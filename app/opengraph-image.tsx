@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
-import { siteUrl } from "@/lib/site";
 
 export const alt = "WebWorkshop, modern websites for contractors and local businesses";
 export const size = {
@@ -8,6 +9,10 @@ export const size = {
   height: 630,
 };
 export const contentType = "image/png";
+
+const logoData = `data:image/png;base64,${readFileSync(
+  join(process.cwd(), "public", "brand", "webworkshop-full.png"),
+).toString("base64")}`;
 
 export default function OpenGraphImage() {
   return new ImageResponse(
@@ -38,7 +43,7 @@ export default function OpenGraphImage() {
             <img
               alt=""
               height="118"
-              src={`${siteUrl}/brand/webworkshop-full.png`}
+              src={logoData}
               style={{
                 height: "118px",
                 objectFit: "contain",

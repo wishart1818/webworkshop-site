@@ -1,4 +1,6 @@
-export const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+
+export const siteUrl = (configuredSiteUrl || "https://webworkshop.dev").replace(/\/+$/, "");
 
 export const publicRoutes = [
   "/",
