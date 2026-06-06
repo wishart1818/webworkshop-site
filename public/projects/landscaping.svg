@@ -1,0 +1,26 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="720" fill="#E7EFE4"/>
+  <rect x="72" y="58" width="816" height="604" rx="12" fill="#FFFFFF" stroke="#C9D2CC" stroke-width="2"/>
+  <rect x="72" y="58" width="816" height="54" rx="12" fill="#1D2B22"/>
+  <circle cx="104" cy="85" r="7" fill="#91B66A"/>
+  <circle cx="128" cy="85" r="7" fill="#E9DECB"/>
+  <circle cx="152" cy="85" r="7" fill="#6CA187"/>
+  <rect x="196" y="78" width="184" height="14" rx="7" fill="#FFFFFF"/>
+  <rect x="656" y="76" width="146" height="18" rx="9" fill="#6E934F"/>
+  <rect x="112" y="150" width="318" height="294" rx="10" fill="#DCEAD2"/>
+  <path d="M112 368C184 316 242 346 308 286C354 244 400 256 430 226V444H112V368Z" fill="#6E934F"/>
+  <circle cx="232" cy="262" r="56" fill="#89AB60"/>
+  <rect x="472" y="188" width="260" height="28" rx="14" fill="#17211D"/>
+  <rect x="472" y="238" width="314" height="12" rx="6" fill="#53615C"/>
+  <rect x="472" y="266" width="242" height="12" rx="6" fill="#53615C"/>
+  <rect x="472" y="306" width="168" height="38" rx="4" fill="#246B57"/>
+  <text x="500" y="330" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="15" font-weight="700">Request estimate</text>
+  <rect x="472" y="388" width="376" height="56" rx="8" fill="#F7F8F5" stroke="#DDE3DE"/>
+  <text x="496" y="422" fill="#17211D" font-family="Arial, sans-serif" font-size="18" font-weight="700">Seasonal maintenance and project gallery</text>
+  <rect x="112" y="500" width="224" height="88" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <rect x="368" y="500" width="224" height="88" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <rect x="624" y="500" width="224" height="88" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <text x="136" y="548" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Lawn care</text>
+  <text x="392" y="548" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Cleanups</text>
+  <text x="648" y="548" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Hardscapes</text>
+</svg>

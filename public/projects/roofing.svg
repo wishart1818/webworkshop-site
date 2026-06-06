@@ -1,0 +1,28 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="720" fill="#E9E3D7"/>
+  <rect x="72" y="58" width="816" height="604" rx="12" fill="#FFFFFF" stroke="#C9D2CC" stroke-width="2"/>
+  <rect x="72" y="58" width="816" height="54" rx="12" fill="#17211D"/>
+  <circle cx="104" cy="85" r="7" fill="#E86F4A"/>
+  <circle cx="128" cy="85" r="7" fill="#E9DECB"/>
+  <circle cx="152" cy="85" r="7" fill="#6CA187"/>
+  <rect x="196" y="78" width="166" height="14" rx="7" fill="#FFFFFF"/>
+  <rect x="652" y="76" width="150" height="18" rx="9" fill="#E86F4A"/>
+  <rect x="112" y="150" width="736" height="222" rx="10" fill="#F7F8F5"/>
+  <path d="M112 310L238 232L364 310H325V372H151V310H112Z" fill="#C94B2D"/>
+  <path d="M238 232L386 323" stroke="#8D311D" stroke-width="18" stroke-linecap="round"/>
+  <rect x="440" y="190" width="240" height="26" rx="13" fill="#17211D"/>
+  <rect x="440" y="236" width="316" height="12" rx="6" fill="#53615C"/>
+  <rect x="440" y="264" width="250" height="12" rx="6" fill="#53615C"/>
+  <rect x="440" y="304" width="154" height="38" rx="4" fill="#246B57"/>
+  <text x="465" y="328" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="15" font-weight="700">Request inspection</text>
+  <rect x="112" y="414" width="224" height="104" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <rect x="368" y="414" width="224" height="104" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <rect x="624" y="414" width="224" height="104" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <text x="136" y="458" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Roof repair</text>
+  <text x="392" y="458" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Replacement</text>
+  <text x="648" y="458" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Storm damage</text>
+  <rect x="112" y="554" width="472" height="58" rx="8" fill="#17211D"/>
+  <text x="136" y="589" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">Recent roof work and service areas</text>
+  <rect x="616" y="554" width="232" height="58" rx="8" fill="#E3F0EB"/>
+  <text x="646" y="589" fill="#184838" font-family="Arial, sans-serif" font-size="18" font-weight="700">Free estimate path</text>
+</svg>

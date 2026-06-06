@@ -1,0 +1,27 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="720" fill="#E8F0F2"/>
+  <rect x="72" y="58" width="816" height="604" rx="12" fill="#FFFFFF" stroke="#C9D2CC" stroke-width="2"/>
+  <rect x="72" y="58" width="816" height="54" rx="12" fill="#18242A"/>
+  <circle cx="104" cy="85" r="7" fill="#2B78A0"/>
+  <circle cx="128" cy="85" r="7" fill="#E9DECB"/>
+  <circle cx="152" cy="85" r="7" fill="#6CA187"/>
+  <rect x="196" y="78" width="204" height="14" rx="7" fill="#FFFFFF"/>
+  <rect x="650" y="76" width="152" height="18" rx="9" fill="#2B78A0"/>
+  <rect x="112" y="150" width="736" height="210" rx="10" fill="#F7F8F5"/>
+  <rect x="148" y="194" width="210" height="124" rx="8" fill="#FFFFFF" stroke="#2B78A0" stroke-width="8"/>
+  <circle cx="253" cy="256" r="40" fill="#2B78A0"/>
+  <path d="M253 218V294M215 256H291M226 229L280 283M280 229L226 283" stroke="#D8E8F0" stroke-width="8" stroke-linecap="round"/>
+  <rect x="430" y="190" width="268" height="28" rx="14" fill="#17211D"/>
+  <rect x="430" y="240" width="320" height="12" rx="6" fill="#53615C"/>
+  <rect x="430" y="268" width="248" height="12" rx="6" fill="#53615C"/>
+  <rect x="430" y="306" width="160" height="38" rx="4" fill="#246B57"/>
+  <text x="458" y="330" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="15" font-weight="700">Send details</text>
+  <rect x="112" y="402" width="224" height="104" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <rect x="368" y="402" width="224" height="104" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <rect x="624" y="402" width="224" height="104" rx="8" fill="#FFFFFF" stroke="#DDE3DE"/>
+  <text x="136" y="446" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Repair</text>
+  <text x="392" y="446" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Replacement</text>
+  <text x="648" y="446" fill="#17211D" font-family="Arial, sans-serif" font-size="20" font-weight="700">Maintenance</text>
+  <rect x="112" y="544" width="736" height="58" rx="8" fill="#E3F0EB"/>
+  <text x="136" y="579" fill="#184838" font-family="Arial, sans-serif" font-size="18" font-weight="700">Plan comparison, technician proof, and service-area pages</text>
+</svg>
