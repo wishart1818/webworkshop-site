@@ -1,0 +1,265 @@
+import { PrismaClient, ProspectStatus as PrismaProspectStatus, type Prisma } from "@prisma/client";
+import {
+  seedProspects,
+  type Activity,
+  type Analysis,
+  type OutreachDraft,
+  type PreviewConcept,
+  type Prospect,
+  type ProspectStatus,
+  type TradeCategory,
+} from "@/lib/prospect-engine";
+
+const globalStore = globalThis as typeof globalThis & {
+  prospectMemory?: Prospect[];
+  prisma?: PrismaClient;
+};
+
+const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
+
+function assertPersistenceAvailable() {
+  if (!hasDatabase && process.env.NODE_ENV === "production") {
+    throw new Error("DATABASE_URL is required for Prospect Engine production persistence.");
+  }
+}
+
+function getPrisma() {
+  if (!globalStore.prisma) globalStore.prisma = new PrismaClient();
+  return globalStore.prisma;
+}
+
+function getMemoryStore() {
+  if (!globalStore.prospectMemory) globalStore.prospectMemory = structuredClone(seedProspects);
+  return globalStore.prospectMemory;
+}
+
+const toPrismaStatus: Record<ProspectStatus, PrismaProspectStatus> = {
+  New: "NEW",
+  Reviewed: "REVIEWED",
+  Contacted: "CONTACTED",
+  Interested: "INTERESTED",
+  "Proposal Sent": "PROPOSAL_SENT",
+  "Closed Won": "CLOSED_WON",
+  "Closed Lost": "CLOSED_LOST",
+};
+
+const fromPrismaStatus: Record<PrismaProspectStatus, ProspectStatus> = {
+  NEW: "New",
+  REVIEWED: "Reviewed",
+  CONTACTED: "Contacted",
+  INTERESTED: "Interested",
+  PROPOSAL_SENT: "Proposal Sent",
+  CLOSED_WON: "Closed Won",
+  CLOSED_LOST: "Closed Lost",
+};
+
+const prospectInclude = {
+  analyses: { orderBy: { createdAt: "desc" as const }, take: 1 },
+  outreach: { orderBy: { createdAt: "desc" as const }, take: 1 },
+  previews: { orderBy: { createdAt: "desc" as const }, take: 1 },
+  notes: { orderBy: { createdAt: "desc" as const } },
+  activities: { orderBy: { createdAt: "desc" as const } },
+} satisfies Prisma.ProspectInclude;
+
+type StoredProspect = Prisma.ProspectGetPayload<{ include: typeof prospectInclude }>;
+
+function stringArray(value: Prisma.JsonValue): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function toDomain(row: StoredProspect): Prospect {
+  const analysisRow = row.analyses[0];
+  const outreachRow = row.outreach[0];
+  const previewRow = row.previews[0];
+  const analysis = analysisRow
+    ? ({
+        overallScore: analysisRow.overallScore,
+        opportunityRating: analysisRow.opportunityRating as Analysis["opportunityRating"],
+        scores: analysisRow.categoryScores as Analysis["scores"],
+        strengths: stringArray(analysisRow.strengths),
+        weaknesses: stringArray(analysisRow.weaknesses),
+        summary: analysisRow.summary,
+        redesignDirection: analysisRow.redesignDirection,
+        analyzedAt: analysisRow.createdAt.toISOString(),
+      } satisfies Analysis)
+    : undefined;
+  const outreach = outreachRow
+    ? ({
+        subjects: stringArray(outreachRow.subjectLines),
+        concise: outreachRow.conciseBody,
+        detailed: outreachRow.detailedBody,
+        followUps: stringArray(outreachRow.followUps),
+        approved: Boolean(outreachRow.approvedAt),
+        generatedAt: outreachRow.createdAt.toISOString(),
+      } satisfies OutreachDraft)
+    : undefined;
+  const preview = previewRow
+    ? ({ ...(previewRow.content as PreviewConcept), generatedAt: previewRow.createdAt.toISOString() } satisfies PreviewConcept)
+    : undefined;
+
+  return {
+    id: row.id,
+    businessName: row.businessName,
+    website: row.website,
+    phone: row.phone ?? "",
+    email: row.publicEmail ?? "",
+    city: row.city,
+    state: row.state,
+    trade: row.tradeCategory as TradeCategory,
+    status: fromPrismaStatus[row.status],
+    serviceArea: row.serviceArea ?? "",
+    sizeIndicator: (row.sizeIndicator ?? "Small") as Prospect["sizeIndicator"],
+    priorityScore: row.priorityScore,
+    analysis,
+    outreach,
+    preview,
+    notes: row.notes.map((note) => note.body),
+    activities: row.activities.map(
+      (item) =>
+        ({
+          id: item.id,
+          type: item.type as Activity["type"],
+          label: item.label,
+          at: item.createdAt.toISOString(),
+        }) satisfies Activity,
+    ),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+async function persistProspect(prospect: Prospect) {
+  const prisma = getPrisma();
+  const previous = await prisma.prospect.findUnique({ where: { id: prospect.id }, select: { status: true } });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.prospect.upsert({
+      where: { id: prospect.id },
+      create: {
+        id: prospect.id,
+        businessName: prospect.businessName,
+        website: prospect.website,
+        phone: prospect.phone || null,
+        publicEmail: prospect.email || null,
+        city: prospect.city,
+        state: prospect.state,
+        tradeCategory: prospect.trade,
+        serviceArea: prospect.serviceArea,
+        sizeIndicator: prospect.sizeIndicator,
+        priorityScore: prospect.priorityScore,
+        status: toPrismaStatus[prospect.status],
+        createdAt: new Date(prospect.createdAt),
+      },
+      update: {
+        businessName: prospect.businessName,
+        website: prospect.website,
+        phone: prospect.phone || null,
+        publicEmail: prospect.email || null,
+        city: prospect.city,
+        state: prospect.state,
+        tradeCategory: prospect.trade,
+        serviceArea: prospect.serviceArea,
+        sizeIndicator: prospect.sizeIndicator,
+        priorityScore: prospect.priorityScore,
+        status: toPrismaStatus[prospect.status],
+      },
+    });
+
+    await Promise.all([
+      tx.analysis.deleteMany({ where: { prospectId: prospect.id } }),
+      tx.outreachDraft.deleteMany({ where: { prospectId: prospect.id } }),
+      tx.previewConcept.deleteMany({ where: { prospectId: prospect.id } }),
+      tx.note.deleteMany({ where: { prospectId: prospect.id } }),
+      tx.activity.deleteMany({ where: { prospectId: prospect.id } }),
+    ]);
+
+    if (prospect.analysis) {
+      await tx.analysis.create({
+        data: {
+          prospectId: prospect.id,
+          overallScore: prospect.analysis.overallScore,
+          opportunityRating: prospect.analysis.opportunityRating,
+          categoryScores: prospect.analysis.scores,
+          strengths: prospect.analysis.strengths,
+          weaknesses: prospect.analysis.weaknesses,
+          summary: prospect.analysis.summary,
+          redesignDirection: prospect.analysis.redesignDirection,
+          createdAt: new Date(prospect.analysis.analyzedAt),
+        },
+      });
+    }
+    if (prospect.outreach) {
+      await tx.outreachDraft.create({
+        data: {
+          prospectId: prospect.id,
+          subjectLines: prospect.outreach.subjects,
+          conciseBody: prospect.outreach.concise,
+          detailedBody: prospect.outreach.detailed,
+          followUps: prospect.outreach.followUps,
+          approvedAt: prospect.outreach.approved ? new Date() : null,
+          createdAt: new Date(prospect.outreach.generatedAt),
+        },
+      });
+    }
+    if (prospect.preview) {
+      await tx.previewConcept.create({
+        data: {
+          prospectId: prospect.id,
+          content: prospect.preview,
+          createdAt: new Date(prospect.preview.generatedAt),
+        },
+      });
+    }
+    if (prospect.notes.length) {
+      await tx.note.createMany({ data: prospect.notes.map((body) => ({ prospectId: prospect.id, body })) });
+    }
+    if (prospect.activities.length) {
+      await tx.activity.createMany({
+        data: prospect.activities.map((item) => ({
+          id: item.id,
+          prospectId: prospect.id,
+          type: item.type,
+          label: item.label,
+          createdAt: new Date(item.at),
+        })),
+      });
+    }
+    if (previous && previous.status !== toPrismaStatus[prospect.status]) {
+      await tx.statusHistory.create({
+        data: { prospectId: prospect.id, fromStatus: previous.status, toStatus: toPrismaStatus[prospect.status] },
+      });
+    }
+  });
+}
+
+export async function listProspects(): Promise<Prospect[]> {
+  assertPersistenceAvailable();
+  if (!hasDatabase) return structuredClone(getMemoryStore());
+  const prisma = getPrisma();
+  const count = await prisma.prospect.count();
+  if (count === 0) {
+    for (const prospect of seedProspects) await persistProspect(prospect);
+  }
+  return (await prisma.prospect.findMany({ include: prospectInclude, orderBy: { priorityScore: "desc" } })).map(toDomain);
+}
+
+export async function saveProspect(prospect: Prospect): Promise<Prospect> {
+  assertPersistenceAvailable();
+  if (!hasDatabase) {
+    const store = getMemoryStore();
+    const index = store.findIndex((item) => item.id === prospect.id);
+    if (index >= 0) store[index] = structuredClone(prospect);
+    else store.unshift(structuredClone(prospect));
+    return structuredClone(prospect);
+  }
+  await persistProspect(prospect);
+  const row = await getPrisma().prospect.findUniqueOrThrow({ where: { id: prospect.id }, include: prospectInclude });
+  return toDomain(row);
+}
+
+export function persistenceMode() {
+  return hasDatabase ? "postgresql" : "memory";
+}
+
+export function resetProspectMemoryForTests() {
+  globalStore.prospectMemory = structuredClone(seedProspects);
+}

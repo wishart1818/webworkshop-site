@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProspectStatus {
+  NEW
+  REVIEWED
+  CONTACTED
+  INTERESTED
+  PROPOSAL_SENT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+model Prospect {
+  id            String          @id @default(cuid())
+  businessName  String
+  website       String          @unique
+  phone         String?
+  publicEmail   String?
+  city          String
+  state         String
+  tradeCategory String
+  serviceArea   String?
+  sizeIndicator String?
+  priorityScore Int             @default(0)
+  status        ProspectStatus  @default(NEW)
+  analyses      Analysis[]
+  outreach      OutreachDraft[]
+  previews      PreviewConcept[]
+  notes         Note[]
+  activities    Activity[]
+  statusHistory StatusHistory[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([status, priorityScore])
+  @@index([tradeCategory, state, city])
+}
+
+model Analysis {
+  id                String   @id @default(cuid())
+  prospectId        String
+  prospect          Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  overallScore      Int
+  opportunityRating String
+  categoryScores    Json
+  strengths         Json
+  weaknesses        Json
+  summary           String
+  redesignDirection String
+  createdAt         DateTime @default(now())
+
+  @@index([prospectId, createdAt])
+}
+
+model OutreachDraft {
+  id           String   @id @default(cuid())
+  prospectId   String
+  prospect     Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  subjectLines Json
+  conciseBody  String
+  detailedBody String
+  followUps    Json
+  approvedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([prospectId, createdAt])
+}
+
+model PreviewConcept {
+  id         String   @id @default(cuid())
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  content    Json
+  createdAt  DateTime @default(now())
+
+  @@index([prospectId, createdAt])
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([prospectId, createdAt])
+}
+
+model Activity {
+  id         String   @id @default(cuid())
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  type       String
+  label      String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([prospectId, createdAt])
+}
+
+model StatusHistory {
+  id         String          @id @default(cuid())
+  prospectId String
+  prospect   Prospect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  fromStatus ProspectStatus?
+  toStatus   ProspectStatus
+  createdAt  DateTime        @default(now())
+
+  @@index([prospectId, createdAt])
+}
+
+model RateLimitBucket {
+  id          String   @id @default(cuid())
+  action      String
+  subject     String
+  windowStart DateTime
+  count       Int      @default(1)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([action, subject, windowStart])
+  @@index([windowStart])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  action    String
+  outcome   String
+  subject   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+  @@index([outcome, createdAt])
+}

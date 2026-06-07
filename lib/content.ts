@@ -234,42 +234,43 @@ export type PortfolioProject = (typeof portfolioProjects)[number];
 export const pricingPlans = [
   {
     name: "Launch Website",
-    price: "Starting at $995",
+    price: "Starting at $699",
     description:
-      "A professional website for a service business that needs a strong online presence and a simple contact form.",
+      "A polished one-page website for a service business that needs a professional online presence.",
     features: [
-      "Home, services, and contact pages",
+      "Services, about, reviews, and contact sections",
       "Mobile-first design",
-      "Project request form",
+      "Contact form",
       "Search-friendly page structure",
-      "Preview link before launch",
+      "One round of revisions",
     ],
   },
   {
     name: "Professional Website",
-    price: "Starting at $2,495",
+    price: "Starting at $1,495",
     description:
-      "A larger website for contractors that need project galleries, service-area pages, and a detailed quote request form.",
+      "A complete website for contractors that need room to show their services, work, and service area.",
     features: [
       "Everything in Launch",
-      "Portfolio or gallery page",
-      "Service-area pages",
-      "FAQ and review sections",
+      "Up to five custom pages",
+      "Project gallery",
+      "Quote request form",
+      "Local search foundations",
       "Two rounds of revisions",
     ],
     featured: true,
   },
   {
-    name: "Maintenance",
-    price: "Starting at $99/mo",
+    name: "Website Care",
+    price: "$59/mo",
     description:
-      "Ongoing help with updates, routine checks, and small improvements after launch.",
+      "Optional support for businesses that want WebWorkshop to handle small updates after launch.",
     features: [
-      "Monthly updates",
-      "Performance checks",
-      "Small copy and image changes",
-      "Form monitoring",
-      "Priority support window",
+      "Hosting and technical maintenance",
+      "Small text and photo updates",
+      "Up to 30 minutes of updates each month",
+      "Additional work quoted separately",
+      "Cancel anytime",
     ],
   },
 ];
@@ -308,7 +309,7 @@ export const faqs = [
   {
     question: "What happens after launch?",
     answer:
-      "You can manage updates yourself or use Maintenance for changes, checks, and small improvements.",
+      "You can manage updates yourself or use Website Care for small changes and routine maintenance.",
   },
   {
     question: "Do you make contractor-specific layouts?",

@@ -69,9 +69,9 @@ export function ContactForm() {
       <label>
         <span>Budget range</span>
         <select className="focus-ring field-control" name="budget">
-          <option>$995-$2,495</option>
-          <option>$2,495+</option>
-          <option>Maintenance</option>
+          <option>$699-$1,494</option>
+          <option>$1,495+</option>
+          <option>Website Care</option>
           <option>Not sure yet</option>
         </select>
       </label>

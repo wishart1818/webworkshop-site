@@ -7,7 +7,7 @@ import { pricingPlans } from "@/lib/content";
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "Simple WebWorkshop pricing options for Launch websites, Professional websites, and Maintenance.",
+    "Simple WebWorkshop pricing options for Launch websites, Professional websites, and Website Care.",
 };
 
 const included = [
@@ -20,9 +20,9 @@ const included = [
 ];
 
 const startingPrices = [
-  { name: "Launch Website", price: "From $995" },
-  { name: "Professional Website", price: "From $2,495" },
-  { name: "Maintenance", price: "From $99/mo" },
+  { name: "Launch Website", price: "From $699" },
+  { name: "Professional Website", price: "From $1,495" },
+  { name: "Website Care", price: "$59/mo" },
 ];
 
 export default function PricingPage() {
