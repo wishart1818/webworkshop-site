@@ -9,6 +9,7 @@ type AuditInput = {
 
 type MemoryBucket = { count: number; windowStart: number };
 type MemoryAudit = AuditInput & { id: string; createdAt: string };
+export type AuditEventView = AuditInput & { id: string; createdAt: string };
 
 const globalOperations = globalThis as typeof globalThis & {
   prisma?: PrismaClient;
@@ -74,7 +75,7 @@ export async function enforceRateLimit(input: {
   }
 
   if (count > input.limit) {
-    await recordAudit({
+    await safeRecordAudit({
       action: input.action,
       outcome: "rejected",
       subject: input.subject,
@@ -98,6 +99,20 @@ export async function recordAudit(input: AuditInput) {
   if (events.length > 500) events.length = 500;
 }
 
+export async function safeRecordAudit(
+  input: AuditInput,
+  write: (event: AuditInput) => Promise<void> = recordAudit,
+  report: (message: string, error: unknown) => void = console.error,
+) {
+  try {
+    await write(input);
+    return true;
+  } catch (error) {
+    report("Unable to record operational audit event.", error);
+    return false;
+  }
+}
+
 export function operationalMode() {
   return hasDatabase() ? "postgresql" : "memory";
 }
@@ -109,4 +124,58 @@ export function resetOperationalMemoryForTests() {
 
 export function memoryAuditEventsForTests() {
   return structuredClone(globalOperations.auditEvents ?? []);
+}
+
+export async function listAuditEvents(limit = 50): Promise<AuditEventView[]> {
+  const boundedLimit = Math.max(1, Math.min(limit, 100));
+  if (hasDatabase()) {
+    const events = await prismaClient().auditEvent.findMany({
+      orderBy: { createdAt: "desc" },
+      take: boundedLimit,
+    });
+    return events.map((event) => ({
+      id: event.id,
+      action: event.action,
+      outcome: event.outcome as AuditInput["outcome"],
+      subject: event.subject ?? undefined,
+      metadata: (event.metadata ?? undefined) as Prisma.InputJsonObject | undefined,
+      createdAt: event.createdAt.toISOString(),
+    }));
+  }
+  return structuredClone((globalOperations.auditEvents ?? []).slice(0, boundedLimit));
+}
+
+export async function safeListAuditEvents(
+  database: { configured: boolean; reachable?: boolean },
+  loadEvents = () => listAuditEvents(50),
+) {
+  if (database.configured && !database.reachable) return [];
+  try {
+    return await loadEvents();
+  } catch {
+    return [];
+  }
+}
+
+export async function databaseHealth() {
+  if (!hasDatabase()) {
+    return {
+      configured: false,
+      reachable: false,
+      message: process.env.NODE_ENV === "production"
+        ? "DATABASE_URL is required before production use."
+        : "Development memory mode is active.",
+    };
+  }
+  try {
+    const prisma = prismaClient();
+    await prisma.$transaction([
+      prisma.prospect.count(),
+      prisma.auditEvent.count(),
+      prisma.rateLimitBucket.count(),
+    ]);
+    return { configured: true, reachable: true, message: "PostgreSQL and required Prospect Engine tables are reachable." };
+  } catch {
+    return { configured: true, reachable: false, message: "PostgreSQL is configured, but required tables are not reachable. Check connectivity and migrations." };
+  }
 }

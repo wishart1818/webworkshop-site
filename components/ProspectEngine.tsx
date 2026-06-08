@@ -1,57 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
+import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
+import { SystemWorkspace, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import type { DiscoveredLead } from "@/lib/lead-discovery";
 import {
   activity,
   createProspect,
+  prospectSortOptions,
   prospectStatuses,
-  scoreLabels,
-  seedProspects,
+  sortProspects,
   tradeCategories,
   withOutreach,
   withPreview,
   type Prospect,
+  type ProspectSort,
   type ProspectStatus,
-  type ScoreKey,
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-type WorkspaceTab = "Overview" | "Prospects" | "Pipeline";
-type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity";
+type WorkspaceTab = "Overview" | "Prospects" | "Pipeline" | "System";
 type SyncState = "loading" | "saved" | "saving" | "error";
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
-    new Date(value),
-  );
-}
-
-function safeWebsiteUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "#";
-  } catch {
-    return "#";
-  }
-}
-
-function ScoreRing({ value }: { value: number }) {
-  return (
-    <span className="engine-score" style={{ "--score": `${value * 3.6}deg` } as React.CSSProperties}>
-      <b>{value}</b>
-    </span>
-  );
-}
-
 export function ProspectEngine() {
-  const [prospects, setProspects] = useState<Prospect[]>(seedProspects);
-  const [selectedId, setSelectedId] = useState(seedProspects[0].id);
+  const [prospects, setProspects] = useState<Prospect[]>([]);
+  const [selectedId, setSelectedId] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("Overview");
   const [detailTab, setDetailTab] = useState<DetailTab>("Analysis");
   const [query, setQuery] = useState("");
   const [trade, setTrade] = useState<"All" | TradeCategory>("All");
   const [status, setStatus] = useState<"All" | ProspectStatus>("All");
+  const [sort, setSort] = useState<ProspectSort>("priority");
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [showLeadSearch, setShowLeadSearch] = useState(false);
   const [discoveredLeads, setDiscoveredLeads] = useState<DiscoveredLead[]>([]);
@@ -61,39 +41,70 @@ export function ProspectEngine() {
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [syncError, setSyncError] = useState("");
   const [persistenceMode, setPersistenceMode] = useState<"memory" | "postgresql">("memory");
+  const [system, setSystem] = useState<SystemPayload | null>(null);
+  const [systemLoading, setSystemLoading] = useState(false);
+  const [systemError, setSystemError] = useState("");
   const saveQueue = useRef<Promise<Prospect | null>>(Promise.resolve(null));
 
-  useEffect(() => {
-    async function loadProspects() {
-      try {
-        const response = await fetch("/api/engine/prospects", { cache: "no-store" });
-        const payload = (await response.json()) as {
-          prospects?: Prospect[];
-          persistence?: "memory" | "postgresql";
-          error?: string;
-        };
-        if (!response.ok || !payload.prospects) throw new Error(payload.error || "Unable to load prospects.");
-        setProspects(payload.prospects);
-        setSelectedId(payload.prospects[0]?.id ?? "");
-        setPersistenceMode(payload.persistence ?? "memory");
-        setSyncState("saved");
-      } catch (error) {
-        setSyncError(error instanceof Error ? error.message : "Unable to load prospects.");
-        setSyncState("error");
-      }
+  const loadProspects = useCallback(async () => {
+    setSyncState("loading");
+    setSyncError("");
+    try {
+      const response = await fetch("/api/engine/prospects", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        prospects?: Prospect[];
+        persistence?: "memory" | "postgresql";
+        error?: string;
+      };
+      if (!response.ok || !payload.prospects) throw new Error(payload.error || "Unable to load prospects.");
+      setProspects(payload.prospects);
+      setSelectedId((current) => payload.prospects?.some((prospect) => prospect.id === current) ? current : payload.prospects?.[0]?.id ?? "");
+      setPersistenceMode(payload.persistence ?? "memory");
+      setSyncState("saved");
+    } catch (error) {
+      setProspects([]);
+      setSelectedId("");
+      setSyncError(error instanceof Error ? error.message : "Unable to load prospects.");
+      setSyncState("error");
     }
-    void loadProspects();
   }, []);
 
+  useEffect(() => {
+    void loadProspects();
+  }, [loadProspects]);
+
+  async function loadSystem() {
+    setSystemLoading(true);
+    setSystemError("");
+    try {
+      const response = await fetch("/api/engine/system", { cache: "no-store" });
+      const payload = (await response.json()) as SystemPayload;
+      if (!response.ok) throw new Error("Unable to load system status.");
+      setSystem(payload);
+    } catch (error) {
+      setSystem(null);
+      setSystemError(error instanceof Error ? error.message : "Unable to load system status.");
+    } finally {
+      setSystemLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (workspaceTab === "System") void loadSystem();
+  }, [workspaceTab]);
+
   const selected = prospects.find((prospect) => prospect.id === selectedId) ?? prospects[0];
+  const prospectStateBlocked = prospects.length === 0 && (syncState === "loading" || syncState === "error");
   const filtered = useMemo(
     () =>
-      prospects
-        .filter((prospect) => trade === "All" || prospect.trade === trade)
-        .filter((prospect) => status === "All" || prospect.status === status)
-        .filter((prospect) => `${prospect.businessName} ${prospect.city} ${prospect.state}`.toLowerCase().includes(query.toLowerCase()))
-        .sort((a, b) => b.priorityScore - a.priorityScore),
-    [prospects, query, status, trade],
+      sortProspects(
+        prospects
+          .filter((prospect) => trade === "All" || prospect.trade === trade)
+          .filter((prospect) => status === "All" || prospect.status === status)
+          .filter((prospect) => `${prospect.businessName} ${prospect.city} ${prospect.state}`.toLowerCase().includes(query.toLowerCase())),
+        sort,
+      ),
+    [prospects, query, sort, status, trade],
   );
 
   const metrics = useMemo(
@@ -258,15 +269,15 @@ export function ProspectEngine() {
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Prospects", "Pipeline"] as WorkspaceTab[]).map((tab) => (
+          {(["Overview", "Prospects", "Pipeline", "System"] as WorkspaceTab[]).map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
               {tab}
             </button>
           ))}
         </nav>
         <div className="engine-compliance">
-          <b>Human approval required</b>
-          <p>Outreach stays in draft until an operator approves it. No mass sending.</p>
+          <b>Human review and source terms</b>
+          <p>Outreach stays in draft until approved. Analysis is user-triggered and robots-aware; review applicable site terms before running it.</p>
         </div>
       </aside>
 
@@ -274,7 +285,7 @@ export function ProspectEngine() {
         <header className="engine-topbar">
           <div><p>WebWorkshop sales workspace</p><h1>{workspaceTab}</h1></div>
           <div className="engine-topbar__actions">
-            <div className={`engine-sync engine-sync--${syncState}`} role={syncState === "error" ? "alert" : "status"}>
+            <div className={`engine-sync engine-sync--${syncState}`} role="status">
               <i aria-hidden="true" />
               <span>
                 {syncState === "loading"
@@ -294,7 +305,22 @@ export function ProspectEngine() {
           </div>
         </header>
 
-        {workspaceTab === "Overview" && (
+        {syncState === "error" && prospects.length > 0 && (
+          <div className="engine-error-banner" role="alert">
+            <div><b>Prospect data is not synced</b><p>{syncError}</p></div>
+            <button className="engine-button" onClick={() => void loadProspects()} type="button">{prospects.length ? "Reload from server" : "Retry loading"}</button>
+          </div>
+        )}
+
+        {workspaceTab !== "System" && prospectStateBlocked && (
+          <div className="engine-content">
+            {syncState === "loading"
+              ? <LoadingState title="Loading prospect workspace" body="Retrieving the latest pipeline, analysis, outreach, and activity records." />
+              : <EmptyState title="Prospects unavailable" body={syncError} action={() => void loadProspects()} actionLabel="Retry loading" />}
+          </div>
+        )}
+
+        {workspaceTab === "Overview" && !prospectStateBlocked && (
           <div className="engine-content">
             <section className="engine-metrics" aria-label="Pipeline summary">
               {[
@@ -321,12 +347,13 @@ export function ProspectEngine() {
           </div>
         )}
 
-        {workspaceTab === "Prospects" && (
+        {workspaceTab === "Prospects" && !prospectStateBlocked && (
           <div className="engine-content">
             <div className="engine-filters">
               <label className="engine-mobile-search"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
               <select aria-label="Filter by trade" onChange={(event) => setTrade(event.target.value as "All" | TradeCategory)} value={trade}><option>All</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select>
               <select aria-label="Filter by status" onChange={(event) => setStatus(event.target.value as "All" | ProspectStatus)} value={status}><option>All</option>{prospectStatuses.map((item) => <option key={item}>{item}</option>)}</select>
+              <select aria-label="Sort prospects" onChange={(event) => setSort(event.target.value as ProspectSort)} value={sort}>{prospectSortOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
               <span>{filtered.length} matching prospects</span>
             </div>
             <div className="engine-workspace">
@@ -339,7 +366,7 @@ export function ProspectEngine() {
           </div>
         )}
 
-        {workspaceTab === "Pipeline" && (
+        {workspaceTab === "Pipeline" && !prospectStateBlocked && (
           <div className="engine-content engine-pipeline">
             {prospectStatuses.map((column) => (
               <section key={column}><header><h2>{column}</h2><span>{prospects.filter((prospect) => prospect.status === column).length}</span></header>
@@ -352,6 +379,10 @@ export function ProspectEngine() {
             ))}
           </div>
         )}
+
+        {workspaceTab === "System" && (
+          <SystemWorkspace error={systemError} loading={systemLoading} onRefresh={() => void loadSystem()} system={system} />
+        )}
       </main>
 
       {showDiscovery && <DiscoveryDialog onClose={() => setShowDiscovery(false)} onSubmit={addProspect} />}
@@ -362,43 +393,6 @@ export function ProspectEngine() {
 
 function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospect[]; selectedId: string; onSelect: (id: string) => void }) {
   return <div className="engine-table" role="table" aria-label="Prospects"><div className="engine-table__head" role="row"><span>Prospect</span><span>Status</span><span>Website score</span><span>Priority</span></div>{prospects.map((prospect) => <button className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} onClick={() => onSelect(prospect.id)} role="row" type="button"><span><b>{prospect.businessName}</b><small>{prospect.trade} · {prospect.city}, {prospect.state}</small></span><span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span><span>{prospect.analysis ? `${prospect.analysis.overallScore}/100` : "Not analyzed"}</span><span><strong>{prospect.priorityScore}</strong></span></button>)}</div>;
-}
-
-function ProspectDetail({ prospect, detailTab, setDetailTab, onAnalyze, onOutreach, onPreview, onStatus, note, setNote, addNote, updateSelected }: { prospect: Prospect; detailTab: DetailTab; setDetailTab: (tab: DetailTab) => void; onAnalyze: () => void; onOutreach: () => void; onPreview: () => void; onStatus: (status: ProspectStatus) => void; note: string; setNote: (value: string) => void; addNote: (event: FormEvent) => void; updateSelected: (updater: (prospect: Prospect) => Prospect) => void }) {
-  return <aside className="engine-detail">
-    <header className="engine-detail__hero"><div className="engine-detail__identity"><span>{prospect.businessName.charAt(0)}</span><div><h2>{prospect.businessName}</h2><p>{prospect.trade} · {prospect.city}, {prospect.state}</p></div></div><ScoreRing value={prospect.priorityScore} /></header>
-    <div className="engine-detail__meta"><a href={safeWebsiteUrl(prospect.website)} rel="noreferrer" target="_blank">Open website</a><a href={`tel:${prospect.phone}`}>{prospect.phone}</a><select aria-label="Pipeline status" onChange={(event) => onStatus(event.target.value as ProspectStatus)} value={prospect.status}>{prospectStatuses.map((item) => <option key={item}>{item}</option>)}</select></div>
-    <nav className="engine-tabs" aria-label="Prospect detail">{(["Analysis", "Outreach", "Preview", "Activity"] as DetailTab[]).map((tab) => <button className={detailTab === tab ? "is-active" : ""} key={tab} onClick={() => setDetailTab(tab)} type="button">{tab}</button>)}</nav>
-    <div className="engine-detail__body">
-      {detailTab === "Analysis" && (prospect.analysis ? <AnalysisView prospect={prospect} onAnalyze={onAnalyze} /> : <EmptyState title="Website not analyzed yet" body="Run the scoring engine to identify strengths, conversion gaps, and redesign opportunity." action={onAnalyze} actionLabel="Analyze website" />)}
-      {detailTab === "Outreach" && (prospect.outreach ? <OutreachView prospect={prospect} updateSelected={updateSelected} /> : <EmptyState title="No outreach draft yet" body="Generate a personal draft grounded in the website analysis. It will stay unsent until approved." action={onOutreach} actionLabel="Generate outreach" />)}
-      {detailTab === "Preview" && (prospect.preview ? <PreviewView prospect={prospect} /> : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
-      {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
-    </div>
-  </aside>;
-}
-
-function AnalysisView({ prospect, onAnalyze }: { prospect: Prospect; onAnalyze: () => void }) {
-  const analysis = prospect.analysis!;
-  return <div className="engine-stack"><div className="engine-analysis-summary"><ScoreRing value={analysis.overallScore} /><div><span className={`engine-opportunity engine-opportunity--${analysis.opportunityRating.toLowerCase()}`}>{analysis.opportunityRating} opportunity</span><p>{analysis.summary}</p></div></div><div className="engine-score-grid">{(Object.entries(analysis.scores) as [ScoreKey, number][]).map(([key, value]) => <div key={key}><span>{scoreLabels[key]}</span><b>{value}</b><i><em style={{ width: `${value}%` }} /></i></div>)}</div><section><h3>Recommended redesign direction</h3><p>{analysis.redesignDirection}</p></section><div className="engine-two-col"><section><h3>Strengths to reference</h3><ul>{analysis.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>Conversion gaps</h3><ul>{analysis.weaknesses.map((item) => <li key={item}>{item}</li>)}</ul></section></div><button className="engine-button" onClick={onAnalyze} type="button">Re-run analysis</button></div>;
-}
-
-function OutreachView({ prospect, updateSelected }: { prospect: Prospect; updateSelected: (updater: (prospect: Prospect) => Prospect) => void }) {
-  const outreach = prospect.outreach!;
-  return <div className="engine-stack"><div className={`engine-approval ${outreach.approved ? "is-approved" : ""}`}><div><b>{outreach.approved ? "Approved for personal sending" : "Human review required"}</b><p>{outreach.approved ? "This draft has been reviewed. Send it manually through your normal email workflow." : "Review facts, tone, and recipient details before approving."}</p></div><button className="engine-button engine-button--primary" onClick={() => updateSelected((item) => ({ ...item, outreach: { ...outreach, approved: !outreach.approved }, activities: [activity("outreach", outreach.approved ? "Outreach approval removed." : "Outreach approved for personal sending."), ...item.activities] }))} type="button">{outreach.approved ? "Remove approval" : "Approve draft"}</button></div><section><h3>Subject options</h3><ul>{outreach.subjects.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>Concise version</h3><pre>{outreach.concise}</pre></section><section><h3>Detailed version</h3><pre>{outreach.detailed}</pre></section><section><h3>Follow-up sequence</h3>{outreach.followUps.map((item, index) => <pre key={item}>Follow-up {index + 1}{`\n\n`}{item}</pre>)}</section></div>;
-}
-
-function PreviewView({ prospect }: { prospect: Prospect }) {
-  const preview = prospect.preview!;
-  return <div className="engine-stack"><section className="engine-preview-hero"><span>{prospect.trade} concept</span><h3>{preview.direction}</h3><p>{preview.hero}</p><button type="button">Request an estimate</button></section><section><h3>Homepage structure</h3><ol>{preview.homepageStructure.map((item) => <li key={item}>{item}</li>)}</ol></section><div className="engine-two-col"><section><h3>CTA strategy</h3><p>{preview.ctaStrategy}</p></section><section><h3>Trust strategy</h3><p>{preview.trustStrategy}</p></section><section><h3>Portfolio direction</h3><p>{preview.portfolioDirection}</p></section><section><h3>Lead capture</h3><p>{preview.leadCaptureStrategy}</p></section></div></div>;
-}
-
-function ActivityView({ prospect, note, setNote, addNote }: { prospect: Prospect; note: string; setNote: (value: string) => void; addNote: (event: FormEvent) => void }) {
-  return <div className="engine-stack"><form className="engine-note" onSubmit={addNote}><label htmlFor="prospect-note">Add operator note</label><textarea id="prospect-note" onChange={(event) => setNote(event.target.value)} placeholder="Record call details, objections, or next steps." value={note} /><button className="engine-button engine-button--primary" type="submit">Add note</button></form>{prospect.notes.length > 0 && <section><h3>Notes</h3><ul>{prospect.notes.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></section>}<section><h3>Activity history</h3><div className="engine-activity">{prospect.activities.map((item) => <div key={item.id}><i /><p><b>{item.label}</b><span>{formatDate(item.at)}</span></p></div>)}</div></section></div>;
-}
-
-function EmptyState({ title, body, action, actionLabel = "Clear filters" }: { title: string; body: string; action?: () => void; actionLabel?: string }) {
-  return <div className="engine-empty"><span aria-hidden="true">+</span><h3>{title}</h3><p>{body}</p>{action && <button className="engine-button engine-button--primary" onClick={action} type="button">{actionLabel}</button>}</div>;
 }
 
 function DiscoveryDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { enforceRateLimit, recordAudit } from "@/lib/operational-controls";
+import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
 import { activity, calculatePriority } from "@/lib/prospect-engine";
 import { saveProspect } from "@/lib/prospect-repository";
 import { validateProspect } from "@/lib/prospect-validation";
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   try {
     const validation = validateProspect(await request.json());
     if (!validation.ok) {
-      await recordAudit({ action: "website_analysis", outcome: "rejected", metadata: { reason: validation.error } });
+      await safeRecordAudit({ action: "website_analysis", outcome: "rejected", metadata: { reason: validation.error } });
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
     prospectId = validation.value.id;
@@ -24,20 +24,20 @@ export async function POST(request: Request) {
     const prospect = await saveProspect({
       ...validation.value,
       analysis,
-      priorityScore: calculatePriority(analysis, validation.value.sizeIndicator),
+      priorityScore: calculatePriority(analysis, validation.value.sizeIndicator, validation.value.serviceArea),
       status: validation.value.status === "New" ? "Reviewed" : validation.value.status,
       activities: [activity("analysis", `Live website analysis completed with a score of ${analysis.overallScore}.`), ...validation.value.activities],
     });
-    await recordAudit({ action: "website_analysis", outcome: "success", subject: hostname, metadata: { prospectId, score: analysis.overallScore } });
+    await safeRecordAudit({ action: "website_analysis", outcome: "success", subject: hostname, metadata: { prospectId, score: analysis.overallScore } });
     return NextResponse.json({ prospect });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const expected = /Only HTTP|credentials cannot|unsupported port|Local websites|private or unsupported|robots.txt does not allow|too large|redirected too many|did not return HTML|Please wait|Rate limit reached|returned HTTP/.test(message);
     if (!expected) console.error("Unable to analyze website.", error);
-    await recordAudit({ action: "website_analysis", outcome: expected ? "rejected" : "failure", subject: prospectId || undefined, metadata: { message } });
+    await safeRecordAudit({ action: "website_analysis", outcome: expected ? "rejected" : "failure", subject: prospectId || undefined, metadata: { message } });
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to analyze website." },
-      { status: 422 },
+      { error: expected ? message : "Unable to analyze website right now." },
+      { status: expected ? 422 : 500 },
     );
   }
 }

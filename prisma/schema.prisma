@@ -57,6 +57,7 @@ model Analysis {
   createdAt         DateTime @default(now())
 
   @@index([prospectId, createdAt])
+  @@unique([prospectId, createdAt])
 }
 
 model OutreachDraft {
@@ -71,6 +72,7 @@ model OutreachDraft {
   createdAt    DateTime @default(now())
 
   @@index([prospectId, createdAt])
+  @@unique([prospectId, createdAt])
 }
 
 model PreviewConcept {
@@ -81,6 +83,7 @@ model PreviewConcept {
   createdAt  DateTime @default(now())
 
   @@index([prospectId, createdAt])
+  @@unique([prospectId, createdAt])
 }
 
 model Note {

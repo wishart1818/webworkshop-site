@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
+import nextConfig from "../next.config.mjs";
 import { authorizeEngineRequest } from "../lib/engine-auth";
 import { discoverContractors, resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
 import {
   enforceRateLimit,
   memoryAuditEventsForTests,
   resetOperationalMemoryForTests,
+  safeRecordAudit,
 } from "../lib/operational-controls";
 import { seedProspects } from "../lib/prospect-engine";
 import { validateProspect } from "../lib/prospect-validation";
@@ -18,6 +20,24 @@ test("prospect validation accepts a complete prospect and rejects unsafe URLs", 
   const result = validateProspect(invalid);
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /HTTP or HTTPS/);
+});
+
+test("prospect validation rejects malformed nested workflow data", () => {
+  const invalidActivity = {
+    ...structuredClone(seedProspects[0]),
+    activities: [{ id: "activity", type: "unknown", label: "Bad activity", at: "not-a-date" }],
+  };
+  const activityResult = validateProspect(invalidActivity);
+  assert.equal(activityResult.ok, false);
+  if (!activityResult.ok) assert.match(activityResult.error, /Activity type/);
+
+  const invalidAnalysis = {
+    ...structuredClone(seedProspects[0]),
+    analysis: { overallScore: 500, scores: {} },
+  };
+  const analysisResult = validateProspect(invalidAnalysis);
+  assert.equal(analysisResult.ok, false);
+  if (!analysisResult.ok) assert.match(analysisResult.error, /Analysis scores/);
 });
 
 test("authentication challenges missing credentials and accepts valid credentials", () => {
@@ -39,6 +59,20 @@ test("authentication challenges missing credentials and accepts valid credential
   }
 });
 
+test("private engine routes receive no-store and baseline security headers", async () => {
+  const config = nextConfig("phase-production-build");
+  const rules = await config.headers?.();
+  const globalHeaders = rules?.find((rule) => rule.source === "/(.*)")?.headers ?? [];
+  const engineHeaders = rules?.find((rule) => rule.source === "/engine/:path*")?.headers ?? [];
+  const apiHeaders = rules?.find((rule) => rule.source === "/api/engine/:path*")?.headers ?? [];
+
+  assert.ok(globalHeaders.some((header) => header.key === "Content-Security-Policy"));
+  assert.ok(globalHeaders.some((header) => header.key === "X-Content-Type-Options" && header.value === "nosniff"));
+  assert.ok(engineHeaders.some((header) => header.key === "Cache-Control" && /no-store/.test(header.value)));
+  assert.ok(engineHeaders.some((header) => header.key === "X-Robots-Tag" && /noindex/.test(header.value)));
+  assert.ok(apiHeaders.some((header) => header.key === "Cache-Control" && /no-store/.test(header.value)));
+});
+
 test("rate limits reject excess operations and leave audit evidence", async () => {
   resetOperationalMemoryForTests();
   await enforceRateLimit({ action: "test", subject: "operator", limit: 2, windowMs: 60_000 });
@@ -50,12 +84,41 @@ test("rate limits reject excess operations and leave audit evidence", async () =
   assert.equal(memoryAuditEventsForTests()[0]?.outcome, "rejected");
 });
 
+test("audit failures do not mask the core workflow result", async () => {
+  const recorded = await safeRecordAudit(
+    { action: "test", outcome: "success" },
+    async () => {
+      throw new Error("audit storage unavailable");
+    },
+    () => undefined,
+  );
+
+  assert.equal(recorded, false);
+});
+
 test("private networks and restrictive robots rules are detected", () => {
   assert.equal(isPrivateAddress("127.0.0.1"), true);
   assert.equal(isPrivateAddress("192.168.1.20"), true);
   assert.equal(isPrivateAddress("8.8.8.8"), false);
   assert.equal(robotsDisallows("User-agent: *\nDisallow: /", "/"), true);
   assert.equal(robotsDisallows("User-agent: *\nDisallow: /private", "/services"), false);
+});
+
+test("robots rules honor agent groups, allow overrides, wildcards, and precedence", () => {
+  const rules = [
+    "User-agent: *",
+    "Disallow: /",
+    "",
+    "User-agent: WebWorkshopProspectEngine",
+    "Disallow: /private/*",
+    "Allow: /private/public$",
+    "Disallow: /reports",
+  ].join("\n");
+
+  assert.equal(robotsDisallows(rules, "/services"), false);
+  assert.equal(robotsDisallows(rules, "/private/estimate"), true);
+  assert.equal(robotsDisallows(rules, "/private/public"), false);
+  assert.equal(robotsDisallows(rules, "/reports/annual"), true);
 });
 
 test("lead discovery rejects invalid input before provider access", async () => {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { discoverContractors } from "@/lib/lead-discovery";
-import { enforceRateLimit, recordAudit } from "@/lib/operational-controls";
+import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
 import type { TradeCategory } from "@/lib/prospect-engine";
 import { requestSubject } from "@/lib/request-context";
 
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       trade: input.trade as TradeCategory,
       radiusKm: Number(input.radiusKm),
     });
-    await recordAudit({
+    await safeRecordAudit({
       action: "lead_discovery",
       outcome: "success",
       subject,
@@ -28,11 +28,12 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const expected = /valid city|two-letter state|not supported|wait|Rate limit reached|could not be found/.test(message);
-    if (!expected) console.error("Unable to discover leads.", error);
-    await recordAudit({ action: "lead_discovery", outcome: expected ? "rejected" : "failure", subject, metadata: { message } });
+    const providerFailure = /provider could not complete/.test(message);
+    if (!expected && !providerFailure) console.error("Unable to discover leads.", error);
+    await safeRecordAudit({ action: "lead_discovery", outcome: expected ? "rejected" : "failure", subject, metadata: { message } });
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to discover leads." },
-      { status: 422 },
+      { error: expected || providerFailure ? message : "Unable to discover leads right now." },
+      { status: expected ? 422 : providerFailure ? 502 : 500 },
     );
   }
 }

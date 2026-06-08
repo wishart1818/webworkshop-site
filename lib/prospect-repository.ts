@@ -129,9 +129,9 @@ function toDomain(row: StoredProspect): Prospect {
 
 async function persistProspect(prospect: Prospect) {
   const prisma = getPrisma();
-  const previous = await prisma.prospect.findUnique({ where: { id: prospect.id }, select: { status: true } });
 
   await prisma.$transaction(async (tx) => {
+    const previous = await tx.prospect.findUnique({ where: { id: prospect.id }, select: { status: true } });
     await tx.prospect.upsert({
       where: { id: prospect.id },
       create: {
@@ -164,53 +164,52 @@ async function persistProspect(prospect: Prospect) {
       },
     });
 
-    await Promise.all([
-      tx.analysis.deleteMany({ where: { prospectId: prospect.id } }),
-      tx.outreachDraft.deleteMany({ where: { prospectId: prospect.id } }),
-      tx.previewConcept.deleteMany({ where: { prospectId: prospect.id } }),
-      tx.note.deleteMany({ where: { prospectId: prospect.id } }),
-      tx.activity.deleteMany({ where: { prospectId: prospect.id } }),
-    ]);
-
     if (prospect.analysis) {
-      await tx.analysis.create({
-        data: {
-          prospectId: prospect.id,
-          overallScore: prospect.analysis.overallScore,
-          opportunityRating: prospect.analysis.opportunityRating,
-          categoryScores: prospect.analysis.scores,
-          strengths: prospect.analysis.strengths,
-          weaknesses: prospect.analysis.weaknesses,
-          summary: prospect.analysis.summary,
-          redesignDirection: prospect.analysis.redesignDirection,
-          createdAt: new Date(prospect.analysis.analyzedAt),
-        },
+      const createdAt = new Date(prospect.analysis.analyzedAt);
+      const data = {
+        overallScore: prospect.analysis.overallScore,
+        opportunityRating: prospect.analysis.opportunityRating,
+        categoryScores: prospect.analysis.scores,
+        strengths: prospect.analysis.strengths,
+        weaknesses: prospect.analysis.weaknesses,
+        summary: prospect.analysis.summary,
+        redesignDirection: prospect.analysis.redesignDirection,
+      };
+      await tx.analysis.upsert({
+        where: { prospectId_createdAt: { prospectId: prospect.id, createdAt } },
+        update: data,
+        create: { prospectId: prospect.id, createdAt, ...data },
       });
     }
     if (prospect.outreach) {
-      await tx.outreachDraft.create({
-        data: {
-          prospectId: prospect.id,
-          subjectLines: prospect.outreach.subjects,
-          conciseBody: prospect.outreach.concise,
-          detailedBody: prospect.outreach.detailed,
-          followUps: prospect.outreach.followUps,
-          approvedAt: prospect.outreach.approved ? new Date() : null,
-          createdAt: new Date(prospect.outreach.generatedAt),
-        },
+      const createdAt = new Date(prospect.outreach.generatedAt);
+      const existing = await tx.outreachDraft.findUnique({ where: { prospectId_createdAt: { prospectId: prospect.id, createdAt } }, select: { approvedAt: true } });
+      const data = {
+        subjectLines: prospect.outreach.subjects,
+        conciseBody: prospect.outreach.concise,
+        detailedBody: prospect.outreach.detailed,
+        followUps: prospect.outreach.followUps,
+        approvedAt: prospect.outreach.approved ? existing?.approvedAt ?? new Date() : null,
+      };
+      await tx.outreachDraft.upsert({
+        where: { prospectId_createdAt: { prospectId: prospect.id, createdAt } },
+        update: data,
+        create: { prospectId: prospect.id, createdAt, ...data },
       });
     }
     if (prospect.preview) {
-      await tx.previewConcept.create({
-        data: {
-          prospectId: prospect.id,
-          content: prospect.preview,
-          createdAt: new Date(prospect.preview.generatedAt),
-        },
+      const createdAt = new Date(prospect.preview.generatedAt);
+      const data = { content: prospect.preview };
+      await tx.previewConcept.upsert({
+        where: { prospectId_createdAt: { prospectId: prospect.id, createdAt } },
+        update: data,
+        create: { prospectId: prospect.id, createdAt, ...data },
       });
     }
     if (prospect.notes.length) {
-      await tx.note.createMany({ data: prospect.notes.map((body) => ({ prospectId: prospect.id, body })) });
+      const existing = new Set((await tx.note.findMany({ where: { prospectId: prospect.id }, select: { body: true } })).map((note) => note.body));
+      const newNotes = prospect.notes.filter((body) => !existing.has(body));
+      if (newNotes.length) await tx.note.createMany({ data: newNotes.map((body) => ({ prospectId: prospect.id, body })) });
     }
     if (prospect.activities.length) {
       await tx.activity.createMany({
@@ -221,6 +220,7 @@ async function persistProspect(prospect: Prospect) {
           label: item.label,
           createdAt: new Date(item.at),
         })),
+        skipDuplicates: true,
       });
     }
     if (previous && previous.status !== toPrismaStatus[prospect.status]) {

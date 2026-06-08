@@ -20,6 +20,7 @@ export const tradeCategories = [
 
 export type ProspectStatus = (typeof prospectStatuses)[number];
 export type TradeCategory = (typeof tradeCategories)[number];
+export type ProspectSort = "priority" | "websiteScore" | "newest" | "businessName";
 export type ScoreKey =
   | "mobileExperience"
   | "visualDesign"
@@ -53,6 +54,7 @@ export type OutreachDraft = {
 
 export type PreviewConcept = {
   direction: string;
+  visualStyleDirection: string;
   hero: string;
   homepageStructure: string[];
   ctaStrategy: string;
@@ -62,6 +64,13 @@ export type PreviewConcept = {
   leadCaptureStrategy: string;
   generatedAt: string;
 };
+
+export const prospectSortOptions: Array<{ value: ProspectSort; label: string }> = [
+  { value: "priority", label: "Priority: highest first" },
+  { value: "websiteScore", label: "Website score: lowest first" },
+  { value: "newest", label: "Recently added" },
+  { value: "businessName", label: "Business name: A-Z" },
+];
 
 export type Activity = {
   id: string;
@@ -103,6 +112,72 @@ const scoreLabels: Record<ScoreKey, string> = {
   technicalQuality: "Technical quality",
 };
 
+const contractorPlaybooks: Record<TradeCategory, {
+  homeownerNeed: string;
+  primaryCta: string;
+  services: string[];
+  trustProof: string[];
+  leadDetails: string[];
+  visualCue: string;
+}> = {
+  Roofing: {
+    homeownerNeed: "move from roof concern to a confident inspection request",
+    primaryCta: "Request a roof inspection",
+    services: ["roof repair", "full replacement", "storm-damage response"],
+    trustProof: ["license and insurance", "material warranties", "recent local roofs"],
+    leadDetails: ["property address", "roof concern", "storm date", "optional damage photos"],
+    visualCue: "Use close, labeled roof photography, material detail, and restrained weather-response cues.",
+  },
+  HVAC: {
+    homeownerNeed: "get urgent comfort help or compare a planned system upgrade",
+    primaryCta: "Schedule HVAC service",
+    services: ["heating and cooling repair", "system installation", "maintenance plans"],
+    trustProof: ["technician certifications", "response expectations", "financing and equipment warranties"],
+    leadDetails: ["service address", "system type", "comfort issue", "preferred appointment window"],
+    visualCue: "Balance urgent service clarity with clean equipment, technician, and comfort imagery.",
+  },
+  Landscaping: {
+    homeownerNeed: "picture the finished property and request a scoped consultation",
+    primaryCta: "Plan a landscape consultation",
+    services: ["landscape design", "installation", "seasonal maintenance"],
+    trustProof: ["before-and-after projects", "plant and material knowledge", "service-area examples"],
+    leadDetails: ["property address", "project goals", "budget range", "inspiration photos"],
+    visualCue: "Let finished outdoor spaces lead, with seasonal color and clear before-and-after context.",
+  },
+  Plumbing: {
+    homeownerNeed: "find the right repair quickly and understand when help can arrive",
+    primaryCta: "Request plumbing service",
+    services: ["leak and drain repair", "fixture installation", "water-heater service"],
+    trustProof: ["licensed plumbers", "arrival and pricing expectations", "repair guarantees"],
+    leadDetails: ["service address", "plumbing issue", "urgency", "optional issue photos"],
+    visualCue: "Use clean service imagery and simple diagnostic cues without generic water graphics.",
+  },
+  Electrical: {
+    homeownerNeed: "understand safety-critical services and request qualified help",
+    primaryCta: "Request electrical service",
+    services: ["electrical repair", "panel and service upgrades", "lighting and EV charger installation"],
+    trustProof: ["licenses and permits", "safety process", "completed upgrade examples"],
+    leadDetails: ["service address", "project or issue", "property type", "preferred timing"],
+    visualCue: "Use precise project photography, clear safety signals, and calm technical detail.",
+  },
+  "Power Washing": {
+    homeownerNeed: "see the likely transformation and request a fast property quote",
+    primaryCta: "Request a washing quote",
+    services: ["house washing", "concrete cleaning", "roof and soft washing"],
+    trustProof: ["before-and-after results", "surface-safe process", "insured service"],
+    leadDetails: ["property address", "surfaces to clean", "approximate size", "property photos"],
+    visualCue: "Make before-and-after comparisons the visual system, supported by crisp surface detail.",
+  },
+  "General Contractor": {
+    homeownerNeed: "judge project fit and start a well-scoped consultation",
+    primaryCta: "Discuss a construction project",
+    services: ["renovations", "additions", "new construction and project coordination"],
+    trustProof: ["project portfolio", "license and insurance", "process and communication expectations"],
+    leadDetails: ["property address", "project type", "target timing", "budget range"],
+    visualCue: "Use project narratives, material details, and progress-to-finished photography.",
+  },
+};
+
 const now = () => new Date().toISOString();
 const activity = (type: Activity["type"], label: string): Activity => ({
   id: crypto.randomUUID(),
@@ -116,11 +191,37 @@ function seededScore(input: string, offset: number) {
   return 32 + (value % 42);
 }
 
-export function calculatePriority(analysis: Analysis | undefined, size: Prospect["sizeIndicator"]) {
-  if (!analysis) return size === "Established" ? 66 : size === "Growing" ? 58 : 48;
+function serviceAreaBoost(serviceArea: string) {
+  return /\b(county|counties|regional|statewide|multiple|communities|nearby|greater)\b/i.test(serviceArea) ? 4 : 0;
+}
+
+export function calculatePriority(analysis: Analysis | undefined, size: Prospect["sizeIndicator"], serviceArea = "") {
+  if (!analysis) return (size === "Established" ? 66 : size === "Growing" ? 58 : 48) + serviceAreaBoost(serviceArea);
   const opportunity = 100 - analysis.overallScore;
   const sizeBoost = size === "Established" ? 18 : size === "Growing" ? 11 : 5;
-  return Math.min(99, Math.round(opportunity * 0.82 + sizeBoost));
+  return Math.min(99, Math.round(opportunity * 0.82 + sizeBoost + serviceAreaBoost(serviceArea)));
+}
+
+export function priorityRationale(prospect: Prospect) {
+  const reasons = [
+    prospect.analysis ? `${prospect.analysis.opportunityRating.toLowerCase()} redesign opportunity` : "website analysis still needed",
+    `${prospect.sizeIndicator.toLowerCase()} business`,
+    serviceAreaBoost(prospect.serviceArea) ? "broader service-area reach" : "local service-area reach",
+  ];
+  return reasons.join(" + ");
+}
+
+export function sortProspects(prospects: Prospect[], sort: ProspectSort) {
+  return [...prospects].sort((a, b) => {
+    if (sort === "websiteScore") {
+      const aScore = a.analysis?.overallScore ?? 101;
+      const bScore = b.analysis?.overallScore ?? 101;
+      return aScore - bScore || b.priorityScore - a.priorityScore;
+    }
+    if (sort === "newest") return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (sort === "businessName") return a.businessName.localeCompare(b.businessName);
+    return b.priorityScore - a.priorityScore;
+  });
 }
 
 export function analyzeProspect(prospect: Prospect): Analysis {
@@ -152,19 +253,21 @@ export function analyzeProspect(prospect: Prospect): Analysis {
 
 export function generateOutreach(prospect: Prospect): OutreachDraft {
   const analysis = prospect.analysis ?? analyzeProspect(prospect);
+  const playbook = contractorPlaybooks[prospect.trade];
   const strength = analysis.strengths[0].replace(/\.$/, "").toLowerCase();
   const weakness = analysis.weaknesses[0].replace(/\.$/, "").toLowerCase();
+  const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
   return {
     subjects: [
       `A website idea for ${prospect.businessName}`,
       `${prospect.trade} website notes for ${prospect.city}`,
       `A clearer quote path for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\nI reviewed your website and noticed ${strength}. I also saw an opportunity: ${weakness}. I sketched a practical redesign direction that would make it easier for homeowners to understand your services and request an estimate.\n\nWould it be useful if I sent the preview?\n\nWebWorkshop`,
-    detailed: `Hi ${prospect.businessName} team,\n\nI took a careful look at your website while researching ${prospect.trade.toLowerCase()} companies serving ${prospect.city}. The strongest part is that ${strength}.\n\nThe biggest missed opportunity is that ${weakness}. On mobile, that can make a ready-to-hire homeowner hesitate or leave before requesting a quote.\n\nI put together a contractor-specific direction focused on clearer services, stronger trust proof, and a shorter estimate path. This is a personal draft for your business, not an automated campaign.\n\nWould you like me to send the concept for review?\n\nWebWorkshop`,
+    concise: `Hi ${prospect.businessName} team,\n\nI reviewed your website and noticed ${strength}. I also saw an opportunity: ${weakness}. I sketched a ${prospect.trade.toLowerCase()}-specific direction built around helping homeowners ${playbook.homeownerNeed}, with a clear "${playbook.primaryCta}" path.\n\nWould it be useful if I sent the preview?\n\n${complianceFooter}`,
+    detailed: `Hi ${prospect.businessName} team,\n\nI took a careful look at your website while researching ${prospect.trade.toLowerCase()} companies serving ${prospect.city}. The strongest part is that ${strength}.\n\nThe biggest missed opportunity is that ${weakness}. On mobile, that can make a ready-to-hire homeowner hesitate before taking the next step.\n\nI put together a contractor-specific direction centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a shorter "${playbook.primaryCta}" path. This is a personal draft for your business, not an automated campaign.\n\nWould you like me to send the concept for review?\n\n${complianceFooter}`,
     followUps: [
-      `Hi again, I wanted to make sure my website notes for ${prospect.businessName} reached you. I can send the short preview if improving quote requests is on your list this year.`,
-      `Last note from me: the main idea is a clearer mobile estimate path supported by recent-work proof. Happy to send it over, and I will close the loop if the timing is not right.`,
+      `Hi again, I wanted to make sure my website notes for ${prospect.businessName} reached you. I can send the short preview if improving quote requests is on your list this year.\n\n${complianceFooter}`,
+      `Last note from me: the main idea is a clearer mobile estimate path supported by recent-work proof. Happy to send it over, and I will close the loop if the timing is not right.\n\n${complianceFooter}`,
     ],
     approved: false,
     generatedAt: now(),
@@ -173,21 +276,23 @@ export function generateOutreach(prospect: Prospect): OutreachDraft {
 
 export function generatePreview(prospect: Prospect): PreviewConcept {
   const trade = prospect.trade.toLowerCase();
+  const playbook = contractorPlaybooks[prospect.trade];
   return {
     direction: `A crisp, local-first ${trade} website that feels established, responsive, and easy to hire.`,
-    hero: `${prospect.trade} help across ${prospect.serviceArea || prospect.city}, with a direct request-an-estimate action and a secondary call option.`,
+    visualStyleDirection: `${playbook.visualCue} Pair it with confident typography, high-contrast actions, and practical proof.`,
+    hero: `${prospect.trade} help across ${prospect.serviceArea || prospect.city}, organized to help homeowners ${playbook.homeownerNeed}, with "${playbook.primaryCta}" as the primary action.`,
     homepageStructure: [
-      "Urgency-aware hero and service-area promise",
-      "Primary services organized by homeowner need",
-      "Recent work and project proof",
-      "Trust signals and what to expect",
-      "Service areas, FAQs, and estimate form",
+      `Outcome-led hero with "${playbook.primaryCta}"`,
+      `${playbook.services.join(", ")} organized by homeowner need`,
+      `Decision-stage proof: ${playbook.trustProof.join(", ")}`,
+      "Recent local work with scope and outcome",
+      "Service areas, practical FAQs, and lead form",
     ],
-    ctaStrategy: "Use one primary action, Request an estimate, supported by a persistent mobile call action.",
-    servicePageStructure: ["Problem and service fit", "What is included", "Recent related work", "FAQs", "Estimate request"],
+    ctaStrategy: `Use one primary action, "${playbook.primaryCta}," supported by a persistent mobile call action.`,
+    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Relevant local project proof", "Process, trust proof, and FAQs", playbook.primaryCta],
     portfolioDirection: "Use labeled project photos with location, scope, and a short outcome instead of an unlabeled gallery.",
-    trustStrategy: "Place licenses, years in business, reviews, warranties, and process expectations beside decision points.",
-    leadCaptureStrategy: "Ask only for service needed, ZIP code, contact details, and optional project photos before the first conversation.",
+    trustStrategy: `Place ${playbook.trustProof.join(", ")} beside the decisions they support.`,
+    leadCaptureStrategy: `Keep the first step focused on ${playbook.leadDetails.join(", ")} and contact details.`,
     generatedAt: now(),
   };
 }
@@ -197,7 +302,7 @@ export function withAnalysis(prospect: Prospect): Prospect {
   return {
     ...prospect,
     analysis,
-    priorityScore: calculatePriority(analysis, prospect.sizeIndicator),
+    priorityScore: calculatePriority(analysis, prospect.sizeIndicator, prospect.serviceArea),
     status: prospect.status === "New" ? "Reviewed" : prospect.status,
     activities: [activity("analysis", `Website analysis completed with a score of ${analysis.overallScore}.`), ...prospect.activities],
   };
@@ -225,7 +330,7 @@ export function createProspect(input: Omit<Prospect, "id" | "createdAt" | "prior
     ...input,
     id: crypto.randomUUID(),
     createdAt,
-    priorityScore: calculatePriority(undefined, input.sizeIndicator),
+    priorityScore: calculatePriority(undefined, input.sizeIndicator, input.serviceArea),
     notes: [],
     activities: [{ id: crypto.randomUUID(), type: "created", label: "Prospect added to the discovery queue.", at: createdAt }],
   };
@@ -252,7 +357,7 @@ export const seedProspects: Prospect[] = [
   status: "New",
   serviceArea: `${city} and nearby communities`,
   sizeIndicator: sizeIndicator as Prospect["sizeIndicator"],
-  priorityScore: calculatePriority(undefined, sizeIndicator as Prospect["sizeIndicator"]),
+  priorityScore: calculatePriority(undefined, sizeIndicator as Prospect["sizeIndicator"], `${city} and nearby communities`),
   notes: [],
   activities: [
     {

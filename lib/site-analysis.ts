@@ -84,17 +84,45 @@ async function readLimitedText(response: Response) {
 }
 
 export function robotsDisallows(robots: string, pathname: string) {
-  const lines = robots.split(/\r?\n/).map((line) => line.split("#")[0].trim());
-  let applies = false;
-  const disallowed: string[] = [];
+  const lines = robots.split(/\r?\n/).map((line) => line.split("#")[0].trim()).filter(Boolean);
+  const groups: Array<{ agents: string[]; rules: Array<{ allow: boolean; pattern: string }> }> = [];
+  let group = { agents: [] as string[], rules: [] as Array<{ allow: boolean; pattern: string }> };
   for (const line of lines) {
     const [rawKey, ...parts] = line.split(":");
     const key = rawKey?.trim().toLowerCase();
     const value = parts.join(":").trim();
-    if (key === "user-agent") applies = value === "*" || value.toLowerCase().includes("webworkshopprospectengine");
-    if (applies && key === "disallow" && value) disallowed.push(value);
+    if (key === "user-agent") {
+      if (group.rules.length) {
+        groups.push(group);
+        group = { agents: [], rules: [] };
+      }
+      group.agents.push(value.toLowerCase());
+    } else if ((key === "allow" || key === "disallow") && group.agents.length && value) {
+      group.rules.push({ allow: key === "allow", pattern: value });
+    }
   }
-  return disallowed.some((path) => path === "/" || pathname.startsWith(path));
+  if (group.agents.length) groups.push(group);
+
+  const matchingGroups = groups.map((candidate) => ({
+    ...candidate,
+    specificity: Math.max(...candidate.agents.map((agent) => agent === "*" ? 0 : "webworkshopprospectengine".startsWith(agent) ? agent.length : -1)),
+  })).filter(({ specificity }) => specificity >= 0);
+  const highestSpecificity = Math.max(...matchingGroups.map(({ specificity }) => specificity), -1);
+  const matchingRules = matchingGroups
+    .filter(({ specificity }) => specificity === highestSpecificity)
+    .flatMap(({ rules }) => rules)
+    .filter(({ pattern }) => {
+      const anchored = pattern.endsWith("$");
+      const source = pattern
+        .replace(/\$$/, "")
+        .split("*")
+        .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".*");
+      return new RegExp(`^${source}${anchored ? "$" : ""}`).test(pathname);
+    })
+    .sort((a, b) => b.pattern.length - a.pattern.length || Number(b.allow) - Number(a.allow));
+
+  return matchingRules[0] ? !matchingRules[0].allow : false;
 }
 
 async function assertRobotsAllowed(url: URL) {

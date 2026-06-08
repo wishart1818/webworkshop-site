@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint \"app/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\" \"lib/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"middleware.ts\"",
     "test": "tsx --test tests/**/*.test.ts",
+    "verify": "npm run prisma:generate && npm run prisma:validate && npm test && npm run lint && npm run build",
     "prisma:generate": "prisma generate",
     "prisma:validate": "node scripts/prisma-validate.mjs",
     "prisma:deploy": "prisma migrate deploy"
