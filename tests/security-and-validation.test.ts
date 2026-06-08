@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
+import { config as middlewareConfig } from "../middleware";
 import nextConfig from "../next.config.mjs";
 import { authorizeEngineRequest } from "../lib/engine-auth";
 import { discoverContractors, resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
@@ -57,6 +58,11 @@ test("authentication challenges missing credentials and accepts valid credential
     process.env.ENGINE_USERNAME = oldUsername;
     process.env.ENGINE_PASSWORD = oldPassword;
   }
+});
+
+test("engine middleware never protects public website routes", () => {
+  assert.deepEqual(middlewareConfig.matcher, ["/engine/:path*", "/api/engine/:path*"]);
+  assert.ok(!middlewareConfig.matcher.some((matcher) => matcher === "/:path*" || matcher === "/(.*)"));
 });
 
 test("private engine routes receive no-store and baseline security headers", async () => {
