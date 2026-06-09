@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
-import { config as middlewareConfig } from "../middleware";
+import { config as middlewareConfig, middleware } from "../middleware";
 import nextConfig from "../next.config.mjs";
 import { authorizeEngineRequest } from "../lib/engine-auth";
 import { discoverContractors, resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
@@ -51,6 +51,25 @@ test("authentication challenges missing credentials and accepts valid credential
     assert.equal(unauthenticated?.status, 401);
     const token = Buffer.from("operator:secret").toString("base64");
     const authenticated = authorizeEngineRequest(
+      new NextRequest("https://example.com/engine", { headers: { authorization: `Basic ${token}` } }),
+    );
+    assert.equal(authenticated, null);
+  } finally {
+    process.env.ENGINE_USERNAME = oldUsername;
+    process.env.ENGINE_PASSWORD = oldPassword;
+  }
+});
+
+test("middleware reads ENGINE_USERNAME and ENGINE_PASSWORD directly", () => {
+  const oldUsername = process.env.ENGINE_USERNAME;
+  const oldPassword = process.env.ENGINE_PASSWORD;
+  process.env.ENGINE_USERNAME = "middleware-operator";
+  process.env.ENGINE_PASSWORD = "middleware-secret";
+  try {
+    const unauthenticated = middleware(new NextRequest("https://example.com/engine"));
+    assert.equal(unauthenticated?.status, 401);
+    const token = Buffer.from("middleware-operator:middleware-secret").toString("base64");
+    const authenticated = middleware(
       new NextRequest("https://example.com/engine", { headers: { authorization: `Basic ${token}` } }),
     );
     assert.equal(authenticated, null);

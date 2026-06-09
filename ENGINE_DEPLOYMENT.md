@@ -39,6 +39,8 @@ Apply production secrets to the **Production** environment. Use separate credent
 
 Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-side code, public documentation, screenshots, or variables prefixed with `NEXT_PUBLIC_`.
 
+The names are exact and case-sensitive: `ENGINE_USERNAME` and `ENGINE_PASSWORD`. After adding or changing either value, create a new Production deployment. Vercel does not apply environment-variable changes to deployments that already exist.
+
 ## 3. Apply Prisma Migrations
 
 Run migrations once from a trusted terminal before using `/engine` in production. Do not add migrations to the Vercel build command because concurrent deployments can race.

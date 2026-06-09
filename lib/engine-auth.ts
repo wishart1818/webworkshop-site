@@ -1,8 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-export function engineAuthState() {
-  const username = process.env.ENGINE_USERNAME?.trim();
-  const password = process.env.ENGINE_PASSWORD?.trim();
+export type EngineCredentials = {
+  username?: string;
+  password?: string;
+};
+
+export function engineAuthState(credentials: EngineCredentials = {
+  username: process.env.ENGINE_USERNAME,
+  password: process.env.ENGINE_PASSWORD,
+}) {
+  const username = credentials.username?.trim();
+  const password = credentials.password?.trim();
 
   return {
     configured: Boolean(username && password),
@@ -11,8 +19,8 @@ export function engineAuthState() {
   };
 }
 
-export function authorizeEngineRequest(request: NextRequest) {
-  const auth = engineAuthState();
+export function authorizeEngineRequest(request: NextRequest, credentials?: EngineCredentials) {
+  const auth = engineAuthState(credentials);
 
   if (!auth.configured) {
     if (process.env.NODE_ENV === "production") {
