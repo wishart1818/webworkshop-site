@@ -10,4 +10,5 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: ["/engine/:path*", "/api/engine/:path*"],
+  runtime: "nodejs",
 };

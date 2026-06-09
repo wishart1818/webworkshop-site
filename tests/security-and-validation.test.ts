@@ -79,8 +79,29 @@ test("middleware reads ENGINE_USERNAME and ENGINE_PASSWORD directly", () => {
   }
 });
 
+test("production auth failure reports secret-safe missing-variable diagnostics", () => {
+  const oldNodeEnv = process.env.NODE_ENV;
+  const oldConsoleWarn = console.warn;
+  process.env.NODE_ENV = "production";
+  console.warn = () => undefined;
+  try {
+    const response = authorizeEngineRequest(new NextRequest("https://example.com/engine"), {
+      username: "operator",
+      password: " ",
+    });
+    assert.equal(response?.status, 503);
+    assert.equal(response?.headers.get("X-Engine-Auth-Configuration"), "username-present,password-missing");
+    assert.doesNotMatch(response?.headers.get("X-Engine-Auth-Configuration") ?? "", /operator/);
+  } finally {
+    if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = oldNodeEnv;
+    console.warn = oldConsoleWarn;
+  }
+});
+
 test("engine middleware never protects public website routes", () => {
   assert.deepEqual(middlewareConfig.matcher, ["/engine/:path*", "/api/engine/:path*"]);
+  assert.equal(middlewareConfig.runtime, "nodejs");
   assert.ok(!middlewareConfig.matcher.some((matcher) => matcher === "/:path*" || matcher === "/(.*)"));
 });
 

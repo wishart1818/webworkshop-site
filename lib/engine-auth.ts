@@ -19,12 +19,24 @@ export function engineAuthState(credentials: EngineCredentials = {
   };
 }
 
+function configurationDiagnostic(auth: ReturnType<typeof engineAuthState>) {
+  return [
+    auth.username ? "username-present" : "username-missing",
+    auth.password ? "password-present" : "password-missing",
+  ].join(",");
+}
+
 export function authorizeEngineRequest(request: NextRequest, credentials?: EngineCredentials) {
   const auth = engineAuthState(credentials);
 
   if (!auth.configured) {
     if (process.env.NODE_ENV === "production") {
-      return new NextResponse("Prospect Engine access is not configured.", { status: 503 });
+      const diagnostic = configurationDiagnostic(auth);
+      console.warn(`[engine-auth] Prospect Engine credentials unavailable: ${diagnostic}`);
+      return new NextResponse("Prospect Engine access is not configured.", {
+        status: 503,
+        headers: { "X-Engine-Auth-Configuration": diagnostic },
+      });
     }
     return null;
   }

@@ -41,6 +41,8 @@ Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-sid
 
 The names are exact and case-sensitive: `ENGINE_USERNAME` and `ENGINE_PASSWORD`. After adding or changing either value, create a new Production deployment. Vercel does not apply environment-variable changes to deployments that already exist.
 
+Engine authentication runs in Node.js middleware so it reads the same runtime environment as the engine API routes. If configuration is missing, the 503 response includes an `X-Engine-Auth-Configuration` header that reports only whether each required variable is present; it never contains either secret value.
+
 ## 3. Apply Prisma Migrations
 
 Run migrations once from a trusted terminal before using `/engine` in production. Do not add migrations to the Vercel build command because concurrent deployments can race.
