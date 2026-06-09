@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
+import { GET as configCheck } from "../app/api/engine/config-check/route";
 import { config as middlewareConfig, middleware } from "../middleware";
 import nextConfig from "../next.config.mjs";
 import { authorizeEngineRequest } from "../lib/engine-auth";
@@ -96,6 +97,37 @@ test("production auth failure reports secret-safe missing-variable diagnostics",
     if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = oldNodeEnv;
     console.warn = oldConsoleWarn;
+  }
+});
+
+test("config check bypasses auth and exposes presence booleans only", async () => {
+  const oldUsername = process.env.ENGINE_USERNAME;
+  const oldPassword = process.env.ENGINE_PASSWORD;
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+  process.env.ENGINE_USERNAME = "diagnostic-operator";
+  process.env.ENGINE_PASSWORD = "diagnostic-password";
+  process.env.DATABASE_URL = "postgresql://diagnostic:secret@example.com/database";
+  try {
+    const middlewareResponse = middleware(new NextRequest("https://example.com/api/engine/config-check"));
+    assert.equal(middlewareResponse?.status, 200);
+
+    const response = await configCheck();
+    const payload = await response.json();
+    assert.deepEqual(payload, {
+      hasEngineUsername: true,
+      hasEnginePassword: true,
+      hasDatabaseUrl: true,
+      runtime: "nodejs",
+    });
+    const serialized = JSON.stringify(payload);
+    assert.doesNotMatch(serialized, /diagnostic-operator|diagnostic-password|postgresql:/);
+  } finally {
+    if (oldUsername === undefined) delete process.env.ENGINE_USERNAME;
+    else process.env.ENGINE_USERNAME = oldUsername;
+    if (oldPassword === undefined) delete process.env.ENGINE_PASSWORD;
+    else process.env.ENGINE_PASSWORD = oldPassword;
+    if (oldDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = oldDatabaseUrl;
   }
 });
 
