@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { authorizeEngineRequest } from "@/lib/engine-auth";
 
 export function middleware(request: NextRequest) {
-  if (request.nextUrl.pathname === "/api/engine/config-check") {
+  if (
+    request.nextUrl.pathname === "/api/engine/config-check"
+    || request.nextUrl.pathname === "/api/engine/env-names"
+  ) {
     return NextResponse.next();
   }
 

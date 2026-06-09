@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { GET as configCheck } from "../app/api/engine/config-check/route";
+import { GET as envNames } from "../app/api/engine/env-names/route";
 import { config as middlewareConfig, middleware } from "../middleware";
 import nextConfig from "../next.config.mjs";
 import { authorizeEngineRequest } from "../lib/engine-auth";
@@ -121,6 +122,36 @@ test("config check bypasses auth and exposes presence booleans only", async () =
     });
     const serialized = JSON.stringify(payload);
     assert.doesNotMatch(serialized, /diagnostic-operator|diagnostic-password|postgresql:/);
+  } finally {
+    if (oldUsername === undefined) delete process.env.ENGINE_USERNAME;
+    else process.env.ENGINE_USERNAME = oldUsername;
+    if (oldPassword === undefined) delete process.env.ENGINE_PASSWORD;
+    else process.env.ENGINE_PASSWORD = oldPassword;
+    if (oldDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = oldDatabaseUrl;
+  }
+});
+
+test("env names diagnostic exposes matching names only", async () => {
+  const oldUsername = process.env.ENGINE_USERNAME;
+  const oldPassword = process.env.ENGINE_PASSWORD;
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+  process.env.ENGINE_USERNAME = "names-operator";
+  process.env.ENGINE_PASSWORD = "names-password";
+  process.env.DATABASE_URL = "postgresql://names:secret@example.com/database";
+  try {
+    const middlewareResponse = middleware(new NextRequest("https://example.com/api/engine/env-names"));
+    assert.equal(middlewareResponse?.status, 200);
+
+    const response = await envNames();
+    const payload = await response.json();
+    assert.ok(payload.names.includes("DATABASE_URL"));
+    assert.ok(payload.names.includes("ENGINE_PASSWORD"));
+    assert.ok(payload.names.includes("ENGINE_USERNAME"));
+    assert.ok(payload.names.every((name: string) => /^(DATABASE_|ENGINE_)/.test(name)));
+    assert.deepEqual(Object.keys(payload), ["names"]);
+    const serialized = JSON.stringify(payload);
+    assert.doesNotMatch(serialized, /names-operator|names-password|postgresql:|secret@example/);
   } finally {
     if (oldUsername === undefined) delete process.env.ENGINE_USERNAME;
     else process.env.ENGINE_USERNAME = oldUsername;
