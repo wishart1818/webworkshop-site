@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { GET as configCheck } from "../app/api/engine/config-check/route";
+import { GET as deploymentContext } from "../app/api/engine/deployment-context/route";
 import { GET as envNames } from "../app/api/engine/env-names/route";
 import { config as middlewareConfig, middleware } from "../middleware";
 import nextConfig from "../next.config.mjs";
@@ -159,6 +160,52 @@ test("env names diagnostic exposes matching names only", async () => {
     else process.env.ENGINE_PASSWORD = oldPassword;
     if (oldDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = oldDatabaseUrl;
+  }
+});
+
+test("deployment context exposes safe platform metadata only", async () => {
+  const keys = [
+    "ENGINE_USERNAME",
+    "ENGINE_PASSWORD",
+    "DATABASE_URL",
+    "VERCEL_ENV",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_URL",
+    "NEXT_RUNTIME",
+  ] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    ENGINE_USERNAME: "context-operator",
+    ENGINE_PASSWORD: "context-password",
+    DATABASE_URL: "postgresql://context:secret@example.com/database",
+    VERCEL_ENV: "production",
+    VERCEL_PROJECT_PRODUCTION_URL: "webworkshop.dev",
+    VERCEL_URL: "webworkshop-git-main-example.vercel.app",
+    NEXT_RUNTIME: "nodejs",
+  });
+  try {
+    const middlewareResponse = middleware(new NextRequest("https://example.com/api/engine/deployment-context"));
+    assert.equal(middlewareResponse?.status, 200);
+
+    const response = await deploymentContext(new Request("https://webworkshop.dev/api/engine/deployment-context"));
+    const payload = await response.json();
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(payload, {
+      vercelEnv: "production",
+      hasVercelProjectProductionUrl: true,
+      nextRuntime: "nodejs",
+      nodeEnv: process.env.NODE_ENV ?? null,
+      requestHost: "webworkshop.dev",
+      deploymentUrlHost: "webworkshop-git-main-example.vercel.app",
+      matchingEnvNames: ["DATABASE_URL", "ENGINE_PASSWORD", "ENGINE_USERNAME"],
+    });
+    assert.doesNotMatch(JSON.stringify(payload), /context-operator|context-password|postgresql:|secret@example/);
+  } finally {
+    for (const key of keys) {
+      const value = previous[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
