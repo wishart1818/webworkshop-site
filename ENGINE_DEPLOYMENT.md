@@ -31,6 +31,7 @@ In **Vercel project settings > Environment Variables**, add:
 | `DATABASE_URL` | Yes for the production engine | Neon pooled PostgreSQL connection string |
 | `ENGINE_USERNAME` | Yes for the production engine | A non-obvious operator username |
 | `ENGINE_PASSWORD` | Yes for the production engine | A unique password-manager-generated password |
+| `ENGINE_SETUP_TOKEN` | Temporary, database initialization only | A unique password-manager-generated token of at least 32 characters |
 | `NEXT_PUBLIC_SITE_URL` | Recommended | The public production URL, such as `https://webworkshop.dev` |
 | `NOMINATIM_API_URL` | No | Optional approved geocoding endpoint override |
 | `OVERPASS_API_URL` | No | Optional approved public-map discovery endpoint override |
@@ -46,6 +47,37 @@ Engine authentication runs in Node.js middleware so it reads the same runtime en
 ## 3. Apply Prisma Migrations
 
 Run migrations once from a trusted terminal before using `/engine` in production. Do not add migrations to the Vercel build command because concurrent deployments can race.
+
+If the production `DATABASE_URL` exists only in Vercel, use the protected one-time initializer instead:
+
+1. Add a temporary Production-only `ENGINE_SETUP_TOKEN` containing at least 32 random characters.
+2. Redeploy Production so the new token is available to the function.
+3. Send one authenticated `POST` request to `/api/engine/setup-database` with the token in the `X-Engine-Setup-Token` header. The request must also use the existing `/engine` Basic authentication credentials.
+4. Confirm the response status is `201` and the System workspace reports that PostgreSQL tables are reachable.
+5. Delete `ENGINE_SETUP_TOKEN` from Vercel and redeploy. The endpoint then returns `503` and cannot initialize another database.
+
+The initializer runs only in Vercel Production, holds a PostgreSQL advisory lock, refuses partial schemas, applies the reviewed repository migrations in dependency order inside one transaction, records their checksums in `_prisma_migrations`, and refuses to run again after all required tables exist. It never returns the database URL or setup token.
+
+Use secure prompts so credentials and the temporary token are not stored in PowerShell history:
+
+```powershell
+$credential = Get-Credential -Message "Enter ENGINE_USERNAME and ENGINE_PASSWORD"
+$secureSetupToken = Read-Host "Enter ENGINE_SETUP_TOKEN" -AsSecureString
+$setupToken = [System.Net.NetworkCredential]::new("", $secureSetupToken).Password
+$basicValue = "$($credential.UserName):$($credential.GetNetworkCredential().Password)"
+$basicHeader = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($basicValue))
+
+try {
+  Invoke-RestMethod -Method Post `
+    -Uri "https://www.webworkshop.dev/api/engine/setup-database" `
+    -Headers @{
+      Authorization = "Basic $basicHeader"
+      "X-Engine-Setup-Token" = $setupToken
+    }
+} finally {
+  Remove-Variable setupToken, basicValue, basicHeader, credential, secureSetupToken
+}
+```
 
 PowerShell:
 
