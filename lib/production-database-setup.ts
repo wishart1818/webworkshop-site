@@ -179,6 +179,10 @@ export function setupTokenMatches(provided: string | null, expected = process.en
   return timingSafeEqual(providedHash, expectedHash);
 }
 
+export function productionSetupDatabaseUrl(environment: NodeJS.ProcessEnv = process.env) {
+  return environment.DATABASE_URL_UNPOOLED?.trim() || environment.DATABASE_URL?.trim();
+}
+
 async function presentRequiredTables(transaction: SetupTransaction) {
   const names = REQUIRED_TABLES.map((table) => `'${table}'`).join(", ");
   const rows = await transaction.$queryRawUnsafe<Array<{ table_name: string }>>(
@@ -193,7 +197,9 @@ function migrationRecord(migration: (typeof MIGRATIONS)[number], index: number) 
 }
 
 export async function initializeProductionDatabase(
-  database: SetupDatabase = new PrismaClient() as unknown as SetupDatabase,
+  database: SetupDatabase = new PrismaClient({
+    datasourceUrl: productionSetupDatabaseUrl(),
+  }) as unknown as SetupDatabase,
 ) {
   try {
     return await runSetupPhase("connection", () => database.$transaction(
@@ -241,7 +247,7 @@ export async function handleDatabaseSetup(request: Request, initialize: Initiali
   if (!setupTokenMatches(request.headers.get("x-engine-setup-token"))) {
     return NextResponse.json({ error: "Database setup authorization failed." }, { status: 403 });
   }
-  if (!process.env.DATABASE_URL?.trim()) {
+  if (!productionSetupDatabaseUrl()) {
     return NextResponse.json(
       { error: "Production database is not configured.", classification: "missing_database_url" },
       { status: 503 },

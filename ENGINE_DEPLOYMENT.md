@@ -56,7 +56,7 @@ If the production `DATABASE_URL` exists only in Vercel, use the protected one-ti
 4. Confirm the response status is `201` and the System workspace reports that PostgreSQL tables are reachable.
 5. Delete `ENGINE_SETUP_TOKEN` from Vercel and redeploy. The endpoint then returns `503` and cannot initialize another database.
 
-The initializer runs only in Vercel Production, holds a PostgreSQL advisory lock, refuses partial schemas, applies the reviewed repository migrations in dependency order inside one transaction, records their checksums in `_prisma_migrations`, and refuses to run again after all required tables exist. It never returns the database URL or setup token.
+The initializer runs only in Vercel Production, prefers Neon's direct `DATABASE_URL_UNPOOLED` connection when available, holds a PostgreSQL advisory lock, refuses partial schemas, applies the reviewed repository migrations in dependency order inside one transaction, records their checksums in `_prisma_migrations`, and refuses to run again after all required tables exist. It never returns the database URL or setup token.
 
 Use secure prompts so credentials and the temporary token are not stored in PowerShell history:
 

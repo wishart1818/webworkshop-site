@@ -11,6 +11,7 @@ import {
   initializeProductionDatabase,
   PartialProductionSchemaError,
   productionSetupManifest,
+  productionSetupDatabaseUrl,
   setupTokenConfigured,
   setupTokenMatches,
 } from "../lib/production-database-setup";
@@ -83,6 +84,18 @@ test("database setup token checks are secret-safe and require a strong temporary
   assert.equal(setupTokenMatches(setupToken, setupToken), true);
   assert.equal(setupTokenMatches("wrong-token", setupToken), false);
   assert.equal(setupTokenMatches(null, setupToken), false);
+});
+
+test("database setup prefers the direct Neon URL and falls back to DATABASE_URL", () => {
+  assert.equal(
+    productionSetupDatabaseUrl({
+      DATABASE_URL: "postgresql://pooled",
+      DATABASE_URL_UNPOOLED: "postgresql://direct",
+    }),
+    "postgresql://direct",
+  );
+  assert.equal(productionSetupDatabaseUrl({ DATABASE_URL: "postgresql://pooled" }), "postgresql://pooled");
+  assert.equal(productionSetupDatabaseUrl({}), undefined);
 });
 
 test("database setup failure classification covers safe production categories", async () => {
@@ -187,7 +200,7 @@ test("database initializer refuses completed and partial schemas without applyin
 });
 
 test("production setup endpoint requires Vercel Production, setup token, and database configuration", async () => {
-  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL"] as const;
+  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL", "DATABASE_URL_UNPOOLED"] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const request = (token?: string) => new Request("https://www.webworkshop.dev/api/engine/setup-database", {
     method: "POST",
@@ -207,6 +220,7 @@ test("production setup endpoint requires Vercel Production, setup token, and dat
     assert.equal((await handleDatabaseSetup(request("incorrect"), async () => "initialized")).status, 403);
 
     delete process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL_UNPOOLED;
     const missingDatabase = await handleDatabaseSetup(request(setupToken), async () => "initialized");
     assert.equal(missingDatabase.status, 503);
     assert.equal((await missingDatabase.json()).classification, "missing_database_url");
@@ -216,7 +230,7 @@ test("production setup endpoint requires Vercel Production, setup token, and dat
 });
 
 test("production setup endpoint returns only safe one-time setup results", async () => {
-  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL"] as const;
+  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL", "DATABASE_URL_UNPOOLED"] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   process.env.VERCEL_ENV = "production";
   process.env.ENGINE_SETUP_TOKEN = setupToken;
@@ -239,7 +253,7 @@ test("production setup endpoint returns only safe one-time setup results", async
 });
 
 test("production setup endpoint suppresses unexpected database error details", async () => {
-  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL"] as const;
+  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL", "DATABASE_URL_UNPOOLED"] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const previousConsoleError = console.error;
   const logs: string[] = [];
