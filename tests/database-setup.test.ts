@@ -6,6 +6,7 @@ import test from "node:test";
 import { NextRequest } from "next/server";
 import { middleware } from "../middleware";
 import {
+  classifySetupFailure,
   handleDatabaseSetup,
   initializeProductionDatabase,
   PartialProductionSchemaError,
@@ -82,6 +83,44 @@ test("database setup token checks are secret-safe and require a strong temporary
   assert.equal(setupTokenMatches(setupToken, setupToken), true);
   assert.equal(setupTokenMatches("wrong-token", setupToken), false);
   assert.equal(setupTokenMatches(null, setupToken), false);
+});
+
+test("database setup failure classification covers safe production categories", async () => {
+  assert.equal(classifySetupFailure(Object.assign(new Error("Can't reach database server"), { code: "P1001" })), "connection_refused");
+  assert.equal(classifySetupFailure(Object.assign(new Error("Connection pool timeout"), { code: "P2024" })), "connection_refused");
+  assert.equal(classifySetupFailure(Object.assign(new Error("TLS handshake failed"), { code: "P1011" })), "ssl_issue");
+  assert.equal(classifySetupFailure(new Error("Query failed for postgresql://host/db?sslmode=require")), "unknown_database_error");
+  assert.equal(classifySetupFailure(Object.assign(new Error("permission denied"), { code: "42501" })), "permissions_issue");
+  assert.equal(classifySetupFailure(new PartialProductionSchemaError()), "partial_schema");
+
+  const lockFailure = fakeDatabase();
+  lockFailure.database.$transaction = async (callback) => callback({
+    async $executeRawUnsafe() {
+      return 0;
+    },
+    async $queryRawUnsafe() {
+      throw new Error("lock failed with postgresql://secret");
+    },
+  });
+  await assert.rejects(
+    initializeProductionDatabase(lockFailure.database),
+    (error) => classifySetupFailure(error) === "lock_failure",
+  );
+
+  const migrationFailure = fakeDatabase();
+  migrationFailure.database.$transaction = async (callback) => callback({
+    async $executeRawUnsafe() {
+      throw new Error("migration failed with postgresql://secret");
+    },
+    async $queryRawUnsafe<R>(query: string) {
+      if (query.includes("pg_advisory_xact_lock")) return [] as R;
+      return [] as R;
+    },
+  });
+  await assert.rejects(
+    initializeProductionDatabase(migrationFailure.database),
+    (error) => classifySetupFailure(error) === "migration_sql_error",
+  );
 });
 
 test("database setup route remains protected by engine Basic authentication", () => {
@@ -168,7 +207,9 @@ test("production setup endpoint requires Vercel Production, setup token, and dat
     assert.equal((await handleDatabaseSetup(request("incorrect"), async () => "initialized")).status, 403);
 
     delete process.env.DATABASE_URL;
-    assert.equal((await handleDatabaseSetup(request(setupToken), async () => "initialized")).status, 503);
+    const missingDatabase = await handleDatabaseSetup(request(setupToken), async () => "initialized");
+    assert.equal(missingDatabase.status, 503);
+    assert.equal((await missingDatabase.json()).classification, "missing_database_url");
   } finally {
     restoreEnvironment(previous);
   }
@@ -217,7 +258,9 @@ test("production setup endpoint suppresses unexpected database error details", a
       },
     );
     assert.equal(response.status, 503);
-    assert.doesNotMatch(await response.text(), /database-secret|postgresql:/);
+    const payload = await response.json();
+    assert.equal(payload.classification, "unknown_database_error");
+    assert.doesNotMatch(JSON.stringify(payload), /database-secret|postgresql:/);
     assert.doesNotMatch(logs.join(" "), /database-secret|postgresql:/);
   } finally {
     console.error = previousConsoleError;

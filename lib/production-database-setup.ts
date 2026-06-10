@@ -83,10 +83,88 @@ type SetupDatabase = {
   $disconnect(): Promise<void>;
 };
 
+export type SetupFailureClassification =
+  | "missing_database_url"
+  | "connection_refused"
+  | "ssl_issue"
+  | "permissions_issue"
+  | "partial_schema"
+  | "lock_failure"
+  | "migration_sql_error"
+  | "unknown_database_error";
+
+type SetupPhase = "connection" | "lock" | "schema_inspection" | "migration_sql" | "verification";
+
 export class PartialProductionSchemaError extends Error {
   constructor() {
     super("The production database contains only part of the required schema.");
     this.name = "PartialProductionSchemaError";
+  }
+}
+
+class ProductionSetupPhaseError extends Error {
+  constructor(
+    readonly phase: SetupPhase,
+    readonly original: unknown,
+  ) {
+    super(`Production database setup failed during ${phase}.`);
+    this.name = "ProductionSetupPhaseError";
+  }
+}
+
+function errorSignals(error: unknown) {
+  const signals: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof Error) signals.push(current.name, current.message);
+    if (typeof current === "object") {
+      const record = current as Record<string, unknown>;
+      for (const key of ["code", "sqlState", "kind"]) {
+        if (typeof record[key] === "string") signals.push(record[key]);
+      }
+      current = record.cause ?? (current instanceof ProductionSetupPhaseError ? current.original : undefined);
+    } else {
+      break;
+    }
+  }
+  return signals.join(" ").toLowerCase();
+}
+
+export function classifySetupFailure(error: unknown): SetupFailureClassification {
+  if (error instanceof PartialProductionSchemaError) return "partial_schema";
+  const phase = error instanceof ProductionSetupPhaseError ? error.phase : "connection";
+  const signals = errorSignals(error);
+
+  if (
+    /\bp1011\b|tls handshake|ssl (error|failure|failed|certificate|connection)|certificate (error|failure|failed|verify)|self signed|secure connection failed/.test(
+      signals,
+    )
+  ) {
+    return "ssl_issue";
+  }
+  if (
+    /\bp1001\b|\bp1002\b|\bp1003\b|\bp2024\b|econnrefused|connection refused|can't reach database|cannot reach database|connection closed|connection pool timeout/.test(
+      signals,
+    )
+  ) {
+    return "connection_refused";
+  }
+  if (/\bp1000\b|\bp1010\b|\b42501\b|permission denied|access denied|not authorized|authentication failed/.test(signals)) {
+    return "permissions_issue";
+  }
+  if (phase === "lock") return "lock_failure";
+  if (phase === "migration_sql" || phase === "verification" || phase === "schema_inspection") {
+    return "migration_sql_error";
+  }
+  return "unknown_database_error";
+}
+
+async function runSetupPhase<T>(phase: SetupPhase, action: () => Promise<T>) {
+  try {
+    return await action();
+  } catch (error) {
+    if (error instanceof PartialProductionSchemaError || error instanceof ProductionSetupPhaseError) throw error;
+    throw new ProductionSetupPhaseError(phase, error);
   }
 }
 
@@ -118,30 +196,34 @@ export async function initializeProductionDatabase(
   database: SetupDatabase = new PrismaClient() as unknown as SetupDatabase,
 ) {
   try {
-    return await database.$transaction(
+    return await runSetupPhase("connection", () => database.$transaction(
       async (transaction) => {
-        await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(928641307)");
-        const existing = await presentRequiredTables(transaction);
+        await runSetupPhase("lock", () => transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(928641307)"));
+        const existing = await runSetupPhase("schema_inspection", () => presentRequiredTables(transaction));
         if (existing.size === REQUIRED_TABLES.length) return "already_initialized" as const;
         if (existing.size > 0) throw new PartialProductionSchemaError();
 
-        await transaction.$executeRawUnsafe(CREATE_MIGRATION_TABLE);
-        for (const [index, migration] of MIGRATIONS.entries()) {
-          // These statements are fixed, repository-owned migration DDL. No request data reaches raw SQL.
-          for (const statement of migration.statements) {
-            await transaction.$executeRawUnsafe(statement);
+        await runSetupPhase("migration_sql", async () => {
+          await transaction.$executeRawUnsafe(CREATE_MIGRATION_TABLE);
+          for (const [index, migration] of MIGRATIONS.entries()) {
+            // These statements are fixed, repository-owned migration DDL. No request data reaches raw SQL.
+            for (const statement of migration.statements) {
+              await transaction.$executeRawUnsafe(statement);
+            }
+            await transaction.$executeRawUnsafe(migrationRecord(migration, index));
           }
-          await transaction.$executeRawUnsafe(migrationRecord(migration, index));
-        }
+        });
 
-        const created = await presentRequiredTables(transaction);
-        if (created.size !== REQUIRED_TABLES.length) {
-          throw new Error("Production database setup verification failed.");
-        }
+        await runSetupPhase("verification", async () => {
+          const created = await presentRequiredTables(transaction);
+          if (created.size !== REQUIRED_TABLES.length) {
+            throw new Error("Production database setup verification failed.");
+          }
+        });
         return "initialized" as const;
       },
       { maxWait: 5_000, timeout: 60_000 },
-    );
+    ));
   } finally {
     await database.$disconnect();
   }
@@ -160,7 +242,10 @@ export async function handleDatabaseSetup(request: Request, initialize: Initiali
     return NextResponse.json({ error: "Database setup authorization failed." }, { status: 403 });
   }
   if (!process.env.DATABASE_URL?.trim()) {
-    return NextResponse.json({ error: "Production database is not configured." }, { status: 503 });
+    return NextResponse.json(
+      { error: "Production database is not configured.", classification: "missing_database_url" },
+      { status: 503 },
+    );
   }
 
   try {
@@ -176,15 +261,21 @@ export async function handleDatabaseSetup(request: Request, initialize: Initiali
       { status: 201 },
     );
   } catch (error) {
-    if (error instanceof PartialProductionSchemaError) {
+    const classification = classifySetupFailure(error);
+    if (classification === "partial_schema") {
       return NextResponse.json(
-        { error: "Database setup stopped because a partial schema already exists. No changes were committed." },
+        {
+          error: "Database setup stopped because a partial schema already exists. No changes were committed.",
+          classification,
+        },
         { status: 409 },
       );
     }
-    const category = error instanceof Error ? error.name : typeof error;
-    console.error(`Production database setup failed (${category}).`);
-    return NextResponse.json({ error: "Production database setup failed. No secret details were returned." }, { status: 503 });
+    console.error(`[engine-setup] Production database setup failed: ${classification}`);
+    return NextResponse.json(
+      { error: "Production database setup failed. No secret details were returned.", classification },
+      { status: 503 },
+    );
   }
 }
 
