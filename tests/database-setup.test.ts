@@ -10,6 +10,7 @@ import {
   handleDatabaseSetup,
   initializeProductionDatabase,
   PartialProductionSchemaError,
+  ProductionSetupLockUnavailableError,
   productionSetupManifest,
   productionSetupDatabaseUrl,
   setupTokenConfigured,
@@ -62,7 +63,7 @@ function fakeDatabase(existingTables: string[] = [], createdTables = productionS
             return 0;
           },
           async $queryRawUnsafe<R>(query: string) {
-            if (query.includes("pg_advisory_xact_lock")) return [] as R;
+            if (query.includes("pg_try_advisory_xact_lock")) return [{ acquired: true }] as R;
             queryCount += 1;
             const names = queryCount === 1 ? existingTables : createdTables;
             return names.map((table_name) => ({ table_name })) as R;
@@ -126,7 +127,7 @@ test("database setup failure classification covers safe production categories", 
       throw new Error("migration failed with postgresql://secret");
     },
     async $queryRawUnsafe<R>(query: string) {
-      if (query.includes("pg_advisory_xact_lock")) return [] as R;
+      if (query.includes("pg_try_advisory_xact_lock")) return [{ acquired: true }] as R;
       return [] as R;
     },
   });
@@ -134,6 +135,81 @@ test("database setup failure classification covers safe production categories", 
     initializeProductionDatabase(migrationFailure.database),
     (error) => classifySetupFailure(error) === "migration_sql_error",
   );
+});
+
+test("database setup retries a busy transaction lock and proceeds only after acquisition", async () => {
+  const fake = fakeDatabase();
+  let lockAttempts = 0;
+  const originalTransaction = fake.database.$transaction;
+  fake.database.$transaction = async (callback, options) => originalTransaction(async (transaction) => callback({
+    ...transaction,
+    async $queryRawUnsafe<R>(query: string) {
+      if (query.includes("pg_try_advisory_xact_lock")) {
+        lockAttempts += 1;
+        return [{ acquired: lockAttempts === 3 }] as R;
+      }
+      return transaction.$queryRawUnsafe<R>(query);
+    },
+  }), options);
+
+  assert.equal(await initializeProductionDatabase(fake.database), "initialized");
+  assert.equal(lockAttempts, 3);
+  assert.ok(fake.statements.some((statement) => statement.includes('CREATE TABLE "Prospect"')));
+});
+
+test("database setup executes no DDL when the transaction lock remains busy", async () => {
+  const fake = fakeDatabase();
+  let lockAttempts = 0;
+  fake.database.$transaction = async (callback) => callback({
+    async $executeRawUnsafe(query: string) {
+      fake.statements.push(query);
+      return 0;
+    },
+    async $queryRawUnsafe<R>(query: string) {
+      if (query.includes("pg_try_advisory_xact_lock")) {
+        lockAttempts += 1;
+        return [{ acquired: false }] as R;
+      }
+      return [] as R;
+    },
+  });
+
+  await assert.rejects(initializeProductionDatabase(fake.database), ProductionSetupLockUnavailableError);
+  assert.equal(lockAttempts, 5);
+  assert.deepEqual(fake.statements, []);
+});
+
+test("database setup returns a safe retry response while another transaction owns the lock", async () => {
+  const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL", "DATABASE_URL_UNPOOLED"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    VERCEL_ENV: "production",
+    ENGINE_SETUP_TOKEN: setupToken,
+    DATABASE_URL_UNPOOLED: "postgresql://operator:database-secret@example.com/production",
+  });
+  try {
+    const response = await handleDatabaseSetup(
+      new Request("https://www.webworkshop.dev/api/engine/setup-database", {
+        method: "POST",
+        headers: { "x-engine-setup-token": setupToken },
+      }),
+      async () => {
+        throw new ProductionSetupLockUnavailableError();
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get("retry-after"), "10");
+    assert.deepEqual(payload, {
+      error: "Another database setup attempt is still active. No changes were made.",
+      classification: "lock_failure",
+      retryable: true,
+      retryAfterSeconds: 10,
+    });
+    assert.doesNotMatch(JSON.stringify(payload), /database-secret|postgresql:/);
+  } finally {
+    restoreEnvironment(previous);
+  }
 });
 
 test("database setup route remains protected by engine Basic authentication", () => {

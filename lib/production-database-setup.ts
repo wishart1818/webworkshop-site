@@ -69,6 +69,9 @@ const MIGRATIONS = [
 ] as const;
 
 const CREATE_MIGRATION_TABLE = `CREATE TABLE IF NOT EXISTS "_prisma_migrations" ("id" VARCHAR(36) PRIMARY KEY NOT NULL, "checksum" VARCHAR(64) NOT NULL, "finished_at" TIMESTAMPTZ, "migration_name" VARCHAR(255) NOT NULL, "logs" TEXT, "rolled_back_at" TIMESTAMPTZ, "started_at" TIMESTAMPTZ NOT NULL DEFAULT now(), "applied_steps_count" INTEGER NOT NULL DEFAULT 0)`;
+const SETUP_LOCK_KEY = 928641307;
+const SETUP_LOCK_ATTEMPTS = 5;
+const SETUP_LOCK_RETRY_MS = 500;
 
 type SetupTransaction = {
   $executeRawUnsafe(query: string): Promise<unknown>;
@@ -102,6 +105,13 @@ export class PartialProductionSchemaError extends Error {
   }
 }
 
+export class ProductionSetupLockUnavailableError extends Error {
+  constructor() {
+    super("Another production database setup transaction currently holds the setup lock.");
+    this.name = "ProductionSetupLockUnavailableError";
+  }
+}
+
 class ProductionSetupPhaseError extends Error {
   constructor(
     readonly phase: SetupPhase,
@@ -132,6 +142,7 @@ function errorSignals(error: unknown) {
 
 export function classifySetupFailure(error: unknown): SetupFailureClassification {
   if (error instanceof PartialProductionSchemaError) return "partial_schema";
+  if (error instanceof ProductionSetupLockUnavailableError) return "lock_failure";
   const phase = error instanceof ProductionSetupPhaseError ? error.phase : "connection";
   const signals = errorSignals(error);
 
@@ -163,9 +174,33 @@ async function runSetupPhase<T>(phase: SetupPhase, action: () => Promise<T>) {
   try {
     return await action();
   } catch (error) {
-    if (error instanceof PartialProductionSchemaError || error instanceof ProductionSetupPhaseError) throw error;
+    if (
+      error instanceof PartialProductionSchemaError
+      || error instanceof ProductionSetupLockUnavailableError
+      || error instanceof ProductionSetupPhaseError
+    ) {
+      throw error;
+    }
     throw new ProductionSetupPhaseError(phase, error);
   }
+}
+
+async function wait(milliseconds: number) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function acquireSetupLock(
+  transaction: SetupTransaction,
+  pause: (milliseconds: number) => Promise<void> = wait,
+) {
+  for (let attempt = 1; attempt <= SETUP_LOCK_ATTEMPTS; attempt += 1) {
+    const rows = await transaction.$queryRawUnsafe<Array<{ acquired: boolean }>>(
+      `SELECT pg_try_advisory_xact_lock(${SETUP_LOCK_KEY}) AS "acquired"`,
+    );
+    if (rows[0]?.acquired === true) return;
+    if (attempt < SETUP_LOCK_ATTEMPTS) await pause(SETUP_LOCK_RETRY_MS);
+  }
+  throw new ProductionSetupLockUnavailableError();
 }
 
 export function setupTokenConfigured(token = process.env.ENGINE_SETUP_TOKEN) {
@@ -204,7 +239,7 @@ export async function initializeProductionDatabase(
   try {
     return await runSetupPhase("connection", () => database.$transaction(
       async (transaction) => {
-        await runSetupPhase("lock", () => transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(928641307)"));
+        await runSetupPhase("lock", () => acquireSetupLock(transaction));
         const existing = await runSetupPhase("schema_inspection", () => presentRequiredTables(transaction));
         if (existing.size === REQUIRED_TABLES.length) return "already_initialized" as const;
         if (existing.size > 0) throw new PartialProductionSchemaError();
@@ -275,6 +310,17 @@ export async function handleDatabaseSetup(request: Request, initialize: Initiali
           classification,
         },
         { status: 409 },
+      );
+    }
+    if (error instanceof ProductionSetupLockUnavailableError) {
+      return NextResponse.json(
+        {
+          error: "Another database setup attempt is still active. No changes were made.",
+          classification,
+          retryable: true,
+          retryAfterSeconds: 10,
+        },
+        { status: 409, headers: { "Retry-After": "10" } },
       );
     }
     console.error(`[engine-setup] Production database setup failed: ${classification}`);
