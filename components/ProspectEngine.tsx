@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
+import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
-import type { DiscoveredLead } from "@/lib/lead-discovery";
+import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   activity,
   createProspect,
@@ -36,6 +37,7 @@ export function ProspectEngine() {
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [showLeadSearch, setShowLeadSearch] = useState(false);
   const [discoveredLeads, setDiscoveredLeads] = useState<DiscoveredLead[]>([]);
+  const [discoveryDiagnostics, setDiscoveryDiagnostics] = useState<DiscoveryDiagnostics | null>(null);
   const [discoveryState, setDiscoveryState] = useState<"idle" | "loading" | "error">("idle");
   const [discoveryError, setDiscoveryError] = useState("");
   const [note, setNote] = useState("");
@@ -188,6 +190,7 @@ export function ProspectEngine() {
     const form = new FormData(event.currentTarget);
     setDiscoveryState("loading");
     setDiscoveryError("");
+    setDiscoveryDiagnostics(null);
     try {
       const response = await fetch("/api/engine/discover", {
         method: "POST",
@@ -199,9 +202,10 @@ export function ProspectEngine() {
           radiusKm: Number(form.get("radiusKm")),
         }),
       });
-      const payload = (await response.json()) as { leads?: DiscoveredLead[]; error?: string };
+      const payload = (await response.json()) as { leads?: DiscoveredLead[]; diagnostics?: DiscoveryDiagnostics; error?: string };
       if (!response.ok || !payload.leads) throw new Error(payload.error || "Unable to discover leads.");
       setDiscoveredLeads(payload.leads);
+      setDiscoveryDiagnostics(payload.diagnostics ?? null);
       setDiscoveryState("idle");
     } catch (error) {
       setDiscoveryError(error instanceof Error ? error.message : "Unable to discover leads.");
@@ -394,7 +398,7 @@ export function ProspectEngine() {
       </main>
 
       {showDiscovery && <DiscoveryDialog onClose={() => setShowDiscovery(false)} onSubmit={addProspect} />}
-      {showLeadSearch && <LeadSearchDialog existingWebsites={new Set(prospects.map((prospect) => prospect.website))} leads={discoveredLeads} state={discoveryState} error={discoveryError} onClose={() => setShowLeadSearch(false)} onDiscover={discoverLeads} onImport={importLead} />}
+      {showLeadSearch && <LeadSearchDialog diagnostics={discoveryDiagnostics} existingWebsites={new Set(prospects.map((prospect) => prospect.website))} leads={discoveredLeads} state={discoveryState} error={discoveryError} onClose={() => setShowLeadSearch(false)} onDiscover={discoverLeads} onImport={importLead} />}
     </div>
   );
 }
@@ -407,6 +411,6 @@ function DiscoveryDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit:
   return <div className="engine-dialog-backdrop" onMouseDown={onClose}><dialog aria-labelledby="discovery-title" className="engine-dialog" onMouseDown={(event) => event.stopPropagation()} open><header><div><p>Lead discovery</p><h2 id="discovery-title">Add a contractor prospect</h2></div><button aria-label="Close" onClick={onClose} type="button">×</button></header><form onSubmit={onSubmit}><div className="engine-form-grid"><label>Business name<input name="businessName" required /></label><label>Website<input name="website" placeholder="https://" required type="url" /></label><label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Business size<select name="sizeIndicator"><option>Small</option><option>Growing</option><option>Established</option></select></label><label>City<input name="city" required /></label><label>State<input maxLength={2} name="state" required /></label><label>Phone<input name="phone" required type="tel" /></label><label>Public email<input name="email" type="email" /></label><label className="engine-form-wide">Service area<input name="serviceArea" placeholder="City and nearby communities" required /></label></div><footer><button className="engine-button" onClick={onClose} type="button">Cancel</button><button className="engine-button engine-button--primary" type="submit">Add to discovery queue</button></footer></form></dialog></div>;
 }
 
-function LeadSearchDialog({ existingWebsites, leads, state, error, onClose, onDiscover, onImport }: { existingWebsites: Set<string>; leads: DiscoveredLead[]; state: "idle" | "loading" | "error"; error: string; onClose: () => void; onDiscover: (event: FormEvent<HTMLFormElement>) => void; onImport: (lead: DiscoveredLead) => void }) {
-  return <div className="engine-dialog-backdrop" onMouseDown={onClose}><dialog aria-labelledby="lead-search-title" className="engine-dialog engine-dialog--wide" onMouseDown={(event) => event.stopPropagation()} open><header><div><p>Public-data discovery</p><h2 id="lead-search-title">Find contractor websites</h2></div><button aria-label="Close" onClick={onClose} type="button">×</button></header><form className="engine-discovery-form" onSubmit={onDiscover}><label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>City<input name="city" required /></label><label>State<input maxLength={2} name="state" required /></label><label>Radius<select name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label><button className="engine-button engine-button--primary" disabled={state === "loading"} type="submit">{state === "loading" ? "Searching" : "Find leads"}</button></form>{state === "error" && <p className="engine-dialog-error" role="alert">{error}</p>}<div className="engine-discovery-results">{leads.length === 0 && state !== "loading" ? <EmptyState title="No discovery results yet" body="Search one trade and location at a time. Results with usable public websites will appear here for review." /> : leads.map((lead) => { const exists = existingWebsites.has(lead.website); return <article key={lead.website}><div><b>{lead.businessName}</b><span>{lead.trade} · {lead.city}, {lead.state}</span><a href={lead.website} rel="noreferrer" target="_blank">{lead.website}</a></div><button className="engine-button" disabled={exists} onClick={() => onImport(lead)} type="button">{exists ? "Already added" : "Import prospect"}</button></article>; })}</div><footer><p>Searches are user-triggered, rate-limited, and return public map records with websites. Review every lead before outreach.</p><button className="engine-button" onClick={onClose} type="button">Close</button></footer></dialog></div>;
+function LeadSearchDialog({ diagnostics, existingWebsites, leads, state, error, onClose, onDiscover, onImport }: { diagnostics: DiscoveryDiagnostics | null; existingWebsites: Set<string>; leads: DiscoveredLead[]; state: "idle" | "loading" | "error"; error: string; onClose: () => void; onDiscover: (event: FormEvent<HTMLFormElement>) => void; onImport: (lead: DiscoveredLead) => void }) {
+  return <div className="engine-dialog-backdrop" onMouseDown={onClose}><dialog aria-labelledby="lead-search-title" className="engine-dialog engine-dialog--wide" onMouseDown={(event) => event.stopPropagation()} open><header><div><p>Public-data discovery</p><h2 id="lead-search-title">Find contractor websites</h2></div><button aria-label="Close" onClick={onClose} type="button">×</button></header><form className="engine-discovery-form" onSubmit={onDiscover}><label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>City<input name="city" required /></label><label>State<input maxLength={2} name="state" required /></label><label>Radius<select name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label><button className="engine-button engine-button--primary" disabled={state === "loading"} type="submit">{state === "loading" ? "Searching" : "Find leads"}</button></form>{state === "error" && <p className="engine-dialog-error" role="alert">{error}</p>}{diagnostics && <DiscoveryFunnel diagnostics={diagnostics} />}<div className="engine-discovery-results">{leads.length === 0 && state !== "loading" ? <EmptyState title="No discovery results yet" body="Search one trade and location at a time. Results with usable public websites will appear here for review." /> : leads.map((lead) => { const exists = existingWebsites.has(lead.website); return <article key={lead.website}><div><b>{lead.businessName}</b><span>{lead.trade} · {lead.city}, {lead.state}</span><a href={lead.website} rel="noreferrer" target="_blank">{lead.website}</a></div><button className="engine-button" disabled={exists} onClick={() => onImport(lead)} type="button">{exists ? "Already added" : "Import prospect"}</button></article>; })}</div><footer><p>Searches are user-triggered, rate-limited, and return public map records with websites. Review every lead before outreach.</p><button className="engine-button" onClick={onClose} type="button">Close</button></footer></dialog></div>;
 }

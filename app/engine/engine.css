@@ -1414,6 +1414,24 @@ body:has(.engine-shell) {
   overflow: auto;
 }
 
+.engine-discovery-funnel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1.2rem;
+  border-bottom: 1px solid var(--engine-line);
+  background: #f7f9f7;
+  padding: 0.7rem 1rem;
+}
+
+.engine-discovery-funnel span {
+  color: var(--engine-muted);
+  font-size: 0.67rem;
+}
+
+.engine-discovery-funnel b {
+  color: var(--engine-ink);
+}
+
 .engine-discovery-results article {
   display: flex;
   align-items: center;

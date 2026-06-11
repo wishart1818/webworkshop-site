@@ -1,4 +1,4 @@
-import type { DiscoveredLead } from "@/lib/lead-discovery";
+import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   generateOutreach,
   generatePreview,
@@ -51,6 +51,7 @@ export type TopProspectJob = {
   status: TopProspectJobStatus;
   stage: string;
   discoveredCount: number;
+  discoveryDiagnostics: DiscoveryDiagnostics | null;
   scannedCount: number;
   qualifiedCount: number;
   skippedCount: number;

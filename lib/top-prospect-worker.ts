@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
-import { discoverContractors, type DiscoveredLead } from "@/lib/lead-discovery";
+import {
+  discoverContractorsWithDiagnostics,
+  discoveryLeadsFromJson,
+  type DiscoveredLead,
+} from "@/lib/lead-discovery";
 import { activity, calculatePriority, createProspect } from "@/lib/prospect-engine";
 import { findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { analyzePublicWebsite } from "@/lib/site-analysis";
@@ -15,10 +19,6 @@ import { classifyTopProspectFailure } from "@/lib/top-prospect-diagnostics";
 const LEASE_MS = 90_000;
 const BATCH_SIZE = 1;
 const contactedStatuses = new Set(["Contacted", "Interested", "Proposal Sent", "Closed Won", "Closed Lost"]);
-
-function leadsFromJson(value: Prisma.JsonValue | null): DiscoveredLead[] {
-  return Array.isArray(value) ? value as unknown as DiscoveredLead[] : [];
-}
 
 function skipSummary(value: Prisma.JsonValue | null) {
   if (!value || Array.isArray(value) || typeof value !== "object") return {} as Record<string, number>;
@@ -184,21 +184,22 @@ export async function processTopProspectJob(jobId: string) {
   const token = job.leaseToken!;
   try {
     if (job.stage === "DISCOVER") {
-      const leads = await discoverContractors({
+      const discovery = await discoverContractorsWithDiagnostics({
         city: job.city,
         state: job.state,
         trade: job.tradeCategory as DiscoveredLead["trade"],
         radiusKm: job.radiusKm,
         limit: job.businessesToScan,
       });
+      console.info("[top-prospects] Discovery completed.", { jobId: job.id, ...discovery.diagnostics });
       await getProspectDatabase().topProspectJob.update({
         where: { id: job.id },
-        data: { discoveredLeads: leads as unknown as Prisma.InputJsonValue, stage: "ANALYZE", leaseToken: null, leaseUntil: null },
+        data: { discoveredLeads: discovery as unknown as Prisma.InputJsonValue, stage: "ANALYZE", leaseToken: null, leaseUntil: null },
       });
       return { status: "running" as const, shouldContinue: true };
     }
 
-    const leads = leadsFromJson(job.discoveredLeads);
+    const leads = discoveryLeadsFromJson(job.discoveredLeads);
     const batch = leads.slice(job.nextLeadIndex, job.nextLeadIndex + BATCH_SIZE);
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { discoverContractors } from "@/lib/lead-discovery";
+import { discoverContractorsWithDiagnostics } from "@/lib/lead-discovery";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
 import type { TradeCategory } from "@/lib/prospect-engine";
 import { requestSubject } from "@/lib/request-context";
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   try {
     await enforceRateLimit({ action: "lead_discovery", subject, limit: 8, windowMs: 60 * 60 * 1000 });
     const input = (await request.json()) as { city?: unknown; state?: unknown; trade?: unknown; radiusKm?: unknown };
-    const leads = await discoverContractors({
+    const result = await discoverContractorsWithDiagnostics({
       city: typeof input.city === "string" ? input.city : "",
       state: typeof input.state === "string" ? input.state : "",
       trade: input.trade as TradeCategory,
@@ -22,9 +22,17 @@ export async function POST(request: Request) {
       action: "lead_discovery",
       outcome: "success",
       subject,
-      metadata: { city: typeof input.city === "string" ? input.city : "", trade: typeof input.trade === "string" ? input.trade : "", resultCount: leads.length },
+      metadata: {
+        city: typeof input.city === "string" ? input.city : "",
+        trade: typeof input.trade === "string" ? input.trade : "",
+        resultCount: result.leads.length,
+        rawProviderCount: result.diagnostics.rawProviderCount,
+        afterDistanceFilteringCount: result.diagnostics.afterDistanceFilteringCount,
+        afterDuplicateFilteringCount: result.diagnostics.afterDuplicateFilteringCount,
+        afterQualificationFilteringCount: result.diagnostics.afterQualificationFilteringCount,
+      },
     });
-    return NextResponse.json({ leads });
+    return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const expected = /valid city|two-letter state|not supported|wait|Rate limit reached|could not be found/.test(message);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
+import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { tradeCategories } from "@/lib/prospect-engine";
 import type { TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
 
@@ -177,6 +178,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             {["QUEUED", "RUNNING"].includes(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Run next saved batch</button>}
             {latestJob.status === "FAILED" && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
           </div>
+          {latestJob.discoveryDiagnostics && <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics} />}
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
         </section>
       )}

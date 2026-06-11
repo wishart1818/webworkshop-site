@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { getProspectDatabase, getProspect } from "@/lib/prospect-repository";
+import { discoveryDiagnosticsFromJson, discoveryLeadsFromJson } from "@/lib/lead-discovery";
 import type { TopProspectInput, TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
 import { topProspectResultDisposition } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
@@ -57,7 +58,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     },
     status: row.status as TopProspectJob["status"],
     stage: row.stage,
-    discoveredCount: Array.isArray(row.discoveredLeads) ? row.discoveredLeads.length : 0,
+    discoveredCount: discoveryLeadsFromJson(row.discoveredLeads).length,
+    discoveryDiagnostics: discoveryDiagnosticsFromJson(row.discoveredLeads),
     scannedCount: row.scannedCount,
     qualifiedCount: recommended.length,
     skippedCount: row.skippedCount,
