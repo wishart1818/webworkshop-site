@@ -43,7 +43,7 @@ export async function initializeTopProspectSchema(
 ) {
   try {
     return await database.$transaction(async (transaction) => {
-      await transaction.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${TOP_PROSPECT_SCHEMA_LOCK})`);
+      await transaction.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(${TOP_PROSPECT_SCHEMA_LOCK})`);
       const existing = await presentTables(transaction);
       if (existing.size === TOP_PROSPECT_TABLES.length) return "ready" as const;
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");

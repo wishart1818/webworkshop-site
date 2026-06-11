@@ -21,7 +21,11 @@ function fakeDatabase(existingTables: string[], createdTables = ["TopProspectJob
             statements.push(query);
             return 0;
           },
-          async $queryRawUnsafe<R>() {
+          async $queryRawUnsafe<R>(query: string) {
+            if (query.includes("pg_advisory_xact_lock")) {
+              statements.push(query);
+              return [{ pg_advisory_xact_lock: null }] as R;
+            }
             inspection += 1;
             const tables = inspection === 1 ? existingTables : createdTables;
             return tables.map((table_name) => ({ table_name })) as R;
