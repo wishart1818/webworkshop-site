@@ -50,10 +50,11 @@ test("Top Prospects schema initializer creates only its additive tables under a 
   assert.equal(fake.disconnected(), true);
 });
 
-test("Top Prospects schema initializer is idempotent and refuses partial schema", async () => {
+test("Top Prospects schema initializer repairs migration bookkeeping and refuses partial schema", async () => {
   const ready = fakeDatabase(["TopProspectJob", "TopProspectResult"]);
   assert.equal(await initializeTopProspectSchema(ready.database), "ready");
-  assert.equal(ready.statements.length, 1);
+  assert.equal(ready.statements.length, 2);
+  assert.ok(ready.statements.some((statement) => statement.includes(TOP_PROSPECT_MIGRATION_ID)));
 
   const partial = fakeDatabase(["TopProspectJob"]);
   await assert.rejects(initializeTopProspectSchema(partial.database), /partially initialized/);

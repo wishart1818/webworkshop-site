@@ -38,6 +38,12 @@ async function presentTables(transaction: SchemaTransaction) {
   return new Set(rows.map((row) => row.table_name));
 }
 
+async function recordMigration(transaction: SchemaTransaction) {
+  await transaction.$executeRawUnsafe(
+    `INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "started_at", "applied_steps_count") SELECT '00000000-0000-4000-8000-000000000004', '${TOP_PROSPECT_MIGRATION_CHECKSUM}', now(), '${TOP_PROSPECT_MIGRATION_ID}', now(), 1 WHERE NOT EXISTS (SELECT 1 FROM "_prisma_migrations" WHERE "migration_name" = '${TOP_PROSPECT_MIGRATION_ID}') ON CONFLICT ("id") DO NOTHING`,
+  );
+}
+
 export async function initializeTopProspectSchema(
   database: SchemaDatabase = new PrismaClient({ datasourceUrl: topProspectDatabaseUrl() }) as unknown as SchemaDatabase,
 ) {
@@ -45,15 +51,16 @@ export async function initializeTopProspectSchema(
     return await database.$transaction(async (transaction) => {
       await transaction.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(${TOP_PROSPECT_SCHEMA_LOCK})`);
       const existing = await presentTables(transaction);
-      if (existing.size === TOP_PROSPECT_TABLES.length) return "ready" as const;
+      if (existing.size === TOP_PROSPECT_TABLES.length) {
+        await recordMigration(transaction);
+        return "ready" as const;
+      }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
 
       for (const statement of TOP_PROSPECT_MIGRATION_STATEMENTS) {
         await transaction.$executeRawUnsafe(statement);
       }
-      await transaction.$executeRawUnsafe(
-        `INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "started_at", "applied_steps_count") SELECT '00000000-0000-4000-8000-000000000004', '${TOP_PROSPECT_MIGRATION_CHECKSUM}', now(), '${TOP_PROSPECT_MIGRATION_ID}', now(), 1 WHERE NOT EXISTS (SELECT 1 FROM "_prisma_migrations" WHERE "migration_name" = '${TOP_PROSPECT_MIGRATION_ID}') ON CONFLICT ("id") DO NOTHING`,
-      );
+      await recordMigration(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;
