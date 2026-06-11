@@ -23,6 +23,17 @@ function addSkip(summary: Record<string, number>, reason: string) {
   summary[reason] = (summary[reason] ?? 0) + 1;
 }
 
+export function recoverableTopProspect(prospect: Awaited<ReturnType<typeof findProspectByWebsite>>, jobCreatedAt: Date) {
+  return Boolean(
+    prospect
+    && Date.parse(prospect.createdAt) >= jobCreatedAt.getTime()
+    && prospect.analysis
+    && prospect.outreach
+    && prospect.preview
+    && prospect.activities.some((item) => item.label.startsWith("Automated Top Prospects analysis completed")),
+  );
+}
+
 async function claimJob(jobId: string) {
   const database = getProspectDatabase();
   const token = crypto.randomUUID();
@@ -62,7 +73,30 @@ async function finalizeJob(jobId: string, wanted: number) {
   ]);
 }
 
-async function processLead(jobId: string, lead: DiscoveredLead, summary: Record<string, number>) {
+async function saveTopProspectResult(jobId: string, prospect: NonNullable<Awaited<ReturnType<typeof findProspectByWebsite>>>) {
+  const prepared = prepareTopProspectArtifacts(prospect);
+  await getProspectDatabase().topProspectResult.upsert({
+    where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
+    update: {
+      opportunityScore: prepared.assessment.opportunityScore,
+      mainWeakness: prepared.assessment.mainWeakness,
+      whyMayBuy: prepared.assessment.whyMayBuy,
+      pitchAngle: prepared.assessment.pitchAngle,
+      buildPrompt: prepared.buildPrompt,
+    },
+    create: {
+      jobId,
+      prospectId: prospect.id,
+      opportunityScore: prepared.assessment.opportunityScore,
+      mainWeakness: prepared.assessment.mainWeakness,
+      whyMayBuy: prepared.assessment.whyMayBuy,
+      pitchAngle: prepared.assessment.pitchAngle,
+      buildPrompt: prepared.buildPrompt,
+    },
+  });
+}
+
+async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLead, summary: Record<string, number>) {
   if (likelyFranchise(lead)) {
     addSkip(summary, "franchise");
     return false;
@@ -80,6 +114,15 @@ async function processLead(jobId: string, lead: DiscoveredLead, summary: Record<
     ? await findProspectByWebsite(matchingWebsite.website)
     : await findProspectByWebsite(lead.website);
   if (existing) {
+    const existingResult = await getProspectDatabase().topProspectResult.findUnique({
+      where: { jobId_prospectId: { jobId, prospectId: existing.id } },
+      select: { id: true },
+    });
+    if (existingResult) return true;
+    if (recoverableTopProspect(existing, jobCreatedAt)) {
+      await saveTopProspectResult(jobId, existing);
+      return true;
+    }
     addSkip(summary, contactedStatuses.has(existing.status) ? "already_contacted" : "duplicate");
     return false;
   }
@@ -108,17 +151,7 @@ async function processLead(jobId: string, lead: DiscoveredLead, summary: Record<
       ...prepared.prospect.activities,
     ],
   });
-  await getProspectDatabase().topProspectResult.create({
-    data: {
-      jobId,
-      prospectId: saved.id,
-      opportunityScore: prepared.assessment.opportunityScore,
-      mainWeakness: prepared.assessment.mainWeakness,
-      whyMayBuy: prepared.assessment.whyMayBuy,
-      pitchAngle: prepared.assessment.pitchAngle,
-      buildPrompt: prepared.buildPrompt,
-    },
-  });
+  await saveTopProspectResult(jobId, saved);
   return true;
 }
 
@@ -148,7 +181,7 @@ export async function processTopProspectJob(jobId: string) {
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;
     for (const lead of batch) {
-      if (await processLead(job.id, lead, summary)) qualified += 1;
+      if (await processLead(job.id, job.createdAt, lead, summary)) qualified += 1;
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
     const done = nextLeadIndex >= leads.length || nextLeadIndex >= job.businessesToScan;

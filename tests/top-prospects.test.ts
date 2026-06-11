@@ -10,6 +10,7 @@ import {
 } from "../lib/top-prospects";
 import { seedProspects, withAnalysis } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
+import { recoverableTopProspect } from "../lib/top-prospect-worker";
 
 test("Top Prospects input applies bounded production-safe limits", () => {
   const valid = validateTopProspectInput({
@@ -65,4 +66,20 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.ok(prepared.prospect.preview);
   assert.match(prompt, new RegExp(prospect.businessName));
   assert.match(prompt, /no invented claims/i);
+});
+
+test("interrupted Top Prospects artifacts can be recovered only by their active job", () => {
+  const jobCreatedAt = new Date();
+  const prospect = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0]))).prospect;
+  prospect.createdAt = new Date(jobCreatedAt.getTime() + 1_000).toISOString();
+  prospect.activities.unshift({
+    id: "automated-analysis",
+    type: "analysis",
+    label: "Automated Top Prospects analysis completed with a score of 58.",
+    at: prospect.createdAt,
+  });
+
+  assert.equal(recoverableTopProspect(prospect, jobCreatedAt), true);
+  assert.equal(recoverableTopProspect(prospect, new Date(jobCreatedAt.getTime() + 2_000)), false);
+  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), false);
 });
