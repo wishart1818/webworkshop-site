@@ -1,4 +1,5 @@
 import { tradeCategories, type TradeCategory } from "@/lib/prospect-engine";
+import { TopProspectStageError } from "@/lib/top-prospect-diagnostics";
 
 export type DiscoveredLead = {
   businessName: string;
@@ -26,6 +27,14 @@ export type DiscoveryResult = {
   diagnostics: DiscoveryDiagnostics;
 };
 
+export type DiscoveryLogEvent =
+  | "provider_queried"
+  | "provider_returned_count"
+  | "provider_enrichment_failed"
+  | "filtering_started";
+
+export type DiscoveryLogger = (event: DiscoveryLogEvent, metadata: Record<string, number | string>) => void;
+
 export type OverpassElement = {
   id?: number;
   type?: string;
@@ -40,7 +49,9 @@ type TradeDiscoverySignals = {
   namePattern: string;
 };
 
-const descriptiveTradeTags = ["name", "operator", "website", "contact:website"] as const;
+// Keep the public Overpass query bounded. Broad website/operator regex selectors can time out
+// before the provider returns any candidates.
+const descriptiveTradeTags = ["name"] as const;
 
 const signalsByTrade: Record<TradeCategory, TradeDiscoverySignals> = {
   Roofing: { exactCrafts: ["roofer"], namePattern: "roof|roofing" },
@@ -94,13 +105,15 @@ export function discoveryCategorySignals(trade: TradeCategory) {
   ];
 }
 
-export function buildTradeDiscoveryQuery(trade: TradeCategory, radiusMeters: number, latitude: number, longitude: number) {
+export function buildTradeDiscoveryQueries(trade: TradeCategory, radiusMeters: number, latitude: number, longitude: number) {
   const signals = signalsByTrade[trade];
-  const selectors = [
-    ...signals.exactCrafts.map((craft) => `nwr["craft"="${craft}"](around:${radiusMeters},${latitude},${longitude});`),
-    ...descriptiveTradeTags.map((tag) => `nwr["${tag}"~"${signals.namePattern}",i](around:${radiusMeters},${latitude},${longitude});`),
-  ];
-  return `[out:json][timeout:30];(${selectors.join("")});out tags center;`;
+  const exactSelectors = signals.exactCrafts.map((craft) => `nwr["craft"="${craft}"](around:${radiusMeters},${latitude},${longitude});`);
+  const enrichmentSelectors = descriptiveTradeTags.map((tag) => `nwr["${tag}"~"${signals.namePattern}",i](around:${radiusMeters},${latitude},${longitude});`);
+  const query = (selectors: string[], timeout: number) => `[out:json][timeout:${timeout}];(${selectors.join("")});out tags center;`;
+  return {
+    primary: exactSelectors.length ? query(exactSelectors, 20) : query(enrichmentSelectors, 20),
+    enrichment: exactSelectors.length ? query(enrichmentSelectors, 8) : null,
+  };
 }
 
 export function inactivePublicRecord(tags: Record<string, string>) {
@@ -125,11 +138,20 @@ export function processDiscoveryElements(input: {
   radiusKm: number;
   limit: number;
 }): DiscoveryResult {
-  const withinRadius = input.elements.filter((element) => {
-    const coordinates = elementCoordinates(element);
-    return !coordinates
-      || distanceKm(input.latitude, input.longitude, coordinates.latitude, coordinates.longitude) <= input.radiusKm;
-  });
+  let withinRadius: OverpassElement[];
+  try {
+    withinRadius = input.elements.filter((element) => {
+      const coordinates = elementCoordinates(element);
+      return !coordinates
+        || distanceKm(input.latitude, input.longitude, coordinates.latitude, coordinates.longitude) <= input.radiusKm;
+    });
+  } catch (error) {
+    throw new TopProspectStageError(
+      "radius_filter_error",
+      "The returned business records could not be filtered by the requested radius.",
+      { cause: error },
+    );
+  }
   const seen = new Set<string>();
   const unique = withinRadius.filter((element, index) => {
     const rawWebsite = element.tags?.website || element.tags?.["contact:website"];
@@ -211,6 +233,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit?: number;
+  logger?: DiscoveryLogger;
 }): Promise<DiscoveryResult> {
   if (!validTrade(input.trade)) throw new Error("Trade category is not supported.");
   if (!input.city.trim() || !/^[A-Za-z .'-]{2,100}$/.test(input.city.trim())) throw new Error("Enter a valid city.");
@@ -220,7 +243,10 @@ export async function discoverContractorsWithDiagnostics(input: {
 
   const now = Date.now();
   if (globalDiscovery.lastDiscoveryAt && now - globalDiscovery.lastDiscoveryAt < 5_000) {
-    throw new Error("Please wait a few seconds before running another discovery search.");
+    throw new TopProspectStageError(
+      "discovery_provider_error",
+      "Discovery is temporarily rate-limited. Retry after a few seconds.",
+    );
   }
   globalDiscovery.lastDiscoveryAt = now;
 
@@ -236,26 +262,98 @@ export async function discoverContractorsWithDiagnostics(input: {
   geocodeUrl.searchParams.set("format", "jsonv2");
   geocodeUrl.searchParams.set("limit", "1");
   geocodeUrl.searchParams.set("countrycodes", "us");
-  const geocodeResponse = await fetch(geocodeUrl, { headers, signal: AbortSignal.timeout(12_000) });
-  if (!geocodeResponse.ok) throw new Error("Location provider could not complete the search.");
-  const locations = (await geocodeResponse.json()) as Array<{ lat?: string; lon?: string }>;
+  let geocodeResponse: Response;
+  try {
+    geocodeResponse = await fetch(geocodeUrl, { headers, signal: AbortSignal.timeout(12_000) });
+  } catch (error) {
+    throw new TopProspectStageError(
+      "geocoding_error",
+      error instanceof DOMException && error.name === "TimeoutError"
+        ? "The location lookup timed out before the requested city and state could be resolved."
+        : "The location provider could not complete the city and state lookup.",
+      { cause: error },
+    );
+  }
+  if (!geocodeResponse.ok) {
+    throw new TopProspectStageError(
+      "geocoding_error",
+      `The location provider returned HTTP ${geocodeResponse.status} before discovery began.`,
+    );
+  }
+  let locations: Array<{ lat?: string; lon?: string }>;
+  try {
+    locations = (await geocodeResponse.json()) as Array<{ lat?: string; lon?: string }>;
+  } catch (error) {
+    throw new TopProspectStageError("geocoding_error", "The location provider returned an unreadable response.", { cause: error });
+  }
   const latitude = Number(locations[0]?.lat);
   const longitude = Number(locations[0]?.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error("Location could not be found.");
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new TopProspectStageError("geocoding_error", "The requested city and state could not be resolved to a location.");
+  }
 
   const radiusMeters = input.radiusKm * 1_000;
-  const query = buildTradeDiscoveryQuery(input.trade, radiusMeters, latitude, longitude);
-  const discoveryResponse = await fetch(overpassUrl, {
-    method: "POST",
-    headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ data: query }),
-    signal: AbortSignal.timeout(35_000),
-  });
-  if (!discoveryResponse.ok) throw new Error("Business discovery provider could not complete the search.");
-  const payload = (await discoveryResponse.json()) as { elements?: OverpassElement[] };
+  const queries = buildTradeDiscoveryQueries(input.trade, radiusMeters, latitude, longitude);
+  async function providerElements(query: string, queryKind: "primary" | "enrichment", required: boolean) {
+    input.logger?.("provider_queried", { queryKind, radiusKm: input.radiusKm });
+    let discoveryResponse: Response;
+    try {
+      discoveryResponse = await fetch(overpassUrl, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ data: query }),
+        signal: AbortSignal.timeout(required ? 22_000 : 10_000),
+      });
+    } catch (error) {
+      if (!required) {
+        input.logger?.("provider_enrichment_failed", { queryKind, reason: "request_failed" });
+        return [];
+      }
+      throw new TopProspectStageError(
+        "discovery_provider_error",
+        error instanceof DOMException && error.name === "TimeoutError"
+          ? "The public business discovery provider timed out before returning candidates."
+          : "The public business discovery provider could not be reached.",
+        { cause: error },
+      );
+    }
+    if (!discoveryResponse.ok) {
+      if (!required) {
+        input.logger?.("provider_enrichment_failed", { queryKind, status: discoveryResponse.status });
+        return [];
+      }
+      throw new TopProspectStageError(
+        "discovery_provider_error",
+        `The public business discovery provider returned HTTP ${discoveryResponse.status}.`,
+      );
+    }
+    try {
+      const payload = (await discoveryResponse.json()) as { elements?: OverpassElement[] };
+      const elements = payload.elements ?? [];
+      input.logger?.("provider_returned_count", { queryKind, rawProviderCount: elements.length });
+      return elements;
+    } catch (error) {
+      if (!required) {
+        input.logger?.("provider_enrichment_failed", { queryKind, reason: "unreadable_response" });
+        return [];
+      }
+      throw new TopProspectStageError(
+        "discovery_provider_error",
+        "The public business discovery provider returned an unreadable response.",
+        { cause: error },
+      );
+    }
+  }
+
+  const primaryElements = await providerElements(queries.primary, "primary", true);
+  const enrichmentElements = queries.enrichment
+    ? await providerElements(queries.enrichment, "enrichment", false)
+    : [];
+  const elements = [...primaryElements, ...enrichmentElements];
+  input.logger?.("filtering_started", { rawProviderCount: elements.length, radiusKm: input.radiusKm });
 
   return processDiscoveryElements({
-    elements: payload.elements ?? [],
+    elements,
     latitude,
     longitude,
     city: input.city,

@@ -1,4 +1,5 @@
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
+import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
 import {
   generateOutreach,
   generatePreview,
@@ -58,6 +59,7 @@ export type TopProspectJob = {
   skipSummary: Record<string, number>;
   results: TopProspectResult[];
   reviewedNotRecommended: TopProspectResult[];
+  failureClassification: TopProspectJobFailureClassification | null;
   errorMessage: string;
   completedAt: string | null;
   createdAt: string;

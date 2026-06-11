@@ -14,7 +14,10 @@ import {
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
-import { classifyTopProspectFailure } from "@/lib/top-prospect-diagnostics";
+import {
+  encodeTopProspectJobFailure,
+  safeTopProspectJobFailure,
+} from "@/lib/top-prospect-diagnostics";
 
 const LEASE_MS = 90_000;
 const BATCH_SIZE = 1;
@@ -184,12 +187,23 @@ export async function processTopProspectJob(jobId: string) {
   const token = job.leaseToken!;
   try {
     if (job.stage === "DISCOVER") {
+      console.info("[top-prospects] Discovery started.", {
+        jobId: job.id,
+        trade: job.tradeCategory,
+        city: job.city,
+        state: job.state,
+        radiusKm: job.radiusKm,
+        businessesToScan: job.businessesToScan,
+      });
       const discovery = await discoverContractorsWithDiagnostics({
         city: job.city,
         state: job.state,
         trade: job.tradeCategory as DiscoveredLead["trade"],
         radiusKm: job.radiusKm,
         limit: job.businessesToScan,
+        logger(event, metadata) {
+          console.info(`[top-prospects] ${event}.`, { jobId: job.id, ...metadata });
+        },
       });
       console.info("[top-prospects] Discovery completed.", { jobId: job.id, ...discovery.diagnostics });
       await getProspectDatabase().topProspectJob.update({
@@ -204,6 +218,13 @@ export async function processTopProspectJob(jobId: string) {
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;
     for (const lead of batch) {
+      if (job.nextLeadIndex === 0) {
+        console.info("[top-prospects] First candidate processing started.", {
+          jobId: job.id,
+          businessName: lead.businessName,
+          websiteHost: new URL(lead.website).hostname,
+        });
+      }
       if (await processLead(job.id, job.createdAt, lead, summary)) qualified += 1;
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
@@ -226,17 +247,23 @@ export async function processTopProspectJob(jobId: string) {
     }
     return { status: "running" as const, shouldContinue: true };
   } catch (error) {
+    const failure = safeTopProspectJobFailure(error);
     await getProspectDatabase().topProspectJob.updateMany({
       where: { id: job.id, leaseToken: token },
       data: {
         status: "FAILED",
-        errorMessage: "Processing stopped safely. Retry to continue from the last saved business.",
+        errorMessage: encodeTopProspectJobFailure(failure.classification, failure.reason),
         leaseToken: null,
         leaseUntil: null,
       },
     });
-    console.error("[top-prospects] Worker batch failed.", { classification: classifyTopProspectFailure(error) });
-    return { status: "failed" as const, shouldContinue: false };
+    console.error("[top-prospects] Worker batch failed.", {
+      jobId: job.id,
+      stage: job.stage,
+      classification: failure.classification,
+      reason: failure.reason,
+    });
+    return { status: "failed" as const, shouldContinue: false, classification: failure.classification, reason: failure.reason };
   } finally {
     await releaseLease(job.id, token);
   }

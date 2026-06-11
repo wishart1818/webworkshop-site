@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildTradeDiscoveryQuery,
+  buildTradeDiscoveryQueries,
   discoverContractorsWithDiagnostics,
   discoveryDiagnosticsFromJson,
   discoveryLeadsFromJson,
@@ -10,18 +10,18 @@ import {
   type DiscoveredLead,
   type DiscoveryResult,
 } from "../lib/lead-discovery";
+import { TopProspectStageError } from "../lib/top-prospect-diagnostics";
 
 test("roofing discovery combines exact craft and business-name signals without a provider result cap", () => {
-  const query = buildTradeDiscoveryQuery("Roofing", 10_000, 41.6528, -83.5379);
+  const queries = buildTradeDiscoveryQueries("Roofing", 10_000, 41.6528, -83.5379);
 
-  assert.match(query, /craft"="roofer/);
-  assert.match(query, /name"~"roof\|roofing",i/);
-  assert.match(query, /operator"~"roof\|roofing",i/);
-  assert.match(query, /website"~"roof\|roofing",i/);
-  assert.match(query, /contact:website"~"roof\|roofing",i/);
-  assert.match(query, /around:10000,41\.6528,-83\.5379/);
-  assert.match(query, /out tags center;/);
-  assert.doesNotMatch(query, /out tags center \d+/);
+  assert.match(queries.primary, /craft"="roofer/);
+  assert.doesNotMatch(queries.primary, /name"~/);
+  assert.match(queries.enrichment ?? "", /name"~"roof\|roofing",i/);
+  assert.doesNotMatch(queries.enrichment ?? "", /operator|contact:website/);
+  assert.match(queries.primary, /around:10000,41\.6528,-83\.5379/);
+  assert.match(queries.primary, /out tags center;/);
+  assert.doesNotMatch(queries.primary, /out tags center \d+/);
 });
 
 test("discovery diagnostics expose provider, distance, duplicate, qualification, and returned counts", () => {
@@ -50,13 +50,7 @@ test("discovery diagnostics expose provider, distance, duplicate, qualification,
     afterQualificationFilteringCount: 2,
     returnedCount: 2,
     radiusKm: 10,
-    categorySignals: [
-      "craft=roofer",
-      "name~roof|roofing",
-      "operator~roof|roofing",
-      "website~roof|roofing",
-      "contact:website~roof|roofing",
-    ],
+    categorySignals: ["craft=roofer", "name~roof|roofing"],
   });
   assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Local Roofing", "Missing Center Roofing"]);
 });
@@ -65,6 +59,7 @@ test("Toledo roofing discovery can return dozens when the provider supplies them
   const originalFetch = globalThis.fetch;
   const requestedUrls: string[] = [];
   let overpassQuery = "";
+  const events: string[] = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     requestedUrls.push(url);
@@ -72,6 +67,7 @@ test("Toledo roofing discovery can return dozens when the provider supplies them
       return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
     }
     overpassQuery = String(init?.body);
+    if (overpassQuery.includes("name")) return new Response("provider timeout", { status: 504 });
     return new Response(JSON.stringify({
       elements: Array.from({ length: 40 }, (_, index) => ({
         type: "node",
@@ -94,6 +90,9 @@ test("Toledo roofing discovery can return dozens when the provider supplies them
       trade: "Roofing",
       radiusKm: 10,
       limit: 50,
+      logger(event) {
+        events.push(event);
+      },
     });
 
     const geocodeUrl = new URL(requestedUrls[0]);
@@ -103,6 +102,43 @@ test("Toledo roofing discovery can return dozens when the provider supplies them
     assert.equal(result.diagnostics.rawProviderCount, 40);
     assert.equal(result.diagnostics.returnedCount, 40);
     assert.equal(result.leads.length, 40);
+    assert.deepEqual(events, [
+      "provider_queried",
+      "provider_returned_count",
+      "provider_queried",
+      "provider_enrichment_failed",
+      "filtering_started",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetDiscoveryThrottleForTests();
+  }
+});
+
+test("discovery source failures retain safe geocoding and provider classifications", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response("location unavailable", { status: 503 });
+    resetDiscoveryThrottleForTests();
+    await assert.rejects(
+      discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 10 }),
+      (error) => error instanceof TopProspectStageError && error.classification === "geocoding_error" && /HTTP 503/.test(error.safeReason),
+    );
+
+    let request = 0;
+    globalThis.fetch = async () => {
+      request += 1;
+      return request === 1
+        ? new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 })
+        : new Response("provider unavailable", { status: 504 });
+    };
+    resetDiscoveryThrottleForTests();
+    await assert.rejects(
+      discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 10 }),
+      (error) => error instanceof TopProspectStageError
+        && error.classification === "discovery_provider_error"
+        && /HTTP 504/.test(error.safeReason),
+    );
   } finally {
     globalThis.fetch = originalFetch;
     resetDiscoveryThrottleForTests();
@@ -129,13 +165,7 @@ test("saved discovery payload parsing remains compatible with old lead arrays an
       afterQualificationFilteringCount: 1,
       returnedCount: 1,
       radiusKm: 10,
-      categorySignals: [
-        "craft=roofer",
-        "name~roof|roofing",
-        "operator~roof|roofing",
-        "website~roof|roofing",
-        "contact:website~roof|roofing",
-      ],
+      categorySignals: ["craft=roofer", "name~roof|roofing"],
     },
   };
 

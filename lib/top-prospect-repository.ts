@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { getProspectDatabase, getProspect } from "@/lib/prospect-repository";
 import { discoveryDiagnosticsFromJson, discoveryLeadsFromJson } from "@/lib/lead-discovery";
+import { parseTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import type { TopProspectInput, TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
 import { topProspectResultDisposition } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
@@ -39,6 +40,7 @@ async function toResult(row: JobRow["results"][number]): Promise<TopProspectResu
 }
 
 async function toJob(row: JobRow): Promise<TopProspectJob> {
+  const failure = parseTopProspectJobFailure(row.errorMessage);
   const allResults = await Promise.all(row.results.map(toResult));
   const recommended = allResults
     .filter((result) => result.selected)
@@ -66,7 +68,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     skipSummary: recordValue(row.skipSummary),
     results: recommended,
     reviewedNotRecommended,
-    errorMessage: row.errorMessage ?? "",
+    failureClassification: failure.classification,
+    errorMessage: failure.reason,
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -78,7 +81,7 @@ export async function createTopProspectJob(input: TopProspectInput) {
   const database = getProspectDatabase();
   const active = await database.topProspectJob.findFirst({ where: { status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
   if (active) throw new Error("A Top Prospects search is already running.");
-  return database.topProspectJob.create({
+  const job = await database.topProspectJob.create({
     data: {
       tradeCategory: input.trade,
       city: input.city,
@@ -88,6 +91,16 @@ export async function createTopProspectJob(input: TopProspectInput) {
       finalProspectsWanted: input.finalProspectsWanted,
     },
   });
+  console.info("[top-prospects] Job created.", {
+    jobId: job.id,
+    trade: job.tradeCategory,
+    city: job.city,
+    state: job.state,
+    radiusKm: job.radiusKm,
+    businessesToScan: job.businessesToScan,
+    finalProspectsWanted: job.finalProspectsWanted,
+  });
+  return job;
 }
 
 export async function getTopProspectJob(id: string) {

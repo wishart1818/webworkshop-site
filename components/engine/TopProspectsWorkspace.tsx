@@ -5,6 +5,7 @@ import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { tradeCategories } from "@/lib/prospect-engine";
 import type { TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
+import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
 
 type Props = {
   onOpenProspect: (id: string) => void;
@@ -37,6 +38,15 @@ const skipReasonLabels: Record<string, string> = {
 function skipReasonLabel(reason: string) {
   return skipReasonLabels[reason] ?? reason.replaceAll("_", " ");
 }
+
+const failureLabels: Record<TopProspectJobFailureClassification, string> = {
+  discovery_provider_error: "Discovery provider error",
+  geocoding_error: "Geocoding error",
+  radius_filter_error: "Radius filter error",
+  database_error: "Database error",
+  worker_timeout: "Worker timeout",
+  unexpected_exception: "Unexpected exception",
+};
 
 function jobProgress(job: TopProspectJob) {
   if (job.status === "COMPLETED") return 100;
@@ -166,7 +176,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob && (
         <section className="engine-panel engine-job-progress" aria-live="polite">
           <div className="engine-panel__head">
-            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{latestJob.status === "COMPLETED" ? "Ranked results are ready for review." : latestJob.status === "FAILED" ? latestJob.errorMessage : "You can leave this page. Progress is saved after every batch."}</p></div>
+            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{latestJob.status === "COMPLETED" ? "Ranked results are ready for review." : latestJob.status === "FAILED" ? "Processing stopped before completion. Review the diagnostic below." : "You can leave this page. Progress is saved after every batch."}</p></div>
             <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase()}`}>{latestJob.status.toLowerCase()}</span>
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
@@ -178,6 +188,13 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             {["QUEUED", "RUNNING"].includes(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Run next saved batch</button>}
             {latestJob.status === "FAILED" && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
           </div>
+          {latestJob.status === "FAILED" && latestJob.failureClassification && (
+            <div className="engine-job-failure" role="alert">
+              <b>{failureLabels[latestJob.failureClassification]}</b>
+              <p>{latestJob.errorMessage}</p>
+              <code>{latestJob.failureClassification}</code>
+            </div>
+          )}
           {latestJob.discoveryDiagnostics && <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics} />}
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
         </section>
