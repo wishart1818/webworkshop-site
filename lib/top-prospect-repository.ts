@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { getProspectDatabase, getProspect } from "@/lib/prospect-repository";
 import type { TopProspectInput, TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
+import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const resultInclude = { prospect: true } satisfies Prisma.TopProspectResultInclude;
 const jobInclude = {
@@ -57,6 +58,7 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
 }
 
 export async function createTopProspectJob(input: TopProspectInput) {
+  await ensureTopProspectSchema();
   const database = getProspectDatabase();
   const active = await database.topProspectJob.findFirst({ where: { status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
   if (active) throw new Error("A Top Prospects search is already running.");
@@ -73,11 +75,13 @@ export async function createTopProspectJob(input: TopProspectInput) {
 }
 
 export async function getTopProspectJob(id: string) {
+  await ensureTopProspectSchema();
   const row = await getProspectDatabase().topProspectJob.findUnique({ where: { id }, include: jobInclude });
   return row ? toJob(row) : null;
 }
 
 export async function listTopProspectJobs() {
+  await ensureTopProspectSchema();
   const rows = await getProspectDatabase().topProspectJob.findMany({ include: jobInclude, orderBy: { createdAt: "desc" }, take: 10 });
   return Promise.all(rows.map(toJob));
 }

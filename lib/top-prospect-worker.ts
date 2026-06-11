@@ -4,6 +4,7 @@ import { activity, calculatePriority, createProspect } from "@/lib/prospect-engi
 import { findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { analyzePublicWebsite } from "@/lib/site-analysis";
 import { likelyFranchise, normalizeWebsite, prepareTopProspectArtifacts } from "@/lib/top-prospects";
+import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const LEASE_MS = 90_000;
 const BATCH_SIZE = 1;
@@ -122,6 +123,7 @@ async function processLead(jobId: string, lead: DiscoveredLead, summary: Record<
 }
 
 export async function processTopProspectJob(jobId: string) {
+  await ensureTopProspectSchema();
   const job = await claimJob(jobId);
   if (!job) return { status: "busy_or_complete" as const, shouldContinue: false };
   const token = job.leaseToken!;
