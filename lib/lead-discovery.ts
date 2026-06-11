@@ -38,6 +38,18 @@ function normalizeWebsite(value: string) {
   return url.href;
 }
 
+export function inactivePublicRecord(tags: Record<string, string>) {
+  return Boolean(
+    tags.disused
+    || tags.abandoned
+    || tags["disused:craft"]
+    || tags["abandoned:craft"]
+    || tags["was:craft"]
+    || tags.end_date
+    || /^(closed|permanently closed)$/i.test(tags.opening_hours?.trim() ?? ""),
+  );
+}
+
 export async function discoverContractors(input: {
   city: string;
   state: string;
@@ -92,6 +104,7 @@ export async function discoverContractors(input: {
   return (payload.elements ?? [])
     .flatMap((element): DiscoveredLead[] => {
       const tags = element.tags ?? {};
+      if (inactivePublicRecord(tags)) return [];
       const rawWebsite = tags.website || tags["contact:website"];
       const businessName = tags.name?.trim();
       if (!businessName || !rawWebsite) return [];

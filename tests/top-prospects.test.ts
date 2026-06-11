@@ -9,6 +9,7 @@ import {
   validateTopProspectInput,
 } from "../lib/top-prospects";
 import { seedProspects, withAnalysis } from "../lib/prospect-engine";
+import { inactivePublicRecord } from "../lib/lead-discovery";
 
 test("Top Prospects input applies bounded production-safe limits", () => {
   const valid = validateTopProspectInput({
@@ -30,6 +31,12 @@ test("duplicate normalization and franchise screening are deterministic", () => 
   assert.equal(normalizeWebsite("https://www.example.com/services/"), normalizeWebsite("https://example.com/contact"));
   assert.equal(likelyFranchise({ businessName: "SERVPRO of Findlay", website: "https://example.com" }), true);
   assert.equal(likelyFranchise({ businessName: "North Main Roofing", website: "https://northmain.example" }), false);
+});
+
+test("public discovery rejects records explicitly marked inactive", () => {
+  assert.equal(inactivePublicRecord({ craft: "roofer", opening_hours: "closed" }), true);
+  assert.equal(inactivePublicRecord({ craft: "roofer", end_date: "2024" }), true);
+  assert.equal(inactivePublicRecord({ craft: "roofer", opening_hours: "Mo-Fr 08:00-17:00" }), false);
 });
 
 test("Opportunity Score is separate from Website Score and favors usable sales fit", () => {
