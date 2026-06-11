@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { handleTopProspectList } from "../lib/top-prospect-list-route";
 import {
   assessOpportunity,
   generateWebsiteBuildPrompt,
@@ -122,6 +123,28 @@ test("Top Prospects final cutoff never leaks extra qualified leads into ranked r
     selected: false,
     rejectionReason: "Below final cutoff",
   });
+});
+
+test("returning to Top Prospects automatically resumes a stalled saved job", async () => {
+  let continuedJobId = "";
+  const response = await handleTopProspectList(
+    new Request("https://www.webworkshop.dev/api/engine/top-prospects"),
+    {
+      async listJobs() {
+        return [];
+      },
+      async findResumableJobId() {
+        return "stalled-job";
+      },
+      continueJob(_request, jobId) {
+        continuedJobId = jobId;
+      },
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { jobs: [] });
+  assert.equal(continuedJobId, "stalled-job");
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
