@@ -26,10 +26,20 @@ export type OpportunityAssessment = {
   pitchAngle: string;
 };
 
+export const topProspectRejectionReasons = [
+  "Already strong website",
+  "National/large brand",
+  "Low redesign opportunity",
+  "Weak sales fit",
+  "No usable contact path",
+] as const;
+export type TopProspectRejectionReason = (typeof topProspectRejectionReasons)[number];
+
 export type TopProspectResult = OpportunityAssessment & {
   id: string;
   rank: number | null;
   selected: boolean;
+  rejectionReason: TopProspectRejectionReason | null;
   buildPrompt: string;
   prospect: Prospect;
 };
@@ -45,6 +55,7 @@ export type TopProspectJob = {
   skippedCount: number;
   skipSummary: Record<string, number>;
   results: TopProspectResult[];
+  reviewedNotRecommended: TopProspectResult[];
   errorMessage: string;
   completedAt: string | null;
   createdAt: string;
@@ -72,6 +83,17 @@ const franchiseSignals = [
   "trugreen",
 ];
 
+const nationalOrLargeBrandSignals = [
+  ...franchiseSignals,
+  "erie home",
+  "home depot",
+  "leaf home",
+  "leafguard",
+  "lowe's",
+  "power home remodeling",
+  "renewal by andersen",
+];
+
 export function normalizeWebsite(value: string) {
   const url = new URL(value);
   return url.hostname.replace(/^www\./, "").toLowerCase();
@@ -80,6 +102,11 @@ export function normalizeWebsite(value: string) {
 export function likelyFranchise(lead: Pick<DiscoveredLead, "businessName" | "website">) {
   const value = `${lead.businessName} ${normalizeWebsite(lead.website)}`.toLowerCase();
   return franchiseSignals.some((signal) => value.includes(signal));
+}
+
+export function likelyNationalOrLargeBrand(lead: Pick<DiscoveredLead, "businessName" | "website">) {
+  const value = `${lead.businessName} ${normalizeWebsite(lead.website)}`.toLowerCase();
+  return nationalOrLargeBrandSignals.some((signal) => value.includes(signal));
 }
 
 function websiteFit(score: number) {
@@ -129,6 +156,19 @@ export function assessOpportunity(prospect: Prospect): OpportunityAssessment {
     whyMayBuy: `${prospect.businessName} has an active site and clear local service footprint, but its ${weakness} may be costing ready-to-hire visitors.`,
     pitchAngle: `Lead with a practical ${prospect.trade.toLowerCase()} redesign that improves ${weakness}, local proof, and the path to a quote.`,
   };
+}
+
+export function topProspectRejectionReason(
+  prospect: Pick<Prospect, "businessName" | "website" | "phone" | "email" | "analysis">,
+  assessment: OpportunityAssessment,
+): TopProspectRejectionReason | null {
+  if (likelyNationalOrLargeBrand(prospect)) return "National/large brand";
+  if (!prospect.phone && !prospect.email) return "No usable contact path";
+  const websiteScore = prospect.analysis?.overallScore;
+  if (websiteScore !== undefined && websiteScore > 85) return "Already strong website";
+  if (websiteScore !== undefined && websiteScore > 75) return "Low redesign opportunity";
+  if (assessment.opportunityScore < 60) return "Weak sales fit";
+  return null;
 }
 
 export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: OpportunityAssessment) {

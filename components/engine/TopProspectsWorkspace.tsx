@@ -21,6 +21,21 @@ function apiError(payload: TopProspectApiPayload, fallback: string) {
   return payload.classification ? `${message} Diagnostic: ${payload.classification}.` : message;
 }
 
+const skipReasonLabels: Record<string, string> = {
+  already_strong_website: "Already strong website",
+  national_large_brand: "National/large brand",
+  low_redesign_opportunity: "Low redesign opportunity",
+  weak_sales_fit: "Weak sales fit",
+  no_usable_contact_path: "No usable contact path",
+  duplicate: "Duplicate",
+  already_contacted: "Already contacted",
+  broken_or_inactive_website: "Broken or inactive website",
+};
+
+function skipReasonLabel(reason: string) {
+  return skipReasonLabels[reason] ?? reason.replaceAll("_", " ");
+}
+
 function jobProgress(job: TopProspectJob) {
   if (job.status === "COMPLETED") return 100;
   if (job.stage === "DISCOVER") return 5;
@@ -118,7 +133,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   }
 
   const skipText = useMemo(
-    () => latestJob ? Object.entries(latestJob.skipSummary).map(([reason, count]) => `${count} ${reason.replaceAll("_", " ")}`).join(" · ") : "",
+    () => latestJob ? Object.entries(latestJob.skipSummary).map(([reason, count]) => `${count} ${skipReasonLabel(reason)}`).join(" / ") : "",
     [latestJob],
   );
 
@@ -170,11 +185,14 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob?.results.length ? (
         <section className="engine-panel engine-top-results">
           <div className="engine-panel__head"><div><h2>Ranked Top Prospects</h2><p>Opportunity Score measures likely sales fit separately from website quality.</p></div><span>{latestJob.results.length} ready for review</span></div>
+          {latestJob.status === "COMPLETED" && latestJob.results.length < latestJob.input.finalProspectsWanted && (
+            <p className="engine-skip-summary">Only {latestJob.results.length} strong prospects found. Increase radius or scan count to find more.</p>
+          )}
           <div className="engine-top-table" role="table" aria-label="Top prospects">
             <div className="engine-top-table__head" role="row"><span>Rank / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {latestJob.results.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>#{result.rank} {result.prospect.businessName}</strong><a href={safeWebsite(result.prospect.website)} rel="noreferrer" target="_blank">{result.prospect.website}</a></div>
+                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><a href={safeWebsite(result.prospect.website)} rel="noreferrer" target="_blank">{result.prospect.website}</a></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
                 <div><span>Website <b>{result.prospect.analysis?.overallScore ?? "-"}</b></span><span>Opportunity <b>{result.opportunityScore}</b></span></div>
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span><em>{result.pitchAngle}</em></div>
@@ -189,7 +207,26 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           </div>
         </section>
       ) : !latestJob || latestJob.status === "COMPLETED" ? (
-        <section className="engine-panel"><EmptyState title="No ranked Top Prospects yet" body="Start a search to discover, qualify, analyze, and rank local contractor businesses." /></section>
+        <section className="engine-panel"><EmptyState title="No ranked Top Prospects yet" body={latestJob ? "Only 0 strong prospects found. Increase radius or scan count to find more." : "Start a search to discover, qualify, analyze, and rank local contractor businesses."} /></section>
+      ) : null}
+
+      {latestJob?.reviewedNotRecommended.length ? (
+        <section className="engine-panel engine-top-results">
+          <div className="engine-panel__head"><div><h2>Reviewed but not recommended</h2><p>Analyzed leads that did not meet the default sales-fit threshold.</p></div><span>{latestJob.reviewedNotRecommended.length} reviewed</span></div>
+          <div className="engine-top-table" role="table" aria-label="Reviewed but not recommended prospects">
+            <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
+            {latestJob.reviewedNotRecommended.map((result) => (
+              <article key={result.id} role="row">
+                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><a href={safeWebsite(result.prospect.website)} rel="noreferrer" target="_blank">{result.prospect.website}</a></div>
+                <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
+                <div><span>Website <b>{result.prospect.analysis?.overallScore ?? "-"}</b></span><span>Opportunity <b>{result.opportunityScore}</b></span></div>
+                <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
+                <div><i className={`engine-status engine-status--${result.prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{result.prospect.status}</i></div>
+                <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button></div>
+              </article>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       {promptResult && (

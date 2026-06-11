@@ -1,11 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { getProspectDatabase, getProspect } from "@/lib/prospect-repository";
 import type { TopProspectInput, TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
+import { topProspectRejectionReason } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const resultInclude = { prospect: true } satisfies Prisma.TopProspectResultInclude;
 const jobInclude = {
-  results: { where: { selected: true }, orderBy: { rank: "asc" as const }, include: resultInclude },
+  results: { orderBy: [{ selected: "desc" as const }, { rank: "asc" as const }, { opportunityScore: "desc" as const }], include: resultInclude },
 } satisfies Prisma.TopProspectJobInclude;
 
 type JobRow = Prisma.TopProspectJobGetPayload<{ include: typeof jobInclude }>;
@@ -18,20 +19,32 @@ function recordValue(value: Prisma.JsonValue | null): Record<string, number> {
 async function toResult(row: JobRow["results"][number]): Promise<TopProspectResult> {
   const prospect = await getProspect(row.prospectId);
   if (!prospect) throw new Error("Top prospect result references a missing prospect.");
-  return {
-    id: row.id,
-    rank: row.rank,
-    selected: row.selected,
+  const assessment = {
     opportunityScore: row.opportunityScore,
     mainWeakness: row.mainWeakness,
     whyMayBuy: row.whyMayBuy,
     pitchAngle: row.pitchAngle,
+  };
+  const rejectionReason = topProspectRejectionReason(prospect, assessment);
+  return {
+    id: row.id,
+    rank: row.rank,
+    selected: rejectionReason === null,
+    rejectionReason,
+    ...assessment,
     buildPrompt: row.buildPrompt,
     prospect,
   };
 }
 
 async function toJob(row: JobRow): Promise<TopProspectJob> {
+  const allResults = await Promise.all(row.results.map(toResult));
+  const recommended = allResults
+    .filter((result) => result.selected)
+    .sort((left, right) => (left.rank ?? 999) - (right.rank ?? 999) || right.opportunityScore - left.opportunityScore);
+  const reviewedNotRecommended = allResults
+    .filter((result) => !result.selected)
+    .sort((left, right) => right.opportunityScore - left.opportunityScore);
   return {
     id: row.id,
     input: {
@@ -46,10 +59,11 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     stage: row.stage,
     discoveredCount: Array.isArray(row.discoveredLeads) ? row.discoveredLeads.length : 0,
     scannedCount: row.scannedCount,
-    qualifiedCount: row.qualifiedCount,
+    qualifiedCount: recommended.length,
     skippedCount: row.skippedCount,
     skipSummary: recordValue(row.skipSummary),
-    results: await Promise.all(row.results.map(toResult)),
+    results: recommended,
+    reviewedNotRecommended,
     errorMessage: row.errorMessage ?? "",
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),

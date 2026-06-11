@@ -3,7 +3,12 @@ import { discoverContractors, type DiscoveredLead } from "@/lib/lead-discovery";
 import { activity, calculatePriority, createProspect } from "@/lib/prospect-engine";
 import { findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { analyzePublicWebsite } from "@/lib/site-analysis";
-import { likelyFranchise, normalizeWebsite, prepareTopProspectArtifacts } from "@/lib/top-prospects";
+import {
+  likelyNationalOrLargeBrand,
+  normalizeWebsite,
+  prepareTopProspectArtifacts,
+  topProspectRejectionReason,
+} from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { classifyTopProspectFailure } from "@/lib/top-prospect-diagnostics";
 
@@ -60,7 +65,10 @@ async function releaseLease(jobId: string, token: string) {
 
 async function finalizeJob(jobId: string, wanted: number) {
   const database = getProspectDatabase();
-  const ranked = await database.topProspectResult.findMany({ where: { jobId }, orderBy: [{ opportunityScore: "desc" }, { createdAt: "asc" }] });
+  const ranked = await database.topProspectResult.findMany({
+    where: { jobId, selected: true },
+    orderBy: [{ opportunityScore: "desc" }, { createdAt: "asc" }],
+  });
   await database.$transaction([
     database.topProspectResult.updateMany({ where: { jobId }, data: { selected: false, rank: null } }),
     ...ranked.slice(0, wanted).map((result, index) => database.topProspectResult.update({
@@ -76,6 +84,7 @@ async function finalizeJob(jobId: string, wanted: number) {
 
 async function saveTopProspectResult(jobId: string, prospect: NonNullable<Awaited<ReturnType<typeof findProspectByWebsite>>>) {
   const prepared = prepareTopProspectArtifacts(prospect);
+  const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment);
   await getProspectDatabase().topProspectResult.upsert({
     where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
     update: {
@@ -84,6 +93,7 @@ async function saveTopProspectResult(jobId: string, prospect: NonNullable<Awaite
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: prepared.buildPrompt,
+      selected: rejectionReason === null,
     },
     create: {
       jobId,
@@ -93,17 +103,19 @@ async function saveTopProspectResult(jobId: string, prospect: NonNullable<Awaite
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: prepared.buildPrompt,
+      selected: rejectionReason === null,
     },
   });
+  return rejectionReason;
 }
 
 async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLead, summary: Record<string, number>) {
-  if (likelyFranchise(lead)) {
-    addSkip(summary, "franchise");
+  if (likelyNationalOrLargeBrand(lead)) {
+    addSkip(summary, "national_large_brand");
     return false;
   }
   if (!lead.phone && !lead.email) {
-    addSkip(summary, "no_public_contact");
+    addSkip(summary, "no_usable_contact_path");
     return false;
   }
   const normalized = normalizeWebsite(lead.website);
@@ -117,14 +129,22 @@ async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLe
   if (existing) {
     const existingResult = await getProspectDatabase().topProspectResult.findUnique({
       where: { jobId_prospectId: { jobId, prospectId: existing.id } },
-      select: { id: true },
+      select: { selected: true },
     });
-    if (existingResult) return true;
-    if (recoverableTopProspect(existing, jobCreatedAt)) {
-      await saveTopProspectResult(jobId, existing);
-      return true;
+    if (existingResult) return existingResult.selected;
+    if (contactedStatuses.has(existing.status)) {
+      addSkip(summary, "already_contacted");
+      return false;
     }
-    addSkip(summary, contactedStatuses.has(existing.status) ? "already_contacted" : "duplicate");
+    if (
+      recoverableTopProspect(existing, jobCreatedAt)
+      || (existing.analysis && existing.outreach && existing.preview)
+    ) {
+      const rejectionReason = await saveTopProspectResult(jobId, existing);
+      if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
+      return rejectionReason === null;
+    }
+    addSkip(summary, "duplicate");
     return false;
   }
 
@@ -152,8 +172,9 @@ async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLe
       ...prepared.prospect.activities,
     ],
   });
-  await saveTopProspectResult(jobId, saved);
-  return true;
+  const rejectionReason = await saveTopProspectResult(jobId, saved);
+  if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
+  return rejectionReason === null;
 }
 
 export async function processTopProspectJob(jobId: string) {

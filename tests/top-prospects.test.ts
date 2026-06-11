@@ -4,8 +4,10 @@ import {
   assessOpportunity,
   generateWebsiteBuildPrompt,
   likelyFranchise,
+  likelyNationalOrLargeBrand,
   normalizeWebsite,
   prepareTopProspectArtifacts,
+  topProspectRejectionReason,
   validateTopProspectInput,
 } from "../lib/top-prospects";
 import { seedProspects, withAnalysis } from "../lib/prospect-engine";
@@ -32,6 +34,7 @@ test("duplicate normalization and franchise screening are deterministic", () => 
   assert.equal(normalizeWebsite("https://www.example.com/services/"), normalizeWebsite("https://example.com/contact"));
   assert.equal(likelyFranchise({ businessName: "SERVPRO of Findlay", website: "https://example.com" }), true);
   assert.equal(likelyFranchise({ businessName: "North Main Roofing", website: "https://northmain.example" }), false);
+  assert.equal(likelyNationalOrLargeBrand({ businessName: "Erie Home", website: "https://eriehome.com" }), true);
 });
 
 test("public discovery rejects records explicitly marked inactive", () => {
@@ -53,6 +56,56 @@ test("Opportunity Score is separate from Website Score and favors usable sales f
   assert.ok(assessment.opportunityScore > prospect.analysis!.overallScore);
   assert.match(assessment.whyMayBuy, /active site/i);
   assert.match(assessment.pitchAngle, /redesign/i);
+});
+
+test("Toledo roofing ranking excludes strong websites and national brands", () => {
+  const husky = withAnalysis(structuredClone(seedProspects[0]));
+  husky.businessName = "Husky Roofing";
+  husky.website = "https://husky-roofing.example";
+  husky.analysis!.overallScore = 62;
+  husky.analysis!.scores.contactAccessibility = 42;
+  husky.analysis!.scores.trustSignals = 44;
+  husky.analysis!.scores.conversionReadiness = 42;
+  const huskyAssessment = assessOpportunity(husky);
+
+  const strong = withAnalysis(structuredClone(seedProspects[0]));
+  strong.businessName = "Shingle And Metal Roofs";
+  strong.website = "https://shingle-and-metal.example";
+  strong.analysis!.overallScore = 97;
+  const strongAssessment = assessOpportunity(strong);
+
+  const national = withAnalysis(structuredClone(seedProspects[0]));
+  national.businessName = "Erie Home";
+  national.website = "https://eriehome.com";
+  national.analysis!.overallScore = 93;
+  const nationalAssessment = assessOpportunity(national);
+
+  assert.ok(huskyAssessment.opportunityScore >= 60);
+  assert.equal(topProspectRejectionReason(husky, huskyAssessment), null);
+  assert.equal(topProspectRejectionReason(strong, strongAssessment), "Already strong website");
+  assert.equal(topProspectRejectionReason(national, nationalAssessment), "National/large brand");
+});
+
+test("Top Prospects recommendation gate explains every sales-fit rejection", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.analysis!.overallScore = 80;
+  assert.equal(
+    topProspectRejectionReason(prospect, { opportunityScore: 70, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
+    "Low redesign opportunity",
+  );
+
+  prospect.analysis!.overallScore = 65;
+  assert.equal(
+    topProspectRejectionReason(prospect, { opportunityScore: 49, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
+    "Weak sales fit",
+  );
+
+  prospect.phone = "";
+  prospect.email = "";
+  assert.equal(
+    topProspectRejectionReason(prospect, { opportunityScore: 80, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
+    "No usable contact path",
+  );
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
