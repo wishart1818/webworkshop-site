@@ -23,7 +23,7 @@ function assertPersistenceAvailable() {
   }
 }
 
-function getPrisma() {
+export function getProspectDatabase() {
   if (!globalStore.prisma) globalStore.prisma = new PrismaClient();
   return globalStore.prisma;
 }
@@ -128,7 +128,7 @@ function toDomain(row: StoredProspect): Prospect {
 }
 
 async function persistProspect(prospect: Prospect) {
-  const prisma = getPrisma();
+  const prisma = getProspectDatabase();
 
   await prisma.$transaction(async (tx) => {
     const previous = await tx.prospect.findUnique({ where: { id: prospect.id }, select: { status: true } });
@@ -234,7 +234,7 @@ async function persistProspect(prospect: Prospect) {
 export async function listProspects(): Promise<Prospect[]> {
   assertPersistenceAvailable();
   if (!hasDatabase) return structuredClone(getMemoryStore());
-  const prisma = getPrisma();
+  const prisma = getProspectDatabase();
   const count = await prisma.prospect.count();
   if (count === 0) {
     for (const prospect of seedProspects) await persistProspect(prospect);
@@ -252,8 +252,22 @@ export async function saveProspect(prospect: Prospect): Promise<Prospect> {
     return structuredClone(prospect);
   }
   await persistProspect(prospect);
-  const row = await getPrisma().prospect.findUniqueOrThrow({ where: { id: prospect.id }, include: prospectInclude });
+  const row = await getProspectDatabase().prospect.findUniqueOrThrow({ where: { id: prospect.id }, include: prospectInclude });
   return toDomain(row);
+}
+
+export async function getProspect(id: string): Promise<Prospect | null> {
+  assertPersistenceAvailable();
+  if (!hasDatabase) return structuredClone(getMemoryStore().find((item) => item.id === id) ?? null);
+  const row = await getProspectDatabase().prospect.findUnique({ where: { id }, include: prospectInclude });
+  return row ? toDomain(row) : null;
+}
+
+export async function findProspectByWebsite(website: string): Promise<Prospect | null> {
+  assertPersistenceAvailable();
+  if (!hasDatabase) return structuredClone(getMemoryStore().find((item) => item.website === website) ?? null);
+  const row = await getProspectDatabase().prospect.findUnique({ where: { website }, include: prospectInclude });
+  return row ? toDomain(row) : null;
 }
 
 export function persistenceMode() {

@@ -12,7 +12,10 @@ const REQUIRED_TABLES = [
   "Prospect",
   "RateLimitBucket",
   "StatusHistory",
+  "TopProspectJob",
+  "TopProspectResult",
 ] as const;
+const ADDITIVE_TOP_PROSPECT_TABLES = new Set(["TopProspectJob", "TopProspectResult"]);
 
 const MIGRATIONS = [
   {
@@ -64,6 +67,20 @@ const MIGRATIONS = [
       `CREATE INDEX "RateLimitBucket_windowStart_idx" ON "RateLimitBucket"("windowStart")`,
       `CREATE INDEX "AuditEvent_action_createdAt_idx" ON "AuditEvent"("action", "createdAt")`,
       `CREATE INDEX "AuditEvent_outcome_createdAt_idx" ON "AuditEvent"("outcome", "createdAt")`,
+    ],
+  },
+  {
+    id: "20260611_top_prospects",
+    checksum: "d89d591749bba50e2d279e45ec69008746c8c87deacde4e72cf2f61bd760538c",
+    statements: [
+      `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
+      `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
+      `CREATE INDEX "TopProspectJob_status_createdAt_idx" ON "TopProspectJob"("status", "createdAt")`,
+      `CREATE UNIQUE INDEX "TopProspectResult_jobId_prospectId_key" ON "TopProspectResult"("jobId", "prospectId")`,
+      `CREATE INDEX "TopProspectResult_jobId_selected_rank_idx" ON "TopProspectResult"("jobId", "selected", "rank")`,
+      `CREATE INDEX "TopProspectResult_prospectId_createdAt_idx" ON "TopProspectResult"("prospectId", "createdAt")`,
+      `ALTER TABLE "TopProspectResult" ADD CONSTRAINT "TopProspectResult_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "TopProspectJob"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+      `ALTER TABLE "TopProspectResult" ADD CONSTRAINT "TopProspectResult_prospectId_fkey" FOREIGN KEY ("prospectId") REFERENCES "Prospect"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
     ],
   },
 ] as const;
@@ -226,6 +243,13 @@ async function presentRequiredTables(transaction: SetupTransaction) {
   return new Set(rows.map((row) => row.table_name));
 }
 
+function isExistingEngineSchema(existing: Set<string>) {
+  return (
+    REQUIRED_TABLES.every((table) => ADDITIVE_TOP_PROSPECT_TABLES.has(table) || existing.has(table))
+    && [...ADDITIVE_TOP_PROSPECT_TABLES].every((table) => !existing.has(table))
+  );
+}
+
 function migrationRecord(migration: (typeof MIGRATIONS)[number], index: number) {
   const suffix = String(index + 1).padStart(12, "0");
   return `INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "started_at", "applied_steps_count") VALUES ('00000000-0000-4000-8000-${suffix}', '${migration.checksum}', now(), '${migration.id}', now(), 1)`;
@@ -242,11 +266,14 @@ export async function initializeProductionDatabase(
         await runSetupPhase("lock", () => acquireSetupLock(transaction));
         const existing = await runSetupPhase("schema_inspection", () => presentRequiredTables(transaction));
         if (existing.size === REQUIRED_TABLES.length) return "already_initialized" as const;
-        if (existing.size > 0) throw new PartialProductionSchemaError();
+        const additiveUpgrade = isExistingEngineSchema(existing);
+        if (existing.size > 0 && !additiveUpgrade) throw new PartialProductionSchemaError();
 
         await runSetupPhase("migration_sql", async () => {
           await transaction.$executeRawUnsafe(CREATE_MIGRATION_TABLE);
-          for (const [index, migration] of MIGRATIONS.entries()) {
+          const migrations = additiveUpgrade ? [MIGRATIONS[MIGRATIONS.length - 1]] : MIGRATIONS;
+          for (const migration of migrations) {
+            const index = MIGRATIONS.indexOf(migration);
             // These statements are fixed, repository-owned migration DDL. No request data reaches raw SQL.
             for (const statement of migration.statements) {
               await transaction.$executeRawUnsafe(statement);
@@ -261,7 +288,7 @@ export async function initializeProductionDatabase(
             throw new Error("Production database setup verification failed.");
           }
         });
-        return "initialized" as const;
+        return additiveUpgrade ? "upgraded" as const : "initialized" as const;
       },
       { maxWait: 5_000, timeout: 60_000 },
     ));
@@ -298,7 +325,12 @@ export async function handleDatabaseSetup(request: Request, initialize: Initiali
       );
     }
     return NextResponse.json(
-      { status: result, message: "Required production database tables were created and verified." },
+      {
+        status: result,
+        message: result === "upgraded"
+          ? "The existing production schema was upgraded and verified."
+          : "Required production database tables were created and verified.",
+      },
       { status: 201 },
     );
   } catch (error) {

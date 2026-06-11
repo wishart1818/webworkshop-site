@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type SystemPayload } from "@/components/engine/SystemWorkspace";
+import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
 import type { DiscoveredLead } from "@/lib/lead-discovery";
 import {
   activity,
@@ -20,7 +21,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-type WorkspaceTab = "Overview" | "Prospects" | "Pipeline" | "System";
+type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "System";
 type SyncState = "loading" | "saved" | "saving" | "error";
 
 export function ProspectEngine() {
@@ -269,7 +270,7 @@ export function ProspectEngine() {
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Prospects", "Pipeline", "System"] as WorkspaceTab[]).map((tab) => (
+          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "System"] as WorkspaceTab[]).map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
               {tab}
             </button>
@@ -364,6 +365,13 @@ export function ProspectEngine() {
               {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onOutreach={() => updateSelected(withOutreach)} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
             </div>
           </div>
+        )}
+
+        {workspaceTab === "Top Prospects" && (
+          <TopProspectsWorkspace
+            onOpenProspect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); }}
+            onProspectsChanged={loadProspects}
+          />
         )}
 
         {workspaceTab === "Pipeline" && !prospectStateBlocked && (

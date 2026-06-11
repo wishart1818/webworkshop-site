@@ -43,11 +43,13 @@ export async function discoverContractors(input: {
   state: string;
   trade: TradeCategory;
   radiusKm: number;
+  limit?: number;
 }): Promise<DiscoveredLead[]> {
   if (!validTrade(input.trade)) throw new Error("Trade category is not supported.");
   if (!input.city.trim() || !/^[A-Za-z .'-]{2,100}$/.test(input.city.trim())) throw new Error("Enter a valid city.");
   if (!/^[A-Za-z]{2}$/.test(input.state.trim())) throw new Error("Enter a two-letter state code.");
   if (![10, 25, 50].includes(input.radiusKm)) throw new Error("Discovery radius is not supported.");
+  const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 25)));
 
   const now = Date.now();
   if (globalDiscovery.lastDiscoveryAt && now - globalDiscovery.lastDiscoveryAt < 5_000) {
@@ -76,7 +78,7 @@ export async function discoverContractors(input: {
 
   const craft = craftByTrade[input.trade];
   const radiusMeters = input.radiusKm * 1_000;
-  const query = `[out:json][timeout:20];nwr["craft"="${craft}"](around:${radiusMeters},${latitude},${longitude});out tags center 40;`;
+  const query = `[out:json][timeout:20];nwr["craft"="${craft}"](around:${radiusMeters},${latitude},${longitude});out tags center ${Math.max(40, limit * 2)};`;
   const discoveryResponse = await fetch(overpassUrl, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
@@ -112,7 +114,7 @@ export async function discoverContractors(input: {
         return [];
       }
     })
-    .slice(0, 25);
+    .slice(0, limit);
 }
 
 export function resetDiscoveryThrottleForTests() {

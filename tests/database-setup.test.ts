@@ -275,6 +275,22 @@ test("database initializer refuses completed and partial schemas without applyin
   assert.equal(partial.disconnected(), true);
 });
 
+test("database initializer safely upgrades the complete legacy engine schema", async () => {
+  const legacyTables = productionSetupManifest.requiredTables.filter(
+    (table) => table !== "TopProspectJob" && table !== "TopProspectResult",
+  );
+  const upgrade = fakeDatabase(legacyTables);
+
+  assert.equal(await initializeProductionDatabase(upgrade.database), "upgraded");
+  assert.ok(upgrade.statements.some((statement) => statement.includes('CREATE TABLE "TopProspectJob"')));
+  assert.ok(upgrade.statements.some((statement) => statement.includes('CREATE TABLE "TopProspectResult"')));
+  assert.ok(!upgrade.statements.some((statement) => statement.includes('CREATE TABLE "Prospect"')));
+  assert.equal(
+    upgrade.statements.filter((statement) => statement.startsWith('INSERT INTO "_prisma_migrations"')).length,
+    1,
+  );
+});
+
 test("production setup endpoint requires Vercel Production, setup token, and database configuration", async () => {
   const keys = ["VERCEL_ENV", "ENGINE_SETUP_TOKEN", "DATABASE_URL", "DATABASE_URL_UNPOOLED"] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));

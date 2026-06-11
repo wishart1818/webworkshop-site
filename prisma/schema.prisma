@@ -36,11 +36,59 @@ model Prospect {
   notes         Note[]
   activities    Activity[]
   statusHistory StatusHistory[]
+  topProspectResults TopProspectResult[]
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
   @@index([status, priorityScore])
   @@index([tradeCategory, state, city])
+}
+
+model TopProspectJob {
+  id                String              @id @default(cuid())
+  tradeCategory     String
+  city              String
+  state             String
+  radiusKm          Int
+  businessesToScan  Int                 @default(50)
+  finalProspectsWanted Int              @default(10)
+  status            String              @default("QUEUED")
+  stage             String              @default("DISCOVER")
+  discoveredLeads   Json?
+  nextLeadIndex     Int                 @default(0)
+  scannedCount      Int                 @default(0)
+  qualifiedCount    Int                 @default(0)
+  skippedCount      Int                 @default(0)
+  skipSummary       Json?
+  errorMessage      String?
+  leaseToken        String?
+  leaseUntil        DateTime?
+  results           TopProspectResult[]
+  completedAt       DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model TopProspectResult {
+  id               String         @id @default(cuid())
+  jobId            String
+  job              TopProspectJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  prospectId       String
+  prospect         Prospect       @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  rank             Int?
+  selected         Boolean        @default(false)
+  opportunityScore Int
+  mainWeakness     String
+  whyMayBuy        String
+  pitchAngle       String
+  buildPrompt      String
+  createdAt        DateTime       @default(now())
+
+  @@unique([jobId, prospectId])
+  @@index([jobId, selected, rank])
+  @@index([prospectId, createdAt])
 }
 
 model Analysis {
