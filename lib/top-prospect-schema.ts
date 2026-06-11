@@ -15,6 +15,8 @@ export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
+const TOP_PROSPECT_SCHEMA_LOCK_ATTEMPTS = 5;
+const TOP_PROSPECT_SCHEMA_LOCK_RETRY_MS = 250;
 const globalSchema = globalThis as typeof globalThis & { topProspectSchemaReady?: Promise<void> };
 
 function topProspectDatabaseUrl(environment: NodeJS.ProcessEnv = process.env) {
@@ -44,12 +46,37 @@ async function recordMigration(transaction: SchemaTransaction) {
   );
 }
 
+export class TopProspectSchemaLockUnavailableError extends Error {
+  constructor() {
+    super("Another Top Prospects schema initialization currently holds the transaction lock.");
+    this.name = "TopProspectSchemaLockUnavailableError";
+  }
+}
+
+async function wait(milliseconds: number) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function acquireSchemaLock(
+  transaction: SchemaTransaction,
+  pause: (milliseconds: number) => Promise<void> = wait,
+) {
+  for (let attempt = 1; attempt <= TOP_PROSPECT_SCHEMA_LOCK_ATTEMPTS; attempt += 1) {
+    const rows = await transaction.$queryRawUnsafe<Array<{ acquired: boolean }>>(
+      `SELECT pg_try_advisory_xact_lock(${TOP_PROSPECT_SCHEMA_LOCK}) AS "acquired"`,
+    );
+    if (rows[0]?.acquired === true) return;
+    if (attempt < TOP_PROSPECT_SCHEMA_LOCK_ATTEMPTS) await pause(TOP_PROSPECT_SCHEMA_LOCK_RETRY_MS);
+  }
+  throw new TopProspectSchemaLockUnavailableError();
+}
+
 export async function initializeTopProspectSchema(
   database: SchemaDatabase = new PrismaClient({ datasourceUrl: topProspectDatabaseUrl() }) as unknown as SchemaDatabase,
 ) {
   try {
     return await database.$transaction(async (transaction) => {
-      await transaction.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(${TOP_PROSPECT_SCHEMA_LOCK})`);
+      await acquireSchemaLock(transaction);
       const existing = await presentTables(transaction);
       if (existing.size === TOP_PROSPECT_TABLES.length) {
         await recordMigration(transaction);

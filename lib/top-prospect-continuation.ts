@@ -19,8 +19,19 @@ export function continueTopProspectJobAfterResponse(request: Request, jobId: str
           signal: AbortSignal.timeout(45_000),
         });
         if (response.ok) return;
+        if (attempt === 2) {
+          const payload = await response.json().catch(() => ({})) as { classification?: unknown };
+          console.error("[top-prospects] Worker continuation returned a failure.", {
+            status: response.status,
+            classification: typeof payload.classification === "string" ? payload.classification : "unknown",
+          });
+        }
       } catch (error) {
-        if (attempt === 2) console.error("[top-prospects] Unable to schedule the next worker batch.", error);
+        if (attempt === 2) {
+          console.error("[top-prospects] Unable to schedule the next worker batch.", {
+            classification: error instanceof DOMException && error.name === "TimeoutError" ? "timeout" : "network_failure",
+          });
+        }
       }
     }
   });

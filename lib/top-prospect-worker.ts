@@ -5,6 +5,7 @@ import { findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/
 import { analyzePublicWebsite } from "@/lib/site-analysis";
 import { likelyFranchise, normalizeWebsite, prepareTopProspectArtifacts } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
+import { classifyTopProspectFailure } from "@/lib/top-prospect-diagnostics";
 
 const LEASE_MS = 90_000;
 const BATCH_SIZE = 1;
@@ -212,7 +213,7 @@ export async function processTopProspectJob(jobId: string) {
         leaseUntil: null,
       },
     });
-    console.error("[top-prospects] Worker batch failed.", error);
+    console.error("[top-prospects] Worker batch failed.", { classification: classifyTopProspectFailure(error) });
     return { status: "failed" as const, shouldContinue: false };
   } finally {
     await releaseLease(job.id, token);
