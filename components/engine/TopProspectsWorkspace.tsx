@@ -27,6 +27,7 @@ const skipReasonLabels: Record<string, string> = {
   low_redesign_opportunity: "Low redesign opportunity",
   weak_sales_fit: "Weak sales fit",
   no_usable_contact_path: "No usable contact path",
+  below_final_cutoff: "Below final cutoff",
   duplicate: "Duplicate",
   already_contacted: "Already contacted",
   broken_or_inactive_website: "Broken or inactive website",

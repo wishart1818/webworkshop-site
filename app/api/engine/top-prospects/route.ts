@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { continueTopProspectJobAfterResponse } from "@/lib/top-prospect-continuation";
 import { classifyTopProspectFailure, topProspectRuntimeChecks } from "@/lib/top-prospect-diagnostics";
 import { getProspectDatabase } from "@/lib/prospect-repository";
-import { createTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
+import { createTopProspectJob, findResumableTopProspectJobId, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { validateTopProspectInput } from "@/lib/top-prospects";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +23,12 @@ function safeFailure(error: unknown) {
   return { classification, checks };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    return NextResponse.json({ jobs: await listTopProspectJobs() });
+    const jobs = await listTopProspectJobs();
+    const resumableJobId = await findResumableTopProspectJobId();
+    if (resumableJobId) continueTopProspectJobAfterResponse(request, resumableJobId);
+    return NextResponse.json({ jobs });
   } catch (error) {
     return NextResponse.json(
       { error: "Top Prospects requires a reachable PostgreSQL database.", ...safeFailure(error) },

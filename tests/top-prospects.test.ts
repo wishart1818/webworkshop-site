@@ -8,6 +8,7 @@ import {
   normalizeWebsite,
   prepareTopProspectArtifacts,
   topProspectRejectionReason,
+  topProspectResultDisposition,
   validateTopProspectInput,
 } from "../lib/top-prospects";
 import { seedProspects, withAnalysis } from "../lib/prospect-engine";
@@ -106,6 +107,21 @@ test("Top Prospects recommendation gate explains every sales-fit rejection", () 
     topProspectRejectionReason(prospect, { opportunityScore: 80, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
     "No usable contact path",
   );
+});
+
+test("Top Prospects final cutoff never leaks extra qualified leads into ranked results", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.analysis!.overallScore = 62;
+  const assessment = assessOpportunity(prospect);
+
+  assert.deepEqual(topProspectResultDisposition(true, prospect, assessment), {
+    selected: true,
+    rejectionReason: null,
+  });
+  assert.deepEqual(topProspectResultDisposition(false, prospect, assessment), {
+    selected: false,
+    rejectionReason: "Below final cutoff",
+  });
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {

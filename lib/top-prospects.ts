@@ -32,6 +32,7 @@ export const topProspectRejectionReasons = [
   "Low redesign opportunity",
   "Weak sales fit",
   "No usable contact path",
+  "Below final cutoff",
 ] as const;
 export type TopProspectRejectionReason = (typeof topProspectRejectionReasons)[number];
 
@@ -169,6 +170,18 @@ export function topProspectRejectionReason(
   if (websiteScore !== undefined && websiteScore > 75) return "Low redesign opportunity";
   if (assessment.opportunityScore < 60) return "Weak sales fit";
   return null;
+}
+
+export function topProspectResultDisposition(
+  persistedSelected: boolean,
+  prospect: Pick<Prospect, "businessName" | "website" | "phone" | "email" | "analysis">,
+  assessment: OpportunityAssessment,
+) {
+  const salesFitRejection = topProspectRejectionReason(prospect, assessment);
+  return {
+    selected: persistedSelected && salesFitRejection === null,
+    rejectionReason: salesFitRejection ?? (persistedSelected ? null : "Below final cutoff" as const),
+  };
 }
 
 export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: OpportunityAssessment) {

@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { getProspectDatabase, getProspect } from "@/lib/prospect-repository";
 import type { TopProspectInput, TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
-import { topProspectRejectionReason } from "@/lib/top-prospects";
+import { topProspectResultDisposition } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const resultInclude = { prospect: true } satisfies Prisma.TopProspectResultInclude;
@@ -25,11 +25,11 @@ async function toResult(row: JobRow["results"][number]): Promise<TopProspectResu
     whyMayBuy: row.whyMayBuy,
     pitchAngle: row.pitchAngle,
   };
-  const rejectionReason = topProspectRejectionReason(prospect, assessment);
+  const { selected, rejectionReason } = topProspectResultDisposition(row.selected, prospect, assessment);
   return {
     id: row.id,
     rank: row.rank,
-    selected: rejectionReason === null,
+    selected,
     rejectionReason,
     ...assessment,
     buildPrompt: row.buildPrompt,
@@ -98,4 +98,17 @@ export async function listTopProspectJobs() {
   await ensureTopProspectSchema();
   const rows = await getProspectDatabase().topProspectJob.findMany({ include: jobInclude, orderBy: { createdAt: "desc" }, take: 10 });
   return Promise.all(rows.map(toJob));
+}
+
+export async function findResumableTopProspectJobId(now = new Date()) {
+  await ensureTopProspectSchema();
+  const row = await getProspectDatabase().topProspectJob.findFirst({
+    where: {
+      status: { in: ["QUEUED", "RUNNING"] },
+      OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  return row?.id ?? null;
 }
