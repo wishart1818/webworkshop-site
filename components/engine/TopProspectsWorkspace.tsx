@@ -10,6 +10,17 @@ type Props = {
   onProspectsChanged: () => void;
 };
 
+type TopProspectApiPayload = {
+  classification?: string;
+  error?: string;
+  jobs?: TopProspectJob[];
+};
+
+function apiError(payload: TopProspectApiPayload, fallback: string) {
+  const message = payload.error || fallback;
+  return payload.classification ? `${message} Diagnostic: ${payload.classification}.` : message;
+}
+
 function jobProgress(job: TopProspectJob) {
   if (job.status === "COMPLETED") return 100;
   if (job.stage === "DISCOVER") return 5;
@@ -39,8 +50,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const loadJobs = useCallback(async () => {
     try {
       const response = await fetch("/api/engine/top-prospects", { cache: "no-store" });
-      const payload = (await response.json()) as { jobs?: TopProspectJob[]; error?: string };
-      if (!response.ok || !payload.jobs) throw new Error(payload.error || "Unable to load Top Prospects.");
+      const payload = (await response.json()) as TopProspectApiPayload;
+      if (!response.ok || !payload.jobs) throw new Error(apiError(payload, "Unable to load Top Prospects."));
       setJobs(payload.jobs);
       setError("");
       if (payload.jobs[0]?.status === "COMPLETED") onProspectsChanged();
@@ -79,8 +90,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           finalProspectsWanted: Number(form.get("finalProspectsWanted")),
         }),
       });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "Unable to start Top Prospects.");
+      const payload = (await response.json()) as TopProspectApiPayload;
+      if (!response.ok) throw new Error(apiError(payload, "Unable to start Top Prospects."));
       await loadJobs();
     } catch (startError) {
       setError(startError instanceof Error ? startError.message : "Unable to start Top Prospects.");
