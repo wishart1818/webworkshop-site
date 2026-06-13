@@ -107,6 +107,7 @@ model TopProspectResult {
   buildPrompt      String
   packageStatus    String         @default("NOT_GENERATED")
   previewLink      String         @default("")
+  publicPreviewToken String?      @unique
   packageGeneratedAt DateTime?
   packageReviewedAt DateTime?
   packageApprovedAt DateTime?

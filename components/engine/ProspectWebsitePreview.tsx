@@ -8,6 +8,7 @@ import {
 
 type ProspectWebsitePreviewProps = {
   prospect: Prospect;
+  publicView?: boolean;
   savedPreview?: PreviewConcept;
 };
 
@@ -23,7 +24,7 @@ type ProspectPreviewProperties = CSSProperties & {
   "--prospect-body-font": string;
 };
 
-export function ProspectWebsitePreview({ prospect, savedPreview }: ProspectWebsitePreviewProps) {
+export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
   const preview = savedPreview ?? generatePreview(prospect);
   const styleProfile = previewStyleProfile(prospect, preview);
   const serviceArea = prospect.serviceArea || `${prospect.city}, ${prospect.state}`;
@@ -47,10 +48,10 @@ export function ProspectWebsitePreview({ prospect, savedPreview }: ProspectWebsi
   } as ProspectPreviewProperties;
 
   return (
-    <main className="prospect-site-preview protected-prospect-preview">
+    <main className="prospect-site-preview protected-prospect-preview" data-preview-access={publicView ? "public" : "internal"}>
       <header className="concept-preview-disclosure">
-        <a href="/engine">Back to Prospect Engine</a>
-        <span>Protected concept preview. Not a live client website.</span>
+        {publicView ? <span>Concept preview. Not a live client website.</span> : <a href="/engine">Back to Prospect Engine</a>}
+        {!publicView && <span>Protected concept preview. Not a live client website.</span>}
       </header>
 
       <div

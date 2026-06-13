@@ -410,26 +410,73 @@ export function analyzeProspect(prospect: Prospect): Analysis {
   };
 }
 
+const outreachStrengths: Record<ScoreKey, string> = {
+  mobileExperience: "Your site is already pretty easy to view on mobile.",
+  visualDesign: "Your current site already gives homeowners a clear sense of the business.",
+  ctaStrength: "Your current site already gives visitors a visible next step.",
+  trustSignals: "Your site already gives homeowners useful reasons to trust the business.",
+  contactAccessibility: "Your phone and contact details are already fairly easy to find.",
+  portfolioQuality: "Your site already gives visitors useful proof of your work.",
+  brandingQuality: "Your business name and brand already come through clearly.",
+  conversionReadiness: "Interested homeowners already have a reasonable path to reach out.",
+  technicalQuality: "Your current site already has a solid technical foundation.",
+};
+
+const outreachOpportunities: Record<ScoreKey, string> = {
+  mobileExperience: "Some mobile visitors may still have to work too hard to find the next step.",
+  visualDesign: "The presentation could do more to make the business feel established at a glance.",
+  ctaStrength: "The quote or inspection path could be clearer for homeowners who are ready to call.",
+  trustSignals: "Recent local work and trust details could be easier to see before someone calls.",
+  contactAccessibility: "Your phone and estimate options could be easier to find from every page.",
+  portfolioQuality: "Recent project proof could be easier for local homeowners to find.",
+  brandingQuality: "The site could make the business name and local reputation more memorable.",
+  conversionReadiness: "The quote or inspection path could be clearer for homeowners who are ready to call.",
+  technicalQuality: "A faster, simpler page structure could make the site easier to use.",
+};
+
+function strongestAndWeakestObservation(analysis: Analysis) {
+  const keys = Object.keys(analysis.scores) as ScoreKey[];
+  const strongest = [...keys].sort((left, right) => analysis.scores[right] - analysis.scores[left])[0];
+  const weakest = [...keys].sort((left, right) => analysis.scores[left] - analysis.scores[right])[0];
+  return {
+    strength: analysis.scores[strongest] >= 60
+      ? outreachStrengths[strongest]
+      : "You already have an active website where homeowners can find the business online.",
+    opportunity: outreachOpportunities[weakest],
+  };
+}
+
+function outreachGoal(prospect: Prospect) {
+  if (prospect.trade === "Roofing") return "help turn more local visitors into roofing estimate requests";
+  if (prospect.trade === "HVAC") return "help turn more local visitors into service and replacement inquiries";
+  return `help turn more local visitors into ${prospect.trade.toLowerCase()} estimate requests`;
+}
+
+const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+
+function conceptPreviewSentence(previewLink: string, lead = "I put together a short concept showing the idea") {
+  return previewLink ? `${lead}: ${previewLink}` : `${lead}.`;
+}
+
 export function generateOutreach(prospect: Prospect, previewLink = ""): OutreachDraft {
-  const previewLine = previewLink ? `\n\nProtected concept preview: ${previewLink}` : "";
   if (prospect.prospectType === "no_website_social_only") {
     const playbook = contractorPlaybooks[prospect.trade];
     const publicPresence = prospect.profileUrl ? "your public business profile" : "public business listings";
     const activityProof = prospect.reviewCount > 0
       ? `${prospect.reviewCount} public reviews`
       : "an active local business presence";
-    const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+    const previewSentence = conceptPreviewSentence(previewLink, "I put together a short concept for an online home you would control");
     return {
       subjects: [
         `A website concept for ${prospect.businessName}`,
         `Own the online home for ${prospect.businessName}`,
         `Turn ${prospect.city} searches into direct inquiries`,
       ],
-      concise: `Hi ${prospect.businessName} team,\n\nI found ${publicPresence} while researching ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}. ${activityProof} is a real strength, but I could not find an owned website where customers can clearly review services and contact you directly.\n\nI sketched a simple concept that would give ${prospect.businessName} a permanent online home beyond Facebook or Google.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
-      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}. The visible strength is ${activityProof}. The missed opportunity is that I could not find an owned website that clearly explains services, builds trust, and gives homeowners a direct path to contact you.\n\nI put together a first-website concept centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a clear "${playbook.primaryCta}" action. The goal is to help ${prospect.businessName} own its customer journey instead of relying entirely on a social profile or third-party listing.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
+      concise: `Hi ${prospect.businessName} team,\n\nI found ${publicPresence} while researching ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find an owned website where people can review services and contact you directly.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find an owned website that clearly explains services, builds trust, and gives homeowners a direct path to contact you.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a clear "${playbook.primaryCta}" action. The goal is to give ${prospect.businessName} an online home it controls instead of relying entirely on a social profile or third-party listing.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
       followUps: [
-        `Hi again, I wanted to make sure the first-website concept for ${prospect.businessName} reached you. It is designed to turn local searches into direct inquiries while keeping your public profiles working alongside an owned site.${previewLine}\n\n${complianceFooter}`,
-        `Last note from me: the main idea is a simple online home that you control, with services, local proof, and one clear estimate path. Happy to send it over, and I will close the loop if the timing is not right.\n\n${complianceFooter}`,
+        `Hi again,\n\nI wanted to follow up on the website concept I shared for ${prospect.businessName}. It is designed to turn local searches into direct inquiries while keeping your public profiles working alongside an owned site.\n\n${conceptPreviewSentence(previewLink, "Here is the concept again")}\n\nWould a quick 10-minute call next week be useful?\n\n${complianceFooter}`,
+        `Hi again,\n\nLast note from me about the website concept in my earlier email. The main idea is a simple online home that you control, with services, local proof, and one clear estimate path.\n\n${conceptPreviewSentence(previewLink, "You can review the concept here")}\n\nIf the timing is not right, no problem. I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
       generatedAt: now(),
@@ -437,20 +484,20 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
   }
   const analysis = prospect.analysis ?? analyzeProspect(prospect);
   const playbook = contractorPlaybooks[prospect.trade];
-  const strength = analysis.strengths[0].replace(/\.$/, "").toLowerCase();
-  const weakness = analysis.weaknesses[0].replace(/\.$/, "").toLowerCase();
-  const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+  const { strength, opportunity } = strongestAndWeakestObservation(analysis);
+  const goal = outreachGoal(prospect);
+  const previewSentence = conceptPreviewSentence(previewLink);
   return {
     subjects: [
       `A website idea for ${prospect.businessName}`,
       `${prospect.trade} website notes for ${prospect.city}`,
       `A clearer quote path for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\nI reviewed your website and noticed ${strength}. I also saw one practical opportunity: ${weakness}. I sketched a ${prospect.trade.toLowerCase()}-specific direction with a clearer "${playbook.primaryCta}" path.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
-    detailed: `Hi ${prospect.businessName} team,\n\nI took a careful look at your website while researching ${prospect.trade.toLowerCase()} companies serving ${prospect.city}. The strongest part is that ${strength}.\n\nThe biggest missed opportunity is that ${weakness}. On mobile, that can make a ready-to-hire homeowner hesitate before taking the next step.\n\nI put together a contractor-specific direction centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a shorter "${playbook.primaryCta}" path. This is a personal draft for your business, not an automated campaign.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
+    concise: `Hi ${prospect.businessName} team,\n\nI reviewed your website while looking at ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: ${opportunity}\n\n${previewSentence}\n\nThe idea is to ${goal}. If the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+    detailed: `Hi ${prospect.businessName} team,\n\nI took a careful look at your website while researching ${prospect.trade.toLowerCase()} companies serving ${prospect.city}.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: ${opportunity}\n\nI made a business-specific concept centered on ${playbook.services.join(", ")}, useful local proof, and a shorter "${playbook.primaryCta}" path. The goal is to ${goal} without losing what already works on the current site.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
     followUps: [
-      `Hi again, I wanted to make sure my website notes for ${prospect.businessName} reached you. The concept focuses on a clearer mobile estimate path and stronger local proof.${previewLine}\n\n${complianceFooter}`,
-      `Last note from me: the main idea is a clearer mobile estimate path supported by recent-work proof. Happy to send it over, and I will close the loop if the timing is not right.\n\n${complianceFooter}`,
+      `Hi again,\n\nI wanted to follow up on the website concept I shared for ${prospect.businessName}. The main idea is a clearer estimate path supported by useful local proof.\n\n${conceptPreviewSentence(previewLink, "Here is the concept again")}\n\nWould a quick 10-minute call next week be useful?\n\n${complianceFooter}`,
+      `Hi again,\n\nLast note from me about the website concept in my earlier email. I think the clearer estimate path could help ${prospect.businessName} turn more local visitors into inquiries.\n\n${conceptPreviewSentence(previewLink, "You can review the concept here")}\n\nIf the timing is not right, no problem. I will close the loop.\n\n${complianceFooter}`,
     ],
     approved: false,
     generatedAt: now(),

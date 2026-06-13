@@ -96,6 +96,24 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.doesNotMatch(html, /Concept prepared for manual review in WebWorkshop Prospect Engine/);
 });
 
+test("public website preview exposes only the prospect concept with no engine navigation", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Blue Line Roofing",
+    notes: ["Private operator note"],
+    analysis: withAnalysis(structuredClone(seedProspects[0])).analysis,
+  });
+  const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    publicView: true,
+    savedPreview: prospect.preview,
+  }));
+
+  assert.match(html, /Concept preview\. Not a live client website\./);
+  assert.match(html, /data-preview-access="public"/);
+  assert.doesNotMatch(html, /\/engine|Back to Prospect Engine|Private operator note|Website score|Opportunity score/i);
+});
+
 test("shared loading and empty states provide useful operator guidance", () => {
   const loading = renderToStaticMarkup(createElement(LoadingState, {
     title: "Loading prospect workspace",

@@ -259,6 +259,7 @@ test("engine middleware never protects public website routes", () => {
   assert.equal(middlewareConfig.runtime, "nodejs");
   assert.ok(!middlewareConfig.matcher.some((matcher) => matcher === "/:path*" || matcher === "/(.*)"));
   assert.ok(middlewareConfig.matcher.some((matcher) => matcher === "/engine/:path*"));
+  assert.ok(!middlewareConfig.matcher.some((matcher) => matcher.startsWith("/p/")));
 });
 
 test("private engine routes receive no-store and baseline security headers", async () => {

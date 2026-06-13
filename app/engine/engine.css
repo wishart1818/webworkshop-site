@@ -5,6 +5,7 @@ body:has(.engine-shell) footer,
 body:has(.engine-shell) > .skip-link,
 body:has(.prospect-site-preview) .site-header,
 body:has(.prospect-site-preview) .site-header__mobile-nav,
+body:has(.prospect-site-preview) .site-shell > footer,
 body:has(.prospect-site-preview) > footer,
 body:has(.prospect-site-preview) > .skip-link {
   display: none;
@@ -2151,6 +2152,48 @@ body:has(.engine-shell) {
   margin-bottom: 0;
 }
 
+.engine-email-quality .engine-copy-head > b {
+  padding: 0.3rem 0.45rem;
+  font-size: 0.64rem;
+}
+
+.engine-email-quality .engine-copy-head > b.is-ready {
+  background: #dff1e7;
+  color: #175d40;
+}
+
+.engine-email-quality .engine-copy-head > b.needs-fixes {
+  background: #f7e5df;
+  color: #823729;
+}
+
+.engine-email-quality ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-email-quality li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.55rem;
+}
+
+.engine-email-quality li > b {
+  min-width: 2.4rem;
+  color: #175d40;
+  font-size: 0.64rem;
+}
+
+.engine-email-quality li.is-failed > b {
+  color: #823729;
+}
+
 .engine-package-dialog pre {
   max-height: 18rem;
   overflow: auto;
@@ -2888,7 +2931,8 @@ body:has(.engine-shell) {
   }
 
   .engine-package-review-grid,
-  .engine-package-dialog__summary {
+  .engine-package-dialog__summary,
+  .engine-email-quality ul {
     grid-template-columns: 1fr;
   }
 
@@ -2921,7 +2965,9 @@ body:has(.engine-shell) {
   .engine-package-dialog p,
   .engine-package-dialog a,
   .engine-package-dialog li,
-  .engine-package-dialog pre {
+  .engine-package-dialog pre,
+  .engine-email-quality .engine-copy-head > b,
+  .engine-email-quality li > b {
     font-size: 0.875rem;
   }
 

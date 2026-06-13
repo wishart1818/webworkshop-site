@@ -26,24 +26,42 @@ test("outreach remains unapproved and references the prospect", () => {
 
   assert.equal(outreach.approved, false);
   assert.match(outreach.concise, new RegExp(prospect.businessName));
-  assert.match(outreach.concise, /schedule HVAC service/i);
+  assert.match(outreach.concise, /service and replacement inquiries/i);
   assert.match(outreach.concise, /postal address before sending/i);
   assert.match(outreach.concise, /would rather not receive another note/i);
   assert.equal(outreach.subjects.length, 3);
   assert.equal(outreach.followUps.length, 2);
   assert.ok(outreach.followUps.every((followUp) => /would rather not receive another note/i.test(followUp)));
+  assert.ok(outreach.followUps.every((followUp) => /earlier email|follow up/i.test(followUp)));
+  assert.doesNotMatch(outreach.followUps.join("\n"), /happy to send|send it over/i);
 });
 
-test("Outreach Package email includes a protected preview link, real analysis points, and opt-out language", () => {
+test("Outreach Package email includes a public preview link and human sales-ready observations", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
-  const previewLink = "https://webworkshop.dev/engine/previews/seed-prospect-1";
+  const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
   const outreach = generateOutreach(prospect, previewLink);
 
-  assert.match(outreach.concise, /The strongest part|noticed/i);
-  assert.match(outreach.concise, /opportunity/i);
+  assert.match(outreach.concise, /One thing that already works well:/i);
+  assert.match(outreach.concise, /One missed opportunity:/i);
   assert.match(outreach.concise, new RegExp(previewLink.replaceAll("/", "\\/")));
+  assert.match(outreach.concise, /roofing estimate requests/i);
+  assert.match(outreach.concise, /quick 10-minute call/i);
   assert.match(outreach.concise, /would rather not receive another note/i);
+  assert.doesNotMatch(outreach.concise, /\b\d{1,3}\s*\/\s*100\b|\bscore\b/i);
+  assert.doesNotMatch(outreach.concise, /Would it be useful if I sent|happy to send/i);
   assert.doesNotMatch(outreach.concise, /you requested|your request/i);
+  assert.ok(outreach.followUps.every((followUp) => followUp.includes(previewLink)));
+});
+
+test("outreach does not overstate a weak website's strongest category", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  for (const key of Object.keys(prospect.analysis!.scores) as Array<keyof typeof prospect.analysis.scores>) {
+    prospect.analysis!.scores[key] = 25;
+  }
+  const outreach = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF");
+
+  assert.match(outreach.concise, /active website where homeowners can find the business online/i);
+  assert.doesNotMatch(outreach.concise, /already pretty easy|solid technical foundation/i);
 });
 
 test("preview concepts include contractor-specific conversion strategy", () => {

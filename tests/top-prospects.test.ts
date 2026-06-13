@@ -4,8 +4,10 @@ import { handleTopProspectList, topProspectBuildVersion } from "../lib/top-prosp
 import {
   assessOpportunity,
   assessNoWebsiteOpportunity,
+  assertOutreachEmailReady,
   calculateNoWebsitePresenceScores,
   calculateProspectSalesScores,
+  evaluateOutreachEmailQuality,
   generateWebsiteBuildPrompt,
   likelyFranchise,
   likelyNationalOrLargeBrand,
@@ -15,6 +17,7 @@ import {
   outreachPackageStatusLabel,
   prepareTopProspectArtifacts,
   prospectPreviewLink,
+  publicProspectPreviewLink,
   topProspectRejectionReason,
   topProspectResultDisposition,
   validateTopProspectInput,
@@ -22,6 +25,7 @@ import {
 } from "../lib/top-prospects";
 import { seedProspects, withAnalysis } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
+import { createPublicPreviewToken } from "../lib/public-preview-token";
 import { recoverableTopProspect } from "../lib/top-prospect-worker";
 
 function manualAssessment(opportunityScore: number): OpportunityAssessment {
@@ -288,15 +292,16 @@ test("No Website / Social Only prospects receive separate presence scoring and o
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[1]));
-  const prepared = prepareTopProspectArtifacts(prospect);
+  const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF"));
   const prompt = generateWebsiteBuildPrompt(prepared.prospect, prepared.assessment);
 
   assert.equal(prepared.prospect.outreach?.approved, false);
   assert.equal(prepared.prospect.outreach?.subjects.length, 3);
   assert.equal(prepared.prospect.outreach?.followUps.length, 2);
   assert.ok(prepared.prospect.preview);
-  assert.equal(prepared.previewLink, prospectPreviewLink(prospect.id));
+  assert.match(prepared.previewLink, /^https:\/\/webworkshop\.dev\/p\//);
   assert.match(prepared.prospect.outreach?.concise ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
+  assert.equal(prepared.emailQuality.ready, true);
   assert.ok(prepared.assessment.salesScores.weightedSalesScore > 0);
   assert.match(prompt, new RegExp(prospect.businessName));
   assert.match(prompt, /Style profile:/);
@@ -305,6 +310,29 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.match(prompt, /Why this style was selected:/);
   assert.match(prompt, /Do not reuse WebWorkshop branding/i);
   assert.match(prompt, /no invented claims/i);
+});
+
+test("public preview tokens are hard to guess and internal preview links fail send-readiness checks", () => {
+  const token = createPublicPreviewToken();
+  const publicLink = publicProspectPreviewLink(token);
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  const publicPackage = prepareTopProspectArtifacts(prospect, publicLink);
+  const internalPackage = prepareTopProspectArtifacts(prospect, prospectPreviewLink(prospect.id));
+  const scoreLeak = {
+    ...publicPackage.prospect,
+    outreach: {
+      ...publicPackage.prospect.outreach!,
+      concise: `${publicPackage.prospect.outreach!.concise}\nWebsite score: 82/100`,
+    },
+  };
+
+  assert.match(token, /^[A-Za-z0-9_-]{32}$/);
+  assert.equal(publicPackage.emailQuality.ready, true);
+  assert.equal(internalPackage.emailQuality.ready, false);
+  assert.ok(internalPackage.emailQuality.issues.some((issue) => /Public preview link/i.test(issue)));
+  assert.equal(evaluateOutreachEmailQuality(scoreLeak, publicLink).ready, false);
+  assert.throws(() => assertOutreachEmailReady(internalPackage.prospect, internalPackage.previewLink), /cannot be approved/i);
+  assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, publicLink));
 });
 
 test("Outreach Package lifecycle values remain explicit and backwards compatible", () => {

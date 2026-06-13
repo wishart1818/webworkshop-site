@@ -48,13 +48,16 @@ test("Outreach Package bulk review exposes the complete human approval workflow 
   assert.match(topProspectsWorkspace, /Generate Outreach Package/);
   assert.match(topProspectsWorkspace, /Review preview \+ email/);
   assert.match(topProspectsWorkspace, /Approve to Send/);
+  assert.match(topProspectsWorkspace, /Email quality checks/);
+  assert.match(topProspectsWorkspace, /Public preview link/);
   assert.match(topProspectsWorkspace, /Mark Sent/);
   assert.match(topProspectsWorkspace, /Skip/);
   assert.match(topProspectsWorkspace, /Open Lovable/);
   assert.match(topProspectsWorkspace, /Open Bolt/);
   assert.match(topProspectsWorkspace, /Open v0/);
-  assert.match(mobileCss, /\.engine-package-review-grid,\s*\.engine-package-dialog__summary\s*{\s*grid-template-columns: 1fr;/);
+  assert.match(mobileCss, /\.engine-package-review-grid,\s*\.engine-package-dialog__summary,\s*\.engine-email-quality ul\s*{\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.engine-package-card__actions\s*{\s*grid-template-columns: 1fr;/);
+  assert.match(mobileCss, /\.engine-email-quality li > b\s*{\s*font-size: 0\.875rem;/);
 });
 
 test("Top Prospects exposes modes, background batch workflow, queue, and requested score labels", () => {

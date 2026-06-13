@@ -415,8 +415,19 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div className="engine-package-dialog">
               <div className="engine-package-dialog__summary">
                 <div><span>Recommended pitch angle</span><p>{outreachResult.pitchAngle}</p></div>
-                <div><span>Protected preview link</span><a href={outreachResult.previewLink} rel="noreferrer" target="_blank">{outreachResult.previewLink}</a><small>This route stays behind Prospect Engine authentication by default. Confirm recipient access before manually sending.</small></div>
+                <div><span>Public preview link</span><a href={outreachResult.previewLink} rel="noreferrer" target="_blank">{outreachResult.previewLink}</a><small>Safe to include in a prospect email. Internal Prospect Engine pages remain protected.</small></div>
               </div>
+              <section className="engine-email-quality" aria-label="Email quality checks">
+                <div className="engine-copy-head"><h3>Email quality checks</h3><b className={outreachResult.emailQuality.ready ? "is-ready" : "needs-fixes"}>{outreachResult.emailQuality.ready ? "Send-ready" : "Needs fixes"}</b></div>
+                <ul>
+                  {outreachResult.emailQuality.checks.map((check) => (
+                    <li className={check.passed ? "is-passed" : "is-failed"} key={check.key}>
+                      <b>{check.passed ? "Pass" : "Fix"}</b>
+                      <span>{check.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
               <section><h3>Subject lines</h3><ul>{outreachResult.prospect.outreach.subjects.map((subject) => <li key={subject}>{subject}</li>)}</ul></section>
               <section><div className="engine-copy-head"><h3>Short email with preview</h3><button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short email"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
               <section><div className="engine-copy-head"><h3>Detailed email with preview</h3><button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed email"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>
@@ -429,7 +440,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               {outreachResult.packageStatus === "APPROVED_TO_SEND"
                 ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`)} onClick={() => void runPackageAction(outreachResult, "mark_sent")} type="button">Mark Sent</button>
                 : outreachResult.packageStatus !== "SENT" && outreachResult.packageStatus !== "SKIPPED"
-                  ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`)} onClick={() => void runPackageAction(outreachResult, "approve")} type="button">Approve to Send</button>
+                  ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`) || !outreachResult.emailQuality.ready} onClick={() => void runPackageAction(outreachResult, "approve")} type="button">Approve to Send</button>
                   : null}
             </footer>
           </dialog>
@@ -455,7 +466,7 @@ function PackageReviewCard({
   const busy = actioning.startsWith(`${result.id}:`);
   const generated = result.packageStatus !== "NOT_GENERATED" && result.packageStatus !== "SKIPPED";
   const reviewable = generated && result.packageStatus !== "SENT";
-  const approvable = result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW";
+  const approvable = result.emailQuality.ready && (result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW");
   const miniStyle = {
     "--package-primary": profile.primaryColor,
     "--package-accent": profile.accentColor,
@@ -476,6 +487,8 @@ function PackageReviewCard({
         <i>{profile.ctaLabel}</i>
       </div>
       <div className="engine-package-card__copy">
+        <span>Email quality</span>
+        <p><b>{result.emailQuality.ready ? "Send-ready" : `Needs ${result.emailQuality.issues.length} fix${result.emailQuality.issues.length === 1 ? "" : "es"}`}</b></p>
         <span>Recommended pitch</span>
         <p>{result.pitchAngle}</p>
         <span>Email preview</span>

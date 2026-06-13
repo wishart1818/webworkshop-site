@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { activity } from "@/lib/prospect-engine";
 import { getProspectDatabase, getProspect, saveProspect } from "@/lib/prospect-repository";
+import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { discoveryDiagnosticsFromJson, discoveryLeadsFromJson } from "@/lib/lead-discovery";
 import { parseTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import type {
@@ -10,14 +11,18 @@ import type {
   TopProspectResult,
 } from "@/lib/top-prospects";
 import {
+  assertOutreachEmailReady,
   calculateProspectSalesScores,
   calculateNoWebsitePresenceScores,
+  evaluateOutreachEmailQuality,
   normalizeOutreachPackageStatus,
   normalizeProspectMode,
   normalizeTopProspectWorkflowType,
   outreachPackageActionAllowed,
   prepareTopProspectArtifacts,
+  publicProspectPreviewLink,
   topProspectResultDisposition,
+  validPublicPreviewToken,
 } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
@@ -90,6 +95,7 @@ async function toResult(row: JobRow["results"][number], mode: TopProspectInput["
     packageApprovedAt: row.packageApprovedAt?.toISOString() ?? null,
     packageSentAt: row.packageSentAt?.toISOString() ?? null,
     packageSkippedAt: row.packageSkippedAt?.toISOString() ?? null,
+    emailQuality: evaluateOutreachEmailQuality(prospect, row.previewLink),
     prospect,
   };
 }
@@ -181,6 +187,33 @@ export async function listTopProspectJobs() {
   return Promise.all(rows.map(toJob));
 }
 
+export async function getPublicProspectPreview(token: string) {
+  if (!validPublicPreviewToken(token)) return null;
+  await ensureTopProspectSchema();
+  const result = await getProspectDatabase().topProspectResult.findUnique({
+    where: { publicPreviewToken: token },
+    select: { prospectId: true },
+  });
+  if (!result) return null;
+  const prospect = await getProspect(result.prospectId);
+  if (!prospect?.preview) return null;
+  return {
+    ...prospect,
+    website: "",
+    profileUrl: "",
+    email: "",
+    priorityScore: 0,
+    rating: 0,
+    reviewCount: 0,
+    recentReviewCount: 0,
+    sourceConfidence: 0,
+    analysis: undefined,
+    outreach: undefined,
+    notes: [],
+    activities: [],
+  };
+}
+
 export async function findResumableTopProspectJobId(now = new Date()) {
   await ensureTopProspectSchema();
   const row = await getProspectDatabase().topProspectJob.findFirst({
@@ -214,7 +247,8 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
   }
 
   if (action === "generate") {
-    const prepared = prepareTopProspectArtifacts(prospect);
+    const publicPreviewToken = result.publicPreviewToken ?? createPublicPreviewToken();
+    const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken));
     const saved = await saveProspect({
       ...prepared.prospect,
       activities: [
@@ -237,6 +271,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
         pitchAngle: prepared.assessment.pitchAngle,
         buildPrompt: prepared.buildPrompt,
         previewLink: prepared.previewLink,
+        publicPreviewToken,
         packageStatus: "PACKAGE_GENERATED",
         packageGeneratedAt: new Date(),
         packageReviewedAt: null,
@@ -247,6 +282,9 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
     });
     console.info("[outreach-package] Package generated.", { resultId, prospectId: saved.id });
   } else {
+    if (action === "approve") {
+      assertOutreachEmailReady(prospect, result.previewLink);
+    }
     const now = new Date();
     const statusData = action === "ready_for_review"
       ? { packageStatus: "READY_FOR_REVIEW", packageReviewedAt: now }

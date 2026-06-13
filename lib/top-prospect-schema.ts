@@ -9,6 +9,8 @@ export const NO_WEBSITE_PROSPECT_MIGRATION_ID = "20260613_no_website_prospects";
 export const NO_WEBSITE_PROSPECT_MIGRATION_CHECKSUM = "283a230d1dc9e7a6fc460c9e088387e73b954cdf9299afbaf80fab44ccbdcf13";
 export const OUTREACH_PACKAGE_MIGRATION_ID = "20260613_outreach_packages";
 export const OUTREACH_PACKAGE_MIGRATION_CHECKSUM = "cc5c987efa4a1c20ff8cd09521e9a80ec5be6775aff0dd4d2fc60ae1d18fd1fe";
+export const PUBLIC_PREVIEW_TOKEN_MIGRATION_ID = "20260613_public_preview_tokens";
+export const PUBLIC_PREVIEW_TOKEN_MIGRATION_CHECKSUM = "699fdb67a629417516fcd8016b41762d4326720bc8e252440bb2b347ffe1f929";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -34,6 +36,10 @@ export const NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS = [
 export const OUTREACH_PACKAGE_MIGRATION_STATEMENTS = [
   `ALTER TABLE "TopProspectResult" ADD COLUMN IF NOT EXISTS "packageStatus" TEXT NOT NULL DEFAULT 'NOT_GENERATED', ADD COLUMN IF NOT EXISTS "previewLink" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "packageGeneratedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageReviewedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageApprovedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageSentAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageSkippedAt" TIMESTAMP(3)`,
   `CREATE INDEX IF NOT EXISTS "TopProspectResult_packageStatus_createdAt_idx" ON "TopProspectResult"("packageStatus", "createdAt")`,
+] as const;
+export const PUBLIC_PREVIEW_TOKEN_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "TopProspectResult" ADD COLUMN IF NOT EXISTS "publicPreviewToken" TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "TopProspectResult_publicPreviewToken_key" ON "TopProspectResult"("publicPreviewToken")`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -89,6 +95,13 @@ async function applyOutreachPackageUpgrade(transaction: SchemaTransaction) {
   await recordMigration(transaction, OUTREACH_PACKAGE_MIGRATION_ID, OUTREACH_PACKAGE_MIGRATION_CHECKSUM, "000000000007");
 }
 
+async function applyPublicPreviewTokenUpgrade(transaction: SchemaTransaction) {
+  for (const statement of PUBLIC_PREVIEW_TOKEN_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, PUBLIC_PREVIEW_TOKEN_MIGRATION_ID, PUBLIC_PREVIEW_TOKEN_MIGRATION_CHECKSUM, "000000000008");
+}
+
 export class TopProspectSchemaLockUnavailableError extends Error {
   constructor() {
     super("Another Top Prospects schema initialization currently holds the transaction lock.");
@@ -126,6 +139,7 @@ export async function initializeTopProspectSchema(
         await applyTopProspectUpgrade(transaction);
         await applyNoWebsiteProspectUpgrade(transaction);
         await applyOutreachPackageUpgrade(transaction);
+        await applyPublicPreviewTokenUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -137,6 +151,7 @@ export async function initializeTopProspectSchema(
       await applyTopProspectUpgrade(transaction);
       await applyNoWebsiteProspectUpgrade(transaction);
       await applyOutreachPackageUpgrade(transaction);
+      await applyPublicPreviewTokenUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

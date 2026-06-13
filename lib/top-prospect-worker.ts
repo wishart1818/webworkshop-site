@@ -4,14 +4,16 @@ import {
   discoveryLeadsFromJson,
   type DiscoveredLead,
 } from "@/lib/lead-discovery";
-import { activity, calculatePriority, createProspect } from "@/lib/prospect-engine";
+import { activity, calculatePriority, createProspect, type Prospect } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { analyzePublicWebsite } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
   normalizeProspectMode,
   normalizeWebsite,
   prepareTopProspectArtifacts,
+  publicProspectPreviewLink,
   type ProspectMode,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
@@ -91,13 +93,23 @@ async function finalizeJob(jobId: string, wanted: number) {
 
 async function saveTopProspectResult(
   jobId: string,
-  prospect: NonNullable<Awaited<ReturnType<typeof findProspectByWebsite>>>,
+  prospect: Prospect,
   mode: ProspectMode,
 ) {
-  const prepared = prepareTopProspectArtifacts(prospect);
+  const database = getProspectDatabase();
+  const existingResult = await database.topProspectResult.findUnique({
+    where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
+    select: { publicPreviewToken: true },
+  });
+  const publicPreviewToken = existingResult?.publicPreviewToken ?? createPublicPreviewToken();
+  const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken));
   const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode);
   const scores = prepared.assessment.salesScores;
-  await getProspectDatabase().topProspectResult.upsert({
+  await saveProspect({
+    ...prepared.prospect,
+    priorityScore: scores.weightedSalesScore,
+  });
+  await database.topProspectResult.upsert({
     where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
     update: {
       opportunityScore: prepared.assessment.opportunityScore,
@@ -111,6 +123,7 @@ async function saveTopProspectResult(
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: prepared.buildPrompt,
       previewLink: prepared.previewLink,
+      publicPreviewToken,
       packageStatus: "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
       packageReviewedAt: null,
@@ -133,6 +146,7 @@ async function saveTopProspectResult(
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: prepared.buildPrompt,
       previewLink: prepared.previewLink,
+      publicPreviewToken,
       packageStatus: "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
       selected: rejectionReason === null,
@@ -214,17 +228,15 @@ async function processLead(
     };
   }
 
-  const prepared = prepareTopProspectArtifacts(prospect);
-  const saved = await saveProspect({
-    ...prepared.prospect,
-    priorityScore: prepared.assessment.salesScores.weightedSalesScore,
+  prospect = {
+    ...prospect,
     activities: [
       activity("preview", "Website preview and build prompt added to the Auto Prospect Queue."),
       activity("outreach", "Personalized outreach draft added to the Auto Prospect Queue for human approval."),
-      ...prepared.prospect.activities,
+      ...prospect.activities,
     ],
-  });
-  const rejectionReason = await saveTopProspectResult(jobId, saved, mode);
+  };
+  const rejectionReason = await saveTopProspectResult(jobId, prospect, mode);
   if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
   return rejectionReason === null;
 }

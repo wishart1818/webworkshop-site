@@ -94,7 +94,20 @@ export type TopProspectResult = OpportunityAssessment & {
   packageApprovedAt: string | null;
   packageSentAt: string | null;
   packageSkippedAt: string | null;
+  emailQuality: OutreachEmailQuality;
   prospect: Prospect;
+};
+
+export type OutreachEmailQualityCheck = {
+  key: string;
+  label: string;
+  passed: boolean;
+};
+
+export type OutreachEmailQuality = {
+  ready: boolean;
+  checks: OutreachEmailQualityCheck[];
+  issues: string[];
 };
 
 export type TopProspectJob = {
@@ -208,6 +221,87 @@ export function normalizeOutreachPackageStatus(value: unknown): OutreachPackageS
 
 export function prospectPreviewLink(prospectId: string) {
   return `${siteUrl}/engine/previews/${encodeURIComponent(prospectId)}`;
+}
+
+export function validPublicPreviewToken(value: string) {
+  return /^[A-Za-z0-9_-]{32}$/.test(value);
+}
+
+export function publicProspectPreviewLink(token: string) {
+  if (!validPublicPreviewToken(token)) throw new Error("A valid public preview token is required.");
+  return `${siteUrl}/p/${token}`;
+}
+
+function isPublicPreviewLink(value: string) {
+  try {
+    const url = new URL(value);
+    return url.origin === new URL(siteUrl).origin
+      && url.pathname.startsWith("/p/")
+      && validPublicPreviewToken(url.pathname.slice(3));
+  } catch {
+    return false;
+  }
+}
+
+export function evaluateOutreachEmailQuality(prospect: Prospect, previewLink: string): OutreachEmailQuality {
+  const outreach = prospect.outreach;
+  const drafts = outreach ? [outreach.concise, outreach.detailed, ...outreach.followUps] : [];
+  const combined = drafts.join("\n");
+  const mainEmails = outreach ? [outreach.concise, outreach.detailed] : [];
+  const publicLinkReady = isPublicPreviewLink(previewLink)
+    && mainEmails.every((draft) => draft.includes(previewLink))
+    && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier email/i.test(draft)));
+  const checks: OutreachEmailQualityCheck[] = [
+    {
+      key: "public_preview_link",
+      label: "Public preview link exists and is included",
+      passed: publicLinkReady,
+    },
+    {
+      key: "no_internal_scores",
+      label: "Email contains no internal score language",
+      passed: drafts.length > 0
+        && !/\b\d{1,3}\s*\/\s*100\b|\bscore(?:d)?(?:\s+of|:)?\s+\d{1,3}\b|\b(?:overall|website|opportunity|conversion readiness|mobile experience|trust signals|contactability|weighted sales)\s+score\b|\b(?:website quality|revenue opportunity|contactability|local market competitiveness|ai website replacement confidence|weighted sales|mobile experience|conversion readiness|trust signals|opportunity)\b.{0,30}\b\d{1,3}\b/i.test(combined),
+    },
+    {
+      key: "real_strength",
+      label: "Email includes one real strength",
+      passed: mainEmails.length === 2 && mainEmails.every((draft) => /one thing that already works well:/i.test(draft)),
+    },
+    {
+      key: "missed_opportunity",
+      label: "Email includes one real missed opportunity",
+      passed: mainEmails.length === 2 && mainEmails.every((draft) => /one missed opportunity:/i.test(draft)),
+    },
+    {
+      key: "clear_cta",
+      label: "Email includes a clear call to action",
+      passed: mainEmails.length === 2 && mainEmails.every((draft) => /would you be open to a quick 10-minute call/i.test(draft)),
+    },
+    {
+      key: "opt_out",
+      label: "Every draft includes opt-out language",
+      passed: drafts.length >= 4 && drafts.every((draft) => /would rather not receive another note/i.test(draft)),
+    },
+    {
+      key: "postal_address",
+      label: "Every draft includes a postal address or placeholder",
+      passed: drafts.length >= 4 && drafts.every((draft) => /\[Add your business postal address before sending\]/i.test(draft)),
+    },
+  ];
+  return {
+    ready: checks.every((check) => check.passed),
+    checks,
+    issues: checks.filter((check) => !check.passed).map((check) => check.label),
+  };
+}
+
+export function assertOutreachEmailReady(prospect: Prospect, previewLink: string) {
+  const quality = evaluateOutreachEmailQuality(prospect, previewLink);
+  if (!quality.ready) {
+    throw new Error(`This Outreach Package cannot be approved before all email quality checks pass: ${quality.issues.join(", ")}.`);
+  }
+  return quality;
 }
 
 export function outreachPackageStatusLabel(status: OutreachPackageStatus) {
@@ -465,7 +559,13 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink = pr
   const assessment = prospect.prospectType === "no_website_social_only"
     ? assessNoWebsiteOpportunity(withArtifacts)
     : assessOpportunity(withArtifacts);
-  return { prospect: withArtifacts, assessment, buildPrompt: generateWebsiteBuildPrompt(withArtifacts, assessment), previewLink };
+  return {
+    prospect: withArtifacts,
+    assessment,
+    buildPrompt: generateWebsiteBuildPrompt(withArtifacts, assessment),
+    previewLink,
+    emailQuality: evaluateOutreachEmailQuality(withArtifacts, previewLink),
+  };
 }
 
 export function validateTopProspectInput(value: unknown): { ok: true; value: TopProspectInput } | { ok: false; error: string } {
