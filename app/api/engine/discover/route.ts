@@ -17,6 +17,9 @@ export async function POST(request: Request) {
       state: typeof input.state === "string" ? input.state : "",
       trade: input.trade as TradeCategory,
       radiusKm: Number(input.radiusKm),
+      logger(event, metadata) {
+        console.info(`[lead-discovery] ${event}.`, metadata);
+      },
     });
     await safeRecordAudit({
       action: "lead_discovery",
@@ -30,6 +33,8 @@ export async function POST(request: Request) {
         afterDistanceFilteringCount: result.diagnostics.afterDistanceFilteringCount,
         afterDuplicateFilteringCount: result.diagnostics.afterDuplicateFilteringCount,
         afterQualificationFilteringCount: result.diagnostics.afterQualificationFilteringCount,
+        finalMergedCount: result.diagnostics.finalMergedCount,
+        ...result.diagnostics.sourceCounts,
       },
     });
     return NextResponse.json(result);

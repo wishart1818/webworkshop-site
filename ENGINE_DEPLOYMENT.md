@@ -35,6 +35,12 @@ In **Vercel project settings > Environment Variables**, add:
 | `NEXT_PUBLIC_SITE_URL` | Recommended | The public production URL, such as `https://webworkshop.dev` |
 | `NOMINATIM_API_URL` | No | Optional approved geocoding endpoint override |
 | `OVERPASS_API_URL` | No | Optional approved public-map discovery endpoint override |
+| `GOOGLE_PLACES_API_KEY` | No | Enables licensed Google Places text search enrichment |
+| `AZURE_MAPS_API_KEY` | No | Preferred Microsoft local-business source; enables Azure Maps POI Search |
+| `BING_MAPS_API_KEY` | No | Legacy Bing Local Search for eligible enterprise accounts only, until June 30, 2028 |
+| `YELP_API_KEY` | No | Enables Yelp business identity, phone, rating, and review-count enrichment |
+| `YELLOW_PAGES_API_URL` | No | Approved/licensed directory endpoint returning `businesses`, `results`, or `records` |
+| `YELLOW_PAGES_API_KEY` | No | Optional bearer token for the approved directory endpoint |
 
 Apply production secrets to the **Production** environment. Use separate credentials and a separate database for Preview if preview deployments need engine access.
 
@@ -129,6 +135,7 @@ This isolation means an engine configuration problem must not take down or prote
 
 - Without `DATABASE_URL`, local development uses server memory that resets when the server restarts.
 - Default Nominatim and Overpass discovery is suitable only for low-volume, user-triggered research.
+- Google Places, Bing Local, Yelp, and Yellow Pages enrichment remain disabled until their licensed server-side credentials or approved endpoint are configured. The engine does not scrape search-result pages.
 - Website analysis and generated content use deterministic application logic, not a paid AI provider.
 - Basic authentication is appropriate for one trusted operator, not a multi-user team with roles.
 - Monitoring, alerting, retention policy, and provider-specific backup verification must be configured operationally.

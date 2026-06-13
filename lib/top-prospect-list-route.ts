@@ -30,12 +30,20 @@ const listDependencies: ListDependencies = {
   listJobs: listTopProspectJobs,
 };
 
+export function topProspectBuildVersion(environment: NodeJS.ProcessEnv = process.env) {
+  const commit = environment.VERCEL_GIT_COMMIT_SHA?.trim();
+  if (commit) return `provider-diagnostics-v2-${commit.slice(0, 7)}`;
+  const deployment = environment.VERCEL_DEPLOYMENT_ID?.trim();
+  if (deployment) return `provider-diagnostics-v2-${deployment.slice(0, 12)}`;
+  return "provider-diagnostics-v2";
+}
+
 export async function handleTopProspectList(request: Request, dependencies: ListDependencies = listDependencies) {
   try {
     const jobs = await dependencies.listJobs();
     const resumableJobId = await dependencies.findResumableJobId();
     if (resumableJobId) dependencies.continueJob(request, resumableJobId);
-    return NextResponse.json({ jobs });
+    return NextResponse.json({ jobs, buildVersion: topProspectBuildVersion() });
   } catch (error) {
     return NextResponse.json(
       { error: "Top Prospects requires a reachable PostgreSQL database.", ...safeTopProspectFailure(error) },

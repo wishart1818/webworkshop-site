@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
+import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import { tradeCategories } from "@/lib/prospect-engine";
 import type { TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
@@ -13,10 +14,40 @@ type Props = {
 };
 
 type TopProspectApiPayload = {
+  buildVersion?: string;
   classification?: string;
   error?: string;
   jobs?: TopProspectJob[];
 };
+
+function legacyJobDiagnostics(job: TopProspectJob): DiscoveryDiagnostics {
+  const notRecorded = {
+    configured: null,
+    queryExecuted: null,
+    status: "not_recorded" as const,
+    returnedCount: 0,
+    withinRadiusCount: 0,
+    afterDeduplicationCount: 0,
+    usableWebsiteCount: 0,
+  };
+  return {
+    rawProviderCount: job.discoveredCount,
+    afterDistanceFilteringCount: job.discoveredCount,
+    afterDuplicateFilteringCount: job.discoveredCount,
+    afterQualificationFilteringCount: job.discoveredCount,
+    returnedCount: job.discoveredCount,
+    radiusKm: job.input.radiusKm,
+    categorySignals: [],
+    sourceCounts: { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+    providerDiagnostics: {
+      osm: { ...notRecorded },
+      azureMaps: { ...notRecorded },
+      googlePlaces: { ...notRecorded },
+      yelp: { ...notRecorded },
+    },
+    finalMergedCount: job.discoveredCount,
+  };
+}
 
 function apiError(payload: TopProspectApiPayload, fallback: string) {
   const message = payload.error || fallback;
@@ -67,6 +98,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [jobs, setJobs] = useState<TopProspectJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [buildVersion, setBuildVersion] = useState("unknown");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [promptResult, setPromptResult] = useState<TopProspectResult | null>(null);
@@ -80,6 +112,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       const payload = (await response.json()) as TopProspectApiPayload;
       if (!response.ok || !payload.jobs) throw new Error(apiError(payload, "Unable to load Top Prospects."));
       setJobs(payload.jobs);
+      setBuildVersion(payload.buildVersion || "unknown");
       setError("");
       if (payload.jobs[0]?.status === "COMPLETED") onProspectsChanged();
     } catch (loadError) {
@@ -156,7 +189,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       <section className="engine-panel engine-top-prospect-launcher">
         <div className="engine-panel__head">
           <div><h2>Find Top Prospects</h2><p>Scan public business records, analyze qualified websites, and return the strongest manual-outreach opportunities.</p></div>
-          <span>Runs safely in saved batches</span>
+          <div className="engine-build-label"><span>Runs safely in saved batches</span><code>Build {buildVersion}</code></div>
         </div>
         <form onSubmit={startJob}>
           <label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -179,6 +212,11 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{latestJob.status === "COMPLETED" ? "Ranked results are ready for review." : latestJob.status === "FAILED" ? "Processing stopped before completion. Review the diagnostic below." : "You can leave this page. Progress is saved after every batch."}</p></div>
             <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase()}`}>{latestJob.status.toLowerCase()}</span>
           </div>
+          <div className="engine-job-meta">
+            <span>Job ID <code>{latestJob.id}</code></span>
+            <span>Created <time dateTime={latestJob.createdAt}>{latestJob.createdAt}</time></span>
+            <span>Updated <time dateTime={latestJob.updatedAt}>{latestJob.updatedAt}</time></span>
+          </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
           <div className="engine-job-stats">
             <span><b>{latestJob.discoveredCount}</b> discovered</span>
@@ -195,7 +233,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <code>{latestJob.failureClassification}</code>
             </div>
           )}
-          {latestJob.discoveryDiagnostics && <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics} />}
+          <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} />
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
         </section>
       )}

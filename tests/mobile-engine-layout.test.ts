@@ -20,6 +20,7 @@ test("engine phone layout removes desktop-width result overflow", () => {
   assert.match(mobileCss, /\.engine-pipeline\s*{\s*grid-template-columns: 1fr;\s*overflow-x: visible;/);
   assert.match(mobileCss, /\.engine-top-table article\s*{\s*min-width: 0;\s*grid-template-columns: 1fr;/);
   assert.doesNotMatch(mobileCss, /min-width:\s*36rem/);
+  assert.match(mobileCss, /\.engine-provider-diagnostic dl\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });
 
 test("engine phone controls and navigation account for iPhone interaction constraints", () => {

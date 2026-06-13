@@ -26,9 +26,13 @@ export async function GET() {
       },
       discovery: {
         configured: true,
-        message: process.env.OVERPASS_API_URL || process.env.NOMINATIM_API_URL
-          ? "Custom public-data provider endpoints are configured."
-          : "Default low-volume public-data providers are active.",
+        message: [
+          "OSM",
+          process.env.GOOGLE_PLACES_API_KEY && "Google Places",
+          (process.env.AZURE_MAPS_API_KEY || process.env.BING_MAPS_API_KEY) && "Microsoft Local",
+          process.env.YELP_API_KEY && "Yelp",
+          process.env.YELLOW_PAGES_API_URL && "Yellow Pages",
+        ].filter(Boolean).join(", ") + " discovery sources are active.",
       },
       audit: {
         configured: true,

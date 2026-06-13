@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleTopProspectList } from "../lib/top-prospect-list-route";
+import { handleTopProspectList, topProspectBuildVersion } from "../lib/top-prospect-list-route";
 import {
   assessOpportunity,
   generateWebsiteBuildPrompt,
@@ -143,8 +143,14 @@ test("returning to Top Prospects automatically resumes a stalled saved job", asy
   );
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { jobs: [] });
+  assert.deepEqual(await response.json(), { jobs: [], buildVersion: topProspectBuildVersion() });
   assert.equal(continuedJobId, "stalled-job");
+});
+
+test("Top Prospects build version safely identifies the deployed commit", () => {
+  assert.equal(topProspectBuildVersion({ VERCEL_GIT_COMMIT_SHA: "abcdef1234567890" }), "provider-diagnostics-v2-abcdef1");
+  assert.equal(topProspectBuildVersion({ VERCEL_DEPLOYMENT_ID: "deployment-1234567890" }), "provider-diagnostics-v2-deployment-1");
+  assert.equal(topProspectBuildVersion({}), "provider-diagnostics-v2");
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
