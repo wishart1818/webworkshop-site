@@ -9,6 +9,7 @@ import {
   type ProspectStatus,
   type TradeCategory,
 } from "@/lib/prospect-engine";
+import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const globalStore = globalThis as typeof globalThis & {
   prospectMemory?: Prospect[];
@@ -100,7 +101,9 @@ function toDomain(row: StoredProspect): Prospect {
   return {
     id: row.id,
     businessName: row.businessName,
-    website: row.website,
+    website: row.website ?? "",
+    profileUrl: row.profileUrl ?? "",
+    prospectType: row.prospectType as Prospect["prospectType"],
     phone: row.phone ?? "",
     email: row.publicEmail ?? "",
     city: row.city,
@@ -110,6 +113,10 @@ function toDomain(row: StoredProspect): Prospect {
     serviceArea: row.serviceArea ?? "",
     sizeIndicator: (row.sizeIndicator ?? "Small") as Prospect["sizeIndicator"],
     priorityScore: row.priorityScore,
+    rating: row.rating,
+    reviewCount: row.reviewCount,
+    recentReviewCount: row.recentReviewCount,
+    sourceConfidence: row.sourceConfidence,
     analysis,
     outreach,
     preview,
@@ -137,7 +144,9 @@ async function persistProspect(prospect: Prospect) {
       create: {
         id: prospect.id,
         businessName: prospect.businessName,
-        website: prospect.website,
+        website: prospect.website || null,
+        profileUrl: prospect.profileUrl || null,
+        prospectType: prospect.prospectType,
         phone: prospect.phone || null,
         publicEmail: prospect.email || null,
         city: prospect.city,
@@ -146,12 +155,18 @@ async function persistProspect(prospect: Prospect) {
         serviceArea: prospect.serviceArea,
         sizeIndicator: prospect.sizeIndicator,
         priorityScore: prospect.priorityScore,
+        rating: prospect.rating,
+        reviewCount: prospect.reviewCount,
+        recentReviewCount: prospect.recentReviewCount,
+        sourceConfidence: prospect.sourceConfidence,
         status: toPrismaStatus[prospect.status],
         createdAt: new Date(prospect.createdAt),
       },
       update: {
         businessName: prospect.businessName,
-        website: prospect.website,
+        website: prospect.website || null,
+        profileUrl: prospect.profileUrl || null,
+        prospectType: prospect.prospectType,
         phone: prospect.phone || null,
         publicEmail: prospect.email || null,
         city: prospect.city,
@@ -160,6 +175,10 @@ async function persistProspect(prospect: Prospect) {
         serviceArea: prospect.serviceArea,
         sizeIndicator: prospect.sizeIndicator,
         priorityScore: prospect.priorityScore,
+        rating: prospect.rating,
+        reviewCount: prospect.reviewCount,
+        recentReviewCount: prospect.recentReviewCount,
+        sourceConfidence: prospect.sourceConfidence,
         status: toPrismaStatus[prospect.status],
       },
     });
@@ -234,6 +253,7 @@ async function persistProspect(prospect: Prospect) {
 export async function listProspects(): Promise<Prospect[]> {
   assertPersistenceAvailable();
   if (!hasDatabase) return structuredClone(getMemoryStore());
+  await ensureTopProspectSchema();
   const prisma = getProspectDatabase();
   const count = await prisma.prospect.count();
   if (count === 0) {
@@ -251,6 +271,7 @@ export async function saveProspect(prospect: Prospect): Promise<Prospect> {
     else store.unshift(structuredClone(prospect));
     return structuredClone(prospect);
   }
+  await ensureTopProspectSchema();
   await persistProspect(prospect);
   const row = await getProspectDatabase().prospect.findUniqueOrThrow({ where: { id: prospect.id }, include: prospectInclude });
   return toDomain(row);
@@ -259,14 +280,46 @@ export async function saveProspect(prospect: Prospect): Promise<Prospect> {
 export async function getProspect(id: string): Promise<Prospect | null> {
   assertPersistenceAvailable();
   if (!hasDatabase) return structuredClone(getMemoryStore().find((item) => item.id === id) ?? null);
+  await ensureTopProspectSchema();
   const row = await getProspectDatabase().prospect.findUnique({ where: { id }, include: prospectInclude });
   return row ? toDomain(row) : null;
 }
 
 export async function findProspectByWebsite(website: string): Promise<Prospect | null> {
   assertPersistenceAvailable();
+  if (!website.trim()) return null;
   if (!hasDatabase) return structuredClone(getMemoryStore().find((item) => item.website === website) ?? null);
+  await ensureTopProspectSchema();
   const row = await getProspectDatabase().prospect.findUnique({ where: { website }, include: prospectInclude });
+  return row ? toDomain(row) : null;
+}
+
+export async function findProspectByIdentity(input: Pick<Prospect, "businessName" | "phone" | "city" | "state">): Promise<Prospect | null> {
+  assertPersistenceAvailable();
+  if (!hasDatabase) {
+    const matching = getMemoryStore().find((item) =>
+      Boolean(input.phone && item.phone === input.phone)
+      || (
+        item.businessName.toLowerCase() === input.businessName.toLowerCase()
+        && item.city.toLowerCase() === input.city.toLowerCase()
+        && item.state.toLowerCase() === input.state.toLowerCase()
+      ));
+    return structuredClone(matching ?? null);
+  }
+  await ensureTopProspectSchema();
+  const row = await getProspectDatabase().prospect.findFirst({
+    where: {
+      OR: [
+        ...(input.phone ? [{ phone: input.phone }] : []),
+        {
+          businessName: { equals: input.businessName, mode: "insensitive" },
+          city: { equals: input.city, mode: "insensitive" },
+          state: { equals: input.state, mode: "insensitive" },
+        },
+      ],
+    },
+    include: prospectInclude,
+  });
   return row ? toDomain(row) : null;
 }
 

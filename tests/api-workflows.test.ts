@@ -4,6 +4,7 @@ import { POST as analyze } from "../app/api/engine/analyze/route";
 import { POST as discover } from "../app/api/engine/discover/route";
 import { GET as list, POST as create, PUT as update } from "../app/api/engine/prospects/route";
 import { GET as systemStatus } from "../app/api/engine/system/route";
+import { POST as updateOutreachPackage } from "../app/api/engine/top-prospects/results/[resultId]/package/route";
 import {
   memoryAuditEventsForTests,
   recordAudit,
@@ -95,6 +96,19 @@ test("invalid prospect, discovery, and analysis requests are rejected", async ()
   const outcomes = memoryAuditEventsForTests().map((event) => event.outcome);
   assert.ok(outcomes.includes("rejected"));
   assert.ok(outcomes.includes("rejected"));
+});
+
+test("Outreach Package endpoint rejects unsupported actions before persistence access", async () => {
+  const response = await updateOutreachPackage(
+    new Request("https://example.com/api/engine/top-prospects/results/result-id/package", {
+      method: "POST",
+      body: JSON.stringify({ action: "send_automatically" }),
+    }),
+    { params: Promise.resolve({ resultId: "result-id" }) },
+  );
+
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /supported Outreach Package action/);
 });
 
 test("unexpected discovery failures do not expose internal error details", async () => {

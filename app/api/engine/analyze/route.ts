@@ -17,6 +17,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
     prospectId = validation.value.id;
+    if (validation.value.prospectType === "no_website_social_only" || !validation.value.website) {
+      return NextResponse.json({ error: "No owned website is available to analyze for this prospect." }, { status: 422 });
+    }
     const hostname = new URL(validation.value.website).hostname;
     await enforceRateLimit({ action: "website_analysis", subject: hostname, limit: 6, windowMs: 60 * 60 * 1000 });
 

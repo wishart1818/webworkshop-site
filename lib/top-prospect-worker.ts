@@ -5,12 +5,14 @@ import {
   type DiscoveredLead,
 } from "@/lib/lead-discovery";
 import { activity, calculatePriority, createProspect } from "@/lib/prospect-engine";
-import { findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { analyzePublicWebsite } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
+  normalizeProspectMode,
   normalizeWebsite,
   prepareTopProspectArtifacts,
+  type ProspectMode,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
@@ -36,10 +38,12 @@ export function recoverableTopProspect(prospect: Awaited<ReturnType<typeof findP
   return Boolean(
     prospect
     && Date.parse(prospect.createdAt) >= jobCreatedAt.getTime()
-    && prospect.analysis
+    && (prospect.prospectType === "no_website_social_only" || prospect.analysis)
     && prospect.outreach
     && prospect.preview
-    && prospect.activities.some((item) => item.label.startsWith("Automated Top Prospects analysis completed")),
+    && prospect.activities.some((item) =>
+      item.label.startsWith("Automated Top Prospects analysis completed")
+      || item.label.startsWith("Automated online presence gap review completed")),
   );
 }
 
@@ -70,7 +74,7 @@ async function finalizeJob(jobId: string, wanted: number) {
   const database = getProspectDatabase();
   const ranked = await database.topProspectResult.findMany({
     where: { jobId, selected: true },
-    orderBy: [{ opportunityScore: "desc" }, { createdAt: "asc" }],
+    orderBy: [{ weightedSalesScore: "desc" }, { createdAt: "asc" }],
   });
   await database.$transaction([
     database.topProspectResult.updateMany({ where: { jobId }, data: { selected: false, rank: null } }),
@@ -85,50 +89,86 @@ async function finalizeJob(jobId: string, wanted: number) {
   ]);
 }
 
-async function saveTopProspectResult(jobId: string, prospect: NonNullable<Awaited<ReturnType<typeof findProspectByWebsite>>>) {
+async function saveTopProspectResult(
+  jobId: string,
+  prospect: NonNullable<Awaited<ReturnType<typeof findProspectByWebsite>>>,
+  mode: ProspectMode,
+) {
   const prepared = prepareTopProspectArtifacts(prospect);
-  const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment);
+  const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode);
+  const scores = prepared.assessment.salesScores;
   await getProspectDatabase().topProspectResult.upsert({
     where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
     update: {
       opportunityScore: prepared.assessment.opportunityScore,
+      ...scores,
+      prospectType: prospect.prospectType,
+      onlinePresenceGapScore: prepared.assessment.presenceScores?.onlinePresenceGapScore ?? 0,
+      businessActivityScore: prepared.assessment.presenceScores?.businessActivityScore ?? 0,
+      websiteNeedScore: prepared.assessment.presenceScores?.websiteNeedScore ?? 0,
       mainWeakness: prepared.assessment.mainWeakness,
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: prepared.buildPrompt,
+      previewLink: prepared.previewLink,
+      packageStatus: "PACKAGE_GENERATED",
+      packageGeneratedAt: new Date(),
+      packageReviewedAt: null,
+      packageApprovedAt: null,
+      packageSentAt: null,
+      packageSkippedAt: null,
       selected: rejectionReason === null,
     },
     create: {
       jobId,
       prospectId: prospect.id,
       opportunityScore: prepared.assessment.opportunityScore,
+      ...scores,
+      prospectType: prospect.prospectType,
+      onlinePresenceGapScore: prepared.assessment.presenceScores?.onlinePresenceGapScore ?? 0,
+      businessActivityScore: prepared.assessment.presenceScores?.businessActivityScore ?? 0,
+      websiteNeedScore: prepared.assessment.presenceScores?.websiteNeedScore ?? 0,
       mainWeakness: prepared.assessment.mainWeakness,
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: prepared.buildPrompt,
+      previewLink: prepared.previewLink,
+      packageStatus: "PACKAGE_GENERATED",
+      packageGeneratedAt: new Date(),
       selected: rejectionReason === null,
     },
   });
   return rejectionReason;
 }
 
-async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLead, summary: Record<string, number>) {
+async function processLead(
+  jobId: string,
+  jobCreatedAt: Date,
+  lead: DiscoveredLead,
+  summary: Record<string, number>,
+  mode: ProspectMode,
+) {
   if (likelyNationalOrLargeBrand(lead)) {
     addSkip(summary, "national_large_brand");
     return false;
   }
-  if (!lead.phone && !lead.email) {
+  if (mode !== "volume" && !lead.phone && !lead.email) {
     addSkip(summary, "no_usable_contact_path");
     return false;
   }
-  const normalized = normalizeWebsite(lead.website);
-  const matchingWebsite = await getProspectDatabase().prospect.findFirst({
-    where: { website: { contains: new URL(lead.website).hostname.replace(/^www\./, ""), mode: "insensitive" } },
-    select: { website: true },
-  });
-  const existing = matchingWebsite && normalizeWebsite(matchingWebsite.website) === normalized
-    ? await findProspectByWebsite(matchingWebsite.website)
-    : await findProspectByWebsite(lead.website);
+  let existing = null;
+  if (lead.website) {
+    const normalized = normalizeWebsite(lead.website);
+    const matchingWebsite = await getProspectDatabase().prospect.findFirst({
+      where: { website: { contains: new URL(lead.website).hostname.replace(/^www\./, ""), mode: "insensitive" } },
+      select: { website: true },
+    });
+    existing = matchingWebsite?.website && normalizeWebsite(matchingWebsite.website) === normalized
+      ? await findProspectByWebsite(matchingWebsite.website)
+      : await findProspectByWebsite(lead.website);
+  } else {
+    existing = await findProspectByIdentity(lead);
+  }
   if (existing) {
     const existingResult = await getProspectDatabase().topProspectResult.findUnique({
       where: { jobId_prospectId: { jobId, prospectId: existing.id } },
@@ -141,9 +181,9 @@ async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLe
     }
     if (
       recoverableTopProspect(existing, jobCreatedAt)
-      || (existing.analysis && existing.outreach && existing.preview)
+      || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach && existing.preview)
     ) {
-      const rejectionReason = await saveTopProspectResult(jobId, existing);
+      const rejectionReason = await saveTopProspectResult(jobId, existing, mode);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
       return rejectionReason === null;
     }
@@ -152,30 +192,39 @@ async function processLead(jobId: string, jobCreatedAt: Date, lead: DiscoveredLe
   }
 
   let prospect = createProspect({ ...lead, sizeIndicator: "Growing", status: "New" });
-  try {
-    const analysis = await analyzePublicWebsite(prospect);
+  if (prospect.prospectType === "redesign") {
+    try {
+      const analysis = await analyzePublicWebsite(prospect);
+      prospect = {
+        ...prospect,
+        analysis,
+        priorityScore: calculatePriority(analysis, prospect.sizeIndicator, prospect.serviceArea),
+        status: "Reviewed",
+        activities: [activity("analysis", `Automated Top Prospects analysis completed with a score of ${analysis.overallScore}.`), ...prospect.activities],
+      };
+    } catch {
+      addSkip(summary, "broken_or_inactive_website");
+      return false;
+    }
+  } else {
     prospect = {
       ...prospect,
-      analysis,
-      priorityScore: calculatePriority(analysis, prospect.sizeIndicator, prospect.serviceArea),
       status: "Reviewed",
-      activities: [activity("analysis", `Automated Top Prospects analysis completed with a score of ${analysis.overallScore}.`), ...prospect.activities],
+      activities: [activity("analysis", "Automated online presence gap review completed."), ...prospect.activities],
     };
-  } catch {
-    addSkip(summary, "broken_or_inactive_website");
-    return false;
   }
 
   const prepared = prepareTopProspectArtifacts(prospect);
   const saved = await saveProspect({
     ...prepared.prospect,
+    priorityScore: prepared.assessment.salesScores.weightedSalesScore,
     activities: [
-      activity("preview", "Website preview and build prompt prepared for manual review."),
-      activity("outreach", "Personalized outreach draft generated for human review."),
+      activity("preview", "Website preview and build prompt added to the Auto Prospect Queue."),
+      activity("outreach", "Personalized outreach draft added to the Auto Prospect Queue for human approval."),
       ...prepared.prospect.activities,
     ],
   });
-  const rejectionReason = await saveTopProspectResult(jobId, saved);
+  const rejectionReason = await saveTopProspectResult(jobId, saved, mode);
   if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
   return rejectionReason === null;
 }
@@ -201,6 +250,7 @@ export async function processTopProspectJob(jobId: string) {
         trade: job.tradeCategory as DiscoveredLead["trade"],
         radiusKm: job.radiusKm,
         limit: job.businessesToScan,
+        prospectType: job.prospectType as DiscoveredLead["prospectType"],
         logger(event, metadata) {
           console.info(`[top-prospects] ${event}.`, { jobId: job.id, ...metadata });
         },
@@ -214,6 +264,7 @@ export async function processTopProspectJob(jobId: string) {
     }
 
     const leads = discoveryLeadsFromJson(job.discoveredLeads);
+    const mode = normalizeProspectMode(job.prospectMode);
     const batch = leads.slice(job.nextLeadIndex, job.nextLeadIndex + BATCH_SIZE);
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;
@@ -222,10 +273,10 @@ export async function processTopProspectJob(jobId: string) {
         console.info("[top-prospects] First candidate processing started.", {
           jobId: job.id,
           businessName: lead.businessName,
-          websiteHost: new URL(lead.website).hostname,
+          websiteHost: lead.website ? new URL(lead.website).hostname : "no-owned-website",
         });
       }
-      if (await processLead(job.id, job.createdAt, lead, summary)) qualified += 1;
+      if (await processLead(job.id, job.createdAt, lead, summary, mode)) qualified += 1;
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
     const done = nextLeadIndex >= leads.length || nextLeadIndex >= job.businessesToScan;

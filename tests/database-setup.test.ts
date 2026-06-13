@@ -259,7 +259,8 @@ test("database initializer creates and records the complete schema once", async 
 
 test("database initializer checksums match the reviewed Prisma migration files", () => {
   for (const migration of productionSetupManifest.migrations) {
-    const sql = readFileSync(path.join(process.cwd(), "prisma", "migrations", migration.id, "migration.sql"));
+    const sql = readFileSync(path.join(process.cwd(), "prisma", "migrations", migration.id, "migration.sql"), "utf8")
+      .replaceAll("\r\n", "\n");
     assert.equal(createHash("sha256").update(sql).digest("hex"), migration.checksum);
   }
 });
@@ -287,7 +288,7 @@ test("database initializer safely upgrades the complete legacy engine schema", a
   assert.ok(!upgrade.statements.some((statement) => statement.includes('CREATE TABLE "Prospect"')));
   assert.equal(
     upgrade.statements.filter((statement) => statement.startsWith('INSERT INTO "_prisma_migrations"')).length,
-    1,
+    4,
   );
 });
 

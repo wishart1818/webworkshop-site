@@ -4,6 +4,7 @@ import React, { useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState } from "@/components/engine/EngineStates";
 import {
   activity,
+  previewStyleProfile,
   priorityRationale,
   prospectStatuses,
   scoreLabels,
@@ -81,7 +82,11 @@ export function ProspectDetail({
         <ScoreRing value={prospect.priorityScore} />
       </header>
       <div className="engine-detail__meta">
-        <a href={safeWebsiteUrl(prospect.website)} rel="noreferrer" target="_blank">Open website</a>
+        {prospect.website
+          ? <a href={safeWebsiteUrl(prospect.website)} rel="noreferrer" target="_blank">Open website</a>
+          : prospect.profileUrl
+            ? <a href={safeWebsiteUrl(prospect.profileUrl)} rel="noreferrer" target="_blank">Open public profile</a>
+            : <span>No owned website</span>}
         {prospect.phone ? <a href={`tel:${prospect.phone}`}>{prospect.phone}</a> : <span>No public phone</span>}
         {prospect.email ? <a href={`mailto:${prospect.email}`}>{prospect.email}</a> : <span>No public email</span>}
         <select aria-label="Pipeline status" onChange={(event) => onStatus(event.target.value as ProspectStatus)} value={prospect.status}>
@@ -96,18 +101,38 @@ export function ProspectDetail({
         ))}
       </nav>
       <div className="engine-detail__body">
-        {detailTab === "Analysis" && (prospect.analysis
+        {detailTab === "Analysis" && (prospect.prospectType === "no_website_social_only"
+          ? <PresenceGapView prospect={prospect} />
+          : prospect.analysis
           ? <AnalysisView prospect={prospect} onAnalyze={onAnalyze} />
           : <EmptyState title="Website not analyzed yet" body="Run the scoring engine to identify strengths, conversion gaps, and redesign opportunity." action={onAnalyze} actionLabel="Analyze website" />)}
         {detailTab === "Outreach" && (prospect.outreach
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} />
-          : <EmptyState title="No outreach draft yet" body="Generate a personal draft grounded in the website analysis. It will stay unsent until approved." action={onOutreach} actionLabel="Generate outreach" />)}
+          : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
           ? <PreviewView prospect={prospect} />
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
       </div>
     </aside>
+  );
+}
+
+function PresenceGapView({ prospect }: { prospect: Prospect }) {
+  return (
+    <div className="engine-stack">
+      <section>
+        <h3>No Website / Social Only prospect</h3>
+        <p>No owned website was found. The opportunity is to give this business a permanent online home instead of relying entirely on Facebook, Instagram, Google, or directory listings.</p>
+      </section>
+      <div className="engine-score-grid">
+        <div><span>Public reviews</span><b>{prospect.reviewCount}</b></div>
+        <div><span>Rating</span><b>{prospect.rating || "Not recorded"}</b></div>
+        <div><span>Recent reviews</span><b>{prospect.recentReviewCount}</b></div>
+        <div><span>Source confidence</span><b>{prospect.sourceConfidence}</b></div>
+      </div>
+      <section><h3>Recommended pitch</h3><p>Lead with owning the customer journey: a clear services page, local proof, and direct estimate path that the business controls.</p></section>
+    </div>
   );
 }
 
@@ -224,13 +249,44 @@ function DraftSection({ approved, copied, label, onCopy, value }: {
 
 function PreviewView({ prospect }: { prospect: Prospect }) {
   const preview = prospect.preview!;
+  const styleProfile = previewStyleProfile(prospect, preview);
+  const palette = [
+    ["Primary", styleProfile.primaryColor],
+    ["Accent", styleProfile.accentColor],
+    ["Surface", styleProfile.surfaceColor],
+    ["Soft surface", styleProfile.softSurfaceColor],
+    ["Text", styleProfile.inkColor],
+  ];
   return (
     <div className="engine-stack">
       <section className="engine-preview-hero">
         <span>{prospect.trade} concept</span>
         <h3>{preview.direction}</h3>
         <p>{preview.hero}</p>
-        <button type="button">Request an estimate</button>
+        <button type="button">{styleProfile.ctaLabel}</button>
+      </section>
+      <section className="engine-preview-style-profile">
+        <div>
+          <span>Prospect-specific style profile</span>
+          <h3>{styleProfile.name}</h3>
+          <p>{styleProfile.styleReason}</p>
+        </div>
+        <div className="engine-preview-palette" aria-label="Preview palette">
+          {palette.map(([label, color]) => (
+            <span key={label}>
+              <i style={{ background: color }} />
+              <b>{label}</b>
+              <code>{color}</code>
+            </span>
+          ))}
+        </div>
+        <dl>
+          <div><dt>Tone</dt><dd>{styleProfile.tone.replace("-", " ")}</dd></div>
+          <div><dt>Layout</dt><dd>{styleProfile.layoutStyle.replace("-", " ")}</dd></div>
+          <div><dt>Typography</dt><dd>{styleProfile.typographyStyle}</dd></div>
+          <div><dt>Brand signal</dt><dd>{styleProfile.brandSource}</dd></div>
+          <div><dt>Primary CTA</dt><dd>{styleProfile.ctaLabel}</dd></div>
+        </dl>
       </section>
       <section><h3>Visual style direction</h3><p>{preview.visualStyleDirection || "Use confident typography, practical project photography, and high-contrast estimate actions."}</p></section>
       <section><h3>Homepage structure</h3><ol>{preview.homepageStructure.map((item) => <li key={item}>{item}</li>)}</ol></section>

@@ -20,7 +20,9 @@ enum ProspectStatus {
 model Prospect {
   id            String          @id @default(cuid())
   businessName  String
-  website       String          @unique
+  website       String?         @unique
+  profileUrl    String?
+  prospectType  String          @default("redesign")
   phone         String?
   publicEmail   String?
   city          String
@@ -29,6 +31,10 @@ model Prospect {
   serviceArea   String?
   sizeIndicator String?
   priorityScore Int             @default(0)
+  rating        Float           @default(0)
+  reviewCount   Int             @default(0)
+  recentReviewCount Int         @default(0)
+  sourceConfidence Int          @default(0)
   status        ProspectStatus  @default(NEW)
   analyses      Analysis[]
   outreach      OutreachDraft[]
@@ -42,6 +48,7 @@ model Prospect {
 
   @@index([status, priorityScore])
   @@index([tradeCategory, state, city])
+  @@index([prospectType, priorityScore])
 }
 
 model TopProspectJob {
@@ -52,6 +59,9 @@ model TopProspectJob {
   radiusKm          Int
   businessesToScan  Int                 @default(50)
   finalProspectsWanted Int              @default(10)
+  prospectMode      String              @default("strict")
+  prospectType      String              @default("redesign")
+  workflowType      String              @default("search")
   status            String              @default("QUEUED")
   stage             String              @default("DISCOVER")
   discoveredLeads   Json?
@@ -69,6 +79,7 @@ model TopProspectJob {
   updatedAt         DateTime            @updatedAt
 
   @@index([status, createdAt])
+  @@index([prospectType, createdAt])
 }
 
 model TopProspectResult {
@@ -80,15 +91,34 @@ model TopProspectResult {
   rank             Int?
   selected         Boolean        @default(false)
   opportunityScore Int
+  websiteQualityScore Int         @default(0)
+  revenueOpportunityScore Int     @default(0)
+  contactabilityScore Int         @default(0)
+  localMarketCompetitivenessScore Int @default(0)
+  aiReplacementConfidenceScore Int @default(0)
+  weightedSalesScore Int          @default(0)
+  prospectType      String        @default("redesign")
+  onlinePresenceGapScore Int      @default(0)
+  businessActivityScore Int       @default(0)
+  websiteNeedScore  Int           @default(0)
   mainWeakness     String
   whyMayBuy        String
   pitchAngle       String
   buildPrompt      String
+  packageStatus    String         @default("NOT_GENERATED")
+  previewLink      String         @default("")
+  packageGeneratedAt DateTime?
+  packageReviewedAt DateTime?
+  packageApprovedAt DateTime?
+  packageSentAt    DateTime?
+  packageSkippedAt DateTime?
   createdAt        DateTime       @default(now())
 
   @@unique([jobId, prospectId])
   @@index([jobId, selected, rank])
+  @@index([jobId, weightedSalesScore])
   @@index([prospectId, createdAt])
+  @@index([packageStatus, createdAt])
 }
 
 model Analysis {

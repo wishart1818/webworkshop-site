@@ -343,7 +343,7 @@ export function ProspectEngine() {
               <div className="engine-panel engine-focus">
                 <div className="engine-panel__head"><div><h2>Today&apos;s focus</h2><p>Move the best-fit leads forward.</p></div></div>
                 <ol>
-                  <li><b>Analyze the high-priority queue</b><span>{prospects.filter((item) => !item.analysis).length} websites still need review</span></li>
+                  <li><b>Analyze the high-priority queue</b><span>{prospects.filter((item) => item.prospectType === "redesign" && !item.analysis).length} websites still need review</span></li>
                   <li><b>Approve personal outreach</b><span>{prospects.filter((item) => item.outreach && !item.outreach.approved).length} drafts awaiting approval</span></li>
                   <li><b>Prepare visual concepts</b><span>{prospects.filter((item) => item.analysis && !item.preview).length} qualified leads need previews</span></li>
                 </ol>
@@ -404,7 +404,7 @@ export function ProspectEngine() {
 }
 
 function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospect[]; selectedId: string; onSelect: (id: string) => void }) {
-  return <div className="engine-table" role="table" aria-label="Prospects"><div className="engine-table__head" role="row"><span>Prospect</span><span>Status</span><span>Website score</span><span>Priority</span></div>{prospects.map((prospect) => <button className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} onClick={() => onSelect(prospect.id)} role="row" type="button"><span><b>{prospect.businessName}</b><small>{prospect.trade} · {prospect.city}, {prospect.state}</small></span><span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span><span>{prospect.analysis ? `${prospect.analysis.overallScore}/100` : "Not analyzed"}</span><span><strong>{prospect.priorityScore}</strong></span></button>)}</div>;
+  return <div className="engine-table" role="table" aria-label="Prospects"><div className="engine-table__head" role="row"><span>Prospect</span><span>Status</span><span>Website / presence</span><span>Priority</span></div>{prospects.map((prospect) => <button className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} onClick={() => onSelect(prospect.id)} role="row" type="button"><span><b>{prospect.businessName}</b><small>{prospect.trade} · {prospect.city}, {prospect.state}</small></span><span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span><span>{prospect.prospectType === "no_website_social_only" ? "No website / social only" : prospect.analysis ? `${prospect.analysis.overallScore}/100` : "Not analyzed"}</span><span><strong>{prospect.priorityScore}</strong></span></button>)}</div>;
 }
 
 function DiscoveryDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {

@@ -4,6 +4,7 @@ import {
   calculatePriority,
   generateOutreach,
   generatePreview,
+  generateProspectStyleProfile,
   seedProspects,
   sortProspects,
   withAnalysis,
@@ -33,15 +34,30 @@ test("outreach remains unapproved and references the prospect", () => {
   assert.ok(outreach.followUps.every((followUp) => /would rather not receive another note/i.test(followUp)));
 });
 
+test("Outreach Package email includes a protected preview link, real analysis points, and opt-out language", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  const previewLink = "https://webworkshop.dev/engine/previews/seed-prospect-1";
+  const outreach = generateOutreach(prospect, previewLink);
+
+  assert.match(outreach.concise, /The strongest part|noticed/i);
+  assert.match(outreach.concise, /opportunity/i);
+  assert.match(outreach.concise, new RegExp(previewLink.replaceAll("/", "\\/")));
+  assert.match(outreach.concise, /would rather not receive another note/i);
+  assert.doesNotMatch(outreach.concise, /you requested|your request/i);
+});
+
 test("preview concepts include contractor-specific conversion strategy", () => {
   const prospect = structuredClone(seedProspects[2]);
   const preview = generatePreview(prospect);
 
   assert.match(preview.direction, /landscaping/i);
-  assert.match(preview.ctaStrategy, /plan a landscape consultation/i);
+  assert.match(preview.ctaStrategy, /get a free quote/i);
   assert.ok(preview.homepageStructure.length >= 5);
   assert.ok(preview.servicePageStructure.length >= 5);
   assert.match(preview.visualStyleDirection, /outdoor spaces/i);
+  assert.ok(preview.styleProfile);
+  assert.ok(preview.heroHeadline);
+  assert.equal(preview.styleProfile?.ctaLabel, "Get a free quote");
 });
 
 test("preview intelligence changes meaningfully by contractor trade", () => {
@@ -51,6 +67,24 @@ test("preview intelligence changes meaningfully by contractor trade", () => {
   assert.match(roofing.trustStrategy, /material warranties/i);
   assert.match(plumbing.trustStrategy, /licensed plumbers/i);
   assert.notEqual(roofing.ctaStrategy, plumbing.ctaStrategy);
+});
+
+test("prospect-specific style profiles use recognizable brand cues and vary by business", () => {
+  const blueLine = {
+    ...structuredClone(seedProspects[0]),
+    businessName: "Blue Line Roofing",
+    website: "https://bluelineroofing.example",
+  };
+  const blueLineProfile = generateProspectStyleProfile(blueLine);
+  const landscapingProfile = generateProspectStyleProfile(structuredClone(seedProspects[2]));
+
+  assert.equal(blueLineProfile.primaryColor, "#174b78");
+  assert.equal(blueLineProfile.accentColor, "#2c94c6");
+  assert.equal(blueLineProfile.brandSource, "business-name cue");
+  assert.equal(blueLineProfile.ctaLabel, "Request an estimate");
+  assert.match(blueLineProfile.styleReason, /blue business-name cue/i);
+  assert.notEqual(blueLineProfile.primaryColor, landscapingProfile.primaryColor);
+  assert.notEqual(blueLineProfile.layoutStyle, landscapingProfile.layoutStyle);
 });
 
 test("prospects can be sorted for operator prioritization", () => {

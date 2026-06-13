@@ -20,6 +20,8 @@ export const tradeCategories = [
 
 export type ProspectStatus = (typeof prospectStatuses)[number];
 export type TradeCategory = (typeof tradeCategories)[number];
+export const prospectTypes = ["redesign", "no_website_social_only"] as const;
+export type ProspectType = (typeof prospectTypes)[number];
 export type ProspectSort = "priority" | "websiteScore" | "newest" | "businessName";
 export type ScoreKey =
   | "mobileExperience"
@@ -56,6 +58,11 @@ export type PreviewConcept = {
   direction: string;
   visualStyleDirection: string;
   hero: string;
+  heroHeadline?: string;
+  heroSupporting?: string;
+  serviceHighlights?: string[];
+  trustItems?: string[];
+  styleProfile?: PreviewStyleProfile;
   homepageStructure: string[];
   ctaStrategy: string;
   servicePageStructure: string[];
@@ -63,6 +70,25 @@ export type PreviewConcept = {
   trustStrategy: string;
   leadCaptureStrategy: string;
   generatedAt: string;
+};
+
+export type PreviewStyleProfile = {
+  name: string;
+  primaryColor: string;
+  accentColor: string;
+  surfaceColor: string;
+  softSurfaceColor: string;
+  inkColor: string;
+  mutedTextColor: string;
+  borderColor: string;
+  typographyStyle: string;
+  headingFont: string;
+  bodyFont: string;
+  tone: "practical" | "modern-practical" | "local-family" | "premium-craft" | "high-trust";
+  layoutStyle: "trust-led" | "service-led" | "project-led" | "clean-split";
+  ctaLabel: string;
+  styleReason: string;
+  brandSource: "business-name cue" | "website-domain cue" | "trade fallback";
 };
 
 export const prospectSortOptions: Array<{ value: ProspectSort; label: string }> = [
@@ -83,6 +109,8 @@ export type Prospect = {
   id: string;
   businessName: string;
   website: string;
+  profileUrl: string;
+  prospectType: ProspectType;
   phone: string;
   email: string;
   city: string;
@@ -92,6 +120,10 @@ export type Prospect = {
   serviceArea: string;
   sizeIndicator: "Small" | "Growing" | "Established";
   priorityScore: number;
+  rating: number;
+  reviewCount: number;
+  recentReviewCount: number;
+  sourceConfidence: number;
   analysis?: Analysis;
   outreach?: OutreachDraft;
   preview?: PreviewConcept;
@@ -178,6 +210,128 @@ const contractorPlaybooks: Record<TradeCategory, {
   },
 };
 
+type PreviewPalette = Pick<
+  PreviewStyleProfile,
+  "primaryColor" | "accentColor" | "surfaceColor" | "softSurfaceColor" | "inkColor" | "mutedTextColor" | "borderColor"
+> & { label: string };
+
+const tradePreviewPalettes: Record<TradeCategory, PreviewPalette[]> = {
+  Roofing: [
+    { label: "Slate and copper", primaryColor: "#263746", accentColor: "#b85c2e", surfaceColor: "#ffffff", softSurfaceColor: "#f2f4f5", inkColor: "#18222b", mutedTextColor: "#53616d", borderColor: "#d8dee2" },
+    { label: "Navy and safety gold", primaryColor: "#173b63", accentColor: "#d69b24", surfaceColor: "#ffffff", softSurfaceColor: "#f2f5f8", inkColor: "#17222d", mutedTextColor: "#536474", borderColor: "#d5dde5" },
+  ],
+  HVAC: [
+    { label: "Comfort blue and warm orange", primaryColor: "#155b83", accentColor: "#d66a2f", surfaceColor: "#ffffff", softSurfaceColor: "#eef6f8", inkColor: "#17262d", mutedTextColor: "#53666e", borderColor: "#d2e0e5" },
+    { label: "Teal and amber", primaryColor: "#17636a", accentColor: "#c78624", surfaceColor: "#ffffff", softSurfaceColor: "#edf6f5", inkColor: "#172827", mutedTextColor: "#526866", borderColor: "#d0dfdd" },
+  ],
+  Landscaping: [
+    { label: "Evergreen and clay", primaryColor: "#315c45", accentColor: "#b86f3d", surfaceColor: "#fffefa", softSurfaceColor: "#f2f5ee", inkColor: "#202b24", mutedTextColor: "#5b685f", borderColor: "#d8dfd7" },
+    { label: "Olive and goldenrod", primaryColor: "#53633d", accentColor: "#b88722", surfaceColor: "#fffefa", softSurfaceColor: "#f4f5ed", inkColor: "#262c21", mutedTextColor: "#616959", borderColor: "#dedfce" },
+  ],
+  Plumbing: [
+    { label: "Clear blue and coral", primaryColor: "#145d82", accentColor: "#d35f4b", surfaceColor: "#ffffff", softSurfaceColor: "#eef6f9", inkColor: "#16272f", mutedTextColor: "#516772", borderColor: "#d2e1e7" },
+    { label: "Deep aqua and brass", primaryColor: "#17656d", accentColor: "#b9892e", surfaceColor: "#ffffff", softSurfaceColor: "#eef7f7", inkColor: "#172a2c", mutedTextColor: "#526a6d", borderColor: "#d1e1e2" },
+  ],
+  Electrical: [
+    { label: "Graphite and electric amber", primaryColor: "#303b46", accentColor: "#d99a18", surfaceColor: "#ffffff", softSurfaceColor: "#f3f5f6", inkColor: "#1b232b", mutedTextColor: "#596570", borderColor: "#d9dfe3" },
+    { label: "Midnight blue and bright yellow", primaryColor: "#243c61", accentColor: "#d8a91d", surfaceColor: "#ffffff", softSurfaceColor: "#f1f4f8", inkColor: "#192433", mutedTextColor: "#566579", borderColor: "#d6dde7" },
+  ],
+  "Power Washing": [
+    { label: "Crisp blue and aqua", primaryColor: "#17648b", accentColor: "#22a3a6", surfaceColor: "#ffffff", softSurfaceColor: "#edf7fa", inkColor: "#172830", mutedTextColor: "#536b76", borderColor: "#d1e3e9" },
+    { label: "Ocean navy and clean cyan", primaryColor: "#244b70", accentColor: "#2b9eb3", surfaceColor: "#ffffff", softSurfaceColor: "#eff5f8", inkColor: "#192630", mutedTextColor: "#586b79", borderColor: "#d5e0e6" },
+  ],
+  "General Contractor": [
+    { label: "Charcoal and brick", primaryColor: "#353b3d", accentColor: "#a95537", surfaceColor: "#ffffff", softSurfaceColor: "#f4f3f1", inkColor: "#242627", mutedTextColor: "#666562", borderColor: "#dedbd6" },
+    { label: "Deep navy and bronze", primaryColor: "#283d52", accentColor: "#a87938", surfaceColor: "#ffffff", softSurfaceColor: "#f3f4f4", inkColor: "#1d272e", mutedTextColor: "#5c686f", borderColor: "#d9dddf" },
+  ],
+};
+
+const brandCuePalettes: Array<{ pattern: RegExp; palette: PreviewPalette; cue: string }> = [
+  { pattern: /\bblue\b|\bblue line\b/i, cue: "blue business-name cue", palette: { label: "Blue-line navy and sky", primaryColor: "#174b78", accentColor: "#2c94c6", surfaceColor: "#ffffff", softSurfaceColor: "#eef5f9", inkColor: "#172632", mutedTextColor: "#526977", borderColor: "#d2e0e8" } },
+  { pattern: /\bevergreen\b|\bgreen\b|\blawn\b|\bgarden\b|\boutdoor\b/i, cue: "green or outdoor business-name cue", palette: { label: "Evergreen and field gold", primaryColor: "#315b43", accentColor: "#b88a2a", surfaceColor: "#fffefa", softSurfaceColor: "#f1f5ef", inkColor: "#202b24", mutedTextColor: "#5c695f", borderColor: "#d7dfd7" } },
+  { pattern: /\bclear\b|\bflow\b|\bwater\b|\bcoast\b/i, cue: "water or clarity business-name cue", palette: { label: "Clear-water blue and coral", primaryColor: "#17617f", accentColor: "#c9664c", surfaceColor: "#ffffff", softSurfaceColor: "#eef6f8", inkColor: "#17272e", mutedTextColor: "#536a73", borderColor: "#d2e2e6" } },
+  { pattern: /\bbright\b|\bsun\b|\bgold\b|\bspark\b/i, cue: "bright business-name cue", palette: { label: "Graphite and bright amber", primaryColor: "#313c46", accentColor: "#d69a20", surfaceColor: "#ffffff", softSurfaceColor: "#f4f5f6", inkColor: "#1c242b", mutedTextColor: "#596670", borderColor: "#d9dfe3" } },
+  { pattern: /\bsummit\b|\bridge\b|\bstone\b|\biron\b|\bsteel\b/i, cue: "sturdy material or terrain cue", palette: { label: "Mountain slate and rust", primaryColor: "#344653", accentColor: "#ae623a", surfaceColor: "#ffffff", softSurfaceColor: "#f2f4f5", inkColor: "#1c272e", mutedTextColor: "#596872", borderColor: "#d8dee2" } },
+];
+
+function stableIndex(value: string, length: number) {
+  return [...value].reduce((total, character) => total + character.charCodeAt(0), 0) % length;
+}
+
+function titleCase(value: string) {
+  return value.replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function websiteHostname(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function previewTone(prospect: Prospect): PreviewStyleProfile["tone"] {
+  const identity = `${prospect.businessName} ${websiteHostname(prospect.website)}`.toLowerCase();
+  if (/\bfamily\b|\b& sons?\b|\band sons?\b|\bowner\b/.test(identity)) return "local-family";
+  if (/\bcustom\b|\bpremium\b|\bluxury\b|\bdesign\b/.test(identity)) return "premium-craft";
+  if (prospect.sizeIndicator === "Established") return "high-trust";
+  if (/\bblue\b|\bbright\b|\bclear\b|\bnorth\b|\bline\b/.test(identity)) return "modern-practical";
+  return "practical";
+}
+
+function previewLayout(prospect: Prospect): PreviewStyleProfile["layoutStyle"] {
+  if (prospect.trade === "Landscaping" || prospect.trade === "Power Washing" || prospect.trade === "General Contractor") return "project-led";
+  if (prospect.trade === "HVAC" || prospect.trade === "Plumbing") return "service-led";
+  if (prospect.trade === "Roofing") return stableIndex(prospect.businessName, 2) ? "trust-led" : "clean-split";
+  return "clean-split";
+}
+
+function previewCta(prospect: Prospect) {
+  if (prospect.trade === "Roofing") return /storm|damage|repair/i.test(prospect.businessName) ? "Schedule an inspection" : "Request an estimate";
+  if (prospect.trade === "HVAC") return "Schedule service";
+  if (prospect.trade === "Landscaping") return "Get a free quote";
+  if (prospect.trade === "Plumbing") return "Request service";
+  if (prospect.trade === "Electrical") return "Request an estimate";
+  if (prospect.trade === "Power Washing") return "Get a free quote";
+  return "Discuss your project";
+}
+
+export function generateProspectStyleProfile(prospect: Prospect): PreviewStyleProfile {
+  const hostname = websiteHostname(prospect.website);
+  const nameCue = brandCuePalettes.find(({ pattern }) => pattern.test(prospect.businessName));
+  const domainCue = nameCue
+    ? undefined
+    : brandCuePalettes.find(({ pattern }) => pattern.test(hostname.replaceAll(/[-_.]/g, " ")));
+  const selectedCue = nameCue ?? domainCue;
+  const tradePalettes = tradePreviewPalettes[prospect.trade];
+  const palette = selectedCue?.palette ?? tradePalettes[stableIndex(`${prospect.businessName}${hostname}`, tradePalettes.length)];
+  const tone = previewTone(prospect);
+  const typography = tone === "premium-craft"
+    ? { typographyStyle: "Craft-led serif headings with plainspoken sans-serif body copy", headingFont: "Georgia, 'Times New Roman', serif", bodyFont: "Arial, Helvetica, sans-serif" }
+    : tone === "local-family"
+      ? { typographyStyle: "Friendly humanist sans-serif with approachable, sturdy headings", headingFont: "'Trebuchet MS', Arial, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" }
+      : { typographyStyle: "Clear, sturdy sans-serif with compact high-trust headings", headingFont: "Arial, Helvetica, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" };
+  const brandSource: PreviewStyleProfile["brandSource"] = nameCue ? "business-name cue" : domainCue ? "website-domain cue" : "trade fallback";
+  const reason = selectedCue
+    ? `${titleCase(selectedCue.cue)} informed the palette; the ${prospect.trade.toLowerCase()} category informed the trust, service, and layout treatment.`
+    : `No recognizable color cue was available, so the palette and layout use a restrained ${prospect.trade.toLowerCase()} direction suited to a ${tone.replace("-", " ")} local business.`;
+
+  return {
+    name: `${palette.label} ${tone.replace("-", " ")}`,
+    ...palette,
+    ...typography,
+    tone,
+    layoutStyle: previewLayout(prospect),
+    ctaLabel: previewCta(prospect),
+    styleReason: reason,
+    brandSource,
+  };
+}
+
+export function previewStyleProfile(prospect: Prospect, preview?: PreviewConcept) {
+  return preview?.styleProfile ?? generateProspectStyleProfile(prospect);
+}
+
 const now = () => new Date().toISOString();
 const activity = (type: Activity["type"], label: string): Activity => ({
   id: crypto.randomUUID(),
@@ -203,6 +357,11 @@ export function calculatePriority(analysis: Analysis | undefined, size: Prospect
 }
 
 export function priorityRationale(prospect: Prospect) {
+  if (prospect.prospectType === "no_website_social_only") {
+    return prospect.reviewCount > 0
+      ? `${prospect.reviewCount} public reviews + no owned website`
+      : "active public profile + no owned website";
+  }
   const reasons = [
     prospect.analysis ? `${prospect.analysis.opportunityRating.toLowerCase()} redesign opportunity` : "website analysis still needed",
     `${prospect.sizeIndicator.toLowerCase()} business`,
@@ -251,7 +410,31 @@ export function analyzeProspect(prospect: Prospect): Analysis {
   };
 }
 
-export function generateOutreach(prospect: Prospect): OutreachDraft {
+export function generateOutreach(prospect: Prospect, previewLink = ""): OutreachDraft {
+  const previewLine = previewLink ? `\n\nProtected concept preview: ${previewLink}` : "";
+  if (prospect.prospectType === "no_website_social_only") {
+    const playbook = contractorPlaybooks[prospect.trade];
+    const publicPresence = prospect.profileUrl ? "your public business profile" : "public business listings";
+    const activityProof = prospect.reviewCount > 0
+      ? `${prospect.reviewCount} public reviews`
+      : "an active local business presence";
+    const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+    return {
+      subjects: [
+        `A website concept for ${prospect.businessName}`,
+        `Own the online home for ${prospect.businessName}`,
+        `Turn ${prospect.city} searches into direct inquiries`,
+      ],
+      concise: `Hi ${prospect.businessName} team,\n\nI found ${publicPresence} while researching ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}. ${activityProof} is a real strength, but I could not find an owned website where customers can clearly review services and contact you directly.\n\nI sketched a simple concept that would give ${prospect.businessName} a permanent online home beyond Facebook or Google.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
+      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}. The visible strength is ${activityProof}. The missed opportunity is that I could not find an owned website that clearly explains services, builds trust, and gives homeowners a direct path to contact you.\n\nI put together a first-website concept centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a clear "${playbook.primaryCta}" action. The goal is to help ${prospect.businessName} own its customer journey instead of relying entirely on a social profile or third-party listing.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
+      followUps: [
+        `Hi again, I wanted to make sure the first-website concept for ${prospect.businessName} reached you. It is designed to turn local searches into direct inquiries while keeping your public profiles working alongside an owned site.${previewLine}\n\n${complianceFooter}`,
+        `Last note from me: the main idea is a simple online home that you control, with services, local proof, and one clear estimate path. Happy to send it over, and I will close the loop if the timing is not right.\n\n${complianceFooter}`,
+      ],
+      approved: false,
+      generatedAt: now(),
+    };
+  }
   const analysis = prospect.analysis ?? analyzeProspect(prospect);
   const playbook = contractorPlaybooks[prospect.trade];
   const strength = analysis.strengths[0].replace(/\.$/, "").toLowerCase();
@@ -263,10 +446,10 @@ export function generateOutreach(prospect: Prospect): OutreachDraft {
       `${prospect.trade} website notes for ${prospect.city}`,
       `A clearer quote path for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\nI reviewed your website and noticed ${strength}. I also saw an opportunity: ${weakness}. I sketched a ${prospect.trade.toLowerCase()}-specific direction built around helping homeowners ${playbook.homeownerNeed}, with a clear "${playbook.primaryCta}" path.\n\nWould it be useful if I sent the preview?\n\n${complianceFooter}`,
-    detailed: `Hi ${prospect.businessName} team,\n\nI took a careful look at your website while researching ${prospect.trade.toLowerCase()} companies serving ${prospect.city}. The strongest part is that ${strength}.\n\nThe biggest missed opportunity is that ${weakness}. On mobile, that can make a ready-to-hire homeowner hesitate before taking the next step.\n\nI put together a contractor-specific direction centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a shorter "${playbook.primaryCta}" path. This is a personal draft for your business, not an automated campaign.\n\nWould you like me to send the concept for review?\n\n${complianceFooter}`,
+    concise: `Hi ${prospect.businessName} team,\n\nI reviewed your website and noticed ${strength}. I also saw one practical opportunity: ${weakness}. I sketched a ${prospect.trade.toLowerCase()}-specific direction with a clearer "${playbook.primaryCta}" path.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
+    detailed: `Hi ${prospect.businessName} team,\n\nI took a careful look at your website while researching ${prospect.trade.toLowerCase()} companies serving ${prospect.city}. The strongest part is that ${strength}.\n\nThe biggest missed opportunity is that ${weakness}. On mobile, that can make a ready-to-hire homeowner hesitate before taking the next step.\n\nI put together a contractor-specific direction centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a shorter "${playbook.primaryCta}" path. This is a personal draft for your business, not an automated campaign.${previewLine}\n\nWould a quick conversation about it be useful?\n\n${complianceFooter}`,
     followUps: [
-      `Hi again, I wanted to make sure my website notes for ${prospect.businessName} reached you. I can send the short preview if improving quote requests is on your list this year.\n\n${complianceFooter}`,
+      `Hi again, I wanted to make sure my website notes for ${prospect.businessName} reached you. The concept focuses on a clearer mobile estimate path and stronger local proof.${previewLine}\n\n${complianceFooter}`,
       `Last note from me: the main idea is a clearer mobile estimate path supported by recent-work proof. Happy to send it over, and I will close the loop if the timing is not right.\n\n${complianceFooter}`,
     ],
     approved: false,
@@ -277,19 +460,40 @@ export function generateOutreach(prospect: Prospect): OutreachDraft {
 export function generatePreview(prospect: Prospect): PreviewConcept {
   const trade = prospect.trade.toLowerCase();
   const playbook = contractorPlaybooks[prospect.trade];
+  const styleProfile = generateProspectStyleProfile(prospect);
+  const heroHeadlines: Record<TradeCategory, string> = {
+    Roofing: "Roofing work that protects your home and earns your confidence.",
+    HVAC: "Comfort restored with clear service and practical options.",
+    Landscaping: "Outdoor spaces planned for the way you want to live.",
+    Plumbing: "Straight answers and dependable help for plumbing problems.",
+    Electrical: "Safe, clear electrical work for homes and growing needs.",
+    "Power Washing": "A cleaner property, with the difference easy to see.",
+    "General Contractor": "Thoughtful construction work, from first conversation to finished space.",
+  };
+  const trustItems = [
+    `Serving ${prospect.city}, ${prospect.state}`,
+    prospect.phone ? "Direct phone contact" : "Clear contact path",
+    "Services explained clearly",
+    "Simple estimate next step",
+  ];
   return {
-    direction: `A crisp, local-first ${trade} website that feels established, responsive, and easy to hire.`,
-    visualStyleDirection: `${playbook.visualCue} Pair it with confident typography, high-contrast actions, and practical proof.`,
-    hero: `${prospect.trade} help across ${prospect.serviceArea || prospect.city}, organized to help homeowners ${playbook.homeownerNeed}, with "${playbook.primaryCta}" as the primary action.`,
+    direction: `A clean, local-first ${trade} website that feels like ${prospect.businessName}: ${styleProfile.tone.replace("-", " ")}, clear, and easy to hire.`,
+    visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} Use ${styleProfile.primaryColor} as the restrained primary brand color and ${styleProfile.accentColor} only for focused emphasis.`,
+    hero: `${prospect.businessName} serves ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`} with a clearer path from service need to direct contact.`,
+    heroHeadline: heroHeadlines[prospect.trade],
+    heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`}.`,
+    serviceHighlights: playbook.services.map(titleCase),
+    trustItems,
+    styleProfile,
     homepageStructure: [
-      `Outcome-led hero with "${playbook.primaryCta}"`,
+      `Simple, business-specific hero with "${styleProfile.ctaLabel}"`,
       `${playbook.services.join(", ")} organized by homeowner need`,
       `Decision-stage proof: ${playbook.trustProof.join(", ")}`,
       "Recent local work with scope and outcome",
       "Service areas, practical FAQs, and lead form",
     ],
-    ctaStrategy: `Use one primary action, "${playbook.primaryCta}," supported by a persistent mobile call action.`,
-    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Relevant local project proof", "Process, trust proof, and FAQs", playbook.primaryCta],
+    ctaStrategy: `Use one primary action, "${styleProfile.ctaLabel}," supported by a persistent mobile call action.`,
+    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Relevant local project proof", "Process, trust proof, and FAQs", styleProfile.ctaLabel],
     portfolioDirection: "Use labeled project photos with location, scope, and a short outcome instead of an unlabeled gallery.",
     trustStrategy: `Place ${playbook.trustProof.join(", ")} beside the decisions they support.`,
     leadCaptureStrategy: `Keep the first step focused on ${playbook.leadDetails.join(", ")} and contact details.`,
@@ -324,10 +528,21 @@ export function withPreview(prospect: Prospect): Prospect {
   };
 }
 
-export function createProspect(input: Omit<Prospect, "id" | "createdAt" | "priorityScore" | "notes" | "activities">): Prospect {
+type CreateProspectInput = Omit<
+  Prospect,
+  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence"
+> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence">>;
+
+export function createProspect(input: CreateProspectInput): Prospect {
   const createdAt = now();
   return {
     ...input,
+    profileUrl: input.profileUrl ?? "",
+    prospectType: input.prospectType ?? "redesign",
+    rating: input.rating ?? 0,
+    reviewCount: input.reviewCount ?? 0,
+    recentReviewCount: input.recentReviewCount ?? 0,
+    sourceConfidence: input.sourceConfidence ?? 0,
     id: crypto.randomUUID(),
     createdAt,
     priorityScore: calculatePriority(undefined, input.sizeIndicator, input.serviceArea),
@@ -349,6 +564,8 @@ export const seedProspects: Prospect[] = [
   id: `seed-prospect-${index + 1}`,
   businessName,
   website,
+  profileUrl: "",
+  prospectType: "redesign",
   phone,
   email,
   city,
@@ -358,6 +575,10 @@ export const seedProspects: Prospect[] = [
   serviceArea: `${city} and nearby communities`,
   sizeIndicator: sizeIndicator as Prospect["sizeIndicator"],
   priorityScore: calculatePriority(undefined, sizeIndicator as Prospect["sizeIndicator"], `${city} and nearby communities`),
+  rating: 0,
+  reviewCount: 0,
+  recentReviewCount: 0,
+  sourceConfidence: 0,
   notes: [],
   activities: [
     {

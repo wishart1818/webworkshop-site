@@ -14,7 +14,7 @@ import {
   resetOperationalMemoryForTests,
   safeRecordAudit,
 } from "../lib/operational-controls";
-import { seedProspects } from "../lib/prospect-engine";
+import { generatePreview, seedProspects } from "../lib/prospect-engine";
 import { validateProspect } from "../lib/prospect-validation";
 import { isPrivateAddress, robotsDisallows } from "../lib/site-analysis";
 
@@ -24,6 +24,35 @@ test("prospect validation accepts a complete prospect and rejects unsafe URLs", 
   const result = validateProspect(invalid);
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /HTTP or HTTPS/);
+});
+
+test("prospect validation preserves safe preview style metadata", () => {
+  const prospect = structuredClone(seedProspects[0]);
+  prospect.preview = generatePreview(prospect);
+  const result = validateProspect(prospect);
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.preview?.styleProfile?.primaryColor, prospect.preview.styleProfile?.primaryColor);
+    assert.equal(result.value.preview?.styleProfile?.ctaLabel, prospect.preview.styleProfile?.ctaLabel);
+  }
+});
+
+test("prospect validation accepts no-website prospects while still validating public profile URLs", () => {
+  const prospect = {
+    ...structuredClone(seedProspects[0]),
+    website: "",
+    profileUrl: "https://facebook.com/local-roofing",
+    prospectType: "no_website_social_only",
+    analysis: undefined,
+  };
+  const valid = validateProspect(prospect);
+  assert.equal(valid.ok, true);
+  if (valid.ok) assert.equal(valid.value.website, "");
+
+  const unsafe = validateProspect({ ...prospect, profileUrl: "javascript:alert(1)" });
+  assert.equal(unsafe.ok, false);
+  if (!unsafe.ok) assert.match(unsafe.error, /HTTP or HTTPS/);
 });
 
 test("prospect validation rejects malformed nested workflow data", () => {
@@ -57,6 +86,22 @@ test("authentication challenges missing credentials and accepts valid credential
       new NextRequest("https://example.com/engine", { headers: { authorization: `Basic ${token}` } }),
     );
     assert.equal(authenticated, null);
+  } finally {
+    process.env.ENGINE_USERNAME = oldUsername;
+    process.env.ENGINE_PASSWORD = oldPassword;
+  }
+});
+
+test("protected previews and Outreach Package actions inherit engine authentication", () => {
+  const oldUsername = process.env.ENGINE_USERNAME;
+  const oldPassword = process.env.ENGINE_PASSWORD;
+  process.env.ENGINE_USERNAME = "operator";
+  process.env.ENGINE_PASSWORD = "secret";
+  try {
+    const preview = middleware(new NextRequest("https://example.com/engine/previews/prospect-id"));
+    const packageAction = middleware(new NextRequest("https://example.com/api/engine/top-prospects/results/result-id/package"));
+    assert.equal(preview?.status, 401);
+    assert.equal(packageAction?.status, 401);
   } finally {
     process.env.ENGINE_USERNAME = oldUsername;
     process.env.ENGINE_PASSWORD = oldPassword;

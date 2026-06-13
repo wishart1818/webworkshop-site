@@ -3,18 +3,44 @@ import test from "node:test";
 import { handleTopProspectList, topProspectBuildVersion } from "../lib/top-prospect-list-route";
 import {
   assessOpportunity,
+  assessNoWebsiteOpportunity,
+  calculateNoWebsitePresenceScores,
+  calculateProspectSalesScores,
   generateWebsiteBuildPrompt,
   likelyFranchise,
   likelyNationalOrLargeBrand,
   normalizeWebsite,
+  normalizeOutreachPackageStatus,
+  outreachPackageActionAllowed,
+  outreachPackageStatusLabel,
   prepareTopProspectArtifacts,
+  prospectPreviewLink,
   topProspectRejectionReason,
   topProspectResultDisposition,
   validateTopProspectInput,
+  type OpportunityAssessment,
 } from "../lib/top-prospects";
 import { seedProspects, withAnalysis } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { recoverableTopProspect } from "../lib/top-prospect-worker";
+
+function manualAssessment(opportunityScore: number): OpportunityAssessment {
+  return {
+    opportunityScore,
+    salesScores: {
+      websiteQualityScore: 65,
+      revenueOpportunityScore: 70,
+      contactabilityScore: 70,
+      localMarketCompetitivenessScore: 70,
+      aiReplacementConfidenceScore: 70,
+      weightedSalesScore: 70,
+    },
+    presenceScores: null,
+    mainWeakness: "",
+    whyMayBuy: "",
+    pitchAngle: "",
+  };
+}
 
 test("Top Prospects input applies bounded production-safe limits", () => {
   const valid = validateTopProspectInput({
@@ -26,10 +52,41 @@ test("Top Prospects input applies bounded production-safe limits", () => {
     finalProspectsWanted: 10,
   });
   assert.equal(valid.ok, true);
-  if (valid.ok) assert.equal(valid.value.state, "OH");
+  if (valid.ok) {
+    assert.equal(valid.value.state, "OH");
+    assert.equal(valid.value.mode, "strict");
+    assert.equal(valid.value.workflowType, "search");
+    assert.equal(valid.value.prospectType, "redesign");
+  }
+
+  const morningBatch = validateTopProspectInput({
+    trade: "Roofing",
+    city: "Findlay",
+    state: "OH",
+    radiusKm: 50,
+    businessesToScan: 50,
+    finalProspectsWanted: 10,
+    mode: "growth",
+    workflowType: "morning_batch",
+  });
+  assert.equal(morningBatch.ok, true);
+  if (morningBatch.ok) assert.deepEqual([morningBatch.value.mode, morningBatch.value.workflowType], ["growth", "morning_batch"]);
+  const noWebsite = validateTopProspectInput({
+    trade: "Roofing",
+    city: "Findlay",
+    state: "OH",
+    radiusKm: 25,
+    businessesToScan: 25,
+    finalProspectsWanted: 10,
+    prospectType: "no_website_social_only",
+  });
+  assert.equal(noWebsite.ok, true);
+  if (noWebsite.ok) assert.equal(noWebsite.value.prospectType, "no_website_social_only");
 
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 101, finalProspectsWanted: 10 }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 11 }).ok, false);
+  assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, mode: "unknown" }).ok, false);
+  assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, workflowType: "unknown" }).ok, false);
 });
 
 test("duplicate normalization and franchise screening are deterministic", () => {
@@ -58,6 +115,25 @@ test("Opportunity Score is separate from Website Score and favors usable sales f
   assert.ok(assessment.opportunityScore > prospect.analysis!.overallScore);
   assert.match(assessment.whyMayBuy, /active site/i);
   assert.match(assessment.pitchAngle, /redesign/i);
+  assert.equal(assessment.salesScores.websiteQualityScore, 58);
+  assert.ok(assessment.salesScores.weightedSalesScore >= 0 && assessment.salesScores.weightedSalesScore <= 100);
+});
+
+test("sales scoring calculates bounded revenue, contactability, market, replacement, and weighted scores", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.analysis!.overallScore = 74;
+  prospect.analysis!.scores.contactAccessibility = 32;
+  const scores = calculateProspectSalesScores(prospect, 68);
+
+  assert.deepEqual(Object.keys(scores), [
+    "websiteQualityScore",
+    "revenueOpportunityScore",
+    "contactabilityScore",
+    "localMarketCompetitivenessScore",
+    "aiReplacementConfidenceScore",
+    "weightedSalesScore",
+  ]);
+  assert.ok(Object.values(scores).every((score) => Number.isInteger(score) && score >= 0 && score <= 100));
 });
 
 test("Toledo roofing ranking excludes strong websites and national brands", () => {
@@ -92,22 +168,52 @@ test("Top Prospects recommendation gate explains every sales-fit rejection", () 
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.analysis!.overallScore = 80;
   assert.equal(
-    topProspectRejectionReason(prospect, { opportunityScore: 70, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
+    topProspectRejectionReason(prospect, manualAssessment(70)),
     "Low redesign opportunity",
   );
 
   prospect.analysis!.overallScore = 65;
   assert.equal(
-    topProspectRejectionReason(prospect, { opportunityScore: 49, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
+    topProspectRejectionReason(prospect, manualAssessment(49)),
     "Weak sales fit",
   );
 
   prospect.phone = "";
   prospect.email = "";
   assert.equal(
-    topProspectRejectionReason(prospect, { opportunityScore: 80, mainWeakness: "", whyMayBuy: "", pitchAngle: "" }),
+    topProspectRejectionReason(prospect, manualAssessment(80)),
     "No usable contact path",
   );
+});
+
+test("Prospect Modes preserve strict behavior and expand local qualification deliberately", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.businessName = "Local Roofing Company";
+  prospect.website = "https://local-roofing.example";
+  prospect.analysis!.overallScore = 84;
+  prospect.analysis!.scores.ctaStrength = 62;
+  prospect.analysis!.scores.conversionReadiness = 58;
+  const assessment = assessOpportunity(prospect);
+
+  assert.equal(topProspectRejectionReason(prospect, assessment, "strict"), "Low redesign opportunity");
+  assert.equal(topProspectRejectionReason(prospect, assessment, "growth"), null);
+
+  prospect.phone = "";
+  prospect.email = "";
+  assert.equal(topProspectRejectionReason(prospect, assessment, "growth"), "No usable contact path");
+  assert.equal(topProspectRejectionReason(prospect, assessment, "volume"), null);
+
+  prospect.businessName = "Erie Home";
+  prospect.website = "https://eriehome.com";
+  assert.equal(topProspectRejectionReason(prospect, assessment, "volume"), "National/large brand");
+
+  prospect.businessName = "Local Roofing Company";
+  prospect.website = "https://local-roofing.example";
+  prospect.analysis!.overallScore = 96;
+  for (const key of Object.keys(prospect.analysis!.scores) as Array<keyof typeof prospect.analysis.scores>) {
+    prospect.analysis!.scores[key] = 95;
+  }
+  assert.equal(topProspectRejectionReason(prospect, assessOpportunity(prospect), "volume"), "Low redesign opportunity");
 });
 
 test("Top Prospects final cutoff never leaks extra qualified leads into ranked results", () => {
@@ -148,9 +254,36 @@ test("returning to Top Prospects automatically resumes a stalled saved job", asy
 });
 
 test("Top Prospects build version safely identifies the deployed commit", () => {
-  assert.equal(topProspectBuildVersion({ VERCEL_GIT_COMMIT_SHA: "abcdef1234567890" }), "provider-diagnostics-v2-abcdef1");
-  assert.equal(topProspectBuildVersion({ VERCEL_DEPLOYMENT_ID: "deployment-1234567890" }), "provider-diagnostics-v2-deployment-1");
-  assert.equal(topProspectBuildVersion({}), "provider-diagnostics-v2");
+  assert.equal(topProspectBuildVersion({ VERCEL_GIT_COMMIT_SHA: "abcdef1234567890" }), "outreach-package-v1-abcdef1");
+  assert.equal(topProspectBuildVersion({ VERCEL_DEPLOYMENT_ID: "deployment-1234567890" }), "outreach-package-v1-deployment-1");
+  assert.equal(topProspectBuildVersion({}), "outreach-package-v1");
+});
+
+test("No Website / Social Only prospects receive separate presence scoring and ownership-focused artifacts", () => {
+  const prospect = structuredClone(seedProspects[0]);
+  prospect.businessName = "Local Social Roofing";
+  prospect.website = "";
+  prospect.profileUrl = "https://www.facebook.com/local-social-roofing";
+  prospect.prospectType = "no_website_social_only";
+  prospect.phone = "(419) 555-0111";
+  prospect.rating = 4.8;
+  prospect.reviewCount = 48;
+  prospect.recentReviewCount = 3;
+  prospect.sourceConfidence = 82;
+  prospect.analysis = undefined;
+
+  const scores = calculateNoWebsitePresenceScores(prospect);
+  const assessment = assessNoWebsiteOpportunity(prospect);
+  const prepared = prepareTopProspectArtifacts(prospect);
+
+  assert.ok(scores.onlinePresenceGapScore >= 80);
+  assert.ok(scores.businessActivityScore > 0);
+  assert.equal(assessment.presenceScores?.websiteNeedScore, scores.websiteNeedScore);
+  assert.equal(assessment.salesScores.websiteQualityScore, 0);
+  assert.equal(topProspectRejectionReason(prospect, assessment), null);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", /owned website|online home/i);
+  assert.match(prepared.buildPrompt, /first owned/i);
+  assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
@@ -162,8 +295,29 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.equal(prepared.prospect.outreach?.subjects.length, 3);
   assert.equal(prepared.prospect.outreach?.followUps.length, 2);
   assert.ok(prepared.prospect.preview);
+  assert.equal(prepared.previewLink, prospectPreviewLink(prospect.id));
+  assert.match(prepared.prospect.outreach?.concise ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
+  assert.ok(prepared.assessment.salesScores.weightedSalesScore > 0);
   assert.match(prompt, new RegExp(prospect.businessName));
+  assert.match(prompt, /Style profile:/);
+  assert.match(prompt, /Palette: primary #[0-9a-f]{6}/i);
+  assert.match(prompt, /Primary CTA wording:/);
+  assert.match(prompt, /Why this style was selected:/);
+  assert.match(prompt, /Do not reuse WebWorkshop branding/i);
   assert.match(prompt, /no invented claims/i);
+});
+
+test("Outreach Package lifecycle values remain explicit and backwards compatible", () => {
+  assert.equal(normalizeOutreachPackageStatus("PACKAGE_GENERATED"), "PACKAGE_GENERATED");
+  assert.equal(normalizeOutreachPackageStatus("unknown"), "NOT_GENERATED");
+  assert.equal(outreachPackageStatusLabel("PACKAGE_GENERATED"), "Package Generated");
+  assert.equal(outreachPackageStatusLabel("READY_FOR_REVIEW"), "Ready for Review");
+  assert.equal(outreachPackageStatusLabel("APPROVED_TO_SEND"), "Approved to Send");
+  assert.equal(outreachPackageStatusLabel("SENT"), "Sent");
+  assert.equal(outreachPackageActionAllowed("PACKAGE_GENERATED", "approve"), true);
+  assert.equal(outreachPackageActionAllowed("APPROVED_TO_SEND", "mark_sent"), true);
+  assert.equal(outreachPackageActionAllowed("READY_FOR_REVIEW", "mark_sent"), false);
+  assert.equal(outreachPackageActionAllowed("SENT", "generate"), false);
 });
 
 test("interrupted Top Prospects artifacts can be recovered only by their active job", () => {

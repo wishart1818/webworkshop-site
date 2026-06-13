@@ -27,7 +27,7 @@ const notRecorded = {
   usableWebsiteCount: 0,
 } as const;
 
-export function DiscoveryFunnel({ diagnostics }: { diagnostics: DiscoveryDiagnostics }) {
+export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable websites" }: { diagnostics: DiscoveryDiagnostics; qualificationLabel?: string }) {
   const booleanLabel = (value: boolean | null) => value === null ? "Not recorded" : value ? "Yes" : "No";
   return (
     <section className="engine-discovery-diagnostics" aria-label="Discovery diagnostics">
@@ -35,7 +35,7 @@ export function DiscoveryFunnel({ diagnostics }: { diagnostics: DiscoveryDiagnos
         <span><b>{diagnostics.rawProviderCount}</b> total provider records</span>
         <span><b>{diagnostics.afterDistanceFilteringCount}</b> within {diagnostics.radiusKm} km</span>
         <span><b>{diagnostics.finalMergedCount}</b> final merged records</span>
-        <span><b>{diagnostics.afterQualificationFilteringCount}</b> usable websites</span>
+        <span><b>{diagnostics.afterQualificationFilteringCount}</b> {qualificationLabel}</span>
         <span><b>{diagnostics.returnedCount}</b> returned for review</span>
       </div>
       <div className="engine-provider-diagnostics" aria-label="Provider query diagnostics">

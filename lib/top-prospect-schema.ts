@@ -3,6 +3,12 @@ import { PrismaClient } from "@prisma/client";
 export const TOP_PROSPECT_TABLES = ["TopProspectJob", "TopProspectResult"] as const;
 export const TOP_PROSPECT_MIGRATION_ID = "20260611_top_prospects";
 export const TOP_PROSPECT_MIGRATION_CHECKSUM = "d89d591749bba50e2d279e45ec69008746c8c87deacde4e72cf2f61bd760538c";
+export const TOP_PROSPECT_UPGRADE_MIGRATION_ID = "20260613_prospect_modes";
+export const TOP_PROSPECT_UPGRADE_MIGRATION_CHECKSUM = "b395a67f047dd33f76c615c4476ca8e15f6dc8faeff7b8bef23a79293fafc477";
+export const NO_WEBSITE_PROSPECT_MIGRATION_ID = "20260613_no_website_prospects";
+export const NO_WEBSITE_PROSPECT_MIGRATION_CHECKSUM = "283a230d1dc9e7a6fc460c9e088387e73b954cdf9299afbaf80fab44ccbdcf13";
+export const OUTREACH_PACKAGE_MIGRATION_ID = "20260613_outreach_packages";
+export const OUTREACH_PACKAGE_MIGRATION_CHECKSUM = "cc5c987efa4a1c20ff8cd09521e9a80ec5be6775aff0dd4d2fc60ae1d18fd1fe";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -12,6 +18,22 @@ export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE INDEX "TopProspectResult_prospectId_createdAt_idx" ON "TopProspectResult"("prospectId", "createdAt")`,
   `ALTER TABLE "TopProspectResult" ADD CONSTRAINT "TopProspectResult_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "TopProspectJob"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   `ALTER TABLE "TopProspectResult" ADD CONSTRAINT "TopProspectResult_prospectId_fkey" FOREIGN KEY ("prospectId") REFERENCES "Prospect"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+] as const;
+export const TOP_PROSPECT_UPGRADE_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "TopProspectJob" ADD COLUMN IF NOT EXISTS "prospectMode" TEXT NOT NULL DEFAULT 'strict', ADD COLUMN IF NOT EXISTS "workflowType" TEXT NOT NULL DEFAULT 'search'`,
+  `ALTER TABLE "TopProspectResult" ADD COLUMN IF NOT EXISTS "websiteQualityScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "revenueOpportunityScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "contactabilityScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "localMarketCompetitivenessScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "aiReplacementConfidenceScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "weightedSalesScore" INTEGER NOT NULL DEFAULT 0`,
+  `CREATE INDEX IF NOT EXISTS "TopProspectResult_jobId_weightedSalesScore_idx" ON "TopProspectResult"("jobId", "weightedSalesScore")`,
+] as const;
+export const NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "Prospect" ALTER COLUMN "website" DROP NOT NULL, ADD COLUMN IF NOT EXISTS "profileUrl" TEXT, ADD COLUMN IF NOT EXISTS "prospectType" TEXT NOT NULL DEFAULT 'redesign', ADD COLUMN IF NOT EXISTS "rating" DOUBLE PRECISION NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "reviewCount" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "recentReviewCount" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "sourceConfidence" INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE "TopProspectJob" ADD COLUMN IF NOT EXISTS "prospectType" TEXT NOT NULL DEFAULT 'redesign'`,
+  `ALTER TABLE "TopProspectResult" ADD COLUMN IF NOT EXISTS "prospectType" TEXT NOT NULL DEFAULT 'redesign', ADD COLUMN IF NOT EXISTS "onlinePresenceGapScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "businessActivityScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "websiteNeedScore" INTEGER NOT NULL DEFAULT 0`,
+  `CREATE INDEX IF NOT EXISTS "Prospect_prospectType_priorityScore_idx" ON "Prospect"("prospectType", "priorityScore")`,
+  `CREATE INDEX IF NOT EXISTS "TopProspectJob_prospectType_createdAt_idx" ON "TopProspectJob"("prospectType", "createdAt")`,
+] as const;
+export const OUTREACH_PACKAGE_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "TopProspectResult" ADD COLUMN IF NOT EXISTS "packageStatus" TEXT NOT NULL DEFAULT 'NOT_GENERATED', ADD COLUMN IF NOT EXISTS "previewLink" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "packageGeneratedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageReviewedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageApprovedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageSentAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "packageSkippedAt" TIMESTAMP(3)`,
+  `CREATE INDEX IF NOT EXISTS "TopProspectResult_packageStatus_createdAt_idx" ON "TopProspectResult"("packageStatus", "createdAt")`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -40,10 +62,31 @@ async function presentTables(transaction: SchemaTransaction) {
   return new Set(rows.map((row) => row.table_name));
 }
 
-async function recordMigration(transaction: SchemaTransaction) {
+async function recordMigration(transaction: SchemaTransaction, id: string, checksum: string, suffix: string) {
   await transaction.$executeRawUnsafe(
-    `INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "started_at", "applied_steps_count") SELECT '00000000-0000-4000-8000-000000000004', '${TOP_PROSPECT_MIGRATION_CHECKSUM}', now(), '${TOP_PROSPECT_MIGRATION_ID}', now(), 1 WHERE NOT EXISTS (SELECT 1 FROM "_prisma_migrations" WHERE "migration_name" = '${TOP_PROSPECT_MIGRATION_ID}') ON CONFLICT ("id") DO NOTHING`,
+    `INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "started_at", "applied_steps_count") SELECT '00000000-0000-4000-8000-${suffix}', '${checksum}', now(), '${id}', now(), 1 WHERE NOT EXISTS (SELECT 1 FROM "_prisma_migrations" WHERE "migration_name" = '${id}') ON CONFLICT ("id") DO NOTHING`,
   );
+}
+
+async function applyTopProspectUpgrade(transaction: SchemaTransaction) {
+  for (const statement of TOP_PROSPECT_UPGRADE_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, TOP_PROSPECT_UPGRADE_MIGRATION_ID, TOP_PROSPECT_UPGRADE_MIGRATION_CHECKSUM, "000000000005");
+}
+
+async function applyNoWebsiteProspectUpgrade(transaction: SchemaTransaction) {
+  for (const statement of NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, NO_WEBSITE_PROSPECT_MIGRATION_ID, NO_WEBSITE_PROSPECT_MIGRATION_CHECKSUM, "000000000006");
+}
+
+async function applyOutreachPackageUpgrade(transaction: SchemaTransaction) {
+  for (const statement of OUTREACH_PACKAGE_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, OUTREACH_PACKAGE_MIGRATION_ID, OUTREACH_PACKAGE_MIGRATION_CHECKSUM, "000000000007");
 }
 
 export class TopProspectSchemaLockUnavailableError extends Error {
@@ -79,7 +122,10 @@ export async function initializeTopProspectSchema(
       await acquireSchemaLock(transaction);
       const existing = await presentTables(transaction);
       if (existing.size === TOP_PROSPECT_TABLES.length) {
-        await recordMigration(transaction);
+        await recordMigration(transaction, TOP_PROSPECT_MIGRATION_ID, TOP_PROSPECT_MIGRATION_CHECKSUM, "000000000004");
+        await applyTopProspectUpgrade(transaction);
+        await applyNoWebsiteProspectUpgrade(transaction);
+        await applyOutreachPackageUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -87,7 +133,10 @@ export async function initializeTopProspectSchema(
       for (const statement of TOP_PROSPECT_MIGRATION_STATEMENTS) {
         await transaction.$executeRawUnsafe(statement);
       }
-      await recordMigration(transaction);
+      await recordMigration(transaction, TOP_PROSPECT_MIGRATION_ID, TOP_PROSPECT_MIGRATION_CHECKSUM, "000000000004");
+      await applyTopProspectUpgrade(transaction);
+      await applyNoWebsiteProspectUpgrade(transaction);
+      await applyOutreachPackageUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

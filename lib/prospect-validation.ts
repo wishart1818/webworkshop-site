@@ -1,13 +1,16 @@
 import {
   prospectStatuses,
+  prospectTypes,
   scoreLabels,
   tradeCategories,
   type Activity,
   type Analysis,
   type OutreachDraft,
   type PreviewConcept,
+  type PreviewStyleProfile,
   type Prospect,
   type ProspectStatus,
+  type ProspectType,
   type ScoreKey,
   type TradeCategory,
 } from "@/lib/prospect-engine";
@@ -75,6 +78,51 @@ function outreachValue(value: unknown): OutreachDraft | undefined {
   };
 }
 
+function styleProfileValue(value: unknown): PreviewStyleProfile | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview style profile must be a valid object.");
+  const color = (input: unknown, field: string) => {
+    const result = text(input, field, 7);
+    if (!/^#[0-9a-f]{6}$/i.test(result)) throw new Error(`${field} must be a six-digit hex color.`);
+    return result;
+  };
+  const font = (input: unknown, field: string) => {
+    const result = text(input, field, 200);
+    if (!/^[A-Za-z0-9'", -]+$/.test(result)) throw new Error(`${field} contains unsupported characters.`);
+    return result;
+  };
+  const tone = text(value.tone, "Preview tone", 30) as PreviewStyleProfile["tone"];
+  if (!["practical", "modern-practical", "local-family", "premium-craft", "high-trust"].includes(tone)) {
+    throw new Error("Preview tone is not supported.");
+  }
+  const layoutStyle = text(value.layoutStyle, "Preview layout style", 30) as PreviewStyleProfile["layoutStyle"];
+  if (!["trust-led", "service-led", "project-led", "clean-split"].includes(layoutStyle)) {
+    throw new Error("Preview layout style is not supported.");
+  }
+  const brandSource = text(value.brandSource, "Preview brand source", 30) as PreviewStyleProfile["brandSource"];
+  if (!["business-name cue", "website-domain cue", "trade fallback"].includes(brandSource)) {
+    throw new Error("Preview brand source is not supported.");
+  }
+  return {
+    name: text(value.name, "Preview style name", 160),
+    primaryColor: color(value.primaryColor, "Preview primary color"),
+    accentColor: color(value.accentColor, "Preview accent color"),
+    surfaceColor: color(value.surfaceColor, "Preview surface color"),
+    softSurfaceColor: color(value.softSurfaceColor, "Preview soft surface color"),
+    inkColor: color(value.inkColor, "Preview ink color"),
+    mutedTextColor: color(value.mutedTextColor, "Preview muted text color"),
+    borderColor: color(value.borderColor, "Preview border color"),
+    typographyStyle: text(value.typographyStyle, "Preview typography style", 500),
+    headingFont: font(value.headingFont, "Preview heading font"),
+    bodyFont: font(value.bodyFont, "Preview body font"),
+    tone,
+    layoutStyle,
+    ctaLabel: text(value.ctaLabel, "Preview CTA label", 100),
+    styleReason: text(value.styleReason, "Preview style reason", 1000),
+    brandSource,
+  };
+}
+
 function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
@@ -82,6 +130,11 @@ function previewValue(value: unknown): PreviewConcept | undefined {
     direction: text(value.direction, "Preview direction", 5000),
     visualStyleDirection: text(value.visualStyleDirection ?? "Practical contractor visual direction.", "Visual style direction", 5000),
     hero: text(value.hero, "Preview hero", 5000),
+    heroHeadline: value.heroHeadline === undefined ? undefined : text(value.heroHeadline, "Preview hero headline", 500),
+    heroSupporting: value.heroSupporting === undefined ? undefined : text(value.heroSupporting, "Preview hero supporting copy", 2000),
+    serviceHighlights: value.serviceHighlights === undefined ? undefined : stringArray(value.serviceHighlights, "Preview service highlights", 12, 300),
+    trustItems: value.trustItems === undefined ? undefined : stringArray(value.trustItems, "Preview trust items", 12, 300),
+    styleProfile: styleProfileValue(value.styleProfile),
     homepageStructure: stringArray(value.homepageStructure, "Homepage structure", 20, 1000),
     ctaStrategy: text(value.ctaStrategy, "CTA strategy", 5000),
     servicePageStructure: stringArray(value.servicePageStructure, "Service page structure", 20, 1000),
@@ -111,11 +164,20 @@ export function validateProspect(input: unknown): ValidationResult {
   try {
     if (!isRecord(input)) throw new Error("Prospect payload must be an object.");
 
-    const website = text(input.website, "Website", 2048);
-    const parsedUrl = new URL(website);
-    if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("Website must use HTTP or HTTPS.");
-    if (parsedUrl.username || parsedUrl.password) throw new Error("Website cannot include credentials.");
-    if (parsedUrl.port && !["80", "443"].includes(parsedUrl.port)) throw new Error("Website uses an unsupported port.");
+    const prospectType = text(input.prospectType ?? "redesign", "Prospect type", 40) as ProspectType;
+    if (!prospectTypes.includes(prospectType)) throw new Error("Prospect type is not supported.");
+    const website = text(input.website ?? "", "Website", 2048, prospectType === "redesign");
+    const profileUrl = text(input.profileUrl ?? "", "Profile URL", 2048, false);
+    const validateUrl = (value: string, field: string) => {
+      if (!value) return "";
+      const parsed = new URL(value);
+      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(`${field} must use HTTP or HTTPS.`);
+      if (parsed.username || parsed.password) throw new Error(`${field} cannot include credentials.`);
+      if (parsed.port && !["80", "443"].includes(parsed.port)) throw new Error(`${field} uses an unsupported port.`);
+      return parsed.href;
+    };
+    const parsedWebsite = validateUrl(website, "Website");
+    const parsedProfileUrl = validateUrl(profileUrl, "Profile URL");
 
     const trade = text(input.trade, "Trade", 40) as TradeCategory;
     if (!tradeCategories.includes(trade)) throw new Error("Trade category is not supported.");
@@ -134,12 +196,25 @@ export function validateProspect(input: unknown): ValidationResult {
     const email = text(input.email, "Email", 254, false);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email must be valid.");
 
+    const scoreValue = (value: unknown, field: string, fallback = 0) => {
+      const score = value === undefined ? fallback : Number(value);
+      if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error(`${field} must be between 0 and 100.`);
+      return score;
+    };
+    const countValue = (value: unknown, field: string) => {
+      const count = value === undefined ? 0 : Number(value);
+      if (!Number.isInteger(count) || count < 0) throw new Error(`${field} must be a non-negative integer.`);
+      return count;
+    };
+
     return {
       ok: true,
       value: {
         id: text(input.id, "Prospect ID", 100),
         businessName: text(input.businessName, "Business name", 160),
-        website: parsedUrl.href,
+        website: parsedWebsite,
+        profileUrl: parsedProfileUrl,
+        prospectType,
         phone: text(input.phone, "Phone", 50, false),
         email,
         city: text(input.city, "City", 100),
@@ -149,6 +224,10 @@ export function validateProspect(input: unknown): ValidationResult {
         serviceArea: text(input.serviceArea, "Service area", 300),
         sizeIndicator,
         priorityScore,
+        rating: Math.min(5, scoreValue(input.rating, "Rating")),
+        reviewCount: countValue(input.reviewCount, "Review count"),
+        recentReviewCount: countValue(input.recentReviewCount, "Recent review count"),
+        sourceConfidence: scoreValue(input.sourceConfidence, "Source confidence"),
         notes: stringArray(input.notes, "Notes", 1000, 5000),
         activities: activityValues(input.activities),
         analysis: analysisValue(input.analysis),

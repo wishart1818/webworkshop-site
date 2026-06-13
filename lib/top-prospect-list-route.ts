@@ -32,10 +32,10 @@ const listDependencies: ListDependencies = {
 
 export function topProspectBuildVersion(environment: NodeJS.ProcessEnv = process.env) {
   const commit = environment.VERCEL_GIT_COMMIT_SHA?.trim();
-  if (commit) return `provider-diagnostics-v2-${commit.slice(0, 7)}`;
+  if (commit) return `outreach-package-v1-${commit.slice(0, 7)}`;
   const deployment = environment.VERCEL_DEPLOYMENT_ID?.trim();
-  if (deployment) return `provider-diagnostics-v2-${deployment.slice(0, 12)}`;
-  return "provider-diagnostics-v2";
+  if (deployment) return `outreach-package-v1-${deployment.slice(0, 12)}`;
+  return "outreach-package-v1";
 }
 
 export async function handleTopProspectList(request: Request, dependencies: ListDependencies = listDependencies) {

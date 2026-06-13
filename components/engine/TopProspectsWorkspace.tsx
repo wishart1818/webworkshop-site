@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
-import { tradeCategories } from "@/lib/prospect-engine";
-import type { TopProspectJob, TopProspectResult } from "@/lib/top-prospects";
+import { previewStyleProfile, tradeCategories, type ProspectType } from "@/lib/prospect-engine";
+import type {
+  OutreachPackageAction,
+  ProspectMode,
+  TopProspectJob,
+  TopProspectResult,
+  TopProspectWorkflowType,
+} from "@/lib/top-prospects";
+import { outreachPackageStatusLabel } from "@/lib/top-prospects";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
 
 type Props = {
@@ -18,6 +25,7 @@ type TopProspectApiPayload = {
   classification?: string;
   error?: string;
   jobs?: TopProspectJob[];
+  result?: TopProspectResult;
 };
 
 function legacyJobDiagnostics(job: TopProspectJob): DiscoveryDiagnostics {
@@ -79,6 +87,28 @@ const failureLabels: Record<TopProspectJobFailureClassification, string> = {
   unexpected_exception: "Unexpected exception",
 };
 
+const modeLabels: Record<ProspectMode, string> = {
+  strict: "Strict Mode",
+  growth: "Growth Mode",
+  volume: "Volume Mode",
+};
+
+const modeDescriptions: Record<ProspectMode, string> = {
+  strict: "Opportunity 60+, website 75 or lower, local brands only.",
+  growth: "Opportunity 45+, website 90 or lower, local brands only.",
+  volume: "Ranks every local business with a meaningful website improvement gap.",
+};
+
+const workflowLabels: Record<TopProspectWorkflowType, string> = {
+  search: "Top Prospects Search",
+  morning_batch: "Morning Prospect Batch",
+};
+
+const prospectTypeLabels: Record<ProspectType, string> = {
+  redesign: "Redesign Prospects",
+  no_website_social_only: "No Website / Social Only",
+};
+
 function jobProgress(job: TopProspectJob) {
   if (job.status === "COMPLETED") return 100;
   if (job.stage === "DISCOVER") return 5;
@@ -101,10 +131,17 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [buildVersion, setBuildVersion] = useState("unknown");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [packageActioning, setPackageActioning] = useState("");
   const [promptResult, setPromptResult] = useState<TopProspectResult | null>(null);
+  const [outreachResult, setOutreachResult] = useState<TopProspectResult | null>(null);
+  const [selectedMode, setSelectedMode] = useState<ProspectMode>("strict");
+  const [selectedProspectType, setSelectedProspectType] = useState<ProspectType>("redesign");
+  const [selectedWorkflow, setSelectedWorkflow] = useState<TopProspectWorkflowType>("search");
   const activeJob = jobs.find((job) => ["QUEUED", "RUNNING"].includes(job.status));
   const latestJob = activeJob ?? jobs[0];
   const best = jobs.find((job) => job.results.length)?.results[0];
+  const queuedResults = latestJob ? [...latestJob.results, ...latestJob.reviewedNotRecommended] : [];
+  const preparedArtifacts = queuedResults.filter((result) => result.prospect.preview && result.prospect.outreach && result.buildPrompt).length;
 
   const loadJobs = useCallback(async () => {
     try {
@@ -148,6 +185,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           radiusKm: Number(form.get("radiusKm")),
           businessesToScan: Number(form.get("businessesToScan")),
           finalProspectsWanted: Number(form.get("finalProspectsWanted")),
+          prospectType: form.get("prospectType"),
+          mode: selectedMode,
+          workflowType: selectedWorkflow,
         }),
       });
       const payload = (await response.json()) as TopProspectApiPayload;
@@ -167,14 +207,44 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     await loadJobs();
   }
 
-  async function copyPrompt(result: TopProspectResult) {
+  async function copyText(key: string, value: string) {
     try {
-      await navigator.clipboard.writeText(result.buildPrompt);
-      setCopied(result.id);
+      await navigator.clipboard.writeText(value);
+      setCopied(key);
       window.setTimeout(() => setCopied(""), 1800);
     } catch {
       setError("Clipboard access is unavailable. Open the prospect and review the saved artifacts instead.");
     }
+  }
+
+  async function copyPrompt(result: TopProspectResult) {
+    await copyText(result.id, result.buildPrompt);
+  }
+
+  async function runPackageAction(result: TopProspectResult, action: OutreachPackageAction) {
+    setPackageActioning(`${result.id}:${action}`);
+    setError("");
+    try {
+      const response = await fetch(`/api/engine/top-prospects/results/${result.id}/package`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const payload = (await response.json()) as TopProspectApiPayload;
+      if (!response.ok || !payload.result) throw new Error(payload.error || "Unable to update Outreach Package.");
+      if (outreachResult?.id === result.id) setOutreachResult(payload.result);
+      await loadJobs();
+      onProspectsChanged();
+    } catch (packageError) {
+      setError(packageError instanceof Error ? packageError.message : "Unable to update Outreach Package.");
+    } finally {
+      setPackageActioning("");
+    }
+  }
+
+  function openPackageReview(result: TopProspectResult) {
+    setOutreachResult(result);
+    if (result.packageStatus === "PACKAGE_GENERATED") void runPackageAction(result, "ready_for_review");
   }
 
   const skipText = useMemo(
@@ -188,18 +258,22 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     <div className="engine-content engine-top-prospects">
       <section className="engine-panel engine-top-prospect-launcher">
         <div className="engine-panel__head">
-          <div><h2>Find Top Prospects</h2><p>Scan public business records, analyze qualified websites, and return the strongest manual-outreach opportunities.</p></div>
+          <div><h2>Find Top Prospects</h2><p>Analyze local businesses, score sales fit, and save ready-to-review previews, outreach drafts, and Lovable prompts.</p></div>
           <div className="engine-build-label"><span>Runs safely in saved batches</span><code>Build {buildVersion}</code></div>
         </div>
         <form onSubmit={startJob}>
+          <label>Run as<select name="workflowType" onChange={(event) => setSelectedWorkflow(event.target.value as TopProspectWorkflowType)} value={selectedWorkflow}><option value="search">Top Prospects Search</option><option value="morning_batch">Morning Prospect Batch</option></select></label>
+          <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option></select></label>
+          <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
           <label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>City<input name="city" required /></label>
           <label>State<input maxLength={2} name="state" required /></label>
           <label>Radius<select name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
           <label>Businesses to scan<input defaultValue="50" max="100" min="5" name="businessesToScan" type="number" /></label>
           <label>Final prospects wanted<input defaultValue="10" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
+          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active, contactable local businesses by online presence gap and website need.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
-            {starting ? "Starting" : activeJob ? "Search in progress" : "Find Top Prospects"}
+            {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}
           </button>
         </form>
       </section>
@@ -209,13 +283,16 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob && (
         <section className="engine-panel engine-job-progress" aria-live="polite">
           <div className="engine-panel__head">
-            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{latestJob.status === "COMPLETED" ? "Ranked results are ready for review." : latestJob.status === "FAILED" ? "Processing stopped before completion. Review the diagnostic below." : "You can leave this page. Progress is saved after every batch."}</p></div>
+            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{latestJob.status === "COMPLETED" ? `${workflowLabels[latestJob.input.workflowType]} results and artifacts are ready for review.` : latestJob.status === "FAILED" ? "Processing stopped before completion. Review the diagnostic below." : "You can leave this page. Analysis and generated artifacts are saved after every batch."}</p></div>
             <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase()}`}>{latestJob.status.toLowerCase()}</span>
           </div>
           <div className="engine-job-meta">
             <span>Job ID <code>{latestJob.id}</code></span>
             <span>Created <time dateTime={latestJob.createdAt}>{latestJob.createdAt}</time></span>
             <span>Updated <time dateTime={latestJob.updatedAt}>{latestJob.updatedAt}</time></span>
+            <span>{latestJob.input.prospectType === "no_website_social_only" ? <>Scoring <b>Website Need</b></> : <>Mode <b>{modeLabels[latestJob.input.mode]}</b></>}</span>
+            <span>Type <b>{prospectTypeLabels[latestJob.input.prospectType]}</b></span>
+            <span>Workflow <b>{workflowLabels[latestJob.input.workflowType]}</b></span>
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
           <div className="engine-job-stats">
@@ -233,54 +310,88 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <code>{latestJob.failureClassification}</code>
             </div>
           )}
-          <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} />
+          <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} qualificationLabel={latestJob.input.prospectType === "no_website_social_only" ? "eligible no-website leads" : "usable websites"} />
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
         </section>
       )}
+
+      {latestJob && queuedResults.length > 0 && (
+        <section className="engine-panel engine-auto-queue">
+          <div className="engine-panel__head"><div><h2>Auto Prospect Queue</h2><p>Complete Outreach Packages are stored for review. Sending remains manual and requires human approval.</p></div><span>{preparedArtifacts} prepared</span></div>
+          <div className="engine-auto-queue__summary">
+            <span><b>{queuedResults.length}</b> reviewed prospects</span>
+            <span><b>{queuedResults.filter((result) => result.prospect.preview).length}</b> previews ready</span>
+            <span><b>{queuedResults.filter((result) => result.prospect.outreach).length}</b> outreach drafts ready</span>
+            <span><b>{queuedResults.filter((result) => result.packageStatus === "APPROVED_TO_SEND").length}</b> approved to send</span>
+          </div>
+        </section>
+      )}
+
+      {latestJob?.results.length ? (
+        <section className="engine-panel engine-package-review">
+          <div className="engine-panel__head">
+            <div><h2>Outreach Package Review</h2><p>Review the business-specific preview, email, pitch, and builder handoff. Approve or skip without opening each prospect record.</p></div>
+            <span>{latestJob.results.filter((result) => result.packageStatus === "READY_FOR_REVIEW").length} ready for review</span>
+          </div>
+          <div className="engine-package-review-grid">
+            {latestJob.results.map((result) => (
+              <PackageReviewCard
+                actioning={packageActioning}
+                key={result.id}
+                onAction={runPackageAction}
+                onReview={openPackageReview}
+                result={result}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {best && <BestProspect result={best} onOpenProspect={onOpenProspect} />}
 
       {latestJob?.results.length ? (
         <section className="engine-panel engine-top-results">
-          <div className="engine-panel__head"><div><h2>Ranked Top Prospects</h2><p>Opportunity Score measures likely sales fit separately from website quality.</p></div><span>{latestJob.results.length} ready for review</span></div>
+          <div className="engine-panel__head"><div><h2>{latestJob.input.prospectType === "no_website_social_only" ? "No Website / Social Only Prospects" : "Ranked Top Prospects"}</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Kept separate from redesign prospects and ranked by website need, activity, and contactability." : `${modeLabels[latestJob.input.mode]} ranks qualified local businesses by a public-data sales heuristic, not verified revenue.`}</p></div><span>{latestJob.results.length} ready for review</span></div>
           {latestJob.status === "COMPLETED" && latestJob.results.length < latestJob.input.finalProspectsWanted && (
-            <p className="engine-skip-summary">Only {latestJob.results.length} strong prospects found. Increase radius or scan count to find more.</p>
+            <p className="engine-skip-summary">{latestJob.input.prospectType === "no_website_social_only" ? `Only ${latestJob.results.length} active no-website prospects found. Increase radius or scan count to find more.` : `Only ${latestJob.results.length} prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.`}</p>
           )}
           <div className="engine-top-table" role="table" aria-label="Top prospects">
             <div className="engine-top-table__head" role="row"><span>Rank / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {latestJob.results.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><a href={safeWebsite(result.prospect.website)} rel="noreferrer" target="_blank">{result.prospect.website}</a></div>
+                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
-                <div><span>Website <b>{result.prospect.analysis?.overallScore ?? "-"}</b></span><span>Opportunity <b>{result.opportunityScore}</b></span></div>
+                <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span><em>{result.pitchAngle}</em></div>
-                <div><i className={`engine-status engine-status--${result.prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{result.prospect.status}</i></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.prospect.status}</span></div>
                 <div className="engine-result-actions">
                   <button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button>
                   <a className="engine-button" href={`/engine/previews/${result.prospect.id}`} target="_blank">Open preview</a>
-                  <button className="engine-button" onClick={() => setPromptResult(result)} type="button">Generate Website Build Prompt</button>
+                  <button className="engine-button" onClick={() => openPackageReview(result)} type="button">Review package</button>
+                  <button className="engine-button" disabled={packageActioning.startsWith(`${result.id}:`) || result.packageStatus === "SENT"} onClick={() => void runPackageAction(result, "generate")} type="button">Generate Outreach Package</button>
+                  <button className="engine-button" onClick={() => setPromptResult(result)} type="button">Open Lovable prompt</button>
                 </div>
               </article>
             ))}
           </div>
         </section>
       ) : !latestJob || latestJob.status === "COMPLETED" ? (
-        <section className="engine-panel"><EmptyState title="No ranked Top Prospects yet" body={latestJob ? "Only 0 strong prospects found. Increase radius or scan count to find more." : "Start a search to discover, qualify, analyze, and rank local contractor businesses."} /></section>
+        <section className="engine-panel"><EmptyState title="No ranked Top Prospects yet" body={latestJob ? latestJob.input.prospectType === "no_website_social_only" ? "No active, contactable no-website prospects matched this search. Increase radius or scan count." : `No prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.` : "Start a search to discover, qualify, analyze, and rank local contractor businesses."} /></section>
       ) : null}
 
       {latestJob?.reviewedNotRecommended.length ? (
         <section className="engine-panel engine-top-results">
-          <div className="engine-panel__head"><div><h2>Reviewed but not recommended</h2><p>Analyzed leads that did not meet the default sales-fit threshold.</p></div><span>{latestJob.reviewedNotRecommended.length} reviewed</span></div>
+          <div className="engine-panel__head"><div><h2>Reviewed but not recommended</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Active no-website leads that did not meet the contactability or website-need threshold." : "Analyzed leads that did not meet the selected mode's sales-fit threshold."}</p></div><span>{latestJob.reviewedNotRecommended.length} reviewed</span></div>
           <div className="engine-top-table" role="table" aria-label="Reviewed but not recommended prospects">
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {latestJob.reviewedNotRecommended.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><a href={safeWebsite(result.prospect.website)} rel="noreferrer" target="_blank">{result.prospect.website}</a></div>
+                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
-                <div><span>Website <b>{result.prospect.analysis?.overallScore ?? "-"}</b></span><span>Opportunity <b>{result.opportunityScore}</b></span></div>
+                <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
-                <div><i className={`engine-status engine-status--${result.prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{result.prospect.status}</i></div>
-                <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.prospect.status}</span></div>
+                <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button><button className="engine-button" onClick={() => openPackageReview(result)} type="button">Review package</button><button className="engine-button" disabled={packageActioning.startsWith(`${result.id}:`) || result.packageStatus === "SENT"} onClick={() => void runPackageAction(result, "generate")} type="button">Generate Outreach Package</button><button className="engine-button" onClick={() => setPromptResult(result)} type="button">Open Lovable prompt</button></div>
               </article>
             ))}
           </div>
@@ -290,9 +401,37 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {promptResult && (
         <div className="engine-dialog-backdrop" onMouseDown={() => setPromptResult(null)}>
           <dialog aria-labelledby="build-prompt-title" className="engine-dialog engine-dialog--wide" onMouseDown={(event) => event.stopPropagation()} open>
-            <header><div><p>Website builder handoff</p><h2 id="build-prompt-title">{promptResult.prospect.businessName} build prompt</h2></div><button aria-label="Close" onClick={() => setPromptResult(null)} type="button">×</button></header>
-            <div className="engine-build-prompt"><p>Review this prompt before using it in Lovable, Bolt, v0, Replit, or another website builder. It avoids invented business claims.</p><pre>{promptResult.buildPrompt}</pre></div>
-            <footer><button className="engine-button" onClick={() => setPromptResult(null)} type="button">Close</button><button className="engine-button engine-button--primary" onClick={() => void copyPrompt(promptResult)} type="button">{copied === promptResult.id ? "Prompt copied" : "Copy build prompt"}</button></footer>
+            <header><div><p>Optional website builder handoff</p><h2 id="build-prompt-title">{promptResult.prospect.businessName} build prompt</h2></div><button aria-label="Close" onClick={() => setPromptResult(null)} type="button">Close</button></header>
+            <div className="engine-build-prompt"><p>This copy-ready prompt works with Lovable, Bolt, v0, or a manual build. The in-engine preview works independently and the prompt avoids invented business claims.</p><pre>{promptResult.buildPrompt}</pre></div>
+            <footer><a className="engine-button" href="https://lovable.dev/" rel="noreferrer" target="_blank">Open Lovable</a><a className="engine-button" href="https://bolt.new/" rel="noreferrer" target="_blank">Open Bolt</a><a className="engine-button" href="https://v0.dev/" rel="noreferrer" target="_blank">Open v0</a><button className="engine-button engine-button--primary" onClick={() => void copyPrompt(promptResult)} type="button">{copied === promptResult.id ? "Prompt copied" : "Copy build prompt"}</button></footer>
+          </dialog>
+        </div>
+      )}
+
+      {outreachResult?.prospect.outreach && (
+        <div className="engine-dialog-backdrop" onMouseDown={() => setOutreachResult(null)}>
+          <dialog aria-labelledby="outreach-draft-title" className="engine-dialog engine-dialog--wide" onMouseDown={(event) => event.stopPropagation()} open>
+            <header><div><p>{outreachPackageStatusLabel(outreachResult.packageStatus)}</p><h2 id="outreach-draft-title">{outreachResult.prospect.businessName} Outreach Package</h2></div><button aria-label="Close" onClick={() => setOutreachResult(null)} type="button">Close</button></header>
+            <div className="engine-package-dialog">
+              <div className="engine-package-dialog__summary">
+                <div><span>Recommended pitch angle</span><p>{outreachResult.pitchAngle}</p></div>
+                <div><span>Protected preview link</span><a href={outreachResult.previewLink} rel="noreferrer" target="_blank">{outreachResult.previewLink}</a><small>This route stays behind Prospect Engine authentication by default. Confirm recipient access before manually sending.</small></div>
+              </div>
+              <section><h3>Subject lines</h3><ul>{outreachResult.prospect.outreach.subjects.map((subject) => <li key={subject}>{subject}</li>)}</ul></section>
+              <section><div className="engine-copy-head"><h3>Short email with preview</h3><button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short email"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
+              <section><div className="engine-copy-head"><h3>Detailed email with preview</h3><button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed email"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>
+              <section><h3>Follow-ups</h3>{outreachResult.prospect.outreach.followUps.map((followUp, index) => <div className="engine-package-follow-up" key={followUp}><b>Follow-up {index + 1}</b><pre>{followUp}</pre></div>)}</section>
+            </div>
+            <footer>
+              <button className="engine-button" disabled={packageActioning.startsWith(`${outreachResult.id}:`) || outreachResult.packageStatus === "SENT"} onClick={() => void runPackageAction(outreachResult, "skip")} type="button">Skip</button>
+              <a className="engine-button" href={outreachResult.previewLink} rel="noreferrer" target="_blank">Open full preview</a>
+              <button className="engine-button" onClick={() => { setPromptResult(outreachResult); setOutreachResult(null); }} type="button">Open build prompt</button>
+              {outreachResult.packageStatus === "APPROVED_TO_SEND"
+                ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`)} onClick={() => void runPackageAction(outreachResult, "mark_sent")} type="button">Mark Sent</button>
+                : outreachResult.packageStatus !== "SENT" && outreachResult.packageStatus !== "SKIPPED"
+                  ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`)} onClick={() => void runPackageAction(outreachResult, "approve")} type="button">Approve to Send</button>
+                  : null}
+            </footer>
           </dialog>
         </div>
       )}
@@ -300,12 +439,97 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   );
 }
 
+function PackageReviewCard({
+  actioning,
+  onAction,
+  onReview,
+  result,
+}: {
+  actioning: string;
+  onAction: (result: TopProspectResult, action: OutreachPackageAction) => Promise<void>;
+  onReview: (result: TopProspectResult) => void;
+  result: TopProspectResult;
+}) {
+  const preview = result.prospect.preview;
+  const profile = previewStyleProfile(result.prospect, preview);
+  const busy = actioning.startsWith(`${result.id}:`);
+  const generated = result.packageStatus !== "NOT_GENERATED" && result.packageStatus !== "SKIPPED";
+  const reviewable = generated && result.packageStatus !== "SENT";
+  const approvable = result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW";
+  const miniStyle = {
+    "--package-primary": profile.primaryColor,
+    "--package-accent": profile.accentColor,
+    "--package-soft": profile.softSurfaceColor,
+    "--package-ink": profile.inkColor,
+  } as CSSProperties;
+  const emailSummary = result.prospect.outreach?.concise.split("\n").filter(Boolean).slice(1, 3).join(" ") ?? "Generate the package to create the personalized email sequence.";
+
+  return (
+    <article className="engine-package-card">
+      <header>
+        <div><span>#{result.rank ?? "Pending"} {result.prospect.trade}</span><h3>{result.prospect.businessName}</h3></div>
+        <i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i>
+      </header>
+      <div className="engine-package-mini-preview" style={miniStyle}>
+        <span>{result.prospect.city}, {result.prospect.state}</span>
+        <strong>{preview?.heroHeadline ?? `${result.prospect.trade} service made easier to trust.`}</strong>
+        <i>{profile.ctaLabel}</i>
+      </div>
+      <div className="engine-package-card__copy">
+        <span>Recommended pitch</span>
+        <p>{result.pitchAngle}</p>
+        <span>Email preview</span>
+        <p>{emailSummary}</p>
+      </div>
+      <div className="engine-package-card__actions">
+        <button className="engine-button" disabled={busy || result.packageStatus === "SENT"} onClick={() => void onAction(result, "generate")} type="button">Generate Outreach Package</button>
+        <button className="engine-button" disabled={busy || !reviewable} onClick={() => onReview(result)} type="button">Review preview + email</button>
+        {result.packageStatus === "APPROVED_TO_SEND"
+          ? <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void onAction(result, "mark_sent")} type="button">Mark Sent</button>
+          : <button className="engine-button engine-button--primary" disabled={busy || !approvable} onClick={() => void onAction(result, "approve")} type="button">Approve</button>}
+        <button className="engine-button" disabled={busy || result.packageStatus === "SENT" || result.packageStatus === "SKIPPED"} onClick={() => void onAction(result, "skip")} type="button">Skip</button>
+      </div>
+    </article>
+  );
+}
+
 function BestProspect({ result, onOpenProspect }: { result: TopProspectResult; onOpenProspect: (id: string) => void }) {
   return (
     <section className="engine-best-prospect">
       <div><span>Best Prospect Today</span><h2>{result.prospect.businessName}</h2><p>{result.whyMayBuy}</p></div>
-      <div><strong>{result.opportunityScore}</strong><span>Opportunity Score</span></div>
-      <div><b>Recommended next action</b><p>Review the analysis and preview, verify the public contact details, then approve a personal outreach draft.</p><button className="engine-button engine-button--primary" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review best prospect</button></div>
+      <div><strong>{result.salesScores.weightedSalesScore}</strong><span>{result.presenceScores ? "Website Need Score" : "Weighted Sales Score"}</span></div>
+      <div><b>Recommended next action</b><p>Review the assessment and preview, verify the public contact details, then approve a personal outreach draft.</p><button className="engine-button engine-button--primary" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review best prospect</button></div>
     </section>
   );
+}
+
+function SalesScoreBreakdown({ result }: { result: TopProspectResult }) {
+  if (result.presenceScores) {
+    return (
+      <div className="engine-sales-score-grid">
+        <span>Website need <b>{result.presenceScores.websiteNeedScore}</b></span>
+        <span>Online presence gap <b>{result.presenceScores.onlinePresenceGapScore}</b></span>
+        <span>Contactability <b>{result.presenceScores.contactabilityScore}</b></span>
+        <span>Business activity <b>{result.presenceScores.businessActivityScore}</b></span>
+      </div>
+    );
+  }
+  const scores = result.salesScores;
+  return (
+    <div className="engine-sales-score-grid">
+      <span>Final weighted sales <b>{scores.weightedSalesScore}</b></span>
+      <span>Website quality <b>{scores.websiteQualityScore}</b></span>
+      <span>Opportunity <b>{result.opportunityScore}</b></span>
+      <span>Revenue opportunity <b>{scores.revenueOpportunityScore}</b></span>
+      <span>Contactability <b>{scores.contactabilityScore}</b></span>
+      <span>Local competitiveness <b>{scores.localMarketCompetitivenessScore}</b></span>
+      <span>AI replacement confidence <b>{scores.aiReplacementConfidenceScore}</b></span>
+    </div>
+  );
+}
+
+function ProspectPresenceLink({ result }: { result: TopProspectResult }) {
+  const url = result.prospect.website || result.prospect.profileUrl;
+  if (!url) return <span>No owned website or public profile link</span>;
+  return <a href={safeWebsite(url)} rel="noreferrer" target="_blank">{result.prospect.website ? result.prospect.website : "Open public profile"}</a>;
 }

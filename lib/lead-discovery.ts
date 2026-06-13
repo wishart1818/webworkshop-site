@@ -1,9 +1,11 @@
-import { tradeCategories, type TradeCategory } from "@/lib/prospect-engine";
+import { tradeCategories, type ProspectType, type TradeCategory } from "@/lib/prospect-engine";
 import { TopProspectStageError } from "@/lib/top-prospect-diagnostics";
 
 export type DiscoveredLead = {
   businessName: string;
   website: string;
+  profileUrl: string;
+  prospectType: ProspectType;
   phone: string;
   email: string;
   city: string;
@@ -65,6 +67,7 @@ export type DiscoveryLogger = (event: DiscoveryLogEvent, metadata: Record<string
 export type DiscoveryCandidate = {
   businessName: string;
   website?: string;
+  profileUrl?: string;
   phone?: string;
   email?: string;
   city?: string;
@@ -117,6 +120,30 @@ function normalizeWebsite(value: string) {
   const url = new URL(candidate);
   if (!["http:", "https:"].includes(url.protocol)) throw new Error("Unsupported website protocol.");
   return url.href;
+}
+
+const socialOrProfileHosts = [
+  "facebook.com",
+  "fb.com",
+  "instagram.com",
+  "g.page",
+  "maps.app.goo.gl",
+  "google.com",
+];
+
+export function isSocialOrBusinessProfileUrl(value: string | undefined) {
+  if (!value) return false;
+  try {
+    const url = new URL(normalizeWebsite(value));
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    return socialOrProfileHosts.some((profileHost) => host === profileHost || host.endsWith(`.${profileHost}`));
+  } catch {
+    return false;
+  }
+}
+
+export function isUsableBusinessWebsite(value: string | undefined) {
+  return validWebsite(value) && !isSocialOrBusinessProfileUrl(value);
 }
 
 function websiteKey(value: string) {
@@ -314,6 +341,7 @@ function overpassCandidates(elements: OverpassElement[]): DiscoveryCandidate[] {
     return [{
       businessName,
       website: tags.website || tags["contact:website"],
+      profileUrl: tags.facebook || tags.instagram || tags["contact:facebook"] || tags["contact:instagram"],
       phone: tags.phone || tags["contact:phone"],
       email: tags.email || tags["contact:email"],
       city: tags["addr:city"],
@@ -335,6 +363,7 @@ export function mergeDiscoveryCandidates(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit: number;
+  prospectType?: ProspectType;
   sourceCounts?: DiscoverySourceCounts;
   providerDiagnostics?: DiscoveryProviderDiagnostics;
   logger?: DiscoveryLogger;
@@ -380,7 +409,8 @@ export function mergeDiscoveryCandidates(input: {
       continue;
     }
     if (!existing.sources.includes(candidate.source)) existing.sources.push(candidate.source);
-    if (!validWebsite(existing.website) && validWebsite(candidate.website)) existing.website = candidate.website;
+    if (!isUsableBusinessWebsite(existing.website) && isUsableBusinessWebsite(candidate.website)) existing.website = candidate.website;
+    existing.profileUrl ||= candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : undefined);
     existing.phone ||= candidate.phone;
     existing.email ||= candidate.email;
     existing.city ||= candidate.city;
@@ -393,13 +423,24 @@ export function mergeDiscoveryCandidates(input: {
   }
 
   const qualified = merged.flatMap((candidate): DiscoveredLead[] => {
-    if (!candidate.website) return [];
+    const prospectType = input.prospectType ?? "redesign";
+    const ownedWebsite = isUsableBusinessWebsite(candidate.website) ? candidate.website : "";
+    const profileUrl = candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : "");
+    const hasActivity = (candidate.reviewCount ?? 0) > 0
+      || (candidate.recentReviewCount ?? 0) > 0
+      || (candidate.rating ?? 0) > 0
+      || Boolean(profileUrl)
+      || candidate.sources.length > 1;
+    if (prospectType === "redesign" && !ownedWebsite) return [];
+    if (prospectType === "no_website_social_only" && (ownedWebsite || !candidate.phone || !hasActivity)) return [];
     try {
-      const website = normalizeWebsite(candidate.website);
+      const website = ownedWebsite ? normalizeWebsite(ownedWebsite) : "";
       const taggedState = candidate.state?.trim() ?? "";
       return [{
         businessName: candidate.businessName.trim(),
         website,
+        profileUrl: profileUrl && validWebsite(profileUrl) ? normalizeWebsite(profileUrl) : "",
+        prospectType,
         phone: candidate.phone ?? "",
         email: candidate.email ?? "",
         city: candidate.city?.trim() || input.city.trim(),
@@ -431,7 +472,7 @@ export function mergeDiscoveryCandidates(input: {
       const source = providerSources[provider];
       diagnostic.withinRadiusCount = withinRadius.filter((candidate) => candidate.source === source).length;
       diagnostic.afterDeduplicationCount = merged.filter((candidate) => candidate.sources.includes(source)).length;
-      diagnostic.usableWebsiteCount = qualified.filter((lead) => lead.sources?.includes(source)).length;
+      diagnostic.usableWebsiteCount = qualified.filter((lead) => lead.website && lead.sources?.includes(source)).length;
     }
     input.logger?.("provider_diagnostics", {
       provider,
@@ -519,6 +560,7 @@ function parseGooglePlaces(value: unknown): DiscoveryCandidate[] {
   const payload = value as { places?: Array<{
     displayName?: { text?: string };
     websiteUri?: string;
+    googleMapsUri?: string;
     nationalPhoneNumber?: string;
     formattedAddress?: string;
     addressComponents?: Array<{ longText?: string; shortText?: string; types?: string[] }>;
@@ -535,6 +577,7 @@ function parseGooglePlaces(value: unknown): DiscoveryCandidate[] {
     return [{
       businessName,
       website: place.websiteUri,
+      profileUrl: place.googleMapsUri,
       phone: place.nationalPhoneNumber,
       city,
       state,
@@ -600,6 +643,7 @@ function parseYelp(value: unknown): DiscoveryCandidate[] {
     display_phone?: string;
     rating?: number;
     review_count?: number;
+    url?: string;
     is_closed?: boolean;
     coordinates?: { latitude?: number; longitude?: number };
     location?: { city?: string; state?: string };
@@ -607,6 +651,7 @@ function parseYelp(value: unknown): DiscoveryCandidate[] {
   return (payload.businesses ?? []).flatMap((record) => record.name?.trim() ? [{
     businessName: record.name.trim(),
     phone: record.display_phone ?? record.phone,
+    profileUrl: record.url,
     city: record.location?.city,
     state: record.location?.state,
     latitude: finiteNumber(record.coordinates?.latitude),
@@ -628,6 +673,7 @@ function parseLicensedDirectory(value: unknown): DiscoveryCandidate[] {
     return [{
       businessName,
       website: String(record.website ?? record.websiteUrl ?? "") || undefined,
+      profileUrl: String(record.profileUrl ?? record.listingUrl ?? record.url ?? "") || undefined,
       phone: String(record.phone ?? record.phoneNumber ?? "") || undefined,
       email: String(record.email ?? record.publicEmail ?? "") || undefined,
       city: String(record.city ?? "") || undefined,
@@ -681,6 +727,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit?: number;
+  prospectType?: ProspectType;
   logger?: DiscoveryLogger;
 }): Promise<DiscoveryResult> {
   if (!validTrade(input.trade)) throw new Error("Trade category is not supported.");
@@ -843,7 +890,7 @@ export async function discoverContractorsWithDiagnostics(input: {
           ...headers,
           "Content-Type": "application/json",
           "X-Goog-Api-Key": googleKey,
-          "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.nationalPhoneNumber,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
+          "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
         },
         body: JSON.stringify({
           textQuery: `${input.trade} near ${input.city}, ${input.state}`,
@@ -923,6 +970,7 @@ export async function discoverContractorsWithDiagnostics(input: {
     trade: input.trade,
     radiusKm: input.radiusKm,
     limit,
+    prospectType: input.prospectType,
     sourceCounts,
     providerDiagnostics,
     logger: input.logger,
@@ -935,6 +983,7 @@ export async function discoverContractors(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit?: number;
+  prospectType?: ProspectType;
 }): Promise<DiscoveredLead[]> {
   return (await discoverContractorsWithDiagnostics(input)).leads;
 }

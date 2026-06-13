@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EmptyState, LoadingState } from "../components/engine/EngineStates";
 import { DiscoveryFunnel } from "../components/engine/DiscoveryFunnel";
+import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePreview";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
 import { seedProspects, withAnalysis, withOutreach, withPreview, type Prospect } from "../lib/prospect-engine";
@@ -33,6 +34,20 @@ test("prospect details explain missing public contact data", () => {
   assert.match(html, /Website not analyzed yet/);
 });
 
+test("no-website prospect detail shows presence-gap guidance without an analyze action", () => {
+  const prospect = structuredClone(seedProspects[0]);
+  prospect.website = "";
+  prospect.profileUrl = "https://facebook.com/local-roofing";
+  prospect.prospectType = "no_website_social_only";
+  prospect.reviewCount = 24;
+  const html = renderDetail(prospect, "Analysis");
+
+  assert.match(html, /Open public profile/);
+  assert.match(html, /No Website \/ Social Only prospect/);
+  assert.match(html, /owning the customer journey/i);
+  assert.doesNotMatch(html, /Analyze website/);
+});
+
 test("unapproved outreach renders compliance review and disabled copy controls", () => {
   const prospect = withOutreach(withAnalysis(structuredClone(seedProspects[0])));
   const html = renderDetail(prospect, "Outreach");
@@ -52,6 +67,33 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Service page structure/);
   assert.match(html, /Trust strategy/);
   assert.match(html, /Lead capture/);
+  assert.match(html, /Prospect-specific style profile/);
+  assert.match(html, /Brand signal/);
+  assert.match(html, /Primary CTA/);
+});
+
+test("protected website preview uses the prospect style profile instead of WebWorkshop branding", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Blue Line Roofing",
+    website: "https://bluelineroofing.example",
+  });
+  const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    savedPreview: prospect.preview,
+  }));
+
+  assert.match(html, /Protected concept preview\. Not a live client website\./);
+  assert.match(html, /Blue Line Roofing/);
+  assert.match(html, /--prospect-primary:#174b78/);
+  assert.match(html, /--prospect-accent:#2c94c6/);
+  assert.match(html, /Request an estimate/);
+  assert.match(html, /Why choose us/);
+  assert.match(html, /Service area/);
+  assert.match(html, /Call \(419\) 555-0142/);
+  assert.match(html, /data-layout="(?:trust-led|clean-split)"/);
+  assert.doesNotMatch(html, /--preview-green|--preview-lime/);
+  assert.doesNotMatch(html, /Concept prepared for manual review in WebWorkshop Prospect Engine/);
 });
 
 test("shared loading and empty states provide useful operator guidance", () => {

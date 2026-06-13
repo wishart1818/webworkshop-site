@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
+const topProspectsWorkspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
 const mobileStart = css.indexOf("@media (max-width: 767px)");
 const mobileEnd = css.indexOf("@media (max-width: 420px)");
 const mobileCss = css.slice(mobileStart, mobileEnd);
@@ -21,6 +22,7 @@ test("engine phone layout removes desktop-width result overflow", () => {
   assert.match(mobileCss, /\.engine-top-table article\s*{\s*min-width: 0;\s*grid-template-columns: 1fr;/);
   assert.doesNotMatch(mobileCss, /min-width:\s*36rem/);
   assert.match(mobileCss, /\.engine-provider-diagnostic dl\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(mobileCss, /\.engine-auto-queue__summary\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });
 
 test("engine phone controls and navigation account for iPhone interaction constraints", () => {
@@ -28,4 +30,41 @@ test("engine phone controls and navigation account for iPhone interaction constr
   assert.match(css, /padding: 0\.4rem 0\.4rem calc\(0\.4rem \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(mobileCss, /\.engine-top-prospect-launcher button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /min-height: 2\.75rem;\s*font-size: 1rem;/);
+});
+
+test("protected prospect previews remain readable and business-themed on phones", () => {
+  assert.match(mobileCss, /\.prospect-preview-site\[data-layout="project-led"\] \.prospect-preview-hero,/);
+  assert.match(mobileCss, /\.prospect-preview-nav div\s*{\s*display: none;/);
+  assert.match(mobileCss, /\.prospect-preview-actions\s*{\s*align-items: stretch;\s*flex-direction: column;/);
+  assert.match(mobileCss, /\.prospect-preview-contact form\s*{\s*grid-template-columns: 1fr;/);
+  assert.match(mobileCss, /\.prospect-preview-footer\s*{\s*flex-direction: column;/);
+  assert.match(mobileCss, /\.prospect-preview-why,/);
+  assert.doesNotMatch(css, /--preview-green|--preview-lime/);
+  assert.doesNotMatch(css.slice(css.indexOf(".protected-prospect-preview")), /linear-gradient/);
+});
+
+test("Outreach Package bulk review exposes the complete human approval workflow on mobile", () => {
+  assert.match(topProspectsWorkspace, /Outreach Package Review/);
+  assert.match(topProspectsWorkspace, /Generate Outreach Package/);
+  assert.match(topProspectsWorkspace, /Review preview \+ email/);
+  assert.match(topProspectsWorkspace, /Approve to Send/);
+  assert.match(topProspectsWorkspace, /Mark Sent/);
+  assert.match(topProspectsWorkspace, /Skip/);
+  assert.match(topProspectsWorkspace, /Open Lovable/);
+  assert.match(topProspectsWorkspace, /Open Bolt/);
+  assert.match(topProspectsWorkspace, /Open v0/);
+  assert.match(mobileCss, /\.engine-package-review-grid,\s*\.engine-package-dialog__summary\s*{\s*grid-template-columns: 1fr;/);
+  assert.match(mobileCss, /\.engine-package-card__actions\s*{\s*grid-template-columns: 1fr;/);
+});
+
+test("Top Prospects exposes modes, background batch workflow, queue, and requested score labels", () => {
+  assert.match(topProspectsWorkspace, /Prospect mode/);
+  assert.match(topProspectsWorkspace, /Morning Prospect Batch/);
+  assert.match(topProspectsWorkspace, /Auto Prospect Queue/);
+  assert.match(topProspectsWorkspace, /Final weighted sales/);
+  assert.match(topProspectsWorkspace, /Revenue opportunity/);
+  assert.match(topProspectsWorkspace, /AI replacement confidence/);
+  assert.match(topProspectsWorkspace, /No Website \/ Social Only/);
+  assert.match(topProspectsWorkspace, /Online presence gap/);
+  assert.match(topProspectsWorkspace, /Business activity/);
 });

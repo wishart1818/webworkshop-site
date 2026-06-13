@@ -2,9 +2,18 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { NextResponse } from "next/server";
 import {
+  NO_WEBSITE_PROSPECT_MIGRATION_CHECKSUM,
+  NO_WEBSITE_PROSPECT_MIGRATION_ID,
+  NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS,
+  OUTREACH_PACKAGE_MIGRATION_CHECKSUM,
+  OUTREACH_PACKAGE_MIGRATION_ID,
+  OUTREACH_PACKAGE_MIGRATION_STATEMENTS,
   TOP_PROSPECT_MIGRATION_CHECKSUM,
   TOP_PROSPECT_MIGRATION_ID,
   TOP_PROSPECT_MIGRATION_STATEMENTS,
+  TOP_PROSPECT_UPGRADE_MIGRATION_CHECKSUM,
+  TOP_PROSPECT_UPGRADE_MIGRATION_ID,
+  TOP_PROSPECT_UPGRADE_MIGRATION_STATEMENTS,
 } from "@/lib/top-prospect-schema";
 
 const REQUIRED_TABLES = [
@@ -78,6 +87,21 @@ const MIGRATIONS = [
     id: TOP_PROSPECT_MIGRATION_ID,
     checksum: TOP_PROSPECT_MIGRATION_CHECKSUM,
     statements: TOP_PROSPECT_MIGRATION_STATEMENTS,
+  },
+  {
+    id: TOP_PROSPECT_UPGRADE_MIGRATION_ID,
+    checksum: TOP_PROSPECT_UPGRADE_MIGRATION_CHECKSUM,
+    statements: TOP_PROSPECT_UPGRADE_MIGRATION_STATEMENTS,
+  },
+  {
+    id: NO_WEBSITE_PROSPECT_MIGRATION_ID,
+    checksum: NO_WEBSITE_PROSPECT_MIGRATION_CHECKSUM,
+    statements: NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS,
+  },
+  {
+    id: OUTREACH_PACKAGE_MIGRATION_ID,
+    checksum: OUTREACH_PACKAGE_MIGRATION_CHECKSUM,
+    statements: OUTREACH_PACKAGE_MIGRATION_STATEMENTS,
   },
 ] as const;
 
@@ -267,7 +291,8 @@ export async function initializeProductionDatabase(
 
         await runSetupPhase("migration_sql", async () => {
           await transaction.$executeRawUnsafe(CREATE_MIGRATION_TABLE);
-          const migrations = additiveUpgrade ? [MIGRATIONS[MIGRATIONS.length - 1]] : MIGRATIONS;
+          const topProspectMigrationIndex = MIGRATIONS.findIndex((migration) => migration.id === TOP_PROSPECT_MIGRATION_ID);
+          const migrations = additiveUpgrade ? MIGRATIONS.slice(topProspectMigrationIndex) : MIGRATIONS;
           for (const migration of migrations) {
             const index = MIGRATIONS.indexOf(migration);
             // These statements are fixed, repository-owned migration DDL. No request data reaches raw SQL.
