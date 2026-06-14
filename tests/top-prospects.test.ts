@@ -23,7 +23,12 @@ import {
   validateTopProspectInput,
   type OpportunityAssessment,
 } from "../lib/top-prospects";
-import { seedProspects, withAnalysis } from "../lib/prospect-engine";
+import {
+  classifyProspectPresence,
+  recommendProspectContactMethod,
+  seedProspects,
+  withAnalysis,
+} from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { createPublicPreviewToken } from "../lib/public-preview-token";
 import { recoverableTopProspect } from "../lib/top-prospect-worker";
@@ -86,6 +91,17 @@ test("Top Prospects input applies bounded production-safe limits", () => {
   });
   assert.equal(noWebsite.ok, true);
   if (noWebsite.ok) assert.equal(noWebsite.value.prospectType, "no_website_social_only");
+  const allTypes = validateTopProspectInput({
+    trade: "Roofing",
+    city: "Findlay",
+    state: "OH",
+    radiusKm: 25,
+    businessesToScan: 25,
+    finalProspectsWanted: 10,
+    prospectType: "all",
+  });
+  assert.equal(allTypes.ok, true);
+  if (allTypes.ok) assert.equal(allTypes.value.prospectType, "all");
 
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 101, finalProspectsWanted: 10 }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 11 }).ok, false);
@@ -188,6 +204,9 @@ test("Top Prospects recommendation gate explains every sales-fit rejection", () 
     topProspectRejectionReason(prospect, manualAssessment(80)),
     "No usable contact path",
   );
+  prospect.contactFormUrl = "https://local-roofing.example/contact";
+  prospect.recommendedContactMethod = "submit_contact_form";
+  assert.equal(topProspectRejectionReason(prospect, manualAssessment(80)), null);
 });
 
 test("Prospect Modes preserve strict behavior and expand local qualification deliberately", () => {
@@ -282,12 +301,25 @@ test("No Website / Social Only prospects receive separate presence scoring and o
 
   assert.ok(scores.onlinePresenceGapScore >= 80);
   assert.ok(scores.businessActivityScore > 0);
+  assert.ok(scores.localFitScore > 0);
+  assert.ok(scores.finalSalesScore > 0);
   assert.equal(assessment.presenceScores?.websiteNeedScore, scores.websiteNeedScore);
+  assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
   assert.match(prepared.prospect.outreach?.detailed ?? "", /owned website|online home/i);
   assert.match(prepared.buildPrompt, /first owned/i);
   assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
+  assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", /licensed|insured|warrant|recent local roofs?/i);
+});
+
+test("presence classification and contact recommendations cover public lead shapes", () => {
+  assert.equal(classifyProspectPresence({ website: "https://local.example", profileUrl: "", phone: "", email: "", contactFormUrl: "" }), "website_redesign");
+  assert.equal(classifyProspectPresence({ website: "", profileUrl: "https://facebook.com/local", phone: "", email: "", contactFormUrl: "" }), "social_only");
+  assert.equal(classifyProspectPresence({ website: "", profileUrl: "https://yelp.com/biz/local", phone: "", email: "", contactFormUrl: "" }), "listing_only");
+  assert.equal(classifyProspectPresence({ website: "", profileUrl: "", phone: "419-555-0100", email: "", contactFormUrl: "" }), "phone_only");
+  assert.equal(recommendProspectContactMethod({ classification: "social_only", profileUrl: "https://facebook.com/local", phone: "", email: "", contactFormUrl: "", inactive: false }), "message_on_facebook");
+  assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "", contactFormUrl: "https://listing.example/contact", inactive: false }), "submit_contact_form");
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
@@ -333,6 +365,36 @@ test("public preview tokens are hard to guess and internal preview links fail se
   assert.equal(evaluateOutreachEmailQuality(scoreLeak, publicLink).ready, false);
   assert.throws(() => assertOutreachEmailReady(internalPackage.prospect, internalPackage.previewLink), /cannot be approved/i);
   assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, publicLink));
+});
+
+test("Outreach Package approval blocks unsafe no-website contact and unsupported claims", () => {
+  const token = createPublicPreviewToken();
+  const publicLink = publicProspectPreviewLink(token);
+  const prospect = structuredClone(seedProspects[0]);
+  prospect.website = "";
+  prospect.profileUrl = "https://yelp.com/biz/local-roofing";
+  prospect.prospectType = "no_website_social_only";
+  prospect.classification = "listing_only";
+  prospect.phone = "";
+  prospect.email = "";
+  prospect.recommendedContactMethod = "needs_manual_contact_research";
+  prospect.analysis = undefined;
+  const uncontactable = prepareTopProspectArtifacts(prospect, publicLink);
+  assert.equal(uncontactable.emailQuality.ready, false);
+  assert.ok(uncontactable.emailQuality.issues.some((issue) => /usable public contact method/i.test(issue)));
+  assert.equal(evaluateOutreachEmailQuality({ ...uncontactable.prospect, recommendedContactMethod: "call_first" }, publicLink).ready, false);
+
+  const unsafe = {
+    ...uncontactable.prospect,
+    phone: "419-555-0100",
+    recommendedContactMethod: "call_first" as const,
+    outreach: {
+      ...uncontactable.prospect.outreach!,
+      concise: `${uncontactable.prospect.outreach!.concise}\nYour licensed team has award-winning work.`,
+    },
+  };
+  assert.ok(evaluateOutreachEmailQuality(unsafe, publicLink).issues.some((issue) => /unsupported claims/i.test(issue)));
+  assert.throws(() => assertOutreachEmailReady(unsafe, publicLink), /cannot be approved/i);
 });
 
 test("Outreach Package lifecycle values remain explicit and backwards compatible", () => {

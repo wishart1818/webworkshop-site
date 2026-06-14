@@ -4,11 +4,12 @@ import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-dia
 import {
   generateOutreach,
   generatePreview,
+  prospectContactMethodIsUsable,
   previewStyleProfile,
   type Analysis,
   type Prospect,
-  prospectTypes,
-  type ProspectType,
+  prospectSearchTypes,
+  type ProspectSearchType,
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
@@ -41,7 +42,7 @@ export type TopProspectInput = {
   radiusKm: number;
   businessesToScan: number;
   finalProspectsWanted: number;
-  prospectType: ProspectType;
+  prospectType: ProspectSearchType;
   mode: ProspectMode;
   workflowType: TopProspectWorkflowType;
 };
@@ -69,6 +70,8 @@ export type NoWebsitePresenceScores = {
   contactabilityScore: number;
   businessActivityScore: number;
   websiteNeedScore: number;
+  localFitScore: number;
+  finalSalesScore: number;
 };
 
 export const topProspectRejectionReasons = [
@@ -77,6 +80,8 @@ export const topProspectRejectionReasons = [
   "Low redesign opportunity",
   "Weak sales fit",
   "No usable contact path",
+  "Inactive business",
+  "Duplicate/bad fit",
   "Below final cutoff",
 ] as const;
 export type TopProspectRejectionReason = (typeof topProspectRejectionReasons)[number];
@@ -288,6 +293,25 @@ export function evaluateOutreachEmailQuality(prospect: Prospect, previewLink: st
       label: "Every draft includes a postal address or placeholder",
       passed: drafts.length >= 4 && drafts.every((draft) => /\[Add your business postal address before sending\]/i.test(draft)),
     },
+    {
+      key: "usable_contact_method",
+      label: "A usable public contact method exists",
+      passed: prospectContactMethodIsUsable(prospect),
+    },
+    {
+      key: "active_local_business",
+      label: "Business appears active, local, and independently operated",
+      passed: !prospect.inactive
+        && prospect.classification !== "national_large_brand"
+        && prospect.classification !== "duplicate_bad_fit"
+        && !likelyNationalOrLargeBrand(prospect),
+    },
+    {
+      key: "supported_facts_only",
+      label: "Email avoids unsupported claims",
+      passed: drafts.length > 0
+        && !/\b(?:licensed|insured|certified|award(?:ed|-winning)?|guaranteed?|warrant(?:y|ies)|testimonials?|years? (?:of experience|in business)|recent local (?:work|projects?|roofs?))\b/i.test(combined),
+    },
   ];
   return {
     ready: checks.every((check) => check.passed),
@@ -423,27 +447,46 @@ export function calculateNoWebsitePresenceScores(prospect: Prospect): NoWebsiteP
   const socialOnly = /facebook|instagram/i.test(prospect.profileUrl);
   const googleOnly = /google|g\.page|maps\.app/i.test(prospect.profileUrl);
   const onlinePresenceGapScore = clampScore(socialOnly ? 88 : googleOnly ? 92 : 100);
-  const contactabilityScore = clampScore((prospect.phone ? 78 : 0) + (prospect.email ? 17 : 0) + (prospect.profileUrl ? 5 : 0));
+  const contactabilityScore = clampScore(
+    (prospect.email ? 88 : 0)
+    + (prospect.contactFormUrl ? 76 : 0)
+    + (prospect.phone ? 64 : 0)
+    + (/facebook|fb\.com/i.test(prospect.profileUrl) ? 48 : prospect.profileUrl ? 18 : 0),
+  );
   const reviewStrength = Math.min(52, Math.round(Math.log10(Math.max(1, prospect.reviewCount) + 1) * 28));
   const businessActivityScore = clampScore(
     reviewStrength
     + Math.min(18, prospect.recentReviewCount * 4)
     + (prospect.rating >= 4.5 ? 18 : prospect.rating >= 4 ? 13 : prospect.rating > 0 ? 7 : 0)
-    + Math.min(12, Math.round(prospect.sourceConfidence * 0.12)),
+    + Math.min(12, Math.round(prospect.sourceConfidence * 0.12))
+    + Math.min(12, prospect.activitySignals.length * 3),
+  );
+  const broaderServiceArea = /\b(county|counties|regional|multiple|communities|nearby|greater)\b/i.test(prospect.serviceArea);
+  const localFitScore = clampScore(
+    (likelyNationalOrLargeBrand(prospect) ? 0 : 58)
+    + (prospect.city && prospect.state ? 16 : 0)
+    + (broaderServiceArea ? 8 : prospect.serviceArea ? 5 : 0)
+    + Math.min(18, Math.round(prospect.sourceConfidence * 0.18)),
   );
   const websiteNeedScore = clampScore(
-    onlinePresenceGapScore * 0.42
-    + contactabilityScore * 0.2
-    + businessActivityScore * 0.28
-    + prospect.sourceConfidence * 0.1,
+    onlinePresenceGapScore * 0.56
+    + businessActivityScore * 0.26
+    + localFitScore * 0.18,
   );
-  return { onlinePresenceGapScore, contactabilityScore, businessActivityScore, websiteNeedScore };
+  const finalSalesScore = clampScore(
+    websiteNeedScore * 0.3
+    + contactabilityScore * 0.24
+    + businessActivityScore * 0.2
+    + localFitScore * 0.2
+    + prospect.sourceConfidence * 0.06,
+  );
+  return { onlinePresenceGapScore, contactabilityScore, businessActivityScore, websiteNeedScore, localFitScore, finalSalesScore };
 }
 
 export function assessNoWebsiteOpportunity(prospect: Prospect): OpportunityAssessment {
   const presenceScores = calculateNoWebsitePresenceScores(prospect);
   return {
-    opportunityScore: presenceScores.websiteNeedScore,
+    opportunityScore: presenceScores.finalSalesScore,
     presenceScores,
     salesScores: {
       websiteQualityScore: 0,
@@ -451,7 +494,7 @@ export function assessNoWebsiteOpportunity(prospect: Prospect): OpportunityAsses
       contactabilityScore: presenceScores.contactabilityScore,
       localMarketCompetitivenessScore: 0,
       aiReplacementConfidenceScore: 0,
-      weightedSalesScore: presenceScores.websiteNeedScore,
+      weightedSalesScore: presenceScores.finalSalesScore,
     },
     mainWeakness: "No owned website was found.",
     whyMayBuy: `${prospect.businessName} appears active and contactable, but depends on third-party profiles instead of an online home it controls.`,
@@ -466,14 +509,16 @@ function hasMeaningfulImprovementGap(prospect: Pick<Prospect, "analysis">) {
 }
 
 export function topProspectRejectionReason(
-  prospect: Pick<Prospect, "businessName" | "website" | "phone" | "email" | "analysis" | "prospectType" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
 ): TopProspectRejectionReason | null {
   if (likelyNationalOrLargeBrand(prospect)) return "National/large brand";
+  if (prospect.inactive) return "Inactive business";
+  if (prospect.classification === "duplicate_bad_fit") return "Duplicate/bad fit";
   if (prospect.prospectType === "no_website_social_only") {
-    if (!prospect.phone && !prospect.email) return "No usable contact path";
-    if (assessment.presenceScores && assessment.presenceScores.websiteNeedScore < 45) return "Weak sales fit";
+    if (!prospectContactMethodIsUsable(prospect)) return "No usable contact path";
+    if (assessment.presenceScores && assessment.presenceScores.finalSalesScore < 45) return "Weak sales fit";
     return null;
   }
   const websiteScore = prospect.analysis?.overallScore;
@@ -481,7 +526,7 @@ export function topProspectRejectionReason(
     if (!hasMeaningfulImprovementGap(prospect)) return "Low redesign opportunity";
     return null;
   }
-  if (!prospect.phone && !prospect.email) return "No usable contact path";
+  if (!prospectContactMethodIsUsable(prospect)) return "No usable contact path";
   if (mode === "growth") {
     if (websiteScore !== undefined && websiteScore > 90) return "Already strong website";
     if (assessment.opportunityScore < 45) return "Weak sales fit";
@@ -495,7 +540,7 @@ export function topProspectRejectionReason(
 
 export function topProspectResultDisposition(
   persistedSelected: boolean,
-  prospect: Pick<Prospect, "businessName" | "website" | "phone" | "email" | "analysis" | "prospectType" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
 ) {
@@ -581,11 +626,11 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   if (input.workflowType !== undefined && !topProspectWorkflowTypes.includes(input.workflowType as TopProspectWorkflowType)) {
     return { ok: false, error: "Select a supported Top Prospects workflow." };
   }
-  if (input.prospectType !== undefined && !prospectTypes.includes(input.prospectType as ProspectType)) {
+  if (input.prospectType !== undefined && !prospectSearchTypes.includes(input.prospectType as ProspectSearchType)) {
     return { ok: false, error: "Select a supported prospect type." };
   }
-  const prospectType = typeof input.prospectType === "string" && prospectTypes.includes(input.prospectType as ProspectType)
-    ? input.prospectType as ProspectType
+  const prospectType = typeof input.prospectType === "string" && prospectSearchTypes.includes(input.prospectType as ProspectSearchType)
+    ? input.prospectType as ProspectSearchType
     : "redesign";
   const mode = normalizeProspectMode(input.mode);
   const workflowType = normalizeTopProspectWorkflowType(input.workflowType);

@@ -2054,6 +2054,26 @@ body:has(.engine-shell) {
   color: #354a41;
 }
 
+.engine-presence-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  align-items: center;
+}
+
+.engine-presence-summary > span,
+.engine-presence-summary > i {
+  border: 1px solid var(--engine-line);
+  border-radius: 999px;
+  background: #f7f9f7;
+  padding: 0.16rem 0.4rem;
+  color: #354a41;
+}
+
+.engine-presence-summary > a {
+  flex-basis: 100%;
+}
+
 .engine-sales-score-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.28rem 0.5rem;

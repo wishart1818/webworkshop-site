@@ -1,6 +1,10 @@
 import {
   prospectStatuses,
   prospectTypes,
+  prospectClassifications,
+  recommendedContactMethods,
+  classifyProspectPresence,
+  recommendProspectContactMethod,
   scoreLabels,
   tradeCategories,
   type Activity,
@@ -11,6 +15,8 @@ import {
   type Prospect,
   type ProspectStatus,
   type ProspectType,
+  type ProspectClassification,
+  type RecommendedContactMethod,
   type ScoreKey,
   type TradeCategory,
 } from "@/lib/prospect-engine";
@@ -178,6 +184,7 @@ export function validateProspect(input: unknown): ValidationResult {
     };
     const parsedWebsite = validateUrl(website, "Website");
     const parsedProfileUrl = validateUrl(profileUrl, "Profile URL");
+    const parsedContactFormUrl = validateUrl(text(input.contactFormUrl ?? "", "Contact form URL", 2048, false), "Contact form URL");
 
     const trade = text(input.trade, "Trade", 40) as TradeCategory;
     if (!tradeCategories.includes(trade)) throw new Error("Trade category is not supported.");
@@ -195,6 +202,17 @@ export function validateProspect(input: unknown): ValidationResult {
 
     const email = text(input.email, "Email", 254, false);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email must be valid.");
+    const phone = text(input.phone, "Phone", 50, false);
+    const classification = input.classification === undefined
+      ? classifyProspectPresence({ website: parsedWebsite, profileUrl: parsedProfileUrl, phone, email, contactFormUrl: parsedContactFormUrl })
+      : text(input.classification, "Prospect classification", 50) as ProspectClassification;
+    if (!prospectClassifications.includes(classification)) throw new Error("Prospect classification is not supported.");
+    const inactive = input.inactive === undefined ? false : input.inactive;
+    if (typeof inactive !== "boolean") throw new Error("Inactive status must be true or false.");
+    const recommendedContactMethod = input.recommendedContactMethod === undefined
+      ? recommendProspectContactMethod({ classification, profileUrl: parsedProfileUrl, phone, email, contactFormUrl: parsedContactFormUrl, inactive })
+      : text(input.recommendedContactMethod, "Recommended contact method", 60) as RecommendedContactMethod;
+    if (!recommendedContactMethods.includes(recommendedContactMethod)) throw new Error("Recommended contact method is not supported.");
 
     const scoreValue = (value: unknown, field: string, fallback = 0) => {
       const score = value === undefined ? fallback : Number(value);
@@ -215,8 +233,11 @@ export function validateProspect(input: unknown): ValidationResult {
         website: parsedWebsite,
         profileUrl: parsedProfileUrl,
         prospectType,
-        phone: text(input.phone, "Phone", 50, false),
+        classification,
+        phone,
         email,
+        contactFormUrl: parsedContactFormUrl,
+        address: text(input.address ?? "", "Address", 500, false),
         city: text(input.city, "City", 100),
         state: text(input.state, "State", 2).toUpperCase(),
         trade,
@@ -228,6 +249,9 @@ export function validateProspect(input: unknown): ValidationResult {
         reviewCount: countValue(input.reviewCount, "Review count"),
         recentReviewCount: countValue(input.recentReviewCount, "Recent review count"),
         sourceConfidence: scoreValue(input.sourceConfidence, "Source confidence"),
+        activitySignals: input.activitySignals === undefined ? [] : stringArray(input.activitySignals, "Activity signals", 50, 100),
+        recommendedContactMethod,
+        inactive,
         notes: stringArray(input.notes, "Notes", 1000, 5000),
         activities: activityValues(input.activities),
         analysis: analysisValue(input.analysis),

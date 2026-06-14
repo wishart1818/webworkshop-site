@@ -22,6 +22,28 @@ export type ProspectStatus = (typeof prospectStatuses)[number];
 export type TradeCategory = (typeof tradeCategories)[number];
 export const prospectTypes = ["redesign", "no_website_social_only"] as const;
 export type ProspectType = (typeof prospectTypes)[number];
+export const prospectSearchTypes = [...prospectTypes, "all"] as const;
+export type ProspectSearchType = (typeof prospectSearchTypes)[number];
+export const prospectClassifications = [
+  "website_redesign",
+  "no_website",
+  "social_only",
+  "listing_only",
+  "phone_only",
+  "not_enough_contact_info",
+  "national_large_brand",
+  "duplicate_bad_fit",
+] as const;
+export type ProspectClassification = (typeof prospectClassifications)[number];
+export const recommendedContactMethods = [
+  "send_email",
+  "submit_contact_form",
+  "message_on_facebook",
+  "call_first",
+  "needs_manual_contact_research",
+  "do_not_contact",
+] as const;
+export type RecommendedContactMethod = (typeof recommendedContactMethods)[number];
 export type ProspectSort = "priority" | "websiteScore" | "newest" | "businessName";
 export type ScoreKey =
   | "mobileExperience"
@@ -111,8 +133,11 @@ export type Prospect = {
   website: string;
   profileUrl: string;
   prospectType: ProspectType;
+  classification: ProspectClassification;
   phone: string;
   email: string;
+  contactFormUrl: string;
+  address: string;
   city: string;
   state: string;
   trade: TradeCategory;
@@ -124,6 +149,9 @@ export type Prospect = {
   reviewCount: number;
   recentReviewCount: number;
   sourceConfidence: number;
+  activitySignals: string[];
+  recommendedContactMethod: RecommendedContactMethod;
+  inactive: boolean;
   analysis?: Analysis;
   outreach?: OutreachDraft;
   preview?: PreviewConcept;
@@ -422,6 +450,40 @@ const outreachStrengths: Record<ScoreKey, string> = {
   technicalQuality: "Your current site already has a solid technical foundation.",
 };
 
+function isFacebookProfile(value: string) {
+  return /(?:^|\/\/)(?:www\.)?(?:facebook|fb)\.com\//i.test(value);
+}
+
+function isSocialProfile(value: string) {
+  return /(?:^|\/\/)(?:www\.)?(?:facebook|fb|instagram)\.com\//i.test(value);
+}
+
+export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl">): ProspectClassification {
+  if (input.website) return "website_redesign";
+  if (isSocialProfile(input.profileUrl)) return "social_only";
+  if (input.profileUrl) return "listing_only";
+  if (input.phone && !input.email && !input.contactFormUrl) return "phone_only";
+  if (input.phone || input.email || input.contactFormUrl) return "no_website";
+  return "not_enough_contact_info";
+}
+
+export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive">): RecommendedContactMethod {
+  if (input.inactive || input.classification === "national_large_brand" || input.classification === "duplicate_bad_fit") return "do_not_contact";
+  if (input.email) return "send_email";
+  if (input.contactFormUrl) return "submit_contact_form";
+  if (isFacebookProfile(input.profileUrl)) return "message_on_facebook";
+  if (input.phone) return "call_first";
+  return "needs_manual_contact_research";
+}
+
+export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl">) {
+  if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
+  if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.contactFormUrl);
+  if (input.recommendedContactMethod === "message_on_facebook") return isFacebookProfile(input.profileUrl);
+  if (input.recommendedContactMethod === "call_first") return Boolean(input.phone);
+  return false;
+}
+
 const outreachOpportunities: Record<ScoreKey, string> = {
   mobileExperience: "Some mobile visitors may still have to work too hard to find the next step.",
   visualDesign: "The presentation could do more to make the business feel established at a glance.",
@@ -473,7 +535,7 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
         `Turn ${prospect.city} searches into direct inquiries`,
       ],
       concise: `Hi ${prospect.businessName} team,\n\nI found ${publicPresence} while researching ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find an owned website where people can review services and contact you directly.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
-      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find an owned website that clearly explains services, builds trust, and gives homeowners a direct path to contact you.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, proof such as ${playbook.trustProof.join(", ")}, and a clear "${playbook.primaryCta}" action. The goal is to give ${prospect.businessName} an online home it controls instead of relying entirely on a social profile or third-party listing.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find an owned website that clearly explains services, builds trust, and gives homeowners a direct path to contact you.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, a clear service area, space for real project proof, and a direct "${playbook.primaryCta}" action. The goal is to give ${prospect.businessName} an online home it controls instead of relying entirely on a social profile or third-party listing.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
       followUps: [
         `Hi again,\n\nI wanted to follow up on the website concept I shared for ${prospect.businessName}. It is designed to turn local searches into direct inquiries while keeping your public profiles working alongside an owned site.\n\n${conceptPreviewSentence(previewLink, "Here is the concept again")}\n\nWould a quick 10-minute call next week be useful?\n\n${complianceFooter}`,
         `Hi again,\n\nLast note from me about the website concept in my earlier email. The main idea is a simple online home that you control, with services, local proof, and one clear estimate path.\n\n${conceptPreviewSentence(previewLink, "You can review the concept here")}\n\nIf the timing is not right, no problem. I will close the loop.\n\n${complianceFooter}`,
@@ -523,6 +585,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     "Services explained clearly",
     "Simple estimate next step",
   ];
+  const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   return {
     direction: `A clean, local-first ${trade} website that feels like ${prospect.businessName}: ${styleProfile.tone.replace("-", " ")}, clear, and easy to hire.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} Use ${styleProfile.primaryColor} as the restrained primary brand color and ${styleProfile.accentColor} only for focused emphasis.`,
@@ -535,14 +598,18 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     homepageStructure: [
       `Simple, business-specific hero with "${styleProfile.ctaLabel}"`,
       `${playbook.services.join(", ")} organized by homeowner need`,
-      `Decision-stage proof: ${playbook.trustProof.join(", ")}`,
-      "Recent local work with scope and outcome",
+      noWebsiteProspect ? "Supported public business details and clearly labeled proof placeholders" : `Decision-stage proof: ${playbook.trustProof.join(", ")}`,
+      noWebsiteProspect ? "A project-proof section ready for verified photos and facts" : "Recent local work with scope and outcome",
       "Service areas, practical FAQs, and lead form",
     ],
     ctaStrategy: `Use one primary action, "${styleProfile.ctaLabel}," supported by a persistent mobile call action.`,
     servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Relevant local project proof", "Process, trust proof, and FAQs", styleProfile.ctaLabel],
-    portfolioDirection: "Use labeled project photos with location, scope, and a short outcome instead of an unlabeled gallery.",
-    trustStrategy: `Place ${playbook.trustProof.join(", ")} beside the decisions they support.`,
+    portfolioDirection: noWebsiteProspect
+      ? "Reserve a clearly labeled project-proof section for verified photos, locations, scope, and outcomes supplied by the business."
+      : "Use labeled project photos with location, scope, and a short outcome instead of an unlabeled gallery.",
+    trustStrategy: noWebsiteProspect
+      ? "Use only supported public business details, then label any future proof, certification, or review areas as content the business must verify."
+      : `Place ${playbook.trustProof.join(", ")} beside the decisions they support.`,
     leadCaptureStrategy: `Keep the first step focused on ${playbook.leadDetails.join(", ")} and contact details.`,
     generatedAt: now(),
   };
@@ -577,25 +644,34 @@ export function withPreview(prospect: Prospect): Prospect {
 
 type CreateProspectInput = Omit<
   Prospect,
-  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence"
-> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence">>;
+  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive"
+> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive">>;
 
 export function createProspect(input: CreateProspectInput): Prospect {
   const createdAt = now();
-  return {
+  const prospect: Prospect = {
     ...input,
     profileUrl: input.profileUrl ?? "",
     prospectType: input.prospectType ?? "redesign",
+    classification: input.classification ?? "not_enough_contact_info",
+    contactFormUrl: input.contactFormUrl ?? "",
+    address: input.address ?? "",
     rating: input.rating ?? 0,
     reviewCount: input.reviewCount ?? 0,
     recentReviewCount: input.recentReviewCount ?? 0,
     sourceConfidence: input.sourceConfidence ?? 0,
+    activitySignals: input.activitySignals ?? [],
+    recommendedContactMethod: input.recommendedContactMethod ?? "needs_manual_contact_research",
+    inactive: input.inactive ?? false,
     id: crypto.randomUUID(),
     createdAt,
     priorityScore: calculatePriority(undefined, input.sizeIndicator, input.serviceArea),
     notes: [],
     activities: [{ id: crypto.randomUUID(), type: "created", label: "Prospect added to the discovery queue.", at: createdAt }],
   };
+  prospect.classification = input.classification ?? classifyProspectPresence(prospect);
+  prospect.recommendedContactMethod = input.recommendedContactMethod ?? recommendProspectContactMethod(prospect);
+  return prospect;
 }
 
 const seedCreatedAt = "2026-06-01T12:00:00.000Z";
@@ -613,8 +689,11 @@ export const seedProspects: Prospect[] = [
   website,
   profileUrl: "",
   prospectType: "redesign",
+  classification: "website_redesign",
   phone,
   email,
+  contactFormUrl: "",
+  address: "",
   city,
   state,
   trade: trade as TradeCategory,
@@ -626,6 +705,9 @@ export const seedProspects: Prospect[] = [
   reviewCount: 0,
   recentReviewCount: 0,
   sourceConfidence: 0,
+  activitySignals: [],
+  recommendedContactMethod: email ? "send_email" : "call_first",
+  inactive: false,
   notes: [],
   activities: [
     {

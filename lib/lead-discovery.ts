@@ -1,4 +1,13 @@
-import { tradeCategories, type ProspectType, type TradeCategory } from "@/lib/prospect-engine";
+import {
+  classifyProspectPresence,
+  recommendProspectContactMethod,
+  tradeCategories,
+  type ProspectClassification,
+  type ProspectSearchType,
+  type ProspectType,
+  type RecommendedContactMethod,
+  type TradeCategory,
+} from "@/lib/prospect-engine";
 import { TopProspectStageError } from "@/lib/top-prospect-diagnostics";
 
 export type DiscoveredLead = {
@@ -6,8 +15,11 @@ export type DiscoveredLead = {
   website: string;
   profileUrl: string;
   prospectType: ProspectType;
+  classification: ProspectClassification;
   phone: string;
   email: string;
+  contactFormUrl: string;
+  address: string;
   city: string;
   state: string;
   trade: TradeCategory;
@@ -17,6 +29,9 @@ export type DiscoveredLead = {
   rating?: number;
   reviewCount?: number;
   recentReviewCount?: number;
+  activitySignals?: string[];
+  recommendedContactMethod: RecommendedContactMethod;
+  inactive: boolean;
 };
 
 export const discoverySources = ["osm", "google", "bing", "yelp", "yellowPages"] as const;
@@ -70,6 +85,8 @@ export type DiscoveryCandidate = {
   profileUrl?: string;
   phone?: string;
   email?: string;
+  contactFormUrl?: string;
+  address?: string;
   city?: string;
   state?: string;
   latitude?: number;
@@ -78,6 +95,7 @@ export type DiscoveryCandidate = {
   rating?: number;
   reviewCount?: number;
   recentReviewCount?: number;
+  activitySignals?: string[];
   inactive?: boolean;
 };
 
@@ -129,6 +147,7 @@ const socialOrProfileHosts = [
   "g.page",
   "maps.app.goo.gl",
   "google.com",
+  "yelp.com",
 ];
 
 export function isSocialOrBusinessProfileUrl(value: string | undefined) {
@@ -344,12 +363,15 @@ function overpassCandidates(elements: OverpassElement[]): DiscoveryCandidate[] {
       profileUrl: tags.facebook || tags.instagram || tags["contact:facebook"] || tags["contact:instagram"],
       phone: tags.phone || tags["contact:phone"],
       email: tags.email || tags["contact:email"],
+      contactFormUrl: tags["contact:form"],
+      address: [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"], tags["addr:state"]].filter(Boolean).join(" "),
       city: tags["addr:city"],
       state: tags["addr:state"],
       latitude: coordinates?.latitude,
       longitude: coordinates?.longitude,
       source: "osm" as const,
       inactive: inactivePublicRecord(tags),
+      activitySignals: tags.opening_hours ? ["public_hours"] : undefined,
     }];
   });
 }
@@ -363,7 +385,7 @@ export function mergeDiscoveryCandidates(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit: number;
-  prospectType?: ProspectType;
+  prospectType?: ProspectSearchType;
   sourceCounts?: DiscoverySourceCounts;
   providerDiagnostics?: DiscoveryProviderDiagnostics;
   logger?: DiscoveryLogger;
@@ -413,6 +435,8 @@ export function mergeDiscoveryCandidates(input: {
     existing.profileUrl ||= candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : undefined);
     existing.phone ||= candidate.phone;
     existing.email ||= candidate.email;
+    existing.contactFormUrl ||= candidate.contactFormUrl;
+    existing.address ||= candidate.address;
     existing.city ||= candidate.city;
     existing.state ||= candidate.state;
     existing.latitude ??= candidate.latitude;
@@ -420,29 +444,63 @@ export function mergeDiscoveryCandidates(input: {
     existing.rating = Math.max(existing.rating ?? 0, candidate.rating ?? 0) || undefined;
     existing.reviewCount = Math.max(existing.reviewCount ?? 0, candidate.reviewCount ?? 0) || undefined;
     existing.recentReviewCount = Math.max(existing.recentReviewCount ?? 0, candidate.recentReviewCount ?? 0) || undefined;
+    existing.activitySignals = [...new Set([...(existing.activitySignals ?? []), ...(candidate.activitySignals ?? [])])];
+    existing.inactive ||= candidate.inactive;
   }
 
   const qualified = merged.flatMap((candidate): DiscoveredLead[] => {
-    const prospectType = input.prospectType ?? "redesign";
+    const requestedType = input.prospectType ?? "redesign";
     const ownedWebsite = isUsableBusinessWebsite(candidate.website) ? candidate.website : "";
     const profileUrl = candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : "");
+    const prospectType: ProspectType = ownedWebsite ? "redesign" : "no_website_social_only";
+    const activitySignals = [
+      ...(candidate.activitySignals ?? []),
+      ...((candidate.reviewCount ?? 0) > 0 ? ["public_reviews"] : []),
+      ...((candidate.recentReviewCount ?? 0) > 0 ? ["recent_reviews"] : []),
+      ...((candidate.rating ?? 0) > 0 ? ["public_rating"] : []),
+      ...(profileUrl ? ["public_profile"] : []),
+      ...(candidate.sources.length > 1 ? ["multiple_public_sources"] : []),
+    ];
     const hasActivity = (candidate.reviewCount ?? 0) > 0
       || (candidate.recentReviewCount ?? 0) > 0
       || (candidate.rating ?? 0) > 0
       || Boolean(profileUrl)
-      || candidate.sources.length > 1;
-    if (prospectType === "redesign" && !ownedWebsite) return [];
-    if (prospectType === "no_website_social_only" && (ownedWebsite || !candidate.phone || !hasActivity)) return [];
+      || candidate.sources.length > 1
+      || activitySignals.length > 0;
+    if (requestedType === "redesign" && prospectType !== "redesign") return [];
+    if (requestedType === "no_website_social_only" && prospectType !== "no_website_social_only") return [];
+    if (prospectType === "no_website_social_only" && !hasActivity) return [];
     try {
       const website = ownedWebsite ? normalizeWebsite(ownedWebsite) : "";
+      const normalizedProfileUrl = profileUrl && validWebsite(profileUrl) ? normalizeWebsite(profileUrl) : "";
       const taggedState = candidate.state?.trim() ?? "";
+      const classification = candidate.inactive
+        ? "duplicate_bad_fit" as const
+        : classifyProspectPresence({
+            website,
+            profileUrl: normalizedProfileUrl,
+            phone: candidate.phone ?? "",
+            email: candidate.email ?? "",
+            contactFormUrl: candidate.contactFormUrl ?? "",
+          });
+      const recommendedContactMethod = recommendProspectContactMethod({
+        classification,
+        profileUrl: normalizedProfileUrl,
+        phone: candidate.phone ?? "",
+        email: candidate.email ?? "",
+        contactFormUrl: candidate.contactFormUrl ?? "",
+        inactive: candidate.inactive ?? false,
+      });
       return [{
         businessName: candidate.businessName.trim(),
         website,
-        profileUrl: profileUrl && validWebsite(profileUrl) ? normalizeWebsite(profileUrl) : "",
+        profileUrl: normalizedProfileUrl,
         prospectType,
+        classification,
         phone: candidate.phone ?? "",
         email: candidate.email ?? "",
+        contactFormUrl: candidate.contactFormUrl ?? "",
+        address: candidate.address ?? "",
         city: candidate.city?.trim() || input.city.trim(),
         state: (/^[A-Za-z]{2}$/.test(taggedState) ? taggedState : input.state).toUpperCase(),
         trade: input.trade,
@@ -452,12 +510,16 @@ export function mergeDiscoveryCandidates(input: {
         rating: candidate.rating,
         reviewCount: candidate.reviewCount,
         recentReviewCount: candidate.recentReviewCount,
+        activitySignals: [...new Set(activitySignals)],
+        recommendedContactMethod,
+        inactive: candidate.inactive ?? false,
       }];
     } catch {
       return [];
     }
   }).sort((a, b) => (b.sourceConfidence ?? 0) - (a.sourceConfidence ?? 0)
     || Number(Boolean(b.email)) - Number(Boolean(a.email))
+    || Number(Boolean(b.contactFormUrl)) - Number(Boolean(a.contactFormUrl))
     || Number(Boolean(b.phone)) - Number(Boolean(a.phone))
     || (b.recentReviewCount ?? 0) - (a.recentReviewCount ?? 0)
     || (b.reviewCount ?? 0) - (a.reviewCount ?? 0));
@@ -579,6 +641,7 @@ function parseGooglePlaces(value: unknown): DiscoveryCandidate[] {
       website: place.websiteUri,
       profileUrl: place.googleMapsUri,
       phone: place.nationalPhoneNumber,
+      address: place.formattedAddress,
       city,
       state,
       latitude: finiteNumber(place.location?.latitude),
@@ -586,6 +649,7 @@ function parseGooglePlaces(value: unknown): DiscoveryCandidate[] {
       rating: finiteNumber(place.rating),
       reviewCount: finiteNumber(place.userRatingCount),
       recentReviewCount: recentGoogleReviews(place.reviews),
+      activitySignals: (place.userRatingCount ?? 0) > 0 ? ["google_places_reviews"] : ["google_places_listing"],
       source: "google" as const,
     }];
   });
@@ -616,6 +680,7 @@ function parseBingLocal(value: unknown): DiscoveryCandidate[] {
       businessName: record.name.trim(),
       website: record.Website ?? record.website,
       phone: record.PhoneNumber ?? record.phoneNumber,
+      address: [address?.locality, address?.adminDistrict].filter(Boolean).join(", "),
       city: address?.locality,
       state: address?.adminDistrict,
       latitude: finiteNumber(record.point?.coordinates?.[0]),
@@ -626,7 +691,8 @@ function parseBingLocal(value: unknown): DiscoveryCandidate[] {
   const azure = (payload.results ?? []).flatMap((record) => record.poi?.name?.trim() ? [{
     businessName: record.poi.name.trim(),
     website: record.poi.url,
-    phone: record.poi.phone,
+      phone: record.poi.phone,
+      address: [record.address?.municipality, record.address?.countrySubdivisionCode].filter(Boolean).join(", "),
     city: record.address?.municipality,
     state: record.address?.countrySubdivisionCode,
     latitude: finiteNumber(record.position?.lat),
@@ -652,12 +718,14 @@ function parseYelp(value: unknown): DiscoveryCandidate[] {
     businessName: record.name.trim(),
     phone: record.display_phone ?? record.phone,
     profileUrl: record.url,
+    address: [record.location?.city, record.location?.state].filter(Boolean).join(", "),
     city: record.location?.city,
     state: record.location?.state,
     latitude: finiteNumber(record.coordinates?.latitude),
     longitude: finiteNumber(record.coordinates?.longitude),
     rating: finiteNumber(record.rating),
     reviewCount: finiteNumber(record.review_count),
+    activitySignals: (record.review_count ?? 0) > 0 ? ["yelp_reviews"] : ["yelp_listing"],
     inactive: record.is_closed,
     source: "yelp" as const,
   }] : []);
@@ -676,6 +744,8 @@ function parseLicensedDirectory(value: unknown): DiscoveryCandidate[] {
       profileUrl: String(record.profileUrl ?? record.listingUrl ?? record.url ?? "") || undefined,
       phone: String(record.phone ?? record.phoneNumber ?? "") || undefined,
       email: String(record.email ?? record.publicEmail ?? "") || undefined,
+      contactFormUrl: String(record.contactFormUrl ?? record.contactUrl ?? "") || undefined,
+      address: String(record.address ?? record.formattedAddress ?? "") || undefined,
       city: String(record.city ?? "") || undefined,
       state: String(record.state ?? "") || undefined,
       latitude: finiteNumber(record.latitude ?? record.lat),
@@ -683,6 +753,9 @@ function parseLicensedDirectory(value: unknown): DiscoveryCandidate[] {
       rating: finiteNumber(record.rating),
       reviewCount: finiteNumber(record.reviewCount),
       recentReviewCount: finiteNumber(record.recentReviewCount),
+      activitySignals: Array.isArray(record.activitySignals)
+        ? record.activitySignals.filter((signal): signal is string => typeof signal === "string")
+        : undefined,
       source: "yellowPages" as const,
     }];
   });
@@ -727,7 +800,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit?: number;
-  prospectType?: ProspectType;
+  prospectType?: ProspectSearchType;
   logger?: DiscoveryLogger;
 }): Promise<DiscoveryResult> {
   if (!validTrade(input.trade)) throw new Error("Trade category is not supported.");
@@ -890,7 +963,7 @@ export async function discoverContractorsWithDiagnostics(input: {
           ...headers,
           "Content-Type": "application/json",
           "X-Goog-Api-Key": googleKey,
-          "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
+          "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.formattedAddress,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
         },
         body: JSON.stringify({
           textQuery: `${input.trade} near ${input.city}, ${input.state}`,
@@ -983,7 +1056,7 @@ export async function discoverContractors(input: {
   trade: TradeCategory;
   radiusKm: number;
   limit?: number;
-  prospectType?: ProspectType;
+  prospectType?: ProspectSearchType;
 }): Promise<DiscoveredLead[]> {
   return (await discoverContractorsWithDiagnostics(input)).leads;
 }

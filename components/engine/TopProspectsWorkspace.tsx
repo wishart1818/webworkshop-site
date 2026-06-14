@@ -4,7 +4,13 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type For
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
-import { previewStyleProfile, tradeCategories, type ProspectType } from "@/lib/prospect-engine";
+import {
+  previewStyleProfile,
+  tradeCategories,
+  type ProspectClassification,
+  type ProspectSearchType,
+  type RecommendedContactMethod,
+} from "@/lib/prospect-engine";
 import type {
   OutreachPackageAction,
   ProspectMode,
@@ -68,6 +74,8 @@ const skipReasonLabels: Record<string, string> = {
   low_redesign_opportunity: "Low redesign opportunity",
   weak_sales_fit: "Weak sales fit",
   no_usable_contact_path: "No usable contact path",
+  inactive_business: "Inactive business",
+  duplicate_bad_fit: "Duplicate/bad fit",
   below_final_cutoff: "Below final cutoff",
   duplicate: "Duplicate",
   already_contacted: "Already contacted",
@@ -104,9 +112,30 @@ const workflowLabels: Record<TopProspectWorkflowType, string> = {
   morning_batch: "Morning Prospect Batch",
 };
 
-const prospectTypeLabels: Record<ProspectType, string> = {
+const prospectTypeLabels: Record<ProspectSearchType, string> = {
   redesign: "Redesign Prospects",
   no_website_social_only: "No Website / Social Only",
+  all: "All Prospect Types",
+};
+
+const classificationLabels: Record<ProspectClassification, string> = {
+  website_redesign: "Website Redesign Prospect",
+  no_website: "No Website Prospect",
+  social_only: "Social-Only Prospect",
+  listing_only: "Listing-Only Prospect",
+  phone_only: "Phone-Only Prospect",
+  not_enough_contact_info: "Not Enough Contact Info",
+  national_large_brand: "National/Large Brand",
+  duplicate_bad_fit: "Duplicate/Bad Fit",
+};
+
+const contactMethodLabels: Record<RecommendedContactMethod, string> = {
+  send_email: "Send email",
+  submit_contact_form: "Submit contact form",
+  message_on_facebook: "Message on Facebook",
+  call_first: "Call first",
+  needs_manual_contact_research: "Needs manual contact research",
+  do_not_contact: "Do not contact",
 };
 
 function jobProgress(job: TopProspectJob) {
@@ -135,7 +164,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [promptResult, setPromptResult] = useState<TopProspectResult | null>(null);
   const [outreachResult, setOutreachResult] = useState<TopProspectResult | null>(null);
   const [selectedMode, setSelectedMode] = useState<ProspectMode>("strict");
-  const [selectedProspectType, setSelectedProspectType] = useState<ProspectType>("redesign");
+  const [selectedProspectType, setSelectedProspectType] = useState<ProspectSearchType>("redesign");
   const [selectedWorkflow, setSelectedWorkflow] = useState<TopProspectWorkflowType>("search");
   const activeJob = jobs.find((job) => ["QUEUED", "RUNNING"].includes(job.status));
   const latestJob = activeJob ?? jobs[0];
@@ -263,7 +292,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         </div>
         <form onSubmit={startJob}>
           <label>Run as<select name="workflowType" onChange={(event) => setSelectedWorkflow(event.target.value as TopProspectWorkflowType)} value={selectedWorkflow}><option value="search">Top Prospects Search</option><option value="morning_batch">Morning Prospect Batch</option></select></label>
-          <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option></select></label>
+          <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectSearchType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option><option value="all">All Prospect Types</option></select></label>
           <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
           <label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>City<input name="city" required /></label>
@@ -271,7 +300,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Radius<select name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
           <label>Businesses to scan<input defaultValue="50" max="100" min="5" name="businessesToScan" type="number" /></label>
           <label>Final prospects wanted<input defaultValue="10" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
-          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active, contactable local businesses by online presence gap and website need.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
+          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
             {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}
           </button>
@@ -290,7 +319,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span>Job ID <code>{latestJob.id}</code></span>
             <span>Created <time dateTime={latestJob.createdAt}>{latestJob.createdAt}</time></span>
             <span>Updated <time dateTime={latestJob.updatedAt}>{latestJob.updatedAt}</time></span>
-            <span>{latestJob.input.prospectType === "no_website_social_only" ? <>Scoring <b>Website Need</b></> : <>Mode <b>{modeLabels[latestJob.input.mode]}</b></>}</span>
+            <span>{latestJob.input.prospectType === "no_website_social_only" ? <>Scoring <b>Presence Gap + Sales Fit</b></> : <>Mode <b>{modeLabels[latestJob.input.mode]}</b></>}</span>
             <span>Type <b>{prospectTypeLabels[latestJob.input.prospectType]}</b></span>
             <span>Workflow <b>{workflowLabels[latestJob.input.workflowType]}</b></span>
           </div>
@@ -310,7 +339,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <code>{latestJob.failureClassification}</code>
             </div>
           )}
-          <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} qualificationLabel={latestJob.input.prospectType === "no_website_social_only" ? "eligible no-website leads" : "usable websites"} />
+          <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} qualificationLabel={latestJob.input.prospectType === "no_website_social_only" ? "eligible no-website leads" : latestJob.input.prospectType === "all" ? "eligible prospects" : "usable websites"} />
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
         </section>
       )}
@@ -351,7 +380,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
 
       {latestJob?.results.length ? (
         <section className="engine-panel engine-top-results">
-          <div className="engine-panel__head"><div><h2>{latestJob.input.prospectType === "no_website_social_only" ? "No Website / Social Only Prospects" : "Ranked Top Prospects"}</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Kept separate from redesign prospects and ranked by website need, activity, and contactability." : `${modeLabels[latestJob.input.mode]} ranks qualified local businesses by a public-data sales heuristic, not verified revenue.`}</p></div><span>{latestJob.results.length} ready for review</span></div>
+          <div className="engine-panel__head"><div><h2>{latestJob.input.prospectType === "no_website_social_only" ? "No Website / Social Only Prospects" : latestJob.input.prospectType === "all" ? "Ranked Prospects Across All Types" : "Ranked Top Prospects"}</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Kept separate from redesign prospects and ranked by presence gap, activity, contactability, and local fit." : latestJob.input.prospectType === "all" ? "Redesign and no-website opportunities are ranked together using the scoring model appropriate to each business." : `${modeLabels[latestJob.input.mode]} ranks qualified local businesses by a public-data sales heuristic, not verified revenue.`}</p></div><span>{latestJob.results.length} ready for review</span></div>
           {latestJob.status === "COMPLETED" && latestJob.results.length < latestJob.input.finalProspectsWanted && (
             <p className="engine-skip-summary">{latestJob.input.prospectType === "no_website_social_only" ? `Only ${latestJob.results.length} active no-website prospects found. Increase radius or scan count to find more.` : `Only ${latestJob.results.length} prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.`}</p>
           )}
@@ -415,6 +444,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div className="engine-package-dialog">
               <div className="engine-package-dialog__summary">
                 <div><span>Recommended pitch angle</span><p>{outreachResult.pitchAngle}</p></div>
+                <div><span>Prospect classification</span><p>{classificationLabels[outreachResult.prospect.classification]}</p></div>
+                <div><span>Recommended contact</span><p>{contactMethodLabels[outreachResult.prospect.recommendedContactMethod]}</p></div>
                 <div><span>Public preview link</span><a href={outreachResult.previewLink} rel="noreferrer" target="_blank">{outreachResult.previewLink}</a><small>Safe to include in a prospect email. Internal Prospect Engine pages remain protected.</small></div>
               </div>
               <section className="engine-email-quality" aria-label="Email quality checks">
@@ -487,6 +518,10 @@ function PackageReviewCard({
         <i>{profile.ctaLabel}</i>
       </div>
       <div className="engine-package-card__copy">
+        <span>Prospect type</span>
+        <p><b>{classificationLabels[result.prospect.classification]}</b></p>
+        <span>Recommended contact</span>
+        <p>{contactMethodLabels[result.prospect.recommendedContactMethod]}</p>
         <span>Email quality</span>
         <p><b>{result.emailQuality.ready ? "Send-ready" : `Needs ${result.emailQuality.issues.length} fix${result.emailQuality.issues.length === 1 ? "" : "es"}`}</b></p>
         <span>Recommended pitch</span>
@@ -510,7 +545,7 @@ function BestProspect({ result, onOpenProspect }: { result: TopProspectResult; o
   return (
     <section className="engine-best-prospect">
       <div><span>Best Prospect Today</span><h2>{result.prospect.businessName}</h2><p>{result.whyMayBuy}</p></div>
-      <div><strong>{result.salesScores.weightedSalesScore}</strong><span>{result.presenceScores ? "Website Need Score" : "Weighted Sales Score"}</span></div>
+      <div><strong>{result.salesScores.weightedSalesScore}</strong><span>{result.presenceScores ? "Final Sales Score" : "Weighted Sales Score"}</span></div>
       <div><b>Recommended next action</b><p>Review the assessment and preview, verify the public contact details, then approve a personal outreach draft.</p><button className="engine-button engine-button--primary" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review best prospect</button></div>
     </section>
   );
@@ -520,10 +555,12 @@ function SalesScoreBreakdown({ result }: { result: TopProspectResult }) {
   if (result.presenceScores) {
     return (
       <div className="engine-sales-score-grid">
+        <span>Final sales score <b>{result.presenceScores.finalSalesScore}</b></span>
         <span>Website need <b>{result.presenceScores.websiteNeedScore}</b></span>
         <span>Online presence gap <b>{result.presenceScores.onlinePresenceGapScore}</b></span>
         <span>Contactability <b>{result.presenceScores.contactabilityScore}</b></span>
         <span>Business activity <b>{result.presenceScores.businessActivityScore}</b></span>
+        <span>Local fit <b>{result.presenceScores.localFitScore}</b></span>
       </div>
     );
   }
@@ -543,6 +580,21 @@ function SalesScoreBreakdown({ result }: { result: TopProspectResult }) {
 
 function ProspectPresenceLink({ result }: { result: TopProspectResult }) {
   const url = result.prospect.website || result.prospect.profileUrl;
-  if (!url) return <span>No owned website or public profile link</span>;
-  return <a href={safeWebsite(url)} rel="noreferrer" target="_blank">{result.prospect.website ? result.prospect.website : "Open public profile"}</a>;
+  const presenceLabels = [
+    !result.prospect.website ? "No website found" : "",
+    result.prospect.classification === "social_only" ? "Facebook / social only" : "",
+    result.prospect.classification === "listing_only" ? "Listing only" : "",
+    result.prospect.classification === "phone_only" ? "Phone only" : "",
+    result.prospect.email ? "Public email available" : "",
+    result.prospect.contactFormUrl ? "Contact form available" : "",
+    result.prospect.recommendedContactMethod === "needs_manual_contact_research" ? "Needs manual contact research" : "",
+  ].filter(Boolean);
+  return (
+    <div className="engine-presence-summary">
+      <span>{classificationLabels[result.prospect.classification]}</span>
+      <span>{contactMethodLabels[result.prospect.recommendedContactMethod]}</span>
+      {presenceLabels.map((label) => <i key={label}>{label}</i>)}
+      {url ? <a href={safeWebsite(url)} rel="noreferrer" target="_blank">{result.prospect.website ? result.prospect.website : "Open public profile"}</a> : <span>No public profile link</span>}
+    </div>
+  );
 }

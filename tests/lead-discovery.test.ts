@@ -159,7 +159,7 @@ test("multi-source discovery merges business identity and prioritizes enriched l
   assert.ok((result.leads[0].sourceConfidence ?? 0) > (result.leads[1].sourceConfidence ?? 0));
 });
 
-test("No Website / Social Only discovery keeps active contactable businesses separate from redesign leads", () => {
+test("No Website / Social Only discovery keeps active businesses and classifies contact readiness", () => {
   const candidates = [
     { source: "google" as const, businessName: "Social Only Roofing", website: "https://facebook.com/social-roofing", profileUrl: "https://facebook.com/social-roofing", phone: "419-555-0100", reviewCount: 28, rating: 4.7 },
     { source: "yelp" as const, businessName: "Directory Only Roofing", phone: "419-555-0200", reviewCount: 12 },
@@ -179,9 +179,37 @@ test("No Website / Social Only discovery keeps active contactable businesses sep
     prospectType: "no_website_social_only",
   });
 
-  assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Social Only Roofing", "Directory Only Roofing"]);
-  assert.ok(result.leads.every((lead) => lead.prospectType === "no_website_social_only" && lead.website === "" && Boolean(lead.phone)));
+  assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Social Only Roofing", "Directory Only Roofing", "No Phone Roofing"]);
+  assert.ok(result.leads.every((lead) => lead.prospectType === "no_website_social_only" && lead.website === ""));
   assert.match(result.leads[0].profileUrl, /facebook/);
+  assert.equal(result.leads[0].classification, "social_only");
+  assert.equal(result.leads[0].recommendedContactMethod, "message_on_facebook");
+  assert.equal(result.leads[1].classification, "phone_only");
+  assert.equal(result.leads[1].recommendedContactMethod, "call_first");
+  assert.equal(result.leads[2].classification, "not_enough_contact_info");
+  assert.equal(result.leads[2].recommendedContactMethod, "needs_manual_contact_research");
+});
+
+test("All Prospect Types discovery returns redesign and no-website opportunities together", () => {
+  const result = mergeDiscoveryCandidates({
+    candidates: [
+      { source: "osm", businessName: "Owned Website Roofing", website: "https://owned.example", phone: "419-555-0100" },
+      { source: "yelp", businessName: "Listing Only Roofing", profileUrl: "https://www.yelp.com/biz/listing-only", phone: "419-555-0200", reviewCount: 14 },
+    ],
+    latitude: 41.65,
+    longitude: -83.54,
+    city: "Toledo",
+    state: "OH",
+    trade: "Roofing",
+    radiusKm: 50,
+    limit: 50,
+    prospectType: "all",
+  });
+
+  assert.deepEqual(result.leads.map((lead) => [lead.businessName, lead.prospectType, lead.classification]), [
+    ["Owned Website Roofing", "redesign", "website_redesign"],
+    ["Listing Only Roofing", "no_website_social_only", "listing_only"],
+  ]);
 });
 
 test("configured licensed sources enrich OSM discovery without becoming required", async () => {

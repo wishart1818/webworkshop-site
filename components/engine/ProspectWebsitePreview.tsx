@@ -35,6 +35,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
     "Services explained clearly",
     "Simple estimate next step",
   ];
+  const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   const style = {
     "--prospect-primary": styleProfile.primaryColor,
     "--prospect-accent": styleProfile.accentColor,
@@ -131,12 +132,12 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
         <section className="prospect-preview-work" id="work">
           <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">Recent local work</span>
-            <h2>Proof that makes the next decision easier.</h2>
+            <span className="prospect-preview-kicker">{noWebsiteProspect ? "Project proof concept" : "Recent local work"}</span>
+            <h2>{noWebsiteProspect ? "A clear place for verified work." : "Proof that makes the next decision easier."}</h2>
             <p>{preview.portfolioDirection}</p>
           </div>
           <div className="prospect-preview-projects">
-            {["Local project story", "Before and after", "Scope and outcome"].map((item, index) => (
+            {(noWebsiteProspect ? ["Verified project story", "Approved project photos", "Confirmed scope and outcome"] : ["Local project story", "Before and after", "Scope and outcome"]).map((item, index) => (
               <article key={item}>
                 <i aria-hidden="true"><span>{index + 1}</span></i>
                 <b>{item}</b>

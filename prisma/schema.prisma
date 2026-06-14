@@ -23,8 +23,11 @@ model Prospect {
   website       String?         @unique
   profileUrl    String?
   prospectType  String          @default("redesign")
+  classification String         @default("not_enough_contact_info")
   phone         String?
   publicEmail   String?
+  contactFormUrl String?
+  address       String?
   city          String
   state         String
   tradeCategory String
@@ -35,6 +38,9 @@ model Prospect {
   reviewCount   Int             @default(0)
   recentReviewCount Int         @default(0)
   sourceConfidence Int          @default(0)
+  activitySignals Json          @default("[]")
+  recommendedContactMethod String @default("needs_manual_contact_research")
+  inactive      Boolean         @default(false)
   status        ProspectStatus  @default(NEW)
   analyses      Analysis[]
   outreach      OutreachDraft[]

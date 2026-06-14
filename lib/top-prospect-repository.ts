@@ -49,6 +49,8 @@ async function toResult(row: JobRow["results"][number], mode: TopProspectInput["
               contactabilityScore: row.contactabilityScore,
               businessActivityScore: row.businessActivityScore,
               websiteNeedScore: row.websiteNeedScore,
+              localFitScore: calculateNoWebsitePresenceScores(prospect).localFitScore,
+              finalSalesScore: row.weightedSalesScore || calculateNoWebsitePresenceScores(prospect).finalSalesScore,
             }
           : calculateNoWebsitePresenceScores(prospect)
       )
@@ -60,7 +62,7 @@ async function toResult(row: JobRow["results"][number], mode: TopProspectInput["
         contactabilityScore: presenceScores!.contactabilityScore,
         localMarketCompetitivenessScore: 0,
         aiReplacementConfidenceScore: 0,
-        weightedSalesScore: presenceScores!.websiteNeedScore,
+        weightedSalesScore: presenceScores!.finalSalesScore,
       }
     : calculateProspectSalesScores(prospect, row.opportunityScore);
   const persistedSalesScores = {
@@ -202,11 +204,15 @@ export async function getPublicProspectPreview(token: string) {
     website: "",
     profileUrl: "",
     email: "",
+    contactFormUrl: "",
+    address: "",
     priorityScore: 0,
     rating: 0,
     reviewCount: 0,
     recentReviewCount: 0,
     sourceConfidence: 0,
+    activitySignals: [],
+    recommendedContactMethod: "needs_manual_contact_research" as const,
     analysis: undefined,
     outreach: undefined,
     notes: [],

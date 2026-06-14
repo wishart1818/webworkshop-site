@@ -68,6 +68,13 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /Revenue opportunity/);
   assert.match(topProspectsWorkspace, /AI replacement confidence/);
   assert.match(topProspectsWorkspace, /No Website \/ Social Only/);
+  assert.match(topProspectsWorkspace, /All Prospect Types/);
+  assert.match(topProspectsWorkspace, /No website found/);
+  assert.match(topProspectsWorkspace, /Public email available/);
+  assert.match(topProspectsWorkspace, /Needs manual contact research/);
   assert.match(topProspectsWorkspace, /Online presence gap/);
   assert.match(topProspectsWorkspace, /Business activity/);
+  assert.match(topProspectsWorkspace, /Local fit/);
+  assert.match(topProspectsWorkspace, /Final sales score/);
+  assert.match(css, /\.engine-presence-summary\s*{\s*display: flex;\s*flex-wrap: wrap;/);
 });

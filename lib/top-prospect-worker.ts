@@ -4,7 +4,7 @@ import {
   discoveryLeadsFromJson,
   type DiscoveredLead,
 } from "@/lib/lead-discovery";
-import { activity, calculatePriority, createProspect, type Prospect } from "@/lib/prospect-engine";
+import { activity, calculatePriority, createProspect, type Prospect, type ProspectSearchType } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { analyzePublicWebsite } from "@/lib/site-analysis";
@@ -166,8 +166,8 @@ async function processLead(
     addSkip(summary, "national_large_brand");
     return false;
   }
-  if (mode !== "volume" && !lead.phone && !lead.email) {
-    addSkip(summary, "no_usable_contact_path");
+  if (lead.inactive) {
+    addSkip(summary, "inactive_business");
     return false;
   }
   let existing = null;
@@ -262,7 +262,7 @@ export async function processTopProspectJob(jobId: string) {
         trade: job.tradeCategory as DiscoveredLead["trade"],
         radiusKm: job.radiusKm,
         limit: job.businessesToScan,
-        prospectType: job.prospectType as DiscoveredLead["prospectType"],
+        prospectType: job.prospectType as ProspectSearchType,
         logger(event, metadata) {
           console.info(`[top-prospects] ${event}.`, { jobId: job.id, ...metadata });
         },
@@ -286,6 +286,8 @@ export async function processTopProspectJob(jobId: string) {
           jobId: job.id,
           businessName: lead.businessName,
           websiteHost: lead.website ? new URL(lead.website).hostname : "no-owned-website",
+          classification: lead.classification,
+          recommendedContactMethod: lead.recommendedContactMethod,
         });
       }
       if (await processLead(job.id, job.createdAt, lead, summary, mode)) qualified += 1;

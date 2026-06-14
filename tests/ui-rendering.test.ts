@@ -39,12 +39,18 @@ test("no-website prospect detail shows presence-gap guidance without an analyze 
   prospect.website = "";
   prospect.profileUrl = "https://facebook.com/local-roofing";
   prospect.prospectType = "no_website_social_only";
+  prospect.classification = "social_only";
+  prospect.recommendedContactMethod = "message_on_facebook";
   prospect.reviewCount = 24;
+  prospect.activitySignals = ["public_reviews", "public_profile"];
   const html = renderDetail(prospect, "Analysis");
 
   assert.match(html, /Open public profile/);
   assert.match(html, /No Website \/ Social Only prospect/);
   assert.match(html, /owning the customer journey/i);
+  assert.match(html, /Social-Only Prospect/);
+  assert.match(html, /Message on Facebook/);
+  assert.match(html, /public reviews/);
   assert.doesNotMatch(html, /Analyze website/);
 });
 
@@ -112,6 +118,27 @@ test("public website preview exposes only the prospect concept with no engine na
   assert.match(html, /Concept preview\. Not a live client website\./);
   assert.match(html, /data-preview-access="public"/);
   assert.doesNotMatch(html, /\/engine|Back to Prospect Engine|Private operator note|Website score|Opportunity score/i);
+});
+
+test("no-website public preview uses supported-fact placeholders instead of invented proof", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    website: "",
+    profileUrl: "https://facebook.com/local-roofing",
+    prospectType: "no_website_social_only",
+    classification: "social_only",
+    recommendedContactMethod: "message_on_facebook",
+  });
+  const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    publicView: true,
+    savedPreview: prospect.preview,
+  }));
+
+  assert.match(html, /Project proof concept/);
+  assert.match(html, /verified work/i);
+  assert.match(html, /Approved project photos/);
+  assert.doesNotMatch(html, /Recent local work|licensed|insured|award-winning|warranties/i);
 });
 
 test("shared loading and empty states provide useful operator guidance", () => {

@@ -9,9 +9,31 @@ import {
   prospectStatuses,
   scoreLabels,
   type Prospect,
+  type ProspectClassification,
   type ProspectStatus,
+  type RecommendedContactMethod,
   type ScoreKey,
 } from "@/lib/prospect-engine";
+
+const classificationLabels: Record<ProspectClassification, string> = {
+  website_redesign: "Website Redesign Prospect",
+  no_website: "No Website Prospect",
+  social_only: "Social-Only Prospect",
+  listing_only: "Listing-Only Prospect",
+  phone_only: "Phone-Only Prospect",
+  not_enough_contact_info: "Not Enough Contact Info",
+  national_large_brand: "National/Large Brand",
+  duplicate_bad_fit: "Duplicate/Bad Fit",
+};
+
+const contactMethodLabels: Record<RecommendedContactMethod, string> = {
+  send_email: "Send email",
+  submit_contact_form: "Submit contact form",
+  message_on_facebook: "Message on Facebook",
+  call_first: "Call first",
+  needs_manual_contact_research: "Needs manual contact research",
+  do_not_contact: "Do not contact",
+};
 
 export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity";
 
@@ -89,6 +111,7 @@ export function ProspectDetail({
             : <span>No owned website</span>}
         {prospect.phone ? <a href={`tel:${prospect.phone}`}>{prospect.phone}</a> : <span>No public phone</span>}
         {prospect.email ? <a href={`mailto:${prospect.email}`}>{prospect.email}</a> : <span>No public email</span>}
+        {prospect.contactFormUrl ? <a href={safeWebsiteUrl(prospect.contactFormUrl)} rel="noreferrer" target="_blank">Open contact form</a> : null}
         <select aria-label="Pipeline status" onChange={(event) => onStatus(event.target.value as ProspectStatus)} value={prospect.status}>
           {prospectStatuses.map((item) => <option key={item}>{item}</option>)}
         </select>
@@ -125,12 +148,18 @@ function PresenceGapView({ prospect }: { prospect: Prospect }) {
         <h3>No Website / Social Only prospect</h3>
         <p>No owned website was found. The opportunity is to give this business a permanent online home instead of relying entirely on Facebook, Instagram, Google, or directory listings.</p>
       </section>
+      <section>
+        <h3>Presence and contact classification</h3>
+        <p><b>{classificationLabels[prospect.classification]}</b>. Recommended contact: {contactMethodLabels[prospect.recommendedContactMethod]}.</p>
+        {prospect.address && <p>Public address: {prospect.address}</p>}
+      </section>
       <div className="engine-score-grid">
         <div><span>Public reviews</span><b>{prospect.reviewCount}</b></div>
         <div><span>Rating</span><b>{prospect.rating || "Not recorded"}</b></div>
         <div><span>Recent reviews</span><b>{prospect.recentReviewCount}</b></div>
         <div><span>Source confidence</span><b>{prospect.sourceConfidence}</b></div>
       </div>
+      {prospect.activitySignals.length > 0 && <section><h3>Public activity signals</h3><ul>{prospect.activitySignals.map((signal) => <li key={signal}>{signal.replaceAll("_", " ")}</li>)}</ul></section>}
       <section><h3>Recommended pitch</h3><p>Lead with owning the customer journey: a clear services page, local proof, and direct estimate path that the business controls.</p></section>
     </div>
   );
