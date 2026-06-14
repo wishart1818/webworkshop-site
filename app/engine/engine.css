@@ -665,6 +665,51 @@ body:has(.engine-shell) {
   font-weight: 650;
 }
 
+.engine-detail__meta .engine-website-state--http_404,
+.engine-detail__meta .engine-website-state--unreachable_website,
+.engine-detail__meta .engine-website-state--broken_website,
+.engine-detail__meta .engine-website-state--inactive_website,
+.engine-detail__meta .engine-website-state--invalid_website {
+  border-color: #e5b5ac;
+  background: #fff1ee;
+  color: #7f2c20;
+}
+
+.engine-detail__meta .engine-website-state--no_owned_website {
+  border-color: #e4d497;
+  background: #fbf6e5;
+  color: #725b08;
+}
+
+.engine-prospect-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  border-top: 1px solid var(--engine-line);
+  padding: 0.65rem 1.05rem;
+}
+
+.engine-prospect-labels span,
+.engine-table-presence small {
+  border: 1px solid var(--engine-line);
+  background: #f7f9f7;
+  color: #354a41;
+  padding: 0.22rem 0.4rem;
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
+.engine-table-presence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.engine-table-presence b {
+  flex-basis: 100%;
+  color: var(--engine-ink);
+}
+
 .engine-tabs {
   display: flex;
   overflow-x: auto;
@@ -1046,6 +1091,19 @@ body:has(.engine-shell) {
   color: var(--engine-muted);
   font-size: 0.74rem;
   line-height: 1.5;
+}
+
+.engine-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.engine-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
 }
 
 .engine-loading-state {
@@ -2852,6 +2910,27 @@ body:has(.engine-shell) {
   .engine-detail__meta select {
     width: 100%;
     flex: 1 1 100%;
+  }
+
+  .engine-prospect-labels {
+    padding: 0.65rem 0.75rem;
+  }
+
+  .engine-prospect-labels span,
+  .engine-table-presence small {
+    font-size: 0.8rem;
+  }
+
+  .engine-empty__actions {
+    width: 100%;
+  }
+
+  .engine-empty__actions .engine-button {
+    width: 100%;
+  }
+
+  .engine-inline-actions .engine-button {
+    width: 100%;
   }
 
   .engine-tabs {

@@ -4,10 +4,10 @@ import {
   discoveryLeadsFromJson,
   type DiscoveredLead,
 } from "@/lib/lead-discovery";
-import { activity, calculatePriority, createProspect, type Prospect, type ProspectSearchType } from "@/lib/prospect-engine";
+import { activity, calculatePriority, createProspect, withPresenceGapReview, type Prospect, type ProspectSearchType } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
-import { analyzePublicWebsite } from "@/lib/site-analysis";
+import { analyzePublicWebsite, classifyWebsiteAnalysisFailure } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
   normalizeProspectMode,
@@ -216,9 +216,13 @@ async function processLead(
         status: "Reviewed",
         activities: [activity("analysis", `Automated Top Prospects analysis completed with a score of ${analysis.overallScore}.`), ...prospect.activities],
       };
-    } catch {
-      addSkip(summary, "broken_or_inactive_website");
-      return false;
+    } catch (error) {
+      const websiteFailure = classifyWebsiteAnalysisFailure(error);
+      if (!websiteFailure) {
+        addSkip(summary, "broken_or_inactive_website");
+        return false;
+      }
+      prospect = withPresenceGapReview(prospect, websiteFailure.status, websiteFailure.detail);
     }
   } else {
     prospect = {

@@ -6,6 +6,7 @@ import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   previewStyleProfile,
+  prospectPresenceLabels,
   tradeCategories,
   type ProspectClassification,
   type ProspectSearchType,
@@ -580,15 +581,7 @@ function SalesScoreBreakdown({ result }: { result: TopProspectResult }) {
 
 function ProspectPresenceLink({ result }: { result: TopProspectResult }) {
   const url = result.prospect.website || result.prospect.profileUrl;
-  const presenceLabels = [
-    !result.prospect.website ? "No website found" : "",
-    result.prospect.classification === "social_only" ? "Facebook / social only" : "",
-    result.prospect.classification === "listing_only" ? "Listing only" : "",
-    result.prospect.classification === "phone_only" ? "Phone only" : "",
-    result.prospect.email ? "Public email available" : "",
-    result.prospect.contactFormUrl ? "Contact form available" : "",
-    result.prospect.recommendedContactMethod === "needs_manual_contact_research" ? "Needs manual contact research" : "",
-  ].filter(Boolean);
+  const presenceLabels = prospectPresenceLabels(result.prospect);
   return (
     <div className="engine-presence-summary">
       <span>{classificationLabels[result.prospect.classification]}</span>

@@ -10,11 +10,13 @@ import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery"
 import {
   activity,
   createProspect,
+  prospectPresenceLabels,
   prospectSortOptions,
   prospectStatuses,
   sortProspects,
   tradeCategories,
   withOutreach,
+  withPresenceGapReview,
   withPreview,
   type Prospect,
   type ProspectSort,
@@ -167,6 +169,7 @@ export function ProspectEngine() {
     const prospect = createProspect({
       businessName: String(form.get("businessName")),
       website: String(form.get("website")),
+      prospectType: String(form.get("website")).trim() ? "redesign" : "no_website_social_only",
       phone: String(form.get("phone")),
       email: String(form.get("email")),
       city: String(form.get("city")),
@@ -256,7 +259,7 @@ export function ProspectEngine() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(selected),
         });
-        const payload = (await response.json()) as { prospect?: Prospect; error?: string };
+        const payload = (await response.json()) as { prospect?: Prospect; error?: string; warning?: string };
         if (!response.ok || !payload.prospect) throw new Error(payload.error || "Unable to analyze website.");
         setProspects((current) => current.map((prospect) => (prospect.id === payload.prospect!.id ? payload.prospect! : prospect)));
         setSyncState("saved");
@@ -267,6 +270,17 @@ export function ProspectEngine() {
         return null;
       }
     });
+  }
+
+  function runPresenceGapSelected() {
+    updateSelected((prospect) => withPresenceGapReview(
+      prospect,
+      prospect.websiteStatus === "unknown"
+        ? prospect.website ? "broken_website" : "no_owned_website"
+        : prospect.websiteStatus === "usable" ? "broken_website" : prospect.websiteStatus,
+      prospect.websiteStatusDetail || (prospect.website ? "Website marked as having no usable owned site during manual review." : "No owned website detected."),
+    ));
+    setDetailTab("Analysis");
   }
 
   return (
@@ -343,7 +357,7 @@ export function ProspectEngine() {
               <div className="engine-panel engine-focus">
                 <div className="engine-panel__head"><div><h2>Today&apos;s focus</h2><p>Move the best-fit leads forward.</p></div></div>
                 <ol>
-                  <li><b>Analyze the high-priority queue</b><span>{prospects.filter((item) => item.prospectType === "redesign" && !item.analysis).length} websites still need review</span></li>
+                  <li><b>Analyze the high-priority queue</b><span>{prospects.filter((item) => item.prospectType === "redesign" && !item.analysis && item.websiteStatus === "unknown").length} websites still need review</span></li>
                   <li><b>Approve personal outreach</b><span>{prospects.filter((item) => item.outreach && !item.outreach.approved).length} drafts awaiting approval</span></li>
                   <li><b>Prepare visual concepts</b><span>{prospects.filter((item) => item.analysis && !item.preview).length} qualified leads need previews</span></li>
                 </ol>
@@ -366,7 +380,7 @@ export function ProspectEngine() {
                 <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onOutreach={() => updateSelected(withOutreach)} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
             </div>
           </div>
         )}
@@ -404,11 +418,11 @@ export function ProspectEngine() {
 }
 
 function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospect[]; selectedId: string; onSelect: (id: string) => void }) {
-  return <div className="engine-table" role="table" aria-label="Prospects"><div className="engine-table__head" role="row"><span>Prospect</span><span>Status</span><span>Website / presence</span><span>Priority</span></div>{prospects.map((prospect) => <button className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} onClick={() => onSelect(prospect.id)} role="row" type="button"><span><b>{prospect.businessName}</b><small>{prospect.trade} · {prospect.city}, {prospect.state}</small></span><span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span><span>{prospect.prospectType === "no_website_social_only" ? "No website / social only" : prospect.analysis ? `${prospect.analysis.overallScore}/100` : "Not analyzed"}</span><span><strong>{prospect.priorityScore}</strong></span></button>)}</div>;
+  return <div className="engine-table" role="table" aria-label="Prospects"><div className="engine-table__head" role="row"><span>Prospect</span><span>Status</span><span>Website / presence</span><span>Priority</span></div>{prospects.map((prospect) => { const labels = prospectPresenceLabels(prospect); const state = prospect.analysis ? `${prospect.analysis.overallScore}/100` : prospect.websiteStatus === "unknown" ? "Not analyzed" : prospect.websiteStatusDetail || "Presence Gap analysis"; return <button className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} onClick={() => onSelect(prospect.id)} role="row" type="button"><span><b>{prospect.businessName}</b><small>{prospect.trade} · {prospect.city}, {prospect.state}</small></span><span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span><span className="engine-table-presence"><b>{state}</b>{labels.slice(0, 2).map((label) => <small key={label}>{label}</small>)}</span><span><strong>{prospect.priorityScore}</strong></span></button>; })}</div>;
 }
 
 function DiscoveryDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <div className="engine-dialog-backdrop" onMouseDown={onClose}><dialog aria-labelledby="discovery-title" className="engine-dialog" onMouseDown={(event) => event.stopPropagation()} open><header><div><p>Lead discovery</p><h2 id="discovery-title">Add a contractor prospect</h2></div><button aria-label="Close" onClick={onClose} type="button">×</button></header><form onSubmit={onSubmit}><div className="engine-form-grid"><label>Business name<input name="businessName" required /></label><label>Website<input name="website" placeholder="https://" required type="url" /></label><label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Business size<select name="sizeIndicator"><option>Small</option><option>Growing</option><option>Established</option></select></label><label>City<input name="city" required /></label><label>State<input maxLength={2} name="state" required /></label><label>Phone<input name="phone" required type="tel" /></label><label>Public email<input name="email" type="email" /></label><label className="engine-form-wide">Service area<input name="serviceArea" placeholder="City and nearby communities" required /></label></div><footer><button className="engine-button" onClick={onClose} type="button">Cancel</button><button className="engine-button engine-button--primary" type="submit">Add to discovery queue</button></footer></form></dialog></div>;
+  return <div className="engine-dialog-backdrop" onMouseDown={onClose}><dialog aria-labelledby="discovery-title" className="engine-dialog" onMouseDown={(event) => event.stopPropagation()} open><header><div><p>Lead discovery</p><h2 id="discovery-title">Add a contractor prospect</h2></div><button aria-label="Close" onClick={onClose} type="button">×</button></header><form onSubmit={onSubmit}><div className="engine-form-grid"><label>Business name<input name="businessName" required /></label><label>Website (optional)<input name="website" placeholder="https://" type="url" /></label><label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Business size<select name="sizeIndicator"><option>Small</option><option>Growing</option><option>Established</option></select></label><label>City<input name="city" required /></label><label>State<input maxLength={2} name="state" required /></label><label>Phone<input name="phone" required type="tel" /></label><label>Public email<input name="email" type="email" /></label><label className="engine-form-wide">Service area<input name="serviceArea" placeholder="City and nearby communities" required /></label></div><footer><button className="engine-button" onClick={onClose} type="button">Cancel</button><button className="engine-button engine-button--primary" type="submit">Add to discovery queue</button></footer></form></dialog></div>;
 }
 
 function LeadSearchDialog({ diagnostics, existingWebsites, leads, state, error, onClose, onDiscover, onImport }: { diagnostics: DiscoveryDiagnostics | null; existingWebsites: Set<string>; leads: DiscoveredLead[]; state: "idle" | "loading" | "error"; error: string; onClose: () => void; onDiscover: (event: FormEvent<HTMLFormElement>) => void; onImport: (lead: DiscoveredLead) => void }) {

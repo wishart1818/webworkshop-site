@@ -5,11 +5,35 @@ import {
   type Analysis,
   type Prospect,
   type ScoreKey,
+  type WebsiteAvailabilityStatus,
 } from "@/lib/prospect-engine";
 
 const userAgent = "WebWorkshopProspectEngine/1.0 (+https://webworkshop.dev)";
 const maxResponseBytes = 2_000_000;
 const globalAnalysis = globalThis as typeof globalThis & { analyzedHosts?: Map<string, number> };
+
+export type WebsiteAnalysisFailure = {
+  status: Exclude<WebsiteAvailabilityStatus, "unknown" | "usable" | "no_owned_website">;
+  detail: string;
+};
+
+export function classifyWebsiteAnalysisFailure(error: unknown): WebsiteAnalysisFailure | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const signals = `${error instanceof Error ? error.name : ""} ${message}`.toLowerCase();
+  if (/website returned http 404\b/.test(signals)) return { status: "http_404", detail: "Website returned HTTP 404." };
+  if (/website returned http 410\b/.test(signals)) return { status: "inactive_website", detail: "Website returned HTTP 410 and appears inactive." };
+  if (/website returned http 400\b/.test(signals)) return { status: "invalid_website", detail: message };
+  if (/website returned http (?:408|5\d\d)\b|invalid redirect|redirected too many times/.test(signals)) {
+    return { status: "broken_website", detail: message };
+  }
+  if (/only http|credentials cannot|unsupported port|local websites|private or unsupported|invalid url|failed to parse url/.test(signals)) {
+    return { status: "invalid_website", detail: message };
+  }
+  if (/timeout|abort|fetch failed|enotfound|econnrefused|econnreset|network|dns/.test(signals)) {
+    return { status: "unreachable_website", detail: "Website could not be reached and appears broken or inactive." };
+  }
+  return null;
+}
 
 export function isPrivateAddress(address: string) {
   if (isIP(address) === 4) {

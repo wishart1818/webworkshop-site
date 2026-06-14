@@ -5,10 +5,15 @@ import {
   generateOutreach,
   generatePreview,
   generateProspectStyleProfile,
+  prospectPresenceLabels,
   seedProspects,
   sortProspects,
   withAnalysis,
+  withOutreach,
+  withPresenceGapReview,
+  withPreview,
 } from "../lib/prospect-engine";
+import { classifyWebsiteAnalysisFailure } from "../lib/site-analysis";
 
 test("analysis prioritizes weaker websites and moves new leads to reviewed", () => {
   const analyzed = withAnalysis(structuredClone(seedProspects[0]));
@@ -120,4 +125,47 @@ test("priority scoring accounts for broader service-area reach", () => {
   const regional = calculatePriority(undefined, "Growing", "Findlay and nearby communities");
 
   assert.ok(regional > local);
+});
+
+test("website analysis failures classify into persistent presence-gap states", () => {
+  assert.deepEqual(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 404.")), {
+    status: "http_404",
+    detail: "Website returned HTTP 404.",
+  });
+  assert.equal(classifyWebsiteAnalysisFailure(new TypeError("fetch failed"))?.status, "unreachable_website");
+  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website robots.txt does not allow analysis of this page.")), null);
+  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 403.")), null);
+  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 429.")), null);
+
+  const broken = withPresenceGapReview(structuredClone(seedProspects[3]), "http_404", "Website returned HTTP 404.");
+  assert.equal(broken.prospectType, "no_website_social_only");
+  assert.equal(broken.analysis, undefined);
+  assert.equal(broken.websiteStatus, "http_404");
+  assert.ok(broken.websiteAnalysisAttemptedAt);
+  assert.deepEqual(prospectPresenceLabels(broken), ["Broken website", "Phone only"]);
+});
+
+test("no-website prospects still generate ownership-focused outreach", () => {
+  const noWebsite = withPresenceGapReview({
+    ...structuredClone(seedProspects[0]),
+    website: "",
+  }, "no_owned_website", "No owned website detected.");
+  const withDraft = withOutreach(noWebsite);
+
+  assert.match(withDraft.outreach?.concise ?? "", /shows up locally/i);
+  assert.match(withDraft.outreach?.concise ?? "", /dedicated website/i);
+  assert.doesNotMatch(withDraft.outreach?.concise ?? "", /your website has issues/i);
+});
+
+test("switching prospect type clears stale analysis, outreach, and preview artifacts", () => {
+  const redesign = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
+  const presenceGap = withPresenceGapReview(redesign, "http_404", "Website returned HTTP 404.");
+  const restored = withAnalysis(withPreview(withOutreach(presenceGap)));
+
+  assert.equal(presenceGap.analysis, undefined);
+  assert.equal(presenceGap.outreach, undefined);
+  assert.equal(presenceGap.preview, undefined);
+  assert.equal(restored.outreach, undefined);
+  assert.equal(restored.preview, undefined);
+  assert.equal(restored.prospectType, "redesign");
 });

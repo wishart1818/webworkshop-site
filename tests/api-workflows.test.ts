@@ -98,6 +98,47 @@ test("invalid prospect, discovery, and analysis requests are rejected", async ()
   assert.ok(outcomes.includes("rejected"));
 });
 
+test("manual no-website analysis returns a persisted Presence Gap state", async () => {
+  const prospect = {
+    ...structuredClone(seedProspects[3]),
+    id: "manual-no-website",
+    website: "",
+    prospectType: "no_website_social_only" as const,
+    classification: "phone_only" as const,
+    websiteStatus: "no_owned_website" as const,
+    websiteStatusDetail: "",
+    analysis: undefined,
+  };
+  const response = await analyze(new Request("https://example.com/api/engine/analyze", {
+    method: "POST",
+    body: JSON.stringify(prospect),
+  }));
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.prospect.prospectType, "no_website_social_only");
+  assert.equal(payload.prospect.websiteStatus, "no_owned_website");
+  assert.match(payload.prospect.activities[0].label, /Presence Gap analysis is ready/);
+});
+
+test("manual analysis safely converts an invalid legacy website into Presence Gap", async () => {
+  const prospect = {
+    ...structuredClone(seedProspects[0]),
+    id: "manual-invalid-website",
+    website: "javascript:alert(1)",
+  };
+  const response = await analyze(new Request("https://example.com/api/engine/analyze", {
+    method: "POST",
+    body: JSON.stringify(prospect),
+  }));
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.prospect.website, "");
+  assert.equal(payload.prospect.websiteStatus, "invalid_website");
+  assert.equal(payload.prospect.websiteStatusDetail, "No usable website found.");
+});
+
 test("Outreach Package endpoint rejects unsupported actions before persistence access", async () => {
   const response = await updateOutreachPackage(
     new Request("https://example.com/api/engine/top-prospects/results/result-id/package", {

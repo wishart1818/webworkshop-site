@@ -22,6 +22,17 @@ export type ProspectStatus = (typeof prospectStatuses)[number];
 export type TradeCategory = (typeof tradeCategories)[number];
 export const prospectTypes = ["redesign", "no_website_social_only"] as const;
 export type ProspectType = (typeof prospectTypes)[number];
+export const websiteAvailabilityStatuses = [
+  "unknown",
+  "usable",
+  "no_owned_website",
+  "invalid_website",
+  "http_404",
+  "unreachable_website",
+  "broken_website",
+  "inactive_website",
+] as const;
+export type WebsiteAvailabilityStatus = (typeof websiteAvailabilityStatuses)[number];
 export const prospectSearchTypes = [...prospectTypes, "all"] as const;
 export type ProspectSearchType = (typeof prospectSearchTypes)[number];
 export const prospectClassifications = [
@@ -152,6 +163,9 @@ export type Prospect = {
   activitySignals: string[];
   recommendedContactMethod: RecommendedContactMethod;
   inactive: boolean;
+  websiteStatus: WebsiteAvailabilityStatus;
+  websiteStatusDetail: string;
+  websiteAnalysisAttemptedAt: string;
   analysis?: Analysis;
   outreach?: OutreachDraft;
   preview?: PreviewConcept;
@@ -467,6 +481,34 @@ export function classifyProspectPresence(input: Pick<Prospect, "website" | "prof
   return "not_enough_contact_info";
 }
 
+export const websiteAvailabilityLabels: Record<WebsiteAvailabilityStatus, string> = {
+  unknown: "Website not analyzed yet",
+  usable: "Usable website",
+  no_owned_website: "No owned website detected",
+  invalid_website: "No usable website found",
+  http_404: "Website returned 404",
+  unreachable_website: "Website appears broken",
+  broken_website: "Website appears broken",
+  inactive_website: "Website appears inactive",
+};
+
+export function prospectHasUnusableWebsite(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
+  return prospect.prospectType === "no_website_social_only"
+    || !["unknown", "usable"].includes(prospect.websiteStatus);
+}
+
+export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" | "classification" | "email" | "contactFormUrl" | "recommendedContactMethod">) {
+  const labels: string[] = [];
+  if (prospect.websiteStatus === "no_owned_website" || prospect.classification === "no_website") labels.push("No website found");
+  if (["invalid_website", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) labels.push("Broken website");
+  if (prospect.classification === "listing_only" || prospect.classification === "social_only") labels.push("Listing only");
+  if (prospect.classification === "phone_only") labels.push("Phone only");
+  if (prospect.recommendedContactMethod === "needs_manual_contact_research") labels.push("Needs manual contact research");
+  if (prospect.email) labels.push("Public email available");
+  if (prospect.contactFormUrl) labels.push("Contact form available");
+  return [...new Set(labels)];
+}
+
 export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive">): RecommendedContactMethod {
   if (input.inactive || input.classification === "national_large_brand" || input.classification === "duplicate_bad_fit") return "do_not_contact";
   if (input.email) return "send_email";
@@ -534,8 +576,8 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
         `Own the online home for ${prospect.businessName}`,
         `Turn ${prospect.city} searches into direct inquiries`,
       ],
-      concise: `Hi ${prospect.businessName} team,\n\nI found ${publicPresence} while researching ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find an owned website where people can review services and contact you directly.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
-      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find an owned website that clearly explains services, builds trust, and gives homeowners a direct path to contact you.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, a clear service area, space for real project proof, and a direct "${playbook.primaryCta}" action. The goal is to give ${prospect.businessName} an online home it controls instead of relying entirely on a social profile or third-party listing.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+      concise: `Hi ${prospect.businessName} team,\n\nI noticed your business shows up locally through ${publicPresence} while researching ${prospect.trade.toLowerCase()} businesses serving ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+      detailed: `Hi ${prospect.businessName} team,\n\nI noticed your business shows up locally through ${publicPresence} while researching local ${prospect.trade.toLowerCase()} businesses in ${prospect.city}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, a clear service area, space for real project proof, and a direct "${playbook.primaryCta}" action. The goal is to give ${prospect.businessName} an online home it controls instead of relying entirely on a social profile or third-party listing.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
       followUps: [
         `Hi again,\n\nI wanted to follow up on the website concept I shared for ${prospect.businessName}. It is designed to turn local searches into direct inquiries while keeping your public profiles working alongside an owned site.\n\n${conceptPreviewSentence(previewLink, "Here is the concept again")}\n\nWould a quick 10-minute call next week be useful?\n\n${complianceFooter}`,
         `Hi again,\n\nLast note from me about the website concept in my earlier email. The main idea is a simple online home that you control, with services, local proof, and one clear estimate path.\n\n${conceptPreviewSentence(previewLink, "You can review the concept here")}\n\nIf the timing is not right, no problem. I will close the loop.\n\n${complianceFooter}`,
@@ -617,12 +659,47 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
 
 export function withAnalysis(prospect: Prospect): Prospect {
   const analysis = analyzeProspect(prospect);
+  const switchingFromPresenceGap = prospect.prospectType === "no_website_social_only";
   return {
     ...prospect,
+    prospectType: "redesign",
+    classification: "website_redesign",
+    websiteStatus: "usable",
+    websiteStatusDetail: "Website analysis completed successfully.",
+    websiteAnalysisAttemptedAt: analysis.analyzedAt,
     analysis,
+    outreach: switchingFromPresenceGap ? undefined : prospect.outreach,
+    preview: switchingFromPresenceGap ? undefined : prospect.preview,
     priorityScore: calculatePriority(analysis, prospect.sizeIndicator, prospect.serviceArea),
     status: prospect.status === "New" ? "Reviewed" : prospect.status,
     activities: [activity("analysis", `Website analysis completed with a score of ${analysis.overallScore}.`), ...prospect.activities],
+  };
+}
+
+export function withPresenceGapReview(
+  prospect: Prospect,
+  websiteStatus: Exclude<WebsiteAvailabilityStatus, "unknown" | "usable"> = prospect.website ? "broken_website" : "no_owned_website",
+  websiteStatusDetail = websiteAvailabilityLabels[websiteStatus],
+): Prospect {
+  const switchingToPresenceGap = prospect.prospectType !== "no_website_social_only";
+  const classification = classifyProspectPresence({ ...prospect, website: "" });
+  const reviewed = {
+    ...prospect,
+    prospectType: "no_website_social_only" as const,
+    classification,
+    analysis: undefined,
+    outreach: switchingToPresenceGap ? undefined : prospect.outreach,
+    preview: switchingToPresenceGap ? undefined : prospect.preview,
+    websiteStatus,
+    websiteStatusDetail,
+    websiteAnalysisAttemptedAt: now(),
+    status: prospect.status === "New" ? "Reviewed" as const : prospect.status,
+  };
+  return {
+    ...reviewed,
+    recommendedContactMethod: recommendProspectContactMethod(reviewed),
+    priorityScore: calculatePriority(undefined, reviewed.sizeIndicator, reviewed.serviceArea),
+    activities: [activity("analysis", `${websiteStatusDetail} Presence Gap analysis is ready.`), ...prospect.activities],
   };
 }
 
@@ -644,8 +721,8 @@ export function withPreview(prospect: Prospect): Prospect {
 
 type CreateProspectInput = Omit<
   Prospect,
-  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive"
-> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive">>;
+  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt"
+> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt">>;
 
 export function createProspect(input: CreateProspectInput): Prospect {
   const createdAt = now();
@@ -663,6 +740,9 @@ export function createProspect(input: CreateProspectInput): Prospect {
     activitySignals: input.activitySignals ?? [],
     recommendedContactMethod: input.recommendedContactMethod ?? "needs_manual_contact_research",
     inactive: input.inactive ?? false,
+    websiteStatus: input.websiteStatus ?? (input.website ? "unknown" : "no_owned_website"),
+    websiteStatusDetail: input.websiteStatusDetail ?? "",
+    websiteAnalysisAttemptedAt: input.websiteAnalysisAttemptedAt ?? "",
     id: crypto.randomUUID(),
     createdAt,
     priorityScore: calculatePriority(undefined, input.sizeIndicator, input.serviceArea),
@@ -708,6 +788,9 @@ export const seedProspects: Prospect[] = [
   activitySignals: [],
   recommendedContactMethod: email ? "send_email" : "call_first",
   inactive: false,
+  websiteStatus: "unknown",
+  websiteStatusDetail: "",
+  websiteAnalysisAttemptedAt: "",
   notes: [],
   activities: [
     {

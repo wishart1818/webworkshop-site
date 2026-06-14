@@ -7,7 +7,7 @@ import { DiscoveryFunnel } from "../components/engine/DiscoveryFunnel";
 import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePreview";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
-import { seedProspects, withAnalysis, withOutreach, withPreview, type Prospect } from "../lib/prospect-engine";
+import { seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 
 function renderDetail(prospect: Prospect, detailTab: DetailTab) {
   return renderToStaticMarkup(createElement(ProspectDetail, {
@@ -15,6 +15,7 @@ function renderDetail(prospect: Prospect, detailTab: DetailTab) {
     detailTab,
     setDetailTab: () => undefined,
     onAnalyze: () => undefined,
+    onPresenceGap: () => undefined,
     onOutreach: () => undefined,
     onPreview: () => undefined,
     onStatus: () => undefined,
@@ -34,24 +35,51 @@ test("prospect details explain missing public contact data", () => {
   assert.match(html, /Website not analyzed yet/);
 });
 
-test("no-website prospect detail shows presence-gap guidance without an analyze action", () => {
+test("no-website prospect detail shows presence-gap guidance without a website analysis action", () => {
   const prospect = structuredClone(seedProspects[0]);
   prospect.website = "";
   prospect.profileUrl = "https://facebook.com/local-roofing";
   prospect.prospectType = "no_website_social_only";
   prospect.classification = "social_only";
   prospect.recommendedContactMethod = "message_on_facebook";
+  prospect.websiteStatus = "no_owned_website";
+  prospect.websiteStatusDetail = "No owned website detected.";
   prospect.reviewCount = 24;
   prospect.activitySignals = ["public_reviews", "public_profile"];
   const html = renderDetail(prospect, "Analysis");
 
   assert.match(html, /Open public profile/);
-  assert.match(html, /No Website \/ Social Only prospect/);
+  assert.match(html, /No owned website detected/);
   assert.match(html, /owning the customer journey/i);
   assert.match(html, /Social-Only Prospect/);
   assert.match(html, /Message on Facebook/);
   assert.match(html, /public reviews/);
   assert.doesNotMatch(html, /Analyze website/);
+});
+
+test("404 website shows broken status and never falls back to not analyzed", () => {
+  const prospect = withPresenceGapReview(
+    structuredClone(seedProspects[3]),
+    "http_404",
+    "Website returned HTTP 404.",
+  );
+  const html = renderDetail(prospect, "Analysis");
+
+  assert.match(html, /Website returned 404/);
+  assert.match(html, /Website returned HTTP 404/);
+  assert.match(html, /Broken website/);
+  assert.match(html, /Presence Gap Score/);
+  assert.match(html, /Best outreach channel/);
+  assert.match(html, /Re-check website/);
+  assert.doesNotMatch(html, /Website not analyzed yet/);
+});
+
+test("untouched redesign prospect offers both website and no-website analysis paths", () => {
+  const html = renderDetail(structuredClone(seedProspects[0]), "Analysis");
+
+  assert.match(html, /Website not analyzed yet/);
+  assert.match(html, /Analyze website/);
+  assert.match(html, /Run No Website \/ Social-Only analysis/);
 });
 
 test("unapproved outreach renders compliance review and disabled copy controls", () => {

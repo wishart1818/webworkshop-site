@@ -10,6 +10,8 @@ import {
   PUBLIC_PREVIEW_TOKEN_MIGRATION_STATEMENTS,
   PROSPECT_CLASSIFICATION_MIGRATION_ID,
   PROSPECT_CLASSIFICATION_MIGRATION_STATEMENTS,
+  WEBSITE_AVAILABILITY_MIGRATION_ID,
+  WEBSITE_AVAILABILITY_MIGRATION_STATEMENTS,
   TopProspectSchemaLockUnavailableError,
   TOP_PROSPECT_MIGRATION_ID,
   TOP_PROSPECT_MIGRATION_STATEMENTS,
@@ -62,30 +64,34 @@ test("Top Prospects schema initializer creates only its additive tables under a 
   assert.ok(OUTREACH_PACKAGE_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
   assert.ok(PUBLIC_PREVIEW_TOKEN_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
   assert.ok(PROSPECT_CLASSIFICATION_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
+  assert.ok(WEBSITE_AVAILABILITY_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
   assert.ok(fake.statements.some((statement) => statement.includes(TOP_PROSPECT_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(TOP_PROSPECT_UPGRADE_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(NO_WEBSITE_PROSPECT_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(OUTREACH_PACKAGE_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(PUBLIC_PREVIEW_TOKEN_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(PROSPECT_CLASSIFICATION_MIGRATION_ID)));
+  assert.ok(fake.statements.some((statement) => statement.includes(WEBSITE_AVAILABILITY_MIGRATION_ID)));
   assert.equal(fake.disconnected(), true);
 });
 
 test("Top Prospects schema initializer repairs migration bookkeeping and refuses partial schema", async () => {
   const ready = fakeDatabase(["TopProspectJob", "TopProspectResult"]);
   assert.equal(await initializeTopProspectSchema(ready.database), "ready");
-  assert.equal(ready.statements.length, 22);
+  assert.equal(ready.statements.length, 25);
   assert.ok(ready.statements.some((statement) => statement.includes(TOP_PROSPECT_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(TOP_PROSPECT_UPGRADE_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(NO_WEBSITE_PROSPECT_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(OUTREACH_PACKAGE_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(PUBLIC_PREVIEW_TOKEN_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(PROSPECT_CLASSIFICATION_MIGRATION_ID)));
+  assert.ok(ready.statements.some((statement) => statement.includes(WEBSITE_AVAILABILITY_MIGRATION_ID)));
   assert.ok(TOP_PROSPECT_UPGRADE_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(OUTREACH_PACKAGE_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(PUBLIC_PREVIEW_TOKEN_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(PROSPECT_CLASSIFICATION_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
+  assert.ok(WEBSITE_AVAILABILITY_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
 
   const partial = fakeDatabase(["TopProspectJob"]);
   await assert.rejects(initializeTopProspectSchema(partial.database), /partially initialized/);

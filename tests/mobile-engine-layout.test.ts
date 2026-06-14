@@ -4,6 +4,7 @@ import test from "node:test";
 
 const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
 const topProspectsWorkspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
+const prospectEngine = readFileSync(new URL("../lib/prospect-engine.ts", import.meta.url), "utf8");
 const mobileStart = css.indexOf("@media (max-width: 767px)");
 const mobileEnd = css.indexOf("@media (max-width: 420px)");
 const mobileCss = css.slice(mobileStart, mobileEnd);
@@ -30,6 +31,9 @@ test("engine phone controls and navigation account for iPhone interaction constr
   assert.match(css, /padding: 0\.4rem 0\.4rem calc\(0\.4rem \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(mobileCss, /\.engine-top-prospect-launcher button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /min-height: 2\.75rem;\s*font-size: 1rem;/);
+  assert.match(mobileCss, /\.engine-empty__actions \.engine-button\s*{\s*width: 100%;/);
+  assert.match(mobileCss, /\.engine-inline-actions \.engine-button\s*{\s*width: 100%;/);
+  assert.match(mobileCss, /\.engine-prospect-labels span,/);
 });
 
 test("protected prospect previews remain readable and business-themed on phones", () => {
@@ -69,9 +73,10 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /AI replacement confidence/);
   assert.match(topProspectsWorkspace, /No Website \/ Social Only/);
   assert.match(topProspectsWorkspace, /All Prospect Types/);
-  assert.match(topProspectsWorkspace, /No website found/);
-  assert.match(topProspectsWorkspace, /Public email available/);
-  assert.match(topProspectsWorkspace, /Needs manual contact research/);
+  assert.match(prospectEngine, /No website found/);
+  assert.match(prospectEngine, /Public email available/);
+  assert.match(prospectEngine, /Needs manual contact research/);
+  assert.match(topProspectsWorkspace, /prospectPresenceLabels/);
   assert.match(topProspectsWorkspace, /Online presence gap/);
   assert.match(topProspectsWorkspace, /Business activity/);
   assert.match(topProspectsWorkspace, /Local fit/);

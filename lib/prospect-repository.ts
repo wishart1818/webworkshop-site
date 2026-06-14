@@ -123,6 +123,9 @@ function toDomain(row: StoredProspect): Prospect {
     activitySignals: stringArray(row.activitySignals),
     recommendedContactMethod: row.recommendedContactMethod as Prospect["recommendedContactMethod"],
     inactive: row.inactive,
+    websiteStatus: row.websiteStatus as Prospect["websiteStatus"],
+    websiteStatusDetail: row.websiteStatusDetail ?? "",
+    websiteAnalysisAttemptedAt: row.websiteAnalysisAttemptedAt?.toISOString() ?? "",
     analysis,
     outreach,
     preview,
@@ -144,7 +147,7 @@ async function persistProspect(prospect: Prospect) {
   const prisma = getProspectDatabase();
 
   await prisma.$transaction(async (tx) => {
-    const previous = await tx.prospect.findUnique({ where: { id: prospect.id }, select: { status: true } });
+    const previous = await tx.prospect.findUnique({ where: { id: prospect.id }, select: { status: true, prospectType: true } });
     await tx.prospect.upsert({
       where: { id: prospect.id },
       create: {
@@ -171,6 +174,9 @@ async function persistProspect(prospect: Prospect) {
         activitySignals: prospect.activitySignals,
         recommendedContactMethod: prospect.recommendedContactMethod,
         inactive: prospect.inactive,
+        websiteStatus: prospect.websiteStatus,
+        websiteStatusDetail: prospect.websiteStatusDetail || null,
+        websiteAnalysisAttemptedAt: prospect.websiteAnalysisAttemptedAt ? new Date(prospect.websiteAnalysisAttemptedAt) : null,
         status: toPrismaStatus[prospect.status],
         createdAt: new Date(prospect.createdAt),
       },
@@ -197,9 +203,18 @@ async function persistProspect(prospect: Prospect) {
         activitySignals: prospect.activitySignals,
         recommendedContactMethod: prospect.recommendedContactMethod,
         inactive: prospect.inactive,
+        websiteStatus: prospect.websiteStatus,
+        websiteStatusDetail: prospect.websiteStatusDetail || null,
+        websiteAnalysisAttemptedAt: prospect.websiteAnalysisAttemptedAt ? new Date(prospect.websiteAnalysisAttemptedAt) : null,
         status: toPrismaStatus[prospect.status],
       },
     });
+
+    if (previous && previous.prospectType !== prospect.prospectType) {
+      await tx.analysis.deleteMany({ where: { prospectId: prospect.id } });
+      await tx.outreachDraft.deleteMany({ where: { prospectId: prospect.id } });
+      await tx.previewConcept.deleteMany({ where: { prospectId: prospect.id } });
+    }
 
     if (prospect.analysis) {
       const createdAt = new Date(prospect.analysis.analyzedAt);

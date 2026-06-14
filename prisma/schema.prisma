@@ -41,6 +41,9 @@ model Prospect {
   activitySignals Json          @default("[]")
   recommendedContactMethod String @default("needs_manual_contact_research")
   inactive      Boolean         @default(false)
+  websiteStatus String          @default("unknown")
+  websiteStatusDetail String?
+  websiteAnalysisAttemptedAt DateTime?
   status        ProspectStatus  @default(NEW)
   analyses      Analysis[]
   outreach      OutreachDraft[]

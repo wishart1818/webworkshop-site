@@ -1,6 +1,7 @@
 import {
   prospectStatuses,
   prospectTypes,
+  websiteAvailabilityStatuses,
   prospectClassifications,
   recommendedContactMethods,
   classifyProspectPresence,
@@ -15,6 +16,7 @@ import {
   type Prospect,
   type ProspectStatus,
   type ProspectType,
+  type WebsiteAvailabilityStatus,
   type ProspectClassification,
   type RecommendedContactMethod,
   type ScoreKey,
@@ -209,6 +211,12 @@ export function validateProspect(input: unknown): ValidationResult {
     if (!prospectClassifications.includes(classification)) throw new Error("Prospect classification is not supported.");
     const inactive = input.inactive === undefined ? false : input.inactive;
     if (typeof inactive !== "boolean") throw new Error("Inactive status must be true or false.");
+    const websiteStatus = text(input.websiteStatus ?? (parsedWebsite ? "unknown" : "no_owned_website"), "Website status", 40) as WebsiteAvailabilityStatus;
+    if (!websiteAvailabilityStatuses.includes(websiteStatus)) throw new Error("Website status is not supported.");
+    const websiteAnalysisAttemptedAt = text(input.websiteAnalysisAttemptedAt ?? "", "Website analysis attempt date", 100, false);
+    if (websiteAnalysisAttemptedAt && !Number.isFinite(Date.parse(websiteAnalysisAttemptedAt))) {
+      throw new Error("Website analysis attempt date must be valid.");
+    }
     const recommendedContactMethod = input.recommendedContactMethod === undefined
       ? recommendProspectContactMethod({ classification, profileUrl: parsedProfileUrl, phone, email, contactFormUrl: parsedContactFormUrl, inactive })
       : text(input.recommendedContactMethod, "Recommended contact method", 60) as RecommendedContactMethod;
@@ -252,6 +260,9 @@ export function validateProspect(input: unknown): ValidationResult {
         activitySignals: input.activitySignals === undefined ? [] : stringArray(input.activitySignals, "Activity signals", 50, 100),
         recommendedContactMethod,
         inactive,
+        websiteStatus,
+        websiteStatusDetail: text(input.websiteStatusDetail ?? "", "Website status detail", 1000, false),
+        websiteAnalysisAttemptedAt: websiteAnalysisAttemptedAt ? new Date(websiteAnalysisAttemptedAt).toISOString() : "",
         notes: stringArray(input.notes, "Notes", 1000, 5000),
         activities: activityValues(input.activities),
         analysis: analysisValue(input.analysis),

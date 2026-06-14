@@ -13,6 +13,8 @@ export const PUBLIC_PREVIEW_TOKEN_MIGRATION_ID = "20260613_public_preview_tokens
 export const PUBLIC_PREVIEW_TOKEN_MIGRATION_CHECKSUM = "699fdb67a629417516fcd8016b41762d4326720bc8e252440bb2b347ffe1f929";
 export const PROSPECT_CLASSIFICATION_MIGRATION_ID = "20260614_prospect_classification";
 export const PROSPECT_CLASSIFICATION_MIGRATION_CHECKSUM = "f63819f822780092faba697cdbaab90366dcb7abdd859819a501c5f21da6689b";
+export const WEBSITE_AVAILABILITY_MIGRATION_ID = "20260614_website_availability";
+export const WEBSITE_AVAILABILITY_MIGRATION_CHECKSUM = "5b7c9ac49943bee6694553f1d36f8f0fa13ddcb6ea64e8b1e65dd7da48b39715";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -47,6 +49,10 @@ export const PROSPECT_CLASSIFICATION_MIGRATION_STATEMENTS = [
   `ALTER TABLE "Prospect" ADD COLUMN IF NOT EXISTS "classification" TEXT NOT NULL DEFAULT 'not_enough_contact_info', ADD COLUMN IF NOT EXISTS "contactFormUrl" TEXT, ADD COLUMN IF NOT EXISTS "address" TEXT, ADD COLUMN IF NOT EXISTS "activitySignals" JSONB NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS "recommendedContactMethod" TEXT NOT NULL DEFAULT 'needs_manual_contact_research', ADD COLUMN IF NOT EXISTS "inactive" BOOLEAN NOT NULL DEFAULT false`,
   `UPDATE "Prospect" SET "classification" = CASE WHEN "website" IS NOT NULL AND "website" <> '' THEN 'website_redesign' WHEN "profileUrl" ~* '(facebook|fb|instagram)\\.com' THEN 'social_only' WHEN "profileUrl" IS NOT NULL AND "profileUrl" <> '' THEN 'listing_only' WHEN "phone" IS NOT NULL AND "phone" <> '' AND ("publicEmail" IS NULL OR "publicEmail" = '') THEN 'phone_only' WHEN ("phone" IS NOT NULL AND "phone" <> '') OR ("publicEmail" IS NOT NULL AND "publicEmail" <> '') THEN 'no_website' ELSE 'not_enough_contact_info' END WHERE "classification" = 'not_enough_contact_info'`,
   `UPDATE "Prospect" SET "recommendedContactMethod" = CASE WHEN "inactive" THEN 'do_not_contact' WHEN "publicEmail" IS NOT NULL AND "publicEmail" <> '' THEN 'send_email' WHEN "contactFormUrl" IS NOT NULL AND "contactFormUrl" <> '' THEN 'submit_contact_form' WHEN "profileUrl" ~* '(facebook|fb)\\.com' THEN 'message_on_facebook' WHEN "phone" IS NOT NULL AND "phone" <> '' THEN 'call_first' ELSE 'needs_manual_contact_research' END WHERE "recommendedContactMethod" = 'needs_manual_contact_research'`,
+] as const;
+export const WEBSITE_AVAILABILITY_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "Prospect" ADD COLUMN IF NOT EXISTS "websiteStatus" TEXT NOT NULL DEFAULT 'unknown', ADD COLUMN IF NOT EXISTS "websiteStatusDetail" TEXT, ADD COLUMN IF NOT EXISTS "websiteAnalysisAttemptedAt" TIMESTAMP(3)`,
+  `UPDATE "Prospect" SET "websiteStatus" = 'no_owned_website', "prospectType" = 'no_website_social_only' WHERE ("website" IS NULL OR "website" = '') AND ("websiteStatus" = 'unknown' OR "prospectType" = 'redesign')`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -116,6 +122,13 @@ async function applyProspectClassificationUpgrade(transaction: SchemaTransaction
   await recordMigration(transaction, PROSPECT_CLASSIFICATION_MIGRATION_ID, PROSPECT_CLASSIFICATION_MIGRATION_CHECKSUM, "000000000009");
 }
 
+async function applyWebsiteAvailabilityUpgrade(transaction: SchemaTransaction) {
+  for (const statement of WEBSITE_AVAILABILITY_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, WEBSITE_AVAILABILITY_MIGRATION_ID, WEBSITE_AVAILABILITY_MIGRATION_CHECKSUM, "000000000010");
+}
+
 export class TopProspectSchemaLockUnavailableError extends Error {
   constructor() {
     super("Another Top Prospects schema initialization currently holds the transaction lock.");
@@ -155,6 +168,7 @@ export async function initializeTopProspectSchema(
         await applyOutreachPackageUpgrade(transaction);
         await applyPublicPreviewTokenUpgrade(transaction);
         await applyProspectClassificationUpgrade(transaction);
+        await applyWebsiteAvailabilityUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -168,6 +182,7 @@ export async function initializeTopProspectSchema(
       await applyOutreachPackageUpgrade(transaction);
       await applyPublicPreviewTokenUpgrade(transaction);
       await applyProspectClassificationUpgrade(transaction);
+      await applyWebsiteAvailabilityUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

@@ -6,14 +6,18 @@ import {
   activity,
   previewStyleProfile,
   priorityRationale,
+  prospectHasUnusableWebsite,
+  prospectPresenceLabels,
   prospectStatuses,
   scoreLabels,
+  websiteAvailabilityLabels,
   type Prospect,
   type ProspectClassification,
   type ProspectStatus,
   type RecommendedContactMethod,
   type ScoreKey,
 } from "@/lib/prospect-engine";
+import { calculateNoWebsitePresenceScores } from "@/lib/top-prospects";
 
 const classificationLabels: Record<ProspectClassification, string> = {
   website_redesign: "Website Redesign Prospect",
@@ -42,6 +46,7 @@ type ProspectDetailProps = {
   detailTab: DetailTab;
   setDetailTab: (tab: DetailTab) => void;
   onAnalyze: () => void;
+  onPresenceGap: () => void;
   onOutreach: () => void;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
@@ -82,6 +87,7 @@ export function ProspectDetail({
   detailTab,
   setDetailTab,
   onAnalyze,
+  onPresenceGap,
   onOutreach,
   onPreview,
   onStatus,
@@ -90,6 +96,8 @@ export function ProspectDetail({
   addNote,
   updateSelected,
 }: ProspectDetailProps) {
+  const presenceGap = prospectHasUnusableWebsite(prospect);
+  const presenceLabels = prospectPresenceLabels(prospect);
   return (
     <aside className="engine-detail">
       <header className="engine-detail__hero">
@@ -112,10 +120,12 @@ export function ProspectDetail({
         {prospect.phone ? <a href={`tel:${prospect.phone}`}>{prospect.phone}</a> : <span>No public phone</span>}
         {prospect.email ? <a href={`mailto:${prospect.email}`}>{prospect.email}</a> : <span>No public email</span>}
         {prospect.contactFormUrl ? <a href={safeWebsiteUrl(prospect.contactFormUrl)} rel="noreferrer" target="_blank">Open contact form</a> : null}
+        <span className={`engine-website-state engine-website-state--${prospect.websiteStatus}`}>{websiteAvailabilityLabels[prospect.websiteStatus]}</span>
         <select aria-label="Pipeline status" onChange={(event) => onStatus(event.target.value as ProspectStatus)} value={prospect.status}>
           {prospectStatuses.map((item) => <option key={item}>{item}</option>)}
         </select>
       </div>
+      {presenceLabels.length > 0 && <div className="engine-prospect-labels" aria-label="Prospect presence labels" role="list">{presenceLabels.map((label) => <span key={label} role="listitem">{label}</span>)}</div>}
       <nav className="engine-tabs" aria-label="Prospect detail">
         {(["Analysis", "Outreach", "Preview", "Activity"] as DetailTab[]).map((tab) => (
           <button className={detailTab === tab ? "is-active" : ""} key={tab} onClick={() => setDetailTab(tab)} type="button">
@@ -124,11 +134,11 @@ export function ProspectDetail({
         ))}
       </nav>
       <div className="engine-detail__body">
-        {detailTab === "Analysis" && (prospect.prospectType === "no_website_social_only"
-          ? <PresenceGapView prospect={prospect} />
+        {detailTab === "Analysis" && (presenceGap
+          ? <PresenceGapView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} prospect={prospect} />
           : prospect.analysis
           ? <AnalysisView prospect={prospect} onAnalyze={onAnalyze} />
-          : <EmptyState title="Website not analyzed yet" body="Run the scoring engine to identify strengths, conversion gaps, and redesign opportunity." action={onAnalyze} actionLabel="Analyze website" />)}
+          : <UnanalyzedWebsiteView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} />)}
         {detailTab === "Outreach" && (prospect.outreach
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
@@ -141,12 +151,27 @@ export function ProspectDetail({
   );
 }
 
-function PresenceGapView({ prospect }: { prospect: Prospect }) {
+function UnanalyzedWebsiteView({ onAnalyze, onPresenceGap }: Pick<ProspectDetailProps, "onAnalyze" | "onPresenceGap">) {
+  return (
+    <div className="engine-empty">
+      <span aria-hidden="true">+</span>
+      <h3>Website not analyzed yet</h3>
+      <p>Analyze the website, or run Presence Gap review when the business has no usable owned website.</p>
+      <div className="engine-empty__actions">
+        <button className="engine-button engine-button--primary" onClick={onAnalyze} type="button">Analyze website</button>
+        <button className="engine-button" onClick={onPresenceGap} type="button">Run No Website / Social-Only analysis</button>
+      </div>
+    </div>
+  );
+}
+
+function PresenceGapView({ prospect, onAnalyze, onPresenceGap }: { prospect: Prospect; onAnalyze: () => void; onPresenceGap: () => void }) {
+  const scores = calculateNoWebsitePresenceScores(prospect);
   return (
     <div className="engine-stack">
       <section>
-        <h3>No Website / Social Only prospect</h3>
-        <p>No owned website was found. The opportunity is to give this business a permanent online home instead of relying entirely on Facebook, Instagram, Google, or directory listings.</p>
+        <h3>{websiteAvailabilityLabels[prospect.websiteStatus]}</h3>
+        <p>{prospect.websiteStatusDetail || "No usable owned website was found."} The opportunity is to give this business a permanent online home instead of relying entirely on Facebook, Instagram, Google, or directory listings.</p>
       </section>
       <section>
         <h3>Presence and contact classification</h3>
@@ -154,13 +179,19 @@ function PresenceGapView({ prospect }: { prospect: Prospect }) {
         {prospect.address && <p>Public address: {prospect.address}</p>}
       </section>
       <div className="engine-score-grid">
-        <div><span>Public reviews</span><b>{prospect.reviewCount}</b></div>
-        <div><span>Rating</span><b>{prospect.rating || "Not recorded"}</b></div>
-        <div><span>Recent reviews</span><b>{prospect.recentReviewCount}</b></div>
-        <div><span>Source confidence</span><b>{prospect.sourceConfidence}</b></div>
+        <div><span>Presence Gap Score</span><b>{scores.onlinePresenceGapScore}</b><i><em style={{ width: `${scores.onlinePresenceGapScore}%` }} /></i></div>
+        <div><span>Business Activity Score</span><b>{scores.businessActivityScore}</b><i><em style={{ width: `${scores.businessActivityScore}%` }} /></i></div>
+        <div><span>Website Need Score</span><b>{scores.websiteNeedScore}</b><i><em style={{ width: `${scores.websiteNeedScore}%` }} /></i></div>
+        <div><span>Contactability Score</span><b>{scores.contactabilityScore}</b><i><em style={{ width: `${scores.contactabilityScore}%` }} /></i></div>
+        <div><span>Local Fit Score</span><b>{scores.localFitScore}</b><i><em style={{ width: `${scores.localFitScore}%` }} /></i></div>
+        <div><span>Best outreach channel</span><b>{contactMethodLabels[prospect.recommendedContactMethod]}</b></div>
       </div>
       {prospect.activitySignals.length > 0 && <section><h3>Public activity signals</h3><ul>{prospect.activitySignals.map((signal) => <li key={signal}>{signal.replaceAll("_", " ")}</li>)}</ul></section>}
       <section><h3>Recommended pitch</h3><p>Lead with owning the customer journey: a clear services page, local proof, and direct estimate path that the business controls.</p></section>
+      <div className="engine-inline-actions">
+        {prospect.website && <button className="engine-button engine-button--primary" onClick={onAnalyze} type="button">Re-check website</button>}
+        <button className="engine-button" onClick={onPresenceGap} type="button">Refresh Presence Gap analysis</button>
+      </div>
     </div>
   );
 }
