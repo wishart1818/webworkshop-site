@@ -393,9 +393,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Trade<select defaultValue={allCoreServiceTradesOption} name="trade"><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>City<input name="city" required /></label>
           <label>State<input maxLength={2} name="state" required /></label>
-          <label>Radius<select defaultValue="25" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
-          <label>Businesses to scan<input defaultValue="50" max="100" min="5" name="businessesToScan" type="number" /></label>
-          <label>Final prospects wanted<input defaultValue="15" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
+          <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
+          <label>Businesses to scan<input defaultValue="100" max="100" min="5" name="businessesToScan" type="number" /></label>
+          <label>Final prospects wanted<input defaultValue="20" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
           <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} <b>Businesses to scan is the total all-trades budget.</b> {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
             {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}
