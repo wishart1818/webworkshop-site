@@ -32,7 +32,7 @@ import {
 } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { createPublicPreviewToken } from "../lib/public-preview-token";
-import { recoverableTopProspect } from "../lib/top-prospect-worker";
+import { combineTradeDiscoveryResults, recoverableTopProspect, tradeFailureDiscoveryResult } from "../lib/top-prospect-worker";
 
 function manualAssessment(opportunityScore: number): OpportunityAssessment {
   return {
@@ -314,6 +314,67 @@ test("returning to Top Prospects automatically resumes a stalled saved job", asy
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { jobs: [], buildVersion: topProspectBuildVersion() });
   assert.equal(continuedJobId, "stalled-job");
+});
+
+test("all-core discovery keeps partial results when one trade is rate limited", () => {
+  const lead = {
+    businessName: "Partial Roofing",
+    website: "https://partialroofing.example/",
+    profileUrl: "",
+    prospectType: "redesign" as const,
+    classification: "website_redesign" as const,
+    phone: "(419) 555-0100",
+    email: "hello@partialroofing.example",
+    contactFormUrl: "",
+    address: "",
+    city: "Toledo",
+    state: "OH",
+    trade: "Roofing" as const,
+    serviceArea: "Toledo and nearby communities",
+    sources: ["osm" as const],
+    sourceConfidence: 40,
+    recommendedContactMethod: "send_email" as const,
+    inactive: false,
+  };
+  const successfulTrade = {
+    leads: [lead],
+    diagnostics: {
+      rawProviderCount: 1,
+      afterDistanceFilteringCount: 1,
+      afterDuplicateFilteringCount: 1,
+      afterQualificationFilteringCount: 1,
+      returnedCount: 1,
+      radiusKm: 25,
+      categorySignals: ["craft=roofer"],
+      sourceCounts: { osm: 1, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+      providerDiagnostics: {
+        osm: { configured: true, queryExecuted: true, status: "succeeded" as const, returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 1 },
+        azureMaps: { configured: false, queryExecuted: false, status: "not_configured" as const, returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        googlePlaces: { configured: false, queryExecuted: false, status: "not_configured" as const, returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        yelp: { configured: false, queryExecuted: false, status: "not_configured" as const, returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      },
+      finalMergedCount: 1,
+    },
+  };
+  const rateLimitedTrade = tradeFailureDiscoveryResult({
+    trade: "HVAC",
+    radiusKm: 25,
+    rateLimited: true,
+    safeReason: "The public business discovery provider returned HTTP 429.",
+  });
+  const combined = combineTradeDiscoveryResults({
+    radiusKm: 25,
+    limit: 10,
+    results: [
+      { trade: "Roofing", result: successfulTrade },
+      { trade: "HVAC", result: rateLimitedTrade },
+    ],
+  });
+
+  assert.equal(combined.leads.length, 1);
+  assert.equal(combined.leads[0].businessName, "Partial Roofing");
+  assert.equal(combined.diagnostics.tradeDiagnostics?.find((item) => item.trade === "HVAC")?.status, "skipped");
+  assert.deepEqual(combined.diagnostics.tradeDiagnostics?.find((item) => item.trade === "HVAC")?.rateLimitedProviders, ["osm"]);
 });
 
 test("Top Prospects build version safely identifies the deployed commit", () => {

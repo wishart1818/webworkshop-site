@@ -215,22 +215,25 @@ test("discovery funnel identifies each provider and the final merged count", () 
         osm: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 7, withinRadiusCount: 7, afterDeduplicationCount: 6, usableWebsiteCount: 4 },
         azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 10, withinRadiusCount: 9, afterDeduplicationCount: 8, usableWebsiteCount: 6 },
         googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-        yelp: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        yelp: { configured: true, queryExecuted: true, status: "rate_limited", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, retryCount: 2, httpStatus: 429 },
       },
       finalMergedCount: 27,
       tradeDiagnostics: [
         {
           trade: "Roofing",
+          status: "partial",
           rawProviderCount: 20,
           withinRadiusCount: 19,
           afterDeduplicationCount: 13,
           usableWebsiteCount: 9,
           returnedCount: 8,
+          rateLimitedProviders: ["yelp"],
+          retryCount: 2,
           providerDiagnostics: {
             osm: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 7, withinRadiusCount: 7, afterDeduplicationCount: 6, usableWebsiteCount: 4 },
             azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 10, withinRadiusCount: 9, afterDeduplicationCount: 8, usableWebsiteCount: 6 },
             googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-            yelp: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            yelp: { configured: true, queryExecuted: true, status: "rate_limited", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, retryCount: 2, httpStatus: 429 },
           },
         },
       ],
@@ -243,7 +246,10 @@ test("discovery funnel identifies each provider and the final merged count", () 
   assert.match(html, /API key configured/);
   assert.match(html, /Query executed/);
   assert.match(html, /Succeeded/);
-  assert.match(html, /Timed out/);
+  assert.match(html, /Rate limited/);
+  assert.match(html, /HTTP status/);
+  assert.match(html, /429/);
+  assert.match(html, /Retries/);
   assert.match(html, /Raw records/);
   assert.match(html, /Within radius/);
   assert.match(html, /After deduplication/);
@@ -251,6 +257,8 @@ test("discovery funnel identifies each provider and the final merged count", () 
   assert.match(html, /27<\/b> final merged records/);
   assert.match(html, /Trade Breakdown/);
   assert.match(html, /Roofing/);
+  assert.match(html, /partial/);
+  assert.match(html, /yelp/);
 });
 
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {

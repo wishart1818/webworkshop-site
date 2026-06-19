@@ -40,7 +40,7 @@ export type DiscoverySourceCounts = Record<DiscoverySource, number>;
 
 export const discoveryProviders = ["osm", "azureMaps", "googlePlaces", "yelp"] as const;
 export type DiscoveryProvider = (typeof discoveryProviders)[number];
-export type DiscoveryProviderStatus = "not_recorded" | "not_configured" | "succeeded" | "failed" | "timed_out" | "zero_results";
+export type DiscoveryProviderStatus = "not_recorded" | "not_configured" | "succeeded" | "failed" | "timed_out" | "zero_results" | "rate_limited";
 export type DiscoveryProviderDiagnostic = {
   configured: boolean | null;
   queryExecuted: boolean | null;
@@ -49,16 +49,22 @@ export type DiscoveryProviderDiagnostic = {
   withinRadiusCount: number;
   afterDeduplicationCount: number;
   usableWebsiteCount: number;
+  retryCount?: number;
+  httpStatus?: number;
 };
 export type DiscoveryProviderDiagnostics = Record<DiscoveryProvider, DiscoveryProviderDiagnostic>;
 export type TradeDiscoveryDiagnostic = {
   trade: TradeCategory;
+  status?: "completed" | "partial" | "skipped";
   rawProviderCount: number;
   withinRadiusCount: number;
   afterDeduplicationCount: number;
   usableWebsiteCount: number;
   returnedCount: number;
   providerDiagnostics: DiscoveryProviderDiagnostics;
+  rateLimitedProviders?: string[];
+  retryCount?: number;
+  skippedReason?: string;
 };
 
 export type DiscoveryDiagnostics = {
@@ -146,6 +152,43 @@ const signalsByTrade: Record<TradeCategory, TradeDiscoverySignals> = {
 
 const globalDiscovery = globalThis as typeof globalThis & { lastDiscoveryAt?: number };
 
+function providerDelayMs() {
+  const configured = Number(process.env.DISCOVERY_PROVIDER_DELAY_MS);
+  return Number.isFinite(configured) && configured >= 0 ? Math.min(2_000, configured) : 250;
+}
+
+function retryAfterMs(response: Response, fallbackMs: number) {
+  const header = response.headers.get("retry-after");
+  if (!header) return fallbackMs;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.min(5_000, Math.max(fallbackMs, seconds * 1_000));
+  const dateMs = Date.parse(header);
+  return Number.isFinite(dateMs) ? Math.min(5_000, Math.max(fallbackMs, dateMs - Date.now())) : fallbackMs;
+}
+
+async function delayProviderRequest(multiplier = 1) {
+  const delayMs = providerDelayMs() * multiplier;
+  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function fetchWithBackoff(
+  input: string | URL,
+  init: RequestInit,
+  logger: DiscoveryLogger | undefined,
+  metadata: Record<string, boolean | number | string>,
+) {
+  let retryCount = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) await delayProviderRequest(attempt);
+    const response = await fetch(input, init);
+    if (response.status !== 429 || attempt === 2) return { response, retryCount };
+    retryCount += 1;
+    logger?.("provider_enrichment_failed", { ...metadata, status: 429, reason: "rate_limited", retryCount });
+    await new Promise((resolve) => setTimeout(resolve, retryAfterMs(response, providerDelayMs() * (attempt + 2))));
+  }
+  throw new Error("unreachable");
+}
+
 function validTrade(value: unknown): value is TradeCategory {
   return typeof value === "string" && tradeCategories.includes(value as TradeCategory);
 }
@@ -221,6 +264,7 @@ function providerDiagnostic(
   queryExecuted: boolean | null,
   status: DiscoveryProviderStatus,
   returnedCount = 0,
+  extra: Partial<Pick<DiscoveryProviderDiagnostic, "retryCount" | "httpStatus">> = {},
 ): DiscoveryProviderDiagnostic {
   return {
     configured,
@@ -230,6 +274,8 @@ function providerDiagnostic(
     withinRadiusCount: 0,
     afterDeduplicationCount: 0,
     usableWebsiteCount: 0,
+    ...(extra.retryCount ? { retryCount: extra.retryCount } : {}),
+    ...(extra.httpStatus ? { httpStatus: extra.httpStatus } : {}),
   };
 }
 
@@ -258,7 +304,7 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
     : {};
   return Object.fromEntries(discoveryProviders.map((provider) => {
     const item = candidate[provider];
-    const validStatus = item?.status && ["not_recorded", "not_configured", "succeeded", "failed", "timed_out", "zero_results"].includes(item.status)
+    const validStatus = item?.status && ["not_recorded", "not_configured", "succeeded", "failed", "timed_out", "zero_results", "rate_limited"].includes(item.status)
       ? item.status as DiscoveryProviderStatus
       : fallback[provider].status;
     return [provider, {
@@ -269,6 +315,8 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
       withinRadiusCount: finiteNumber(item?.withinRadiusCount) ?? fallback[provider].withinRadiusCount,
       afterDeduplicationCount: finiteNumber(item?.afterDeduplicationCount) ?? fallback[provider].afterDeduplicationCount,
       usableWebsiteCount: finiteNumber(item?.usableWebsiteCount) ?? fallback[provider].usableWebsiteCount,
+      ...(finiteNumber(item?.retryCount) ? { retryCount: finiteNumber(item?.retryCount) } : {}),
+      ...(finiteNumber(item?.httpStatus) ? { httpStatus: finiteNumber(item?.httpStatus) } : {}),
     }];
   })) as DiscoveryProviderDiagnostics;
 }
@@ -280,14 +328,21 @@ function normalizeTradeDiagnostics(value: unknown): TradeDiscoveryDiagnostic[] {
     const candidate = item as Partial<TradeDiscoveryDiagnostic>;
     if (!validTrade(candidate.trade)) return [];
     const sourceCounts = emptySourceCounts();
+    const status = candidate.status && ["completed", "partial", "skipped"].includes(candidate.status) ? candidate.status : undefined;
     return [{
       trade: candidate.trade,
+      ...(status ? { status } : {}),
       rawProviderCount: finiteNumber(candidate.rawProviderCount) ?? 0,
       withinRadiusCount: finiteNumber(candidate.withinRadiusCount) ?? 0,
       afterDeduplicationCount: finiteNumber(candidate.afterDeduplicationCount) ?? 0,
       usableWebsiteCount: finiteNumber(candidate.usableWebsiteCount) ?? 0,
       returnedCount: finiteNumber(candidate.returnedCount) ?? 0,
       providerDiagnostics: normalizeProviderDiagnostics(candidate.providerDiagnostics, sourceCounts),
+      ...(Array.isArray(candidate.rateLimitedProviders)
+        ? { rateLimitedProviders: candidate.rateLimitedProviders.filter((provider): provider is string => typeof provider === "string") }
+        : {}),
+      ...(finiteNumber(candidate.retryCount) ? { retryCount: finiteNumber(candidate.retryCount) } : {}),
+      ...(typeof candidate.skippedReason === "string" ? { skippedReason: candidate.skippedReason } : {}),
     }];
   });
 }
@@ -581,6 +636,8 @@ export function mergeDiscoveryCandidates(input: {
       withinRadiusCount: diagnostic.withinRadiusCount,
       afterDeduplicationCount: diagnostic.afterDeduplicationCount,
       usableWebsiteCount: diagnostic.usableWebsiteCount,
+      retryCount: diagnostic.retryCount ?? 0,
+      httpStatus: diagnostic.httpStatus ?? 0,
     });
   }
 
@@ -814,10 +871,25 @@ async function optionalProviderCandidates(input: {
   if (!input.configured) return { candidates: [], diagnostic: providerDiagnostic(false, false, "not_configured") };
   input.logger?.("provider_queried", { queryKind: input.source, radiusKm: input.radiusKm });
   try {
-    const response = await fetch(input.url, { ...input.init, signal: AbortSignal.timeout(12_000) });
+    await delayProviderRequest();
+    const { response, retryCount } = await fetchWithBackoff(
+      input.url,
+      { ...input.init, signal: AbortSignal.timeout(12_000) },
+      input.logger,
+      { queryKind: input.source, radiusKm: input.radiusKm },
+    );
     if (!response.ok) {
       input.logger?.("provider_enrichment_failed", { queryKind: input.source, status: response.status });
-      return { candidates: [], diagnostic: providerDiagnostic(true, true, "failed") };
+      return {
+        candidates: [],
+        diagnostic: providerDiagnostic(
+          true,
+          true,
+          response.status === 429 ? "rate_limited" : "failed",
+          0,
+          { retryCount, httpStatus: response.status },
+        ),
+      };
     }
     const payload = await response.json();
     const candidates = input.parse(payload);
@@ -825,7 +897,7 @@ async function optionalProviderCandidates(input: {
     input.logger?.("provider_returned_count", { queryKind: input.source, rawProviderCount: returnedCount });
     return {
       candidates,
-      diagnostic: providerDiagnostic(true, true, returnedCount ? "succeeded" : "zero_results", returnedCount),
+      diagnostic: providerDiagnostic(true, true, returnedCount ? "succeeded" : "zero_results", returnedCount, { retryCount }),
     };
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "TimeoutError";
@@ -906,17 +978,26 @@ export async function discoverContractorsWithDiagnostics(input: {
   async function providerElements(query: string, queryKind: "primary" | "enrichment", required: boolean) {
     input.logger?.("provider_queried", { queryKind, radiusKm: input.radiusKm });
     let discoveryResponse: Response;
+    let retryCount = 0;
     try {
-      discoveryResponse = await fetch(overpassUrl, {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: query }),
-        signal: AbortSignal.timeout(required ? 22_000 : 10_000),
-      });
+      await delayProviderRequest();
+      const result = await fetchWithBackoff(
+        overpassUrl,
+        {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ data: query }),
+          signal: AbortSignal.timeout(required ? 22_000 : 10_000),
+        },
+        input.logger,
+        { queryKind, radiusKm: input.radiusKm },
+      );
+      discoveryResponse = result.response;
+      retryCount = result.retryCount;
     } catch (error) {
       if (!required) {
         input.logger?.("provider_enrichment_failed", { queryKind, reason: "request_failed" });
-        return [];
+        return { elements: [], diagnostic: providerDiagnostic(true, true, "failed") };
       }
       throw new TopProspectStageError(
         "discovery_provider_error",
@@ -929,7 +1010,16 @@ export async function discoverContractorsWithDiagnostics(input: {
     if (!discoveryResponse.ok) {
       if (!required) {
         input.logger?.("provider_enrichment_failed", { queryKind, status: discoveryResponse.status });
-        return [];
+        return {
+          elements: [],
+          diagnostic: providerDiagnostic(
+            true,
+            true,
+            discoveryResponse.status === 429 ? "rate_limited" : "failed",
+            0,
+            { retryCount, httpStatus: discoveryResponse.status },
+          ),
+        };
       }
       throw new TopProspectStageError(
         "discovery_provider_error",
@@ -940,11 +1030,14 @@ export async function discoverContractorsWithDiagnostics(input: {
       const payload = (await discoveryResponse.json()) as { elements?: OverpassElement[] };
       const elements = payload.elements ?? [];
       input.logger?.("provider_returned_count", { queryKind, rawProviderCount: elements.length });
-      return elements;
+      return {
+        elements,
+        diagnostic: providerDiagnostic(true, true, elements.length ? "succeeded" : "zero_results", elements.length, { retryCount }),
+      };
     } catch (error) {
       if (!required) {
         input.logger?.("provider_enrichment_failed", { queryKind, reason: "unreadable_response" });
-        return [];
+        return { elements: [], diagnostic: providerDiagnostic(true, true, "failed", 0, { retryCount }) };
       }
       throw new TopProspectStageError(
         "discovery_provider_error",
@@ -954,7 +1047,7 @@ export async function discoverContractorsWithDiagnostics(input: {
     }
   }
 
-  const primaryElements = await providerElements(queries.primary, "primary", true);
+  const primaryResult = await providerElements(queries.primary, "primary", true);
   const googleKey = process.env.GOOGLE_PLACES_API_KEY?.trim() ?? "";
   const azureMapsKey = process.env.AZURE_MAPS_API_KEY?.trim() ?? "";
   const bingKey = process.env.BING_MAPS_API_KEY?.trim() ?? "";
@@ -992,9 +1085,10 @@ export async function discoverContractorsWithDiagnostics(input: {
   yelpUrl?.searchParams.set("radius", String(Math.min(40_000, radiusMeters)));
   yelpUrl?.searchParams.set("limit", String(Math.min(50, limit)));
 
-  const [enrichmentElements, googleResult, bingResult, yelpResult, yellowPagesResult] = await Promise.all([
-    queries.enrichment ? providerElements(queries.enrichment, "enrichment", false) : Promise.resolve([]),
-    optionalProviderCandidates({
+  const enrichmentResult = queries.enrichment
+    ? await providerElements(queries.enrichment, "enrichment", false)
+    : { elements: [], diagnostic: providerDiagnostic(true, false, "not_recorded") };
+  const googleResult = await optionalProviderCandidates({
       source: "google",
       configured: Boolean(googleKey),
       url: googleUrl,
@@ -1017,8 +1111,8 @@ export async function discoverContractorsWithDiagnostics(input: {
       returnedCount: (value) => Array.isArray((value as { places?: unknown[] }).places) ? (value as { places: unknown[] }).places.length : 0,
       logger: input.logger,
       radiusKm: input.radiusKm,
-    }),
-    optionalProviderCandidates({
+    });
+  const bingResult = await optionalProviderCandidates({
       source: "bing",
       configured: Boolean(azureMapsKey || bingKey),
       url: bingUrl?.href ?? "https://invalid.local",
@@ -1031,8 +1125,8 @@ export async function discoverContractorsWithDiagnostics(input: {
       },
       logger: input.logger,
       radiusKm: input.radiusKm,
-    }),
-    optionalProviderCandidates({
+    });
+  const yelpResult = await optionalProviderCandidates({
       source: "yelp",
       configured: Boolean(yelpKey),
       url: yelpUrl?.href ?? "https://invalid.local",
@@ -1041,8 +1135,8 @@ export async function discoverContractorsWithDiagnostics(input: {
       returnedCount: (value) => Array.isArray((value as { businesses?: unknown[] }).businesses) ? (value as { businesses: unknown[] }).businesses.length : 0,
       logger: input.logger,
       radiusKm: input.radiusKm,
-    }),
-    optionalProviderCandidates({
+    });
+  const yellowPagesResult = await optionalProviderCandidates({
       source: "yellowPages",
       configured: Boolean(yellowUrl),
       url: yellowUrl?.href ?? "https://invalid.local",
@@ -1050,13 +1144,12 @@ export async function discoverContractorsWithDiagnostics(input: {
       parse: parseLicensedDirectory,
       logger: input.logger,
       radiusKm: input.radiusKm,
-    }),
-  ]);
+    });
   const google = googleResult.candidates;
   const bing = bingResult.candidates;
   const yelp = yelpResult.candidates;
   const yellowPages = yellowPagesResult.candidates;
-  const elements = [...primaryElements, ...enrichmentElements];
+  const elements = [...primaryResult.elements, ...enrichmentResult.elements];
   const osm = overpassCandidates(elements);
   const candidates = [...osm, ...google, ...bing, ...yelp, ...yellowPages];
   const sourceCounts = emptySourceCounts();
@@ -1066,7 +1159,20 @@ export async function discoverContractorsWithDiagnostics(input: {
   sourceCounts.yelp = yelp.length;
   sourceCounts.yellowPages = yellowPages.length;
   const providerDiagnostics: DiscoveryProviderDiagnostics = {
-    osm: providerDiagnostic(true, true, elements.length ? "succeeded" : "zero_results", elements.length),
+    osm: providerDiagnostic(
+      true,
+      true,
+      elements.length
+        ? "succeeded"
+        : primaryResult.diagnostic.status === "rate_limited" || enrichmentResult.diagnostic.status === "rate_limited"
+          ? "rate_limited"
+          : "zero_results",
+      elements.length,
+      {
+        retryCount: (primaryResult.diagnostic.retryCount ?? 0) + (enrichmentResult.diagnostic.retryCount ?? 0),
+        httpStatus: primaryResult.diagnostic.httpStatus ?? enrichmentResult.diagnostic.httpStatus,
+      },
+    ),
     azureMaps: azureMapsKey
       ? bingResult.diagnostic
       : providerDiagnostic(false, false, "not_configured"),

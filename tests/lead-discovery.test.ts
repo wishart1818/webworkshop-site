@@ -277,7 +277,100 @@ test("configured licensed sources enrich OSM discovery without becoming required
       withinRadiusCount: 1,
       afterDeduplicationCount: 1,
       usableWebsiteCount: 1,
+      retryCount: 0,
+      httpStatus: 0,
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetDiscoveryThrottleForTests();
+  }
+});
+
+test("provider throttling retries HTTP 429 and records retry diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
+  };
+  process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
+  let googleCalls = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("nominatim")) return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
+    if (url.includes("overpass")) return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+    if (url.includes("googleapis")) {
+      googleCalls += 1;
+      return googleCalls === 1
+        ? new Response("slow down", { status: 429, headers: { "retry-after": "0" } })
+        : new Response(JSON.stringify({ places: [{ displayName: { text: "Retry Roofing" }, websiteUri: "retryroofing.example" }] }), { status: 200 });
+    }
+    return new Response("unavailable", { status: 503 });
+  };
+  resetDiscoveryThrottleForTests();
+  try {
+    const result = await discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 25, limit: 10 });
+
+    assert.equal(googleCalls, 2);
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.retryCount, 1);
+    assert.equal(result.leads[0]?.businessName, "Retry Roofing");
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetDiscoveryThrottleForTests();
+  }
+});
+
+test("provider calls run sequentially for a single trade search", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    AZURE_MAPS_API_KEY: process.env.AZURE_MAPS_API_KEY,
+    YELP_API_KEY: process.env.YELP_API_KEY,
+    DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
+  };
+  process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  process.env.AZURE_MAPS_API_KEY = "azure-test-key";
+  process.env.YELP_API_KEY = "yelp-test-key";
+  process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("nominatim")) {
+      calls.push("geocode");
+      return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
+    }
+    if (url.includes("overpass")) {
+      calls.push("osm");
+      return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+    }
+    if (url.includes("googleapis")) {
+      calls.push("google");
+      return new Response(JSON.stringify({ places: [] }), { status: 200 });
+    }
+    if (url.includes("atlas.microsoft")) {
+      calls.push("azure");
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    if (url.includes("yelp")) {
+      calls.push("yelp");
+      return new Response(JSON.stringify({ businesses: [] }), { status: 200 });
+    }
+    return new Response("unavailable", { status: 503 });
+  };
+  resetDiscoveryThrottleForTests();
+  try {
+    await discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 25, limit: 10 });
+
+    assert.deepEqual(calls, ["geocode", "osm", "osm", "google", "azure", "yelp"]);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalEnv)) {
@@ -313,7 +406,7 @@ test("provider diagnostics distinguish zero results, failures, timeouts, and mis
 
     assert.deepEqual(result.diagnostics.providerDiagnostics, {
       osm: { configured: true, queryExecuted: true, status: "zero_results", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-      azureMaps: { configured: true, queryExecuted: true, status: "failed", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      azureMaps: { configured: true, queryExecuted: true, status: "failed", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, httpStatus: 503 },
       googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
       yelp: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
     });

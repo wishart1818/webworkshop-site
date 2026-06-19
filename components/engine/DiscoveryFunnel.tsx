@@ -15,6 +15,7 @@ const statusLabels: Record<DiscoveryProviderStatus, string> = {
   failed: "Failed",
   timed_out: "Timed out",
   zero_results: "Zero results",
+  rate_limited: "Rate limited",
 };
 
 const notRecorded = {
@@ -55,6 +56,8 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
                 <div><dt>Within radius</dt><dd>{diagnostic.withinRadiusCount}</dd></div>
                 <div><dt>After deduplication</dt><dd>{diagnostic.afterDeduplicationCount}</dd></div>
                 <div><dt>Usable websites</dt><dd>{diagnostic.usableWebsiteCount}</dd></div>
+                <div><dt>Retries</dt><dd>{diagnostic.retryCount ?? 0}</dd></div>
+                <div><dt>HTTP status</dt><dd>{diagnostic.httpStatus ?? "None"}</dd></div>
               </dl>
             </article>
           );
@@ -64,15 +67,16 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
         <div className="engine-trade-diagnostics" aria-label="Trade discovery diagnostics">
           <h3>Trade Breakdown</h3>
           <div role="table" aria-label="Discovery diagnostics by trade">
-            <div role="row"><span>Trade</span><span>Raw</span><span>Within radius</span><span>Merged</span><span>Qualified</span><span>Returned</span></div>
+            <div role="row"><span>Trade</span><span>Status</span><span>Rate limited</span><span>Retries</span><span>Raw</span><span>Returned</span></div>
             {diagnostics.tradeDiagnostics.map((trade) => (
               <div key={trade.trade} role="row">
                 <strong>{trade.trade}</strong>
+                <span>{trade.status ?? "completed"}</span>
+                <span>{trade.rateLimitedProviders?.length ? trade.rateLimitedProviders.join(", ") : "None"}</span>
+                <span>{trade.retryCount ?? 0}</span>
                 <span>{trade.rawProviderCount}</span>
-                <span>{trade.withinRadiusCount}</span>
-                <span>{trade.afterDeduplicationCount}</span>
-                <span>{trade.usableWebsiteCount}</span>
                 <span>{trade.returnedCount}</span>
+                {trade.skippedReason ? <small>{trade.skippedReason}</small> : null}
               </div>
             ))}
           </div>
