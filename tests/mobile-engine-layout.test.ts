@@ -57,6 +57,9 @@ test("Outreach Package bulk review exposes the complete human approval workflow 
   assert.match(topProspectsWorkspace, /Review preview \+ email/);
   assert.match(topProspectsWorkspace, /Approve to Send/);
   assert.match(topProspectsWorkspace, /Email quality checks/);
+  assert.match(topProspectsWorkspace, /check\.phrase/);
+  assert.match(topProspectsWorkspace, /check\.reason/);
+  assert.match(topProspectsWorkspace, /check\.suggestion/);
   assert.match(topProspectsWorkspace, /Public preview link/);
   assert.match(topProspectsWorkspace, /Send-ready/);
   assert.match(topProspectsWorkspace, /Phone-only \/ written outreach blocked/);

@@ -17,6 +17,7 @@ import {
   outreachPackageActionAllowed,
   outreachPackageStatusLabel,
   prepareTopProspectArtifacts,
+  repairUnsupportedOutreachClaims,
   prospectPreviewLink,
   publicProspectPreviewLink,
   topProspectJobStatuses,
@@ -477,6 +478,38 @@ test("public preview tokens are hard to guess and internal preview links fail se
   assert.equal(evaluateOutreachEmailQuality(scoreLeak, publicLink).ready, false);
   assert.throws(() => assertOutreachEmailReady(publicPackage.prospect, internalLink), /cannot be approved/i);
   assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, publicLink));
+});
+
+test("unsupported outreach claim is explainable and safely repairable", () => {
+  const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
+  const prepared = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0])), publicLink);
+  const unsafe = {
+    ...prepared.prospect,
+    outreach: {
+      ...prepared.prospect.outreach!,
+      concise: prepared.prospect.outreach!.concise.replace(
+        /I came across [^\n]+/,
+        "I reviewed your website while looking at hvac businesses serving Perrysburg.",
+      ),
+    },
+  };
+  const unsafeQuality = evaluateOutreachEmailQuality(unsafe, publicLink);
+  const unsupportedCheck = unsafeQuality.checks.find((check) => check.key === "supported_facts_only");
+
+  assert.equal(unsafeQuality.ready, false);
+  assert.equal(unsafeQuality.readinessLabel, "Unsupported claim");
+  assert.match(unsupportedCheck?.phrase ?? "", /I reviewed your website while looking at hvac businesses serving Perrysburg/i);
+  assert.match(unsupportedCheck?.reason ?? "", /automated|audit/i);
+  assert.match(unsupportedCheck?.suggestion ?? "", /came across/i);
+
+  const repaired = {
+    ...unsafe,
+    outreach: repairUnsupportedOutreachClaims(unsafe.outreach),
+  };
+  const repairedQuality = evaluateOutreachEmailQuality(repaired, publicLink);
+  assert.equal(repairedQuality.ready, true);
+  assert.equal(repairedQuality.readinessLabel, "Send-ready");
+  assert.doesNotMatch(repaired.outreach.concise, /I reviewed your website|I analyzed your website|free audit/i);
 });
 
 test("Outreach Package approval blocks unsafe no-website contact and unsupported claims", () => {

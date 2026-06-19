@@ -9,6 +9,7 @@ import {
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
   type Analysis,
+  type OutreachDraft,
   type Prospect,
   tradeCategories,
   prospectSearchTypes,
@@ -126,6 +127,9 @@ export type OutreachEmailQualityCheck = {
   key: string;
   label: string;
   passed: boolean;
+  phrase?: string;
+  reason?: string;
+  suggestion?: string;
 };
 
 export type OutreachEmailQuality = {
@@ -322,6 +326,73 @@ export function prospectHasPhoneContactMethod(prospect: Pick<Prospect, "recommen
   return prospect.recommendedContactMethod === "call_first" && Boolean(prospect.phone);
 }
 
+const unsupportedClaimPatterns: Array<{ pattern: RegExp; reason: string; suggestion: string }> = [
+  {
+    pattern: /\bI reviewed your website(?: while looking at [^.]+)?\./i,
+    reason: "This sounds like an audit claim and can feel automated.",
+    suggestion: "I came across your business while looking at local service companies.",
+  },
+  {
+    pattern: /\bI analyzed your website(?: while looking at [^.]+)?\./i,
+    reason: "This sounds like an automated audit and overstates the review.",
+    suggestion: "I came across your business while looking at local service companies.",
+  },
+  {
+    pattern: /\bI took a careful look at your website(?: while researching [^.]+)?\./i,
+    reason: "This overstates how much manual review happened.",
+    suggestion: "I came across your business while looking at local service companies.",
+  },
+  {
+    pattern: /\bI reviewed your website\b/i,
+    reason: "This sounds like an audit claim and can feel automated.",
+    suggestion: "I came across your business",
+  },
+  {
+    pattern: /\bI analyzed your website\b/i,
+    reason: "This sounds like an automated audit and overstates the review.",
+    suggestion: "I came across your business",
+  },
+  {
+    pattern: /\bI took a careful look at your website\b/i,
+    reason: "This overstates how much manual review happened.",
+    suggestion: "I came across your business",
+  },
+  {
+    pattern: /\bfree audit\b/i,
+    reason: "This reads like generic spam and implies a formal audit.",
+    suggestion: "a short concept showing one possible direction",
+  },
+  {
+    pattern: /\b(?:licensed|insured|certified|award(?:ed|-winning)?|guaranteed?|warrant(?:y|ies)|testimonials?|years? (?:of experience|in business)|family[- ]owned|recent local (?:work|projects?|roofs?))\b/i,
+    reason: "This business claim must not be used unless it was directly verified from a public source.",
+    suggestion: "customer proof you can verify",
+  },
+];
+
+function findUnsupportedClaim(value: string) {
+  for (const item of unsupportedClaimPatterns) {
+    const match = value.match(item.pattern);
+    if (match?.[0]) return { phrase: match[0], reason: item.reason, suggestion: item.suggestion };
+  }
+  return null;
+}
+
+function replaceUnsupportedClaims(value: string) {
+  return unsupportedClaimPatterns.reduce(
+    (draft, item) => draft.replace(item.pattern, item.suggestion),
+    value,
+  );
+}
+
+export function repairUnsupportedOutreachClaims(outreach: OutreachDraft): OutreachDraft {
+  return {
+    ...outreach,
+    concise: replaceUnsupportedClaims(outreach.concise),
+    detailed: replaceUnsupportedClaims(outreach.detailed),
+    followUps: outreach.followUps.map(replaceUnsupportedClaims),
+  };
+}
+
 export function evaluateOutreachEmailQuality(
   prospect: Prospect,
   previewLink: string,
@@ -346,6 +417,7 @@ export function evaluateOutreachEmailQuality(
   const publicLinkReady = isPublicPreviewLink(previewLink)
     && mainEmails.every((draft) => draft.includes(previewLink))
     && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier email/i.test(draft)));
+  const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
     {
       key: "public_preview_link",
@@ -401,11 +473,17 @@ export function evaluateOutreachEmailQuality(
     {
       key: "supported_facts_only",
       label: "Email avoids unsupported claims",
-      passed: drafts.length > 0
-        && !/\b(?:licensed|insured|certified|award(?:ed|-winning)?|guaranteed?|warrant(?:y|ies)|testimonials?|years? (?:of experience|in business)|recent local (?:work|projects?|roofs?))\b/i.test(combined),
+      passed: drafts.length > 0 && unsupportedClaim === null,
+      phrase: unsupportedClaim?.phrase,
+      reason: unsupportedClaim?.reason,
+      suggestion: unsupportedClaim?.suggestion,
     },
   ];
-  const issues = checks.filter((check) => !check.passed).map((check) => check.label);
+  const issues = checks
+    .filter((check) => !check.passed)
+    .map((check) => check.phrase
+      ? `${check.label}: "${check.phrase}" (${check.reason} Suggested replacement: ${check.suggestion}.)`
+      : check.label);
   const readinessLabel: SendReadinessLabel = issues.length === 0
     ? "Send-ready"
     : badFit
@@ -714,11 +792,18 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
   if (!isPublicPreviewLink(previewLink)) {
     throw new Error("A public /p/ preview link is required before generating prospect-facing outreach artifacts.");
   }
-  const withArtifacts = {
+  let outreach = generateOutreach(prospect, previewLink);
+  let withArtifacts = {
     ...prospect,
-    outreach: generateOutreach(prospect, previewLink),
+    outreach,
     preview: generatePreview(prospect),
   };
+  let emailQuality = evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference);
+  if (emailQuality.readinessLabel === "Unsupported claim") {
+    outreach = repairUnsupportedOutreachClaims(outreach);
+    withArtifacts = { ...withArtifacts, outreach };
+    emailQuality = evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference);
+  }
   const assessment = prospect.prospectType === "no_website_social_only"
     ? assessNoWebsiteOpportunity(withArtifacts)
     : assessOpportunity(withArtifacts);
@@ -727,7 +812,7 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
     assessment,
     buildPrompt: generateWebsiteBuildPrompt(withArtifacts, assessment),
     previewLink,
-    emailQuality: evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference),
+    emailQuality,
   };
 }
 

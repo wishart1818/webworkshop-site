@@ -557,7 +557,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                   {outreachResult.emailQuality.checks.map((check) => (
                     <li className={check.passed ? "is-passed" : "is-failed"} key={check.key}>
                       <b>{check.passed ? "Pass" : "Fix"}</b>
-                      <span>{check.label}</span>
+                      <span>{check.label}{!check.passed && check.phrase ? `: "${check.phrase}"` : ""}</span>
+                      {!check.passed && check.reason && <small>{check.reason}</small>}
+                      {!check.passed && check.suggestion && <small>Try: {check.suggestion}</small>}
                     </li>
                   ))}
                 </ul>

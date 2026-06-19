@@ -53,6 +53,7 @@ test("Outreach Package email includes a public preview link and human sales-read
   assert.match(outreach.concise, /quick 10-minute call/i);
   assert.match(outreach.concise, /would rather not receive another note/i);
   assert.doesNotMatch(outreach.concise, /\b\d{1,3}\s*\/\s*100\b|\bscore\b/i);
+  assert.doesNotMatch(outreach.concise, /I reviewed your website|I analyzed your website|free audit/i);
   assert.doesNotMatch(outreach.concise, /Would it be useful if I sent|happy to send/i);
   assert.doesNotMatch(outreach.concise, /you requested|your request/i);
   assert.ok(outreach.followUps.every((followUp) => followUp.includes(previewLink)));
@@ -152,7 +153,7 @@ test("no-website prospects still generate ownership-focused outreach", () => {
   }, "no_owned_website", "No owned website detected.");
   const withDraft = withOutreach(noWebsite);
 
-  assert.match(withDraft.outreach?.concise ?? "", /shows up locally/i);
+  assert.match(withDraft.outreach?.concise ?? "", /came across/i);
   assert.match(withDraft.outreach?.concise ?? "", /dedicated website/i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /your website has issues/i);
 });
