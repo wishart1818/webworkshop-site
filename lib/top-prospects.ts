@@ -4,13 +4,16 @@ import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-dia
 import {
   generateOutreach,
   generatePreview,
+  allCoreServiceTradesOption,
   prospectContactMethodIsUsable,
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
   type Analysis,
   type Prospect,
+  tradeCategories,
   prospectSearchTypes,
   type ProspectSearchType,
+  type TopProspectTradeSelection,
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
@@ -40,7 +43,7 @@ export const outreachPackageActions = ["generate", "ready_for_review", "approve"
 export type OutreachPackageAction = (typeof outreachPackageActions)[number];
 
 export type TopProspectInput = {
-  trade: TradeCategory;
+  trade: TopProspectTradeSelection;
   city: string;
   state: string;
   radiusKm: number;
@@ -242,10 +245,17 @@ function scoreAverage(...values: number[]) {
 const tradeRevenuePotential: Record<TradeCategory, number> = {
   Roofing: 88,
   HVAC: 84,
-  Landscaping: 66,
   Plumbing: 76,
   Electrical: 74,
+  Landscaping: 66,
   "Power Washing": 54,
+  Painting: 62,
+  Concrete: 70,
+  Cleaning: 52,
+  "Tree Service": 72,
+  Fencing: 64,
+  Flooring: 68,
+  Remodeling: 82,
   "General Contractor": 82,
 };
 
@@ -714,7 +724,6 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
 
 export function validateTopProspectInput(value: unknown): { ok: true; value: TopProspectInput } | { ok: false; error: string } {
   const input = value as Partial<TopProspectInput>;
-  const trades: TradeCategory[] = ["Roofing", "HVAC", "Landscaping", "Plumbing", "Electrical", "Power Washing", "General Contractor"];
   const trade = input.trade;
   const city = typeof input.city === "string" ? input.city.trim() : "";
   const state = typeof input.state === "string" ? input.state.trim().toUpperCase() : "";
@@ -737,7 +746,7 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   const mode = normalizeProspectMode(input.mode);
   const workflowType = normalizeTopProspectWorkflowType(input.workflowType);
   const outreachPreference = normalizeOutreachPreference(input.outreachPreference);
-  if (!trade || !trades.includes(trade)) return { ok: false, error: "Select a supported trade." };
+  if (!trade || (trade !== allCoreServiceTradesOption && !tradeCategories.includes(trade as TradeCategory))) return { ok: false, error: "Select a supported trade." };
   if (!/^[A-Za-z .'-]{2,100}$/.test(city)) return { ok: false, error: "Enter a valid city." };
   if (!/^[A-Z]{2}$/.test(state)) return { ok: false, error: "Enter a two-letter state code." };
   if (![10, 25, 50].includes(radiusKm)) return { ok: false, error: "Select a supported radius." };

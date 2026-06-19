@@ -1,10 +1,28 @@
 import type { Prisma } from "@prisma/client";
 import {
   discoverContractorsWithDiagnostics,
+  discoveryProviders,
   discoveryLeadsFromJson,
   type DiscoveredLead,
+  type DiscoveryDiagnostics,
+  type DiscoveryProviderDiagnostic,
+  type DiscoveryProviderDiagnostics,
+  type DiscoveryProviderStatus,
+  type DiscoveryResult,
+  type DiscoverySourceCounts,
+  type TradeDiscoveryDiagnostic,
 } from "@/lib/lead-discovery";
-import { activity, calculatePriority, createProspect, withPresenceGapReview, type Prospect, type ProspectSearchType } from "@/lib/prospect-engine";
+import {
+  activity,
+  allCoreServiceTradesOption,
+  calculatePriority,
+  coreServiceTrades,
+  createProspect,
+  withPresenceGapReview,
+  type Prospect,
+  type ProspectSearchType,
+  type TradeCategory,
+} from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { analyzePublicWebsite, classifyWebsiteAnalysisFailure } from "@/lib/site-analysis";
@@ -29,6 +47,217 @@ import {
 const LEASE_MS = 90_000;
 const BATCH_SIZE = 1;
 const contactedStatuses = new Set(["Contacted", "Interested", "Proposal Sent", "Closed Won", "Closed Lost"]);
+
+function emptySourceCounts(): DiscoverySourceCounts {
+  return { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 };
+}
+
+function emptyProviderDiagnostic(status: DiscoveryProviderStatus = "not_recorded"): DiscoveryProviderDiagnostic {
+  return {
+    configured: null,
+    queryExecuted: null,
+    status,
+    returnedCount: 0,
+    withinRadiusCount: 0,
+    afterDeduplicationCount: 0,
+    usableWebsiteCount: 0,
+  };
+}
+
+function emptyProviderDiagnostics(): DiscoveryProviderDiagnostics {
+  return {
+    osm: emptyProviderDiagnostic(),
+    azureMaps: emptyProviderDiagnostic(),
+    googlePlaces: emptyProviderDiagnostic(),
+    yelp: emptyProviderDiagnostic(),
+  };
+}
+
+function combineProviderStatus(items: DiscoveryProviderDiagnostic[]): DiscoveryProviderStatus {
+  if (items.some((item) => item.status === "succeeded")) return "succeeded";
+  if (items.some((item) => item.status === "timed_out")) return "timed_out";
+  if (items.some((item) => item.status === "failed")) return "failed";
+  if (items.some((item) => item.status === "zero_results")) return "zero_results";
+  if (items.every((item) => item.status === "not_configured")) return "not_configured";
+  return "not_recorded";
+}
+
+function combineBooleanState(values: Array<boolean | null>) {
+  if (values.some((value) => value === true)) return true;
+  if (values.length > 0 && values.every((value) => value === false)) return false;
+  return null;
+}
+
+function combineProviderDiagnostics(results: DiscoveryResult[]): DiscoveryProviderDiagnostics {
+  const combined = emptyProviderDiagnostics();
+  for (const provider of discoveryProviders) {
+    const items = results.map((result) => result.diagnostics.providerDiagnostics[provider]);
+    combined[provider] = {
+      configured: combineBooleanState(items.map((item) => item.configured)),
+      queryExecuted: combineBooleanState(items.map((item) => item.queryExecuted)),
+      status: combineProviderStatus(items),
+      returnedCount: items.reduce((total, item) => total + item.returnedCount, 0),
+      withinRadiusCount: items.reduce((total, item) => total + item.withinRadiusCount, 0),
+      afterDeduplicationCount: items.reduce((total, item) => total + item.afterDeduplicationCount, 0),
+      usableWebsiteCount: items.reduce((total, item) => total + item.usableWebsiteCount, 0),
+    };
+  }
+  return combined;
+}
+
+function combineSourceCounts(results: DiscoveryResult[]): DiscoverySourceCounts {
+  return results.reduce((combined, result) => {
+    for (const [source, count] of Object.entries(result.diagnostics.sourceCounts) as Array<[keyof DiscoverySourceCounts, number]>) {
+      combined[source] += count;
+    }
+    return combined;
+  }, emptySourceCounts());
+}
+
+function leadDomain(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function leadNameKey(value: string) {
+  return value.toLowerCase().replace(/\b(llc|inc|company|co|corp|corporation|services?)\b/g, "").replace(/[^a-z0-9]/g, "");
+}
+
+function leadPhoneKey(value: string) {
+  return value.replace(/\D/g, "").slice(-10);
+}
+
+function leadDedupeKey(lead: DiscoveredLead) {
+  const websiteDomain = leadDomain(lead.website);
+  if (websiteDomain) return `website:${websiteDomain}`;
+  const profileDomain = leadDomain(lead.profileUrl);
+  if (profileDomain) return `profile:${profileDomain}:${lead.profileUrl.toLowerCase()}`;
+  const phone = leadPhoneKey(lead.phone);
+  if (phone) return `phone:${phone}`;
+  return `name:${leadNameKey(lead.businessName)}:${lead.city.toLowerCase()}:${lead.state.toLowerCase()}`;
+}
+
+function mergeLeadForAllTrades(existing: DiscoveredLead, incoming: DiscoveredLead): DiscoveredLead {
+  const keepIncoming = (incoming.sourceConfidence ?? 0) > (existing.sourceConfidence ?? 0);
+  const primary = keepIncoming ? incoming : existing;
+  const secondary = keepIncoming ? existing : incoming;
+  return {
+    ...primary,
+    sources: [...new Set([...(primary.sources ?? []), ...(secondary.sources ?? [])])],
+    phone: primary.phone || secondary.phone,
+    email: primary.email || secondary.email,
+    contactFormUrl: primary.contactFormUrl || secondary.contactFormUrl,
+    profileUrl: primary.profileUrl || secondary.profileUrl,
+    activitySignals: [...new Set([...(primary.activitySignals ?? []), ...(secondary.activitySignals ?? [])])],
+    rating: Math.max(primary.rating ?? 0, secondary.rating ?? 0) || undefined,
+    reviewCount: Math.max(primary.reviewCount ?? 0, secondary.reviewCount ?? 0) || undefined,
+    recentReviewCount: Math.max(primary.recentReviewCount ?? 0, secondary.recentReviewCount ?? 0) || undefined,
+    sourceConfidence: Math.max(primary.sourceConfidence ?? 0, secondary.sourceConfidence ?? 0),
+  };
+}
+
+function combineTradeDiscoveryResults(input: {
+  radiusKm: number;
+  limit: number;
+  results: Array<{ trade: TradeCategory; result: DiscoveryResult }>;
+}): DiscoveryResult {
+  const merged = new Map<string, DiscoveredLead>();
+  for (const { result } of input.results) {
+    for (const lead of result.leads) {
+      const key = leadDedupeKey(lead);
+      const existing = merged.get(key);
+      merged.set(key, existing ? mergeLeadForAllTrades(existing, lead) : lead);
+    }
+  }
+  const allLeads = [...merged.values()].sort((left, right) =>
+    (right.sourceConfidence ?? 0) - (left.sourceConfidence ?? 0)
+    || Number(Boolean(right.email)) - Number(Boolean(left.email))
+    || Number(Boolean(right.contactFormUrl)) - Number(Boolean(left.contactFormUrl))
+    || Number(Boolean(right.phone)) - Number(Boolean(left.phone))
+    || (right.recentReviewCount ?? 0) - (left.recentReviewCount ?? 0)
+    || (right.reviewCount ?? 0) - (left.reviewCount ?? 0));
+  const leads = allLeads.slice(0, input.limit);
+  const tradeDiagnostics: TradeDiscoveryDiagnostic[] = input.results.map(({ trade, result }) => ({
+    trade,
+    rawProviderCount: result.diagnostics.rawProviderCount,
+    withinRadiusCount: result.diagnostics.afterDistanceFilteringCount,
+    afterDeduplicationCount: result.diagnostics.afterDuplicateFilteringCount,
+    usableWebsiteCount: result.diagnostics.afterQualificationFilteringCount,
+    returnedCount: result.diagnostics.returnedCount,
+    providerDiagnostics: result.diagnostics.providerDiagnostics,
+  }));
+  const diagnostics: DiscoveryDiagnostics = {
+    rawProviderCount: input.results.reduce((total, item) => total + item.result.diagnostics.rawProviderCount, 0),
+    afterDistanceFilteringCount: input.results.reduce((total, item) => total + item.result.diagnostics.afterDistanceFilteringCount, 0),
+    afterDuplicateFilteringCount: allLeads.length,
+    afterQualificationFilteringCount: allLeads.length,
+    returnedCount: leads.length,
+    radiusKm: input.radiusKm,
+    categorySignals: input.results.flatMap((item) => item.result.diagnostics.categorySignals),
+    sourceCounts: combineSourceCounts(input.results.map((item) => item.result)),
+    providerDiagnostics: combineProviderDiagnostics(input.results.map((item) => item.result)),
+    finalMergedCount: allLeads.length,
+    tradeDiagnostics,
+  };
+  return { leads, diagnostics };
+}
+
+async function discoverTopProspectLeads(input: {
+  jobId: string;
+  city: string;
+  state: string;
+  tradeCategory: string;
+  radiusKm: number;
+  limit: number;
+  prospectType: ProspectSearchType;
+}) {
+  if (input.tradeCategory !== allCoreServiceTradesOption) {
+    return discoverContractorsWithDiagnostics({
+      city: input.city,
+      state: input.state,
+      trade: input.tradeCategory as DiscoveredLead["trade"],
+      radiusKm: input.radiusKm,
+      limit: input.limit,
+      prospectType: input.prospectType,
+      logger(event, metadata) {
+        console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, trade: input.tradeCategory, ...metadata });
+      },
+    });
+  }
+
+  const perTradeLimit = Math.max(5, Math.ceil(input.limit / coreServiceTrades.length));
+  const results: Array<{ trade: TradeCategory; result: DiscoveryResult }> = [];
+  for (const trade of coreServiceTrades) {
+    console.info("[top-prospects] Trade discovery started.", { jobId: input.jobId, trade, perTradeLimit });
+    const result = await discoverContractorsWithDiagnostics({
+      city: input.city,
+      state: input.state,
+      trade,
+      radiusKm: input.radiusKm,
+      limit: perTradeLimit,
+      prospectType: input.prospectType,
+      skipThrottle: true,
+      logger(event, metadata) {
+        console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, trade, ...metadata });
+      },
+    });
+    console.info("[top-prospects] Trade discovery completed.", {
+      jobId: input.jobId,
+      trade,
+      rawProviderCount: result.diagnostics.rawProviderCount,
+      returnedCount: result.diagnostics.returnedCount,
+    });
+    results.push({ trade, result });
+  }
+  return combineTradeDiscoveryResults({
+    radiusKm: input.radiusKm,
+    limit: input.limit,
+    results,
+  });
+}
 
 function skipSummary(value: Prisma.JsonValue | null) {
   if (!value || Array.isArray(value) || typeof value !== "object") return {} as Record<string, number>;
@@ -269,16 +498,14 @@ export async function processTopProspectJob(jobId: string) {
         radiusKm: job.radiusKm,
         businessesToScan: job.businessesToScan,
       });
-      const discovery = await discoverContractorsWithDiagnostics({
+      const discovery = await discoverTopProspectLeads({
+        jobId: job.id,
         city: job.city,
         state: job.state,
-        trade: job.tradeCategory as DiscoveredLead["trade"],
+        tradeCategory: job.tradeCategory,
         radiusKm: job.radiusKm,
         limit: job.businessesToScan,
         prospectType: job.prospectType as ProspectSearchType,
-        logger(event, metadata) {
-          console.info(`[top-prospects] ${event}.`, { jobId: job.id, ...metadata });
-        },
       });
       console.info("[top-prospects] Discovery completed.", { jobId: job.id, ...discovery.diagnostics });
       await getProspectDatabase().topProspectJob.update({

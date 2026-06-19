@@ -327,6 +327,13 @@ test("provider diagnostics distinguish zero results, failures, timeouts, and mis
   }
 });
 
+test("new core service trades produce discovery category signals", () => {
+  assert.match(buildTradeDiscoveryQueries("Painting", 10_000, 41.65, -83.54).primary, /craft"="painter/);
+  assert.match(buildTradeDiscoveryQueries("Painting", 10_000, 41.65, -83.54).enrichment ?? "", /paint\|painting/);
+  assert.match(buildTradeDiscoveryQueries("Tree Service", 10_000, 41.65, -83.54).primary, /tree service\|tree care\|arborist/);
+  assert.match(buildTradeDiscoveryQueries("Flooring", 10_000, 41.65, -83.54).primary, /flooring\|floor installation/);
+});
+
 test("discovery source failures retain safe geocoding and provider classifications", async () => {
   const originalFetch = globalThis.fetch;
   try {

@@ -60,6 +60,24 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
           );
         })}
       </div>
+      {diagnostics.tradeDiagnostics?.length ? (
+        <div className="engine-trade-diagnostics" aria-label="Trade discovery diagnostics">
+          <h3>Trade Breakdown</h3>
+          <div role="table" aria-label="Discovery diagnostics by trade">
+            <div role="row"><span>Trade</span><span>Raw</span><span>Within radius</span><span>Merged</span><span>Qualified</span><span>Returned</span></div>
+            {diagnostics.tradeDiagnostics.map((trade) => (
+              <div key={trade.trade} role="row">
+                <strong>{trade.trade}</strong>
+                <span>{trade.rawProviderCount}</span>
+                <span>{trade.withinRadiusCount}</span>
+                <span>{trade.afterDeduplicationCount}</span>
+                <span>{trade.usableWebsiteCount}</span>
+                <span>{trade.returnedCount}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -11,15 +11,39 @@ export const prospectStatuses = [
 export const tradeCategories = [
   "Roofing",
   "HVAC",
-  "Landscaping",
   "Plumbing",
   "Electrical",
+  "Landscaping",
   "Power Washing",
+  "Painting",
+  "Concrete",
+  "Cleaning",
+  "Tree Service",
+  "Fencing",
+  "Flooring",
+  "Remodeling",
   "General Contractor",
 ] as const;
 
 export type ProspectStatus = (typeof prospectStatuses)[number];
 export type TradeCategory = (typeof tradeCategories)[number];
+export const allCoreServiceTradesOption = "All Core Service Trades" as const;
+export const coreServiceTrades = [
+  "Roofing",
+  "HVAC",
+  "Plumbing",
+  "Electrical",
+  "Landscaping",
+  "Power Washing",
+  "Painting",
+  "Concrete",
+  "Cleaning",
+  "Tree Service",
+  "Fencing",
+  "Flooring",
+  "Remodeling",
+] as const satisfies readonly TradeCategory[];
+export type TopProspectTradeSelection = TradeCategory | typeof allCoreServiceTradesOption;
 export const prospectTypes = ["redesign", "no_website_social_only"] as const;
 export type ProspectType = (typeof prospectTypes)[number];
 export const websiteAvailabilityStatuses = [
@@ -243,6 +267,62 @@ const contractorPlaybooks: Record<TradeCategory, {
     leadDetails: ["property address", "surfaces to clean", "approximate size", "property photos"],
     visualCue: "Make before-and-after comparisons the visual system, supported by crisp surface detail.",
   },
+  Painting: {
+    homeownerNeed: "compare scope, color direction, and timing before requesting an estimate",
+    primaryCta: "Request a painting estimate",
+    services: ["interior painting", "exterior painting", "cabinet and trim painting"],
+    trustProof: ["prep process", "clean job sites", "finished-room examples"],
+    leadDetails: ["project address", "rooms or exterior areas", "target timing", "optional inspiration photos"],
+    visualCue: "Use clean before-and-after room or exterior photography, simple color guidance, and careful prep details.",
+  },
+  Concrete: {
+    homeownerNeed: "understand concrete options and get a clear quote for durable work",
+    primaryCta: "Request a concrete estimate",
+    services: ["driveways", "patios and walkways", "flatwork repair"],
+    trustProof: ["site preparation", "finish options", "completed local flatwork"],
+    leadDetails: ["property address", "project type", "approximate dimensions", "access notes"],
+    visualCue: "Use sturdy material detail, finished slabs, clean edges, and practical process cues.",
+  },
+  Cleaning: {
+    homeownerNeed: "book reliable cleaning with clear scope, frequency, and expectations",
+    primaryCta: "Request cleaning service",
+    services: ["recurring cleaning", "deep cleaning", "move-in and move-out cleaning"],
+    trustProof: ["checklists", "arrival expectations", "before-and-after details"],
+    leadDetails: ["service address", "cleaning type", "property size", "preferred schedule"],
+    visualCue: "Keep the design bright, simple, and organized around trust, checklists, and easy booking.",
+  },
+  "Tree Service": {
+    homeownerNeed: "get safe tree help with enough detail to request the right crew",
+    primaryCta: "Request tree service",
+    services: ["tree trimming", "tree removal", "storm cleanup"],
+    trustProof: ["safety process", "cleanup expectations", "equipment and crew readiness"],
+    leadDetails: ["property address", "tree concern", "urgency", "optional tree photos"],
+    visualCue: "Use grounded outdoor imagery, safety-first language, and clear storm-response or cleanup details.",
+  },
+  Fencing: {
+    homeownerNeed: "choose the right fence type and request a scoped property estimate",
+    primaryCta: "Request a fencing estimate",
+    services: ["privacy fencing", "fence repair", "gates and access"],
+    trustProof: ["material options", "property-line planning", "finished fence examples"],
+    leadDetails: ["property address", "fence type", "approximate linear feet", "gate needs"],
+    visualCue: "Show clean boundary lines, material samples, and finished-yard context without looking overdesigned.",
+  },
+  Flooring: {
+    homeownerNeed: "compare flooring options and request an installation or refinishing quote",
+    primaryCta: "Request a flooring estimate",
+    services: ["floor installation", "hardwood refinishing", "floor repair"],
+    trustProof: ["material guidance", "room preparation", "finished floor examples"],
+    leadDetails: ["property address", "rooms involved", "flooring type", "target timing"],
+    visualCue: "Use warm interior surfaces, material closeups, and simple before-and-after room context.",
+  },
+  Remodeling: {
+    homeownerNeed: "judge project fit and start a well-scoped home improvement conversation",
+    primaryCta: "Discuss a remodeling project",
+    services: ["kitchen remodeling", "bath remodeling", "basement and interior updates"],
+    trustProof: ["project process", "finished-space portfolio", "communication expectations"],
+    leadDetails: ["property address", "project type", "target timing", "budget range"],
+    visualCue: "Use practical finished-space photography, material details, and a clear planning process.",
+  },
   "General Contractor": {
     homeownerNeed: "judge project fit and start a well-scoped consultation",
     primaryCta: "Discuss a construction project",
@@ -282,6 +362,34 @@ const tradePreviewPalettes: Record<TradeCategory, PreviewPalette[]> = {
   "Power Washing": [
     { label: "Crisp blue and aqua", primaryColor: "#17648b", accentColor: "#22a3a6", surfaceColor: "#ffffff", softSurfaceColor: "#edf7fa", inkColor: "#172830", mutedTextColor: "#536b76", borderColor: "#d1e3e9" },
     { label: "Ocean navy and clean cyan", primaryColor: "#244b70", accentColor: "#2b9eb3", surfaceColor: "#ffffff", softSurfaceColor: "#eff5f8", inkColor: "#192630", mutedTextColor: "#586b79", borderColor: "#d5e0e6" },
+  ],
+  Painting: [
+    { label: "Painter navy and warm clay", primaryColor: "#2f4658", accentColor: "#c8744f", surfaceColor: "#ffffff", softSurfaceColor: "#f7f3ef", inkColor: "#20262b", mutedTextColor: "#62676b", borderColor: "#ded8d1" },
+    { label: "Soft charcoal and color pop", primaryColor: "#3b4248", accentColor: "#b46f9b", surfaceColor: "#ffffff", softSurfaceColor: "#f6f2f5", inkColor: "#24272a", mutedTextColor: "#65636a", borderColor: "#dfd8de" },
+  ],
+  Concrete: [
+    { label: "Concrete graphite and rust", primaryColor: "#3d464b", accentColor: "#b55f37", surfaceColor: "#ffffff", softSurfaceColor: "#f3f3f1", inkColor: "#23272a", mutedTextColor: "#60666a", borderColor: "#d9d9d5" },
+    { label: "Steel gray and safety gold", primaryColor: "#46515a", accentColor: "#c79325", surfaceColor: "#ffffff", softSurfaceColor: "#f3f5f5", inkColor: "#23292d", mutedTextColor: "#5f686d", borderColor: "#d9dfe1" },
+  ],
+  Cleaning: [
+    { label: "Fresh blue and mint", primaryColor: "#1f6382", accentColor: "#45a987", surfaceColor: "#ffffff", softSurfaceColor: "#eef8f5", inkColor: "#17262d", mutedTextColor: "#53696f", borderColor: "#d2e5e3" },
+    { label: "Clean navy and sky", primaryColor: "#244f73", accentColor: "#5aa8d6", surfaceColor: "#ffffff", softSurfaceColor: "#f0f7fb", inkColor: "#182631", mutedTextColor: "#566a76", borderColor: "#d5e3eb" },
+  ],
+  "Tree Service": [
+    { label: "Forest and bark", primaryColor: "#345a3e", accentColor: "#9a6738", surfaceColor: "#fffefa", softSurfaceColor: "#f1f5ef", inkColor: "#202a22", mutedTextColor: "#5d695d", borderColor: "#d8dfd5" },
+    { label: "Deep green and amber", primaryColor: "#2f5947", accentColor: "#c18a2c", surfaceColor: "#ffffff", softSurfaceColor: "#f1f6f1", inkColor: "#1f2a25", mutedTextColor: "#5b695f", borderColor: "#d5dfd8" },
+  ],
+  Fencing: [
+    { label: "Fence cedar and navy", primaryColor: "#394c59", accentColor: "#a56a3b", surfaceColor: "#ffffff", softSurfaceColor: "#f5f2ee", inkColor: "#20282d", mutedTextColor: "#60686c", borderColor: "#ded9d3" },
+    { label: "Charcoal and cedar", primaryColor: "#3d4244", accentColor: "#b8793e", surfaceColor: "#ffffff", softSurfaceColor: "#f4f2ef", inkColor: "#242728", mutedTextColor: "#626561", borderColor: "#dedad3" },
+  ],
+  Flooring: [
+    { label: "Walnut and slate", primaryColor: "#3f4b55", accentColor: "#a87443", surfaceColor: "#ffffff", softSurfaceColor: "#f5f1ec", inkColor: "#25282a", mutedTextColor: "#625f59", borderColor: "#dfd8cf" },
+    { label: "Warm wood and cream", primaryColor: "#5a4635", accentColor: "#b77b3d", surfaceColor: "#fffefa", softSurfaceColor: "#f6f1e9", inkColor: "#2b251f", mutedTextColor: "#6a6258", borderColor: "#e2d8ca" },
+  ],
+  Remodeling: [
+    { label: "Remodel slate and brass", primaryColor: "#344858", accentColor: "#b8833b", surfaceColor: "#ffffff", softSurfaceColor: "#f4f3f0", inkColor: "#20272d", mutedTextColor: "#60676d", borderColor: "#dbd9d3" },
+    { label: "Modern charcoal and clay", primaryColor: "#373d40", accentColor: "#b76c4a", surfaceColor: "#ffffff", softSurfaceColor: "#f5f2ef", inkColor: "#232627", mutedTextColor: "#64635f", borderColor: "#ded9d4" },
   ],
   "General Contractor": [
     { label: "Charcoal and brick", primaryColor: "#353b3d", accentColor: "#a95537", surfaceColor: "#ffffff", softSurfaceColor: "#f4f3f1", inkColor: "#242627", mutedTextColor: "#666562", borderColor: "#dedbd6" },
@@ -323,8 +431,8 @@ function previewTone(prospect: Prospect): PreviewStyleProfile["tone"] {
 }
 
 function previewLayout(prospect: Prospect): PreviewStyleProfile["layoutStyle"] {
-  if (prospect.trade === "Landscaping" || prospect.trade === "Power Washing" || prospect.trade === "General Contractor") return "project-led";
-  if (prospect.trade === "HVAC" || prospect.trade === "Plumbing") return "service-led";
+  if (["Landscaping", "Power Washing", "General Contractor", "Painting", "Fencing", "Flooring", "Remodeling"].includes(prospect.trade)) return "project-led";
+  if (["HVAC", "Plumbing", "Cleaning", "Tree Service"].includes(prospect.trade)) return "service-led";
   if (prospect.trade === "Roofing") return stableIndex(prospect.businessName, 2) ? "trust-led" : "clean-split";
   return "clean-split";
 }
@@ -336,6 +444,13 @@ function previewCta(prospect: Prospect) {
   if (prospect.trade === "Plumbing") return "Request service";
   if (prospect.trade === "Electrical") return "Request an estimate";
   if (prospect.trade === "Power Washing") return "Get a free quote";
+  if (prospect.trade === "Painting") return "Request a painting estimate";
+  if (prospect.trade === "Concrete") return "Request an estimate";
+  if (prospect.trade === "Cleaning") return "Request cleaning service";
+  if (prospect.trade === "Tree Service") return "Request tree service";
+  if (prospect.trade === "Fencing") return "Request a fencing estimate";
+  if (prospect.trade === "Flooring") return "Request a flooring estimate";
+  if (prospect.trade === "Remodeling") return "Discuss your project";
   return "Discuss your project";
 }
 
@@ -570,6 +685,8 @@ function strongestAndWeakestObservation(analysis: Analysis) {
 function outreachGoal(prospect: Prospect) {
   if (prospect.trade === "Roofing") return "help turn more local visitors into roofing estimate requests";
   if (prospect.trade === "HVAC") return "help turn more local visitors into service and replacement inquiries";
+  if (prospect.trade === "Cleaning") return "help turn more local visitors into booked cleaning inquiries";
+  if (prospect.trade === "Tree Service") return "help turn more local visitors into tree service requests";
   return `help turn more local visitors into ${prospect.trade.toLowerCase()} estimate requests`;
 }
 
@@ -632,10 +749,17 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   const heroHeadlines: Record<TradeCategory, string> = {
     Roofing: "Roofing work that protects your home and earns your confidence.",
     HVAC: "Comfort restored with clear service and practical options.",
-    Landscaping: "Outdoor spaces planned for the way you want to live.",
     Plumbing: "Straight answers and dependable help for plumbing problems.",
     Electrical: "Safe, clear electrical work for homes and growing needs.",
+    Landscaping: "Outdoor spaces planned for the way you want to live.",
     "Power Washing": "A cleaner property, with the difference easy to see.",
+    Painting: "Painting projects made clearer from prep to final coat.",
+    Concrete: "Durable concrete work planned with practical details.",
+    Cleaning: "Reliable cleaning with clear scope and easy scheduling.",
+    "Tree Service": "Tree care that starts with safety and clear next steps.",
+    Fencing: "Fencing that fits your property, privacy, and plans.",
+    Flooring: "Flooring updates planned with clean options and clear timing.",
+    Remodeling: "Home updates shaped around practical plans and clear communication.",
     "General Contractor": "Thoughtful construction work, from first conversation to finished space.",
   };
   const trustItems = [

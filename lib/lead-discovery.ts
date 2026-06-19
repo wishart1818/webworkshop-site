@@ -51,6 +51,15 @@ export type DiscoveryProviderDiagnostic = {
   usableWebsiteCount: number;
 };
 export type DiscoveryProviderDiagnostics = Record<DiscoveryProvider, DiscoveryProviderDiagnostic>;
+export type TradeDiscoveryDiagnostic = {
+  trade: TradeCategory;
+  rawProviderCount: number;
+  withinRadiusCount: number;
+  afterDeduplicationCount: number;
+  usableWebsiteCount: number;
+  returnedCount: number;
+  providerDiagnostics: DiscoveryProviderDiagnostics;
+};
 
 export type DiscoveryDiagnostics = {
   rawProviderCount: number;
@@ -63,6 +72,7 @@ export type DiscoveryDiagnostics = {
   sourceCounts: DiscoverySourceCounts;
   providerDiagnostics: DiscoveryProviderDiagnostics;
   finalMergedCount: number;
+  tradeDiagnostics?: TradeDiscoveryDiagnostic[];
 };
 
 export type DiscoveryResult = {
@@ -120,10 +130,17 @@ const descriptiveTradeTags = ["name"] as const;
 const signalsByTrade: Record<TradeCategory, TradeDiscoverySignals> = {
   Roofing: { exactCrafts: ["roofer"], namePattern: "roof|roofing" },
   HVAC: { exactCrafts: ["hvac"], namePattern: "hvac|heating|cooling|air conditioning" },
-  Landscaping: { exactCrafts: ["landscaper"], namePattern: "landscap|lawn care|lawn service" },
   Plumbing: { exactCrafts: ["plumber"], namePattern: "plumb" },
   Electrical: { exactCrafts: ["electrician"], namePattern: "electric" },
+  Landscaping: { exactCrafts: ["landscaper"], namePattern: "landscap|lawn care|lawn service" },
   "Power Washing": { exactCrafts: [], namePattern: "power wash|pressure wash|soft wash" },
+  Painting: { exactCrafts: ["painter"], namePattern: "paint|painting" },
+  Concrete: { exactCrafts: [], namePattern: "concrete|masonry|flatwork|driveway" },
+  Cleaning: { exactCrafts: ["cleaner"], namePattern: "cleaning|cleaner|maid|janitorial" },
+  "Tree Service": { exactCrafts: [], namePattern: "tree service|tree care|arborist|tree removal|tree trimming" },
+  Fencing: { exactCrafts: [], namePattern: "fence|fencing" },
+  Flooring: { exactCrafts: [], namePattern: "flooring|floor installation|hardwood floor" },
+  Remodeling: { exactCrafts: [], namePattern: "remodel|remodeling|renovation|bathroom|kitchen" },
   "General Contractor": { exactCrafts: ["builder"], namePattern: "general contractor|construction|remodel" },
 };
 
@@ -254,6 +271,25 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
       usableWebsiteCount: finiteNumber(item?.usableWebsiteCount) ?? fallback[provider].usableWebsiteCount,
     }];
   })) as DiscoveryProviderDiagnostics;
+}
+
+function normalizeTradeDiagnostics(value: unknown): TradeDiscoveryDiagnostic[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): TradeDiscoveryDiagnostic[] => {
+    if (!item || Array.isArray(item) || typeof item !== "object") return [];
+    const candidate = item as Partial<TradeDiscoveryDiagnostic>;
+    if (!validTrade(candidate.trade)) return [];
+    const sourceCounts = emptySourceCounts();
+    return [{
+      trade: candidate.trade,
+      rawProviderCount: finiteNumber(candidate.rawProviderCount) ?? 0,
+      withinRadiusCount: finiteNumber(candidate.withinRadiusCount) ?? 0,
+      afterDeduplicationCount: finiteNumber(candidate.afterDeduplicationCount) ?? 0,
+      usableWebsiteCount: finiteNumber(candidate.usableWebsiteCount) ?? 0,
+      returnedCount: finiteNumber(candidate.returnedCount) ?? 0,
+      providerDiagnostics: normalizeProviderDiagnostics(candidate.providerDiagnostics, sourceCounts),
+    }];
+  });
 }
 
 const providerSources: Record<DiscoveryProvider, DiscoverySource> = {
@@ -604,12 +640,16 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
     && typeof candidate.returnedCount === "number"
     && typeof candidate.radiusKm === "number"
     && Array.isArray(candidate.categorySignals)
-    ? {
+    ? (() => {
+        const tradeDiagnostics = normalizeTradeDiagnostics(candidate.tradeDiagnostics);
+        return {
         ...candidate,
         sourceCounts: normalizeSourceCounts(candidate.sourceCounts),
         providerDiagnostics: normalizeProviderDiagnostics(candidate.providerDiagnostics, normalizeSourceCounts(candidate.sourceCounts)),
         finalMergedCount: candidate.finalMergedCount ?? candidate.afterDuplicateFilteringCount,
-      } as DiscoveryDiagnostics
+        ...(tradeDiagnostics.length ? { tradeDiagnostics } : {}),
+      } as DiscoveryDiagnostics;
+      })()
     : null;
 }
 
@@ -801,6 +841,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   radiusKm: number;
   limit?: number;
   prospectType?: ProspectSearchType;
+  skipThrottle?: boolean;
   logger?: DiscoveryLogger;
 }): Promise<DiscoveryResult> {
   if (!validTrade(input.trade)) throw new Error("Trade category is not supported.");
@@ -810,13 +851,13 @@ export async function discoverContractorsWithDiagnostics(input: {
   const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 25)));
 
   const now = Date.now();
-  if (globalDiscovery.lastDiscoveryAt && now - globalDiscovery.lastDiscoveryAt < 5_000) {
+  if (!input.skipThrottle && globalDiscovery.lastDiscoveryAt && now - globalDiscovery.lastDiscoveryAt < 5_000) {
     throw new TopProspectStageError(
       "discovery_provider_error",
       "Discovery is temporarily rate-limited. Retry after a few seconds.",
     );
   }
-  globalDiscovery.lastDiscoveryAt = now;
+  if (!input.skipThrottle) globalDiscovery.lastDiscoveryAt = now;
 
   const nominatimUrl = process.env.NOMINATIM_API_URL?.trim() || "https://nominatim.openstreetmap.org/search";
   const overpassUrl = process.env.OVERPASS_API_URL?.trim() || "https://overpass-api.de/api/interpreter";

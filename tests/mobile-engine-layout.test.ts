@@ -24,6 +24,7 @@ test("engine phone layout removes desktop-width result overflow", () => {
   assert.match(mobileCss, /\.engine-top-table article\s*{\s*min-width: 0;\s*grid-template-columns: 1fr;/);
   assert.doesNotMatch(mobileCss, /min-width:\s*36rem/);
   assert.match(mobileCss, /\.engine-provider-diagnostic dl\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(mobileCss, /\.engine-trade-diagnostics \[role="row"\]\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(mobileCss, /\.engine-auto-queue__summary\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });
 
@@ -70,6 +71,12 @@ test("Outreach Package bulk review exposes the complete human approval workflow 
 
 test("Top Prospects exposes modes, background batch workflow, queue, and requested score labels", () => {
   assert.match(topProspectsWorkspace, /Prospect mode/);
+  assert.match(topProspectsWorkspace, /allCoreServiceTradesOption/);
+  assert.match(prospectEngine, /All Core Service Trades/);
+  assert.match(topProspectsWorkspace, /useState<ProspectMode>\("growth"\)/);
+  assert.match(topProspectsWorkspace, /useState<ProspectSearchType>\("all"\)/);
+  assert.match(topProspectsWorkspace, /defaultValue="100"/);
+  assert.match(topProspectsWorkspace, /defaultValue="20"/);
   assert.match(topProspectsWorkspace, /Outreach preference/);
   assert.match(topProspectsWorkspace, /Written outreach only/);
   assert.match(topProspectsWorkspace, /Phone allowed/);

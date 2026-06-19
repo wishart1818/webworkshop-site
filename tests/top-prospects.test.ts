@@ -105,6 +105,19 @@ test("Top Prospects input applies bounded production-safe limits", () => {
   });
   assert.equal(allTypes.ok, true);
   if (allTypes.ok) assert.equal(allTypes.value.prospectType, "all");
+  const allCoreTrades = validateTopProspectInput({
+    trade: "All Core Service Trades",
+    city: "Findlay",
+    state: "OH",
+    radiusKm: 50,
+    businessesToScan: 100,
+    finalProspectsWanted: 20,
+    prospectType: "all",
+    mode: "growth",
+  });
+  assert.equal(allCoreTrades.ok, true);
+  if (allCoreTrades.ok) assert.deepEqual([allCoreTrades.value.trade, allCoreTrades.value.prospectType, allCoreTrades.value.mode], ["All Core Service Trades", "all", "growth"]);
+  assert.equal(validateTopProspectInput({ trade: "Painting", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5 }).ok, true);
 
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 101, finalProspectsWanted: 10 }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 11 }).ok, false);

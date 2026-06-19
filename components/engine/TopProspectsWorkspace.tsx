@@ -5,6 +5,7 @@ import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
+  allCoreServiceTradesOption,
   previewStyleProfile,
   prospectPresenceLabels,
   tradeCategories,
@@ -183,8 +184,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [packageActioning, setPackageActioning] = useState("");
   const [promptResult, setPromptResult] = useState<TopProspectResult | null>(null);
   const [outreachResult, setOutreachResult] = useState<TopProspectResult | null>(null);
-  const [selectedMode, setSelectedMode] = useState<ProspectMode>("strict");
-  const [selectedProspectType, setSelectedProspectType] = useState<ProspectSearchType>("redesign");
+  const [selectedMode, setSelectedMode] = useState<ProspectMode>("growth");
+  const [selectedProspectType, setSelectedProspectType] = useState<ProspectSearchType>("all");
   const [selectedWorkflow, setSelectedWorkflow] = useState<TopProspectWorkflowType>("search");
   const [selectedOutreachPreference, setSelectedOutreachPreference] = useState<OutreachPreference>("written_only");
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
@@ -320,12 +321,12 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Outreach preference<select name="outreachPreference" onChange={(event) => setSelectedOutreachPreference(event.target.value as OutreachPreference)} value={selectedOutreachPreference}><option value="written_only">Written outreach only</option><option value="phone_allowed">Phone allowed</option></select></label>
           <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectSearchType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option><option value="all">All Prospect Types</option></select></label>
           <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
-          <label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Trade<select defaultValue={allCoreServiceTradesOption} name="trade"><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>City<input name="city" required /></label>
           <label>State<input maxLength={2} name="state" required /></label>
-          <label>Radius<select name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
-          <label>Businesses to scan<input defaultValue="50" max="100" min="5" name="businessesToScan" type="number" /></label>
-          <label>Final prospects wanted<input defaultValue="10" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
+          <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
+          <label>Businesses to scan<input defaultValue="100" max="100" min="5" name="businessesToScan" type="number" /></label>
+          <label>Final prospects wanted<input defaultValue="20" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
           <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
             {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}
@@ -418,7 +419,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div className="engine-top-table__head" role="row"><span>Rank / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredResults.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><ProspectPresenceLink result={result} /></div>
+                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><span>{result.prospect.trade} · {result.prospect.city}, {result.prospect.state}</span><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span><em>{result.pitchAngle}</em></div>
@@ -445,7 +446,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredReviewedNotRecommended.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><ProspectPresenceLink result={result} /></div>
+                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{result.prospect.trade} · {result.prospect.city}, {result.prospect.state}</span><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>

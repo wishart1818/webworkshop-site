@@ -1656,6 +1656,51 @@ body:has(.engine-shell) {
   font-weight: 800;
 }
 
+.engine-trade-diagnostics {
+  border-top: 1px solid var(--engine-line);
+  background: white;
+}
+
+.engine-trade-diagnostics > h3 {
+  margin: 0;
+  color: var(--engine-ink);
+  padding: 0.65rem 1rem;
+  font-size: 0.72rem;
+}
+
+.engine-trade-diagnostics [role="table"] {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0 1rem 0.8rem;
+}
+
+.engine-trade-diagnostics [role="row"] {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.5fr) repeat(5, minmax(4.5rem, 1fr));
+  gap: 0.4rem;
+  align-items: center;
+  border: 1px solid var(--engine-line);
+  background: #fff;
+  padding: 0.45rem 0.5rem;
+}
+
+.engine-trade-diagnostics [role="row"]:first-child {
+  border: 0;
+  background: transparent;
+  color: var(--engine-muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.engine-trade-diagnostics strong,
+.engine-trade-diagnostics span {
+  min-width: 0;
+  color: var(--engine-ink);
+  font-size: 0.68rem;
+}
+
 .engine-provider-status {
   justify-self: start;
   background: #e8eeea;
@@ -3024,6 +3069,14 @@ body:has(.engine-shell) {
 
   .engine-provider-diagnostic dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .engine-trade-diagnostics [role="row"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .engine-trade-diagnostics [role="row"]:first-child {
+    display: none;
   }
 
   .engine-job-failure {
