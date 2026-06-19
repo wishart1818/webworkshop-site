@@ -232,6 +232,10 @@ export function combineTradeDiscoveryResults(input: {
   return { leads, diagnostics };
 }
 
+function savedDiscoveryLeadCount(value: Prisma.JsonValue | null) {
+  return discoveryLeadsFromJson(value).length;
+}
+
 function discoveryHasPartialIssues(diagnostics: DiscoveryDiagnostics | null | undefined) {
   return Boolean(
     diagnostics?.tradeDiagnostics?.some((trade) => trade.status === "partial" || trade.status === "skipped" || trade.rateLimitedProviders?.length)
@@ -620,7 +624,17 @@ export async function processTopProspectJob(jobId: string) {
   if (!job) return { status: "busy_or_complete" as const, shouldContinue: false };
   const token = job.leaseToken!;
   try {
-    if (job.stage === "DISCOVER") {
+    const savedLeadCount = savedDiscoveryLeadCount(job.discoveredLeads);
+    if (job.stage === "DISCOVER" && savedLeadCount > 0) {
+      console.info("[top-prospects] Saved discovery found; resuming analysis without rediscovery.", {
+        jobId: job.id,
+        savedLeadCount,
+      });
+      await getProspectDatabase().topProspectJob.updateMany({
+        where: { id: job.id, leaseToken: token },
+        data: { stage: "ANALYZE" },
+      });
+    } else if (job.stage === "DISCOVER") {
       console.info("[top-prospects] Discovery started.", {
         jobId: job.id,
         trade: job.tradeCategory,
@@ -639,9 +653,17 @@ export async function processTopProspectJob(jobId: string) {
         prospectType: job.prospectType as ProspectSearchType,
         existingDiscovery: job.discoveredLeads,
         async savePartial(partial) {
+          const partialStatus = waitingStatusForDiscovery(partial);
           await getProspectDatabase().topProspectJob.updateMany({
             where: { id: job.id, leaseToken: token },
-            data: { discoveredLeads: partial as unknown as Prisma.InputJsonValue },
+            data: partial.leads.length
+              ? {
+                  discoveredLeads: partial as unknown as Prisma.InputJsonValue,
+                  stage: "ANALYZE",
+                  status: partialStatus,
+                  errorMessage: null,
+                }
+              : { discoveredLeads: partial as unknown as Prisma.InputJsonValue },
           });
         },
       });
@@ -702,6 +724,7 @@ export async function processTopProspectJob(jobId: string) {
       where: { id: job.id },
       data: {
         status: done ? "RUNNING" : waitingStatus,
+        stage: "ANALYZE",
         nextLeadIndex,
         scannedCount: { increment: batch.length },
         qualifiedCount: { increment: qualified },

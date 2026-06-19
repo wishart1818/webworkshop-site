@@ -81,7 +81,10 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /defaultValue="50"/);
   assert.match(topProspectsWorkspace, /defaultValue="15"/);
   assert.match(topProspectsWorkspace, /total all-trades budget/);
-  assert.match(topProspectsWorkspace, /Discovery complete\. Run next saved batch to analyze/);
+  assert.match(topProspectsWorkspace, /Discovery complete\. Analyze/);
+  assert.match(topProspectsWorkspace, /Analyze saved prospects/);
+  assert.match(topProspectsWorkspace, /discovery complete, waiting to analyze/);
+  assert.match(topProspectsWorkspace, /latestJob && latestJob\.scannedCount > 0 \? latestJob\.results\[0\] : null/);
   assert.match(topProspectsWorkspace, /Website scan/);
   assert.match(topProspectsWorkspace, /Preview generation/);
   assert.match(topProspectsWorkspace, /Outreach packages/);
@@ -89,9 +92,14 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /PARTIAL_RESULTS_READY/);
   assert.match(topProspectWorker, /BATCH_SIZE = 3/);
   assert.match(topProspectWorker, /waitingStatusForDiscovery/);
+  assert.match(topProspectWorker, /Saved discovery found; resuming analysis without rediscovery/);
+  assert.match(topProspectWorker, /status: partialStatus/);
+  assert.match(topProspectWorker, /stage: "ANALYZE"/);
   assert.match(topProspectWorker, /status: done \? "RUNNING" : waitingStatus/);
   assert.match(topProspectRepository, /reconcileStaleTopProspectJobs/);
   assert.match(topProspectRepository, /staleRunningMs = 10 \* 60_000/);
+  assert.match(topProspectRepository, /stage: "DISCOVER",\s*OR: \[\{ leaseUntil: null \}, \{ leaseUntil: \{ lte: now \} \}\]/);
+  assert.match(topProspectRepository, /inferredScannedCount/);
   assert.match(topProspectsWorkspace, /Outreach preference/);
   assert.match(topProspectsWorkspace, /Written outreach only/);
   assert.match(topProspectsWorkspace, /Phone allowed/);

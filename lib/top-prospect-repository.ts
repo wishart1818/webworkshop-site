@@ -133,6 +133,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
   const reviewedNotRecommended = allResults
     .filter((result) => !result.selected)
     .sort((left, right) => right.salesScores.weightedSalesScore - left.salesScores.weightedSalesScore);
+  const inferredScannedCount = Math.max(row.scannedCount, row.nextLeadIndex, allResults.length);
+  const inferredSkippedCount = Math.max(row.skippedCount, inferredScannedCount - recommended.length);
   return {
     id: row.id,
     input: {
@@ -151,9 +153,9 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     stage: row.stage,
     discoveredCount: discoveryLeadsFromJson(row.discoveredLeads).length,
     discoveryDiagnostics: discoveryDiagnosticsFromJson(row.discoveredLeads),
-    scannedCount: row.scannedCount,
+    scannedCount: inferredScannedCount,
     qualifiedCount: recommended.length,
-    skippedCount: row.skippedCount,
+    skippedCount: inferredSkippedCount,
     skipSummary: recordValue(row.skipSummary),
     results: recommended,
     reviewedNotRecommended,
@@ -265,23 +267,40 @@ export async function reconcileStaleTopProspectJobs(now = new Date()) {
   const rows = await database.topProspectJob.findMany({
     where: {
       status: "RUNNING",
-      updatedAt: { lte: staleBefore },
-      OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+      OR: [
+        {
+          stage: "DISCOVER",
+          OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+        },
+        {
+          updatedAt: { lte: staleBefore },
+          OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+        },
+      ],
     },
     select: {
       id: true,
       stage: true,
       discoveredLeads: true,
+      nextLeadIndex: true,
+      scannedCount: true,
+      skippedCount: true,
+      results: { select: { selected: true } },
     },
   });
   for (const row of rows) {
     const leads = discoveryLeadsFromJson(row.discoveredLeads);
+    const inferredScannedCount = Math.max(row.scannedCount, row.nextLeadIndex, row.results.length);
+    const selectedCount = row.results.filter((result) => result.selected).length;
+    const inferredSkippedCount = Math.max(row.skippedCount, inferredScannedCount - selectedCount);
     if (leads.length > 0 && row.stage === "DISCOVER") {
       await database.topProspectJob.update({
         where: { id: row.id },
         data: {
           status: waitingStatusForSavedDiscovery(row.discoveredLeads),
           stage: "ANALYZE",
+          scannedCount: inferredScannedCount,
+          skippedCount: inferredSkippedCount,
           leaseToken: null,
           leaseUntil: null,
         },
@@ -293,6 +312,8 @@ export async function reconcileStaleTopProspectJobs(now = new Date()) {
         where: { id: row.id },
         data: {
           status: waitingStatusForSavedDiscovery(row.discoveredLeads),
+          scannedCount: inferredScannedCount,
+          skippedCount: inferredSkippedCount,
           leaseToken: null,
           leaseUntil: null,
         },

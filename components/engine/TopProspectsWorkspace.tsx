@@ -165,18 +165,21 @@ function jobProgress(job: TopProspectJob) {
   return Math.min(98, Math.round((job.scannedCount / Math.max(1, job.discoveredCount)) * 100));
 }
 
-function jobStatusLabel(status: TopProspectJob["status"]) {
+function jobStatusLabel(job: TopProspectJob) {
+  if (job.status === "RUNNING" && job.stage === "DISCOVER" && job.discoveredCount === 0) return "discovering leads";
+  if (job.status === "RUNNING" && job.stage === "DISCOVER" && job.discoveredCount > 0) return "discovery complete, waiting to analyze";
+  if (job.status === "RUNNING" && job.stage === "ANALYZE") return "analyzing websites";
   const labels: Record<TopProspectJob["status"], string> = {
     QUEUED: "queued",
-    RUNNING: "running",
-    NEEDS_NEXT_BATCH: "needs next batch",
+    RUNNING: "analyzing websites",
+    NEEDS_NEXT_BATCH: "discovery complete, waiting to analyze",
     PARTIAL_RESULTS_READY: "partial results ready",
     COMPLETED: "completed",
     COMPLETED_WITH_PARTIAL_RESULTS: "completed with partial results",
     FAILED: "failed",
     FAILED_AFTER_DISCOVERY: "failed after discovery",
   };
-  return labels[status] ?? status.toLowerCase();
+  return labels[job.status] ?? job.status.toLowerCase();
 }
 
 function jobIsActive(status: TopProspectJob["status"]) {
@@ -190,11 +193,18 @@ function jobIsComplete(status: TopProspectJob["status"]) {
 function jobStatusDescription(job: TopProspectJob) {
   if (jobIsComplete(job.status)) return `${workflowLabels[job.input.workflowType]} results and artifacts are ready for review.`;
   if (job.status === "FAILED" || job.status === "FAILED_AFTER_DISCOVERY") return "Processing stopped before completion. Review the diagnostic below.";
-  if (job.status === "NEEDS_NEXT_BATCH" || job.status === "PARTIAL_RESULTS_READY") {
+  if (job.status === "NEEDS_NEXT_BATCH" || job.status === "PARTIAL_RESULTS_READY" || (job.stage === "DISCOVER" && job.discoveredCount > 0)) {
     const remaining = Math.max(0, Math.min(job.discoveredCount, job.input.businessesToScan) - job.scannedCount);
-    return `Discovery complete. Run next saved batch to analyze ${remaining} prospect${remaining === 1 ? "" : "s"}.`;
+    return `Discovery complete. Analyze ${remaining} saved prospect${remaining === 1 ? "" : "s"}.`;
   }
-  return "You can leave this page. Analysis and generated artifacts are saved after every batch.";
+  if (job.stage === "DISCOVER") return "Discovering leads. The engine is collecting and deduplicating public business records.";
+  return "Analyzing websites, generating previews, and saving outreach packages after every batch.";
+}
+
+function jobNextActionLabel(job: TopProspectJob) {
+  if (job.stage === "DISCOVER" && job.discoveredCount === 0) return "Continue discovery";
+  if (job.scannedCount === 0 && job.discoveredCount > 0) return "Analyze saved prospects";
+  return "Run next saved batch";
 }
 
 function safeWebsite(value: string) {
@@ -250,7 +260,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const activeJob = jobs.find((job) => jobIsActive(job.status));
   const latestJob = activeJob ?? jobs[0];
-  const best = jobs.find((job) => job.results.length)?.results[0];
+  const best = latestJob && latestJob.scannedCount > 0 ? latestJob.results[0] : null;
   const queuedResults = latestJob ? [...latestJob.results, ...latestJob.reviewedNotRecommended] : [];
   const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const filteredReviewedNotRecommended = latestJob ? latestJob.reviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter)) : [];
@@ -264,7 +274,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       setJobs(payload.jobs);
       setBuildVersion(payload.buildVersion || "unknown");
       setError("");
-      if (payload.jobs[0]?.status === "COMPLETED") onProspectsChanged();
+      if (payload.jobs[0] && jobIsComplete(payload.jobs[0].status)) onProspectsChanged();
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load Top Prospects.");
     } finally {
@@ -399,7 +409,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         <section className="engine-panel engine-job-progress" aria-live="polite">
           <div className="engine-panel__head">
             <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{jobStatusDescription(latestJob)}</p></div>
-            <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase().replaceAll("_", "-")}`}>{jobStatusLabel(latestJob.status)}</span>
+            <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase().replaceAll("_", "-")}`}>{jobStatusLabel(latestJob)}</span>
           </div>
           <div className="engine-job-meta">
             <span>Job ID <code>{latestJob.id}</code></span>
@@ -417,7 +427,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span><b>{latestJob.scannedCount}</b> scanned</span>
             <span><b>{latestJob.qualifiedCount}</b> qualified</span>
             <span><b>{latestJob.skippedCount}</b> skipped</span>
-            {jobIsActive(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">{latestJob.stage === "DISCOVER" ? "Continue discovery" : "Run next saved batch"}</button>}
+            {jobIsActive(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">{jobNextActionLabel(latestJob)}</button>}
             {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
           </div>
           {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && latestJob.failureClassification && (
