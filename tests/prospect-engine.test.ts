@@ -80,8 +80,14 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.ok(preview.servicePageStructure.length >= 5);
   assert.match(preview.visualStyleDirection, /outdoor spaces/i);
   assert.ok(preview.styleProfile);
+  assert.ok(preview.qualityScore);
+  assert.ok(preview.qualityScore.overall >= 85);
+  assert.ok(preview.qualityScore.visualPolish >= 85);
+  assert.ok(preview.qualityScore.safetyTruthfulness >= 90);
   assert.ok(preview.heroHeadline);
   assert.equal(preview.styleProfile?.ctaLabel, "Get a free quote");
+  assert.match(preview.homepageStructure.join(" "), /sample service visual/i);
+  assert.match(preview.portfolioDirection, /sample layout/i);
 });
 
 test("preview intelligence changes meaningfully by contractor trade", () => {
@@ -89,7 +95,9 @@ test("preview intelligence changes meaningfully by contractor trade", () => {
   const plumbing = generatePreview(structuredClone(seedProspects[3]));
 
   assert.match(roofing.trustStrategy, /material warranties/i);
+  assert.match(roofing.trustStrategy, /only when the business verifies/i);
   assert.match(plumbing.trustStrategy, /licensed plumbers/i);
+  assert.match(plumbing.trustStrategy, /verified/i);
   assert.notEqual(roofing.ctaStrategy, plumbing.ctaStrategy);
 });
 

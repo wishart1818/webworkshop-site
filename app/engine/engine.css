@@ -1010,6 +1010,61 @@ body:has(.engine-shell) {
   line-height: 1.45;
 }
 
+.engine-preview-quality {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid #cfded7;
+  background: #f5faf7;
+}
+
+.engine-preview-quality > div > span {
+  color: var(--engine-accent-dark);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.engine-preview-quality h3 {
+  margin: 0.35rem 0;
+}
+
+.engine-preview-quality dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.engine-preview-quality dl div {
+  border-top: 2px solid var(--engine-line);
+  padding-top: 0.55rem;
+}
+
+.engine-preview-quality dt {
+  color: var(--engine-muted);
+  font-size: 0.64rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.engine-preview-quality dd {
+  margin: 0.2rem 0 0;
+  color: var(--engine-ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.engine-preview-quality ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--engine-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .engine-note {
   display: grid;
   gap: 0.5rem;
@@ -2828,6 +2883,301 @@ body:has(.engine-shell) {
   border-top: 0.3rem solid var(--prospect-accent);
 }
 
+.prospect-preview-site {
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--prospect-accent) 10%, transparent), transparent 28rem),
+    var(--prospect-surface);
+}
+
+.prospect-preview-site img {
+  display: block;
+  width: 100%;
+  object-fit: cover;
+}
+
+.prospect-preview-nav {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--prospect-line) 72%, transparent);
+  background: color-mix(in srgb, var(--prospect-surface) 94%, white);
+}
+
+.prospect-preview-button {
+  border-radius: 999px;
+  box-shadow: 0 6px 12px color-mix(in srgb, var(--prospect-primary) 16%, transparent);
+  letter-spacing: 0.01em;
+}
+
+.prospect-preview-button:active {
+  transform: translateY(1px);
+}
+
+.prospect-preview-text-link {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  color: var(--prospect-primary);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--prospect-accent) 70%, transparent);
+  text-underline-offset: 0.25rem;
+}
+
+.prospect-preview-kicker {
+  display: inline-flex;
+  max-width: max-content;
+  border-bottom: 2px solid color-mix(in srgb, var(--prospect-accent) 70%, transparent);
+  padding-bottom: 0.2rem;
+  letter-spacing: 0;
+}
+
+.prospect-preview-hero {
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.92fr);
+  min-height: 42rem;
+  background: transparent;
+}
+
+.prospect-preview-hero__content h1 {
+  max-width: 14ch;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.prospect-preview-hero__content > p,
+.prospect-preview-section__intro p,
+.prospect-preview-service-list p,
+.prospect-preview-why p,
+.prospect-preview-service-area p,
+.prospect-preview-contact p {
+  color: var(--prospect-muted);
+  text-wrap: pretty;
+}
+
+.prospect-preview-hero__visual {
+  display: grid;
+  gap: 0.85rem;
+  align-self: stretch;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  padding: 0;
+}
+
+.prospect-preview-hero__visual img {
+  min-height: 30rem;
+  border-radius: 16px;
+  aspect-ratio: 5 / 6;
+  box-shadow: 0 10px 18px color-mix(in srgb, var(--prospect-primary) 16%, transparent);
+}
+
+.prospect-preview-visual-caption {
+  display: grid;
+  gap: 0.35rem;
+  border-radius: 14px;
+  background: var(--prospect-soft);
+  padding: 1rem;
+}
+
+.prospect-preview-visual-caption small {
+  color: var(--prospect-primary);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.prospect-preview-visual-caption strong {
+  max-width: none;
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.prospect-preview-visual-caption span {
+  color: var(--prospect-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.prospect-preview-trust {
+  gap: 1px;
+  border: 0;
+  background: var(--prospect-line);
+  padding: 1px;
+}
+
+.prospect-preview-trust span {
+  display: grid;
+  gap: 0.35rem;
+  border-right: 0;
+  background: var(--prospect-soft);
+  padding: 1.25rem;
+  text-align: left;
+}
+
+.prospect-preview-trust b {
+  color: var(--prospect-ink);
+  font-size: 0.82rem;
+}
+
+.prospect-preview-trust i {
+  color: var(--prospect-muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.prospect-preview-services {
+  grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr);
+  align-items: start;
+}
+
+.prospect-preview-service-list {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1rem;
+  border-top: 0;
+}
+
+.prospect-preview-service-list article {
+  display: grid;
+  grid-column: span 3;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--prospect-line) 82%, transparent);
+  border-radius: 14px;
+  background: var(--prospect-surface);
+  padding: 0;
+}
+
+.prospect-preview-service-list article:first-child {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+
+.prospect-preview-service-list img {
+  height: 100%;
+  min-height: 13rem;
+  aspect-ratio: 4 / 3;
+}
+
+.prospect-preview-service-list article > div {
+  display: grid;
+  align-content: center;
+  padding: 1.1rem;
+}
+
+.prospect-preview-service-list h3 {
+  font-size: clamp(1.15rem, 2vw, 1.65rem);
+  line-height: 1.1;
+}
+
+.prospect-preview-why {
+  border-top: 0;
+  background: color-mix(in srgb, var(--prospect-primary) 6%, var(--prospect-surface));
+}
+
+.prospect-preview-why > div:last-child {
+  gap: 1rem;
+}
+
+.prospect-preview-why article {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  border: 0;
+  border-radius: 14px;
+  background: var(--prospect-surface);
+  padding: 1.25rem;
+}
+
+.prospect-preview-why article span {
+  display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--prospect-accent) 24%, var(--prospect-soft));
+  color: var(--prospect-primary);
+  font-weight: 900;
+}
+
+.prospect-preview-work {
+  background: var(--prospect-soft);
+}
+
+.prospect-preview-projects {
+  gap: 1rem;
+}
+
+.prospect-preview-projects article {
+  overflow: hidden;
+  min-height: 0;
+  border: 0;
+  border-radius: 14px;
+  background: var(--prospect-surface);
+  padding: 0;
+}
+
+.prospect-preview-projects img {
+  min-height: 17rem;
+  aspect-ratio: 4 / 5;
+}
+
+.prospect-preview-projects b {
+  margin: 0;
+  padding: 1rem 1rem 0.25rem;
+}
+
+.prospect-preview-projects article > span {
+  display: block;
+  margin: 0;
+  padding: 0 1rem 1rem;
+  line-height: 1.45;
+}
+
+.prospect-preview-service-area {
+  position: relative;
+  overflow: hidden;
+  border-top: 0;
+  background: var(--prospect-surface);
+}
+
+.prospect-preview-service-area::after {
+  content: "";
+  position: absolute;
+  right: clamp(1rem, 8vw, 8rem);
+  bottom: clamp(2rem, 6vw, 5rem);
+  width: min(28vw, 18rem);
+  height: min(28vw, 18rem);
+  border: 1px solid color-mix(in srgb, var(--prospect-line) 78%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--prospect-primary) 10%, transparent), transparent 55%),
+    color-mix(in srgb, var(--prospect-soft) 88%, white);
+}
+
+.prospect-preview-contact {
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--prospect-accent) 28%, transparent), transparent 24rem),
+    var(--prospect-primary);
+}
+
+.prospect-preview-contact form {
+  border-radius: 16px;
+  box-shadow: 0 10px 18px color-mix(in srgb, var(--prospect-primary) 22%, black 4%);
+}
+
+.prospect-preview-contact input,
+.prospect-preview-contact textarea {
+  border-radius: 10px;
+  padding: 0.55rem;
+}
+
+.prospect-preview-contact button {
+  border-radius: 999px;
+}
+
 .engine-discovery-results a {
   color: var(--engine-accent-dark);
   text-decoration: underline;
@@ -3075,6 +3425,10 @@ body:has(.engine-shell) {
 
   .engine-preview-style-profile dl {
     grid-template-columns: 1fr;
+  }
+
+  .engine-preview-quality dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .engine-preview-palette {
@@ -3372,6 +3726,27 @@ body:has(.engine-shell) {
   .prospect-preview-hero__visual,
   .prospect-preview-site[data-layout="project-led"] .prospect-preview-hero__visual {
     min-height: 17rem;
+  }
+
+  .prospect-preview-hero__visual img {
+    min-height: 18rem;
+    aspect-ratio: 4 / 3;
+  }
+
+  .prospect-preview-service-list article,
+  .prospect-preview-service-list article:first-child {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
+  }
+
+  .prospect-preview-service-list img,
+  .prospect-preview-projects img {
+    min-height: 12rem;
+    aspect-ratio: 16 / 10;
+  }
+
+  .prospect-preview-service-area::after {
+    display: none;
   }
 
   .prospect-preview-service-list,

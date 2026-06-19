@@ -8,6 +8,7 @@ import {
   prospectContactMethodIsUsable,
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
+  scorePreviewQuality,
   type Analysis,
   type OutreachDraft,
   type Prospect,
@@ -748,6 +749,7 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
   const analysis = prospect.analysis;
   const preview = prospect.preview ?? generatePreview(prospect);
   const styleProfile = previewStyleProfile(prospect, preview);
+  const quality = preview.qualityScore ?? scorePreviewQuality(prospect, preview);
   const styleInstructions = [
     `Style profile: ${styleProfile.name}.`,
     `Palette: primary ${styleProfile.primaryColor}, accent ${styleProfile.accentColor}, main surface ${styleProfile.surfaceColor}, soft surface ${styleProfile.softSurfaceColor}, text ${styleProfile.inkColor}.`,
@@ -755,7 +757,9 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
     `Typography: ${styleProfile.typographyStyle}.`,
     `Primary CTA wording: "${styleProfile.ctaLabel}".`,
     `Why this style was selected: ${styleProfile.styleReason}`,
+    `Preview quality target: ${quality.overall}/100 overall, with visual polish ${quality.visualPolish}, business specificity ${quality.businessSpecificity}, mobile responsiveness ${quality.mobileResponsiveness}, conversion strength ${quality.conversionStrength}, and safety/truthfulness ${quality.safetyTruthfulness}.`,
     "Do not reuse WebWorkshop branding, dark-green defaults, or agency-template styling. The result should feel like this business, improved.",
+    "Use sample imagery only as labeled placeholders until the business provides verified photos, project details, reviews, certifications, warranties, or awards.",
   ].join("\n");
   if (prospect.prospectType === "no_website_social_only") {
     return [

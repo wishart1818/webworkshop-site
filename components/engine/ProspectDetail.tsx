@@ -314,6 +314,7 @@ function DraftSection({ approved, copied, label, onCopy, value }: {
 function PreviewView({ prospect }: { prospect: Prospect }) {
   const preview = prospect.preview!;
   const styleProfile = previewStyleProfile(prospect, preview);
+  const quality = preview.qualityScore;
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -352,6 +353,24 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
           <div><dt>Primary CTA</dt><dd>{styleProfile.ctaLabel}</dd></div>
         </dl>
       </section>
+      {quality && (
+        <section className="engine-preview-quality">
+          <div>
+            <span>Preview quality check</span>
+            <h3>{quality.overall}/100 overall</h3>
+            <p>Internal design QA for polish, specificity, conversion clarity, mobile readiness, and truthfulness.</p>
+          </div>
+          <dl>
+            <div><dt>Visual polish</dt><dd>{quality.visualPolish}</dd></div>
+            <div><dt>Business specificity</dt><dd>{quality.businessSpecificity}</dd></div>
+            <div><dt>Clarity</dt><dd>{quality.clarity}</dd></div>
+            <div><dt>Mobile responsiveness</dt><dd>{quality.mobileResponsiveness}</dd></div>
+            <div><dt>Conversion strength</dt><dd>{quality.conversionStrength}</dd></div>
+            <div><dt>Safety/truthfulness</dt><dd>{quality.safetyTruthfulness}</dd></div>
+          </dl>
+          {quality.notes.length ? <ul>{quality.notes.map((note) => <li key={note}>{note}</li>)}</ul> : null}
+        </section>
+      )}
       <section><h3>Visual style direction</h3><p>{preview.visualStyleDirection || "Use confident typography, practical project photography, and high-contrast estimate actions."}</p></section>
       <section><h3>Homepage structure</h3><ol>{preview.homepageStructure.map((item) => <li key={item}>{item}</li>)}</ol></section>
       <section><h3>Service page structure</h3><ol>{preview.servicePageStructure.map((item) => <li key={item}>{item}</li>)}</ol></section>

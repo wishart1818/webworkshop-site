@@ -119,6 +119,9 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Trust strategy/);
   assert.match(html, /Lead capture/);
   assert.match(html, /Prospect-specific style profile/);
+  assert.match(html, /Preview quality check/);
+  assert.match(html, /Safety\/truthfulness/);
+  assert.match(html, /Visual polish/);
   assert.match(html, /Brand signal/);
   assert.match(html, /Primary CTA/);
 });
@@ -139,6 +142,10 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /--prospect-primary:#174b78/);
   assert.match(html, /--prospect-accent:#2c94c6/);
   assert.match(html, /Request an estimate/);
+  assert.match(html, /Sample visual direction/);
+  assert.match(html, /picsum\.photos\/seed\/roofing-blue-line-roofing-hero-service-visual/);
+  assert.match(html, /Replace with verified Blue Line Roofing photos before launch/);
+  assert.match(html, /Sample layout content/);
   assert.match(html, /Why choose us/);
   assert.match(html, /Service area/);
   assert.match(html, /Call \(419\) 555-0142/);
@@ -183,6 +190,8 @@ test("no-website public preview uses supported-fact placeholders instead of inve
   assert.match(html, /Project proof concept/);
   assert.match(html, /verified work/i);
   assert.match(html, /Approved project photos/);
+  assert.match(html, /Sample layout content/);
+  assert.match(html, /Replace with verified/);
   assert.doesNotMatch(html, /Recent local work|licensed|insured|award-winning|warranties/i);
 });
 

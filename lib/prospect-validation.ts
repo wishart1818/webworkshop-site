@@ -12,6 +12,7 @@ import {
   type Analysis,
   type OutreachDraft,
   type PreviewConcept,
+  type PreviewQualityScore,
   type PreviewStyleProfile,
   type Prospect,
   type ProspectStatus,
@@ -131,6 +132,27 @@ function styleProfileValue(value: unknown): PreviewStyleProfile | undefined {
   };
 }
 
+function scoreValue(input: unknown, field: string) {
+  const value = Number(input);
+  if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`${field} must be a score from 0 to 100.`);
+  return Math.round(value);
+}
+
+function previewQualityValue(value: unknown): PreviewQualityScore | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview quality score must be a valid object.");
+  return {
+    visualPolish: scoreValue(value.visualPolish, "Preview visual polish"),
+    businessSpecificity: scoreValue(value.businessSpecificity, "Preview business specificity"),
+    clarity: scoreValue(value.clarity, "Preview clarity"),
+    mobileResponsiveness: scoreValue(value.mobileResponsiveness, "Preview mobile responsiveness"),
+    conversionStrength: scoreValue(value.conversionStrength, "Preview conversion strength"),
+    safetyTruthfulness: scoreValue(value.safetyTruthfulness, "Preview safety truthfulness"),
+    overall: scoreValue(value.overall, "Preview overall quality"),
+    notes: value.notes === undefined ? [] : stringArray(value.notes, "Preview quality notes", 12, 500),
+  };
+}
+
 function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
@@ -149,6 +171,7 @@ function previewValue(value: unknown): PreviewConcept | undefined {
     portfolioDirection: text(value.portfolioDirection, "Portfolio direction", 5000),
     trustStrategy: text(value.trustStrategy, "Trust strategy", 5000),
     leadCaptureStrategy: text(value.leadCaptureStrategy, "Lead capture strategy", 5000),
+    qualityScore: previewQualityValue(value.qualityScore),
     generatedAt: dateText(value.generatedAt, "Preview generated date"),
   };
 }

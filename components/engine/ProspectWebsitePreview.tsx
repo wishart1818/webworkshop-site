@@ -1,4 +1,5 @@
 import React, { type CSSProperties } from "react";
+import Image from "next/image";
 import {
   generatePreview,
   previewStyleProfile,
@@ -24,11 +25,104 @@ type ProspectPreviewProperties = CSSProperties & {
   "--prospect-body-font": string;
 };
 
+const tradeVisuals: Record<Prospect["trade"], { hero: string; service: string; proof: string; texture: string }> = {
+  Roofing: {
+    hero: "Durable roofline and exterior service visual",
+    service: "Roof material and inspection detail",
+    proof: "Sample roof project photo slot",
+    texture: "Sturdy roofline, material detail, and local exterior work",
+  },
+  HVAC: {
+    hero: "Clean home comfort and equipment service visual",
+    service: "HVAC equipment and technician detail",
+    proof: "Sample comfort service photo slot",
+    texture: "Clean equipment, airflow, and reliable service cues",
+  },
+  Landscaping: {
+    hero: "Outdoor living and finished yard visual",
+    service: "Planting, hardscape, and seasonal detail",
+    proof: "Sample landscape project photo slot",
+    texture: "Finished outdoor spaces and before-after potential",
+  },
+  Plumbing: {
+    hero: "Practical home plumbing service visual",
+    service: "Fixture, pipe, and repair detail",
+    proof: "Sample plumbing work photo slot",
+    texture: "Clean repair detail, response clarity, and simple next steps",
+  },
+  Electrical: {
+    hero: "Safe residential electrical service visual",
+    service: "Panel, lighting, and installation detail",
+    proof: "Sample electrical project photo slot",
+    texture: "Sharp safety cues, clear scope, and dependable work",
+  },
+  "Power Washing": {
+    hero: "Clean exterior surface transformation visual",
+    service: "Surface cleaning and soft-wash detail",
+    proof: "Sample washing result photo slot",
+    texture: "Before-after contrast, exterior detail, and quick quoting",
+  },
+  Painting: {
+    hero: "Fresh exterior or interior painting visual",
+    service: "Prep, color, and finish detail",
+    proof: "Sample painting project photo slot",
+    texture: "Clean prep, careful finish, and color confidence",
+  },
+  Concrete: {
+    hero: "Durable concrete and flatwork visual",
+    service: "Driveway, patio, and finish detail",
+    proof: "Sample concrete project photo slot",
+    texture: "Material strength, clean edges, and practical planning",
+  },
+  Cleaning: {
+    hero: "Bright, organized cleaning service visual",
+    service: "Clean room and checklist detail",
+    proof: "Sample cleaning result photo slot",
+    texture: "Fresh surfaces, organized scope, and easy booking",
+  },
+  "Tree Service": {
+    hero: "Outdoor tree care and safety visual",
+    service: "Crew, equipment, and cleanup detail",
+    proof: "Sample tree service photo slot",
+    texture: "Safety-first outdoor work and cleanup expectations",
+  },
+  Fencing: {
+    hero: "Finished fence and property boundary visual",
+    service: "Material, gate, and fence-line detail",
+    proof: "Sample fencing project photo slot",
+    texture: "Cedar, clean lines, privacy, and property fit",
+  },
+  Flooring: {
+    hero: "Finished flooring and interior surface visual",
+    service: "Wood, plank, and installation detail",
+    proof: "Sample flooring project photo slot",
+    texture: "Warm interior surfaces and clean installation detail",
+  },
+  Remodeling: {
+    hero: "Finished home improvement space visual",
+    service: "Material, planning, and room detail",
+    proof: "Sample remodeling project photo slot",
+    texture: "Finished spaces, material choices, and planning clarity",
+  },
+  "General Contractor": {
+    hero: "Residential construction and project planning visual",
+    service: "Build process and material detail",
+    proof: "Sample construction project photo slot",
+    texture: "Project progress, finished spaces, and communication clarity",
+  },
+};
+
+function previewImageUrl(prospect: Prospect, slot: string, width: number, height: number) {
+  const seed = encodeURIComponent(`${prospect.trade}-${prospect.businessName}-${slot}`.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-"));
+  return `https://picsum.photos/seed/${seed}/${width}/${height}`;
+}
+
 export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
   const preview = savedPreview ?? generatePreview(prospect);
   const styleProfile = previewStyleProfile(prospect, preview);
   const serviceArea = prospect.serviceArea || `${prospect.city}, ${prospect.state}`;
   const services = preview.serviceHighlights ?? preview.servicePageStructure.slice(0, 3);
+  const visual = tradeVisuals[prospect.trade];
   const trustItems = preview.trustItems ?? [
     `Serving ${prospect.city}, ${prospect.state}`,
     prospect.phone ? "Direct phone contact" : "Clear contact path",
@@ -84,15 +178,17 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             </div>
           </div>
           <aside className="prospect-preview-hero__visual">
-            <small>Local {prospect.trade.toLowerCase()} service</small>
-            <strong>{prospect.businessName}</strong>
-            <p>Serving {serviceArea}</p>
-            <span>{preview.direction}</span>
+            <Image alt={visual.hero} height={760} priority sizes="(max-width: 767px) 100vw, 42vw" src={previewImageUrl(prospect, "hero-service-visual", 960, 760)} unoptimized width={960} />
+            <div className="prospect-preview-visual-caption">
+              <small>Sample visual direction</small>
+              <strong>{visual.texture}</strong>
+              <span>Replace with verified {prospect.businessName} photos before launch.</span>
+            </div>
           </aside>
         </section>
 
         <section className="prospect-preview-trust" aria-label="Business trust highlights">
-          {trustItems.slice(0, 4).map((item) => <span key={item}>{item}</span>)}
+          {trustItems.slice(0, 4).map((item) => <span key={item}><b>{item}</b><i>Useful detail for a faster decision</i></span>)}
         </section>
 
         <section className="prospect-preview-section prospect-preview-services" id="services">
@@ -104,7 +200,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-service-list">
             {services.map((item, index) => (
               <article key={item}>
-                <b>0{index + 1}</b>
+                <Image alt={index === 0 ? visual.service : `${item} sample service visual`} height={380} sizes="(max-width: 767px) 100vw, 34vw" src={previewImageUrl(prospect, `service-${index}-${item}`, 520, 380)} unoptimized width={520} />
                 <div>
                   <h3>{item}</h3>
                   <p>Understand the scope, practical next steps, and what to expect before the work begins.</p>
@@ -123,6 +219,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             {trustItems.slice(0, 3).map((item) => (
               <article key={item}>
+                <span aria-hidden="true">{item.slice(0, 1)}</span>
                 <h3>{item}</h3>
                 <p>Clear, factual information that helps a homeowner understand the business and take the next step.</p>
               </article>
@@ -139,9 +236,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-projects">
             {(noWebsiteProspect ? ["Verified project story", "Approved project photos", "Confirmed scope and outcome"] : ["Local project story", "Before and after", "Scope and outcome"]).map((item, index) => (
               <article key={item}>
-                <i aria-hidden="true"><span>{index + 1}</span></i>
+                <Image alt={index === 0 ? visual.proof : `${item} sample layout slot`} height={640} sizes="(max-width: 767px) 100vw, 28vw" src={previewImageUrl(prospect, `proof-${index}-${item}`, 520, 640)} unoptimized width={520} />
                 <b>{item}</b>
-                <span>{prospect.city}, {prospect.state}</span>
+                <span>Sample layout content. Use verified photos, locations, scope, and outcomes supplied by the business.</span>
               </article>
             ))}
           </div>

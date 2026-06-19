@@ -127,7 +127,19 @@ export type PreviewConcept = {
   portfolioDirection: string;
   trustStrategy: string;
   leadCaptureStrategy: string;
+  qualityScore?: PreviewQualityScore;
   generatedAt: string;
+};
+
+export type PreviewQualityScore = {
+  visualPolish: number;
+  businessSpecificity: number;
+  clarity: number;
+  mobileResponsiveness: number;
+  conversionStrength: number;
+  safetyTruthfulness: number;
+  overall: number;
+  notes: string[];
 };
 
 export type PreviewStyleProfile = {
@@ -490,6 +502,61 @@ export function previewStyleProfile(prospect: Prospect, preview?: PreviewConcept
   return preview?.styleProfile ?? generateProspectStyleProfile(prospect);
 }
 
+function boundedQuality(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function previewQualityNotes(score: Omit<PreviewQualityScore, "overall" | "notes">) {
+  const notes: string[] = [];
+  if (score.visualPolish >= 85) notes.push("Uses prospect palette, imagery guidance, varied sections, and stronger CTA treatment.");
+  if (score.businessSpecificity >= 85) notes.push("Includes business name, trade, services, city, and a prospect-specific style rationale.");
+  if (score.safetyTruthfulness >= 90) notes.push("Avoids unsupported claims and labels proof/photo areas as verification-ready or sample content.");
+  return notes;
+}
+
+export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept): PreviewQualityScore {
+  const searchable = [
+    preview.direction,
+    preview.visualStyleDirection,
+    preview.hero,
+    preview.heroHeadline,
+    preview.heroSupporting,
+    preview.homepageStructure.join(" "),
+    preview.ctaStrategy,
+    preview.servicePageStructure.join(" "),
+    preview.portfolioDirection,
+    preview.trustStrategy,
+    preview.leadCaptureStrategy,
+    preview.styleProfile?.name,
+    preview.styleProfile?.styleReason,
+  ].filter(Boolean).join(" ");
+  const mentionsBusiness = searchable.includes(prospect.businessName);
+  const mentionsTrade = new RegExp(prospect.trade, "i").test(searchable);
+  const mentionsCity = new RegExp(`\\b${prospect.city}\\b`, "i").test(searchable);
+  const hasStyleProfile = Boolean(preview.styleProfile);
+  const hasTradeServices = (preview.serviceHighlights?.length ?? 0) >= 3;
+  const hasImageDirection = /photo|image|visual|material|outdoor|service|project|before-and-after|placeholder|sample/i.test(searchable);
+  const hasMobile = /mobile|persistent mobile|phone action/i.test(searchable);
+  const hasCta = Boolean(preview.styleProfile?.ctaLabel) && searchable.includes(preview.styleProfile?.ctaLabel ?? "");
+  const hasSafetyLanguage = /verified|verification-ready|sample|placeholder|supplied by the business|no invented/i.test(searchable);
+  const unsupportedClaim = /\b(award-winning|certified|licensed|insured|warrant(?:y|ies)|guarantee|guarantees|five-star|best rated)\b/i.test(searchable)
+    && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
+
+  const base = {
+    visualPolish: boundedQuality(68 + (hasStyleProfile ? 10 : 0) + (hasImageDirection ? 12 : 0) + (preview.homepageStructure.length >= 5 ? 5 : 0)),
+    businessSpecificity: boundedQuality(58 + (mentionsBusiness ? 12 : 0) + (mentionsTrade ? 10 : 0) + (mentionsCity ? 8 : 0) + (hasTradeServices ? 7 : 0)),
+    clarity: boundedQuality(72 + (preview.heroHeadline ? 6 : 0) + (preview.heroSupporting ? 5 : 0) + (preview.servicePageStructure.length >= 5 ? 5 : 0)),
+    mobileResponsiveness: boundedQuality(72 + (hasMobile ? 12 : 0) + (hasCta ? 6 : 0)),
+    conversionStrength: boundedQuality(68 + (hasCta ? 12 : 0) + (prospect.phone ? 5 : 0) + (/lead form|estimate|quote|inspection|service/i.test(searchable) ? 7 : 0)),
+    safetyTruthfulness: boundedQuality(unsupportedClaim ? 58 : 82 + (hasSafetyLanguage ? 12 : 0) + (prospect.prospectType === "no_website_social_only" ? 4 : 0)),
+  };
+  return {
+    ...base,
+    overall: boundedQuality((base.visualPolish + base.businessSpecificity + base.clarity + base.mobileResponsiveness + base.conversionStrength + base.safetyTruthfulness) / 6),
+    notes: previewQualityNotes(base),
+  };
+}
+
 const now = () => new Date().toISOString();
 const activity = (type: Activity["type"], label: string): Activity => ({
   id: crypto.randomUUID(),
@@ -749,6 +816,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   const trade = prospect.trade.toLowerCase();
   const playbook = contractorPlaybooks[prospect.trade];
   const styleProfile = generateProspectStyleProfile(prospect);
+  const verifiedProofAreas = playbook.trustProof.map((item) => `verified ${item}`).join(", ");
   const heroHeadlines: Record<TradeCategory, string> = {
     Roofing: "Roofing work that protects your home and earns your confidence.",
     HVAC: "Comfort restored with clear service and practical options.",
@@ -772,9 +840,9 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     "Simple estimate next step",
   ];
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
-  return {
+  const preview: PreviewConcept = {
     direction: `A clean, local-first ${trade} website that feels like ${prospect.businessName}: ${styleProfile.tone.replace("-", " ")}, clear, and easy to hire.`,
-    visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} Use ${styleProfile.primaryColor} as the restrained primary brand color and ${styleProfile.accentColor} only for focused emphasis.`,
+    visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} Use ${styleProfile.primaryColor} as the restrained primary brand color and ${styleProfile.accentColor} only for focused emphasis. Use tasteful generic service imagery when real photos are unavailable, with sample areas clearly labeled.`,
     hero: `${prospect.businessName} serves ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`} with a clearer path from service need to direct contact.`,
     heroHeadline: heroHeadlines[prospect.trade],
     heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`}.`,
@@ -782,22 +850,26 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     trustItems,
     styleProfile,
     homepageStructure: [
-      `Simple, business-specific hero with "${styleProfile.ctaLabel}"`,
-      `${playbook.services.join(", ")} organized by homeowner need`,
-      noWebsiteProspect ? "Supported public business details and clearly labeled proof placeholders" : `Decision-stage proof: ${playbook.trustProof.join(", ")}`,
-      noWebsiteProspect ? "A project-proof section ready for verified photos and facts" : "Recent local work with scope and outcome",
+      `Polished business-specific hero with "${styleProfile.ctaLabel}" and a safe sample service visual`,
+      `${playbook.services.join(", ")} organized with varied service visuals and homeowner need`,
+      noWebsiteProspect ? "Supported public business details and clearly labeled proof placeholders" : `Verification-ready proof areas for ${verifiedProofAreas}`,
+      noWebsiteProspect ? "A sample project-proof section ready for verified photos and facts" : "Sample local work layout ready for verified photos, scope, and outcome",
       "Service areas, practical FAQs, and lead form",
     ],
     ctaStrategy: `Use one primary action, "${styleProfile.ctaLabel}," supported by a persistent mobile call action.`,
-    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Relevant local project proof", "Process, trust proof, and FAQs", styleProfile.ctaLabel],
+    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Sample visual slots for real service photos", "Verification-ready trust proof and FAQs", styleProfile.ctaLabel],
     portfolioDirection: noWebsiteProspect
       ? "Reserve a clearly labeled project-proof section for verified photos, locations, scope, and outcomes supplied by the business."
-      : "Use labeled project photos with location, scope, and a short outcome instead of an unlabeled gallery.",
+      : "Use a clearly labeled sample layout for project photos until the business supplies verified location, scope, and outcome details.",
     trustStrategy: noWebsiteProspect
       ? "Use only supported public business details, then label any future proof, certification, or review areas as content the business must verify."
-      : `Place ${playbook.trustProof.join(", ")} beside the decisions they support.`,
+      : `Create spaces for ${verifiedProofAreas} beside the decisions they support, but include those claims only when the business verifies them.`,
     leadCaptureStrategy: `Keep the first step focused on ${playbook.leadDetails.join(", ")} and contact details.`,
     generatedAt: now(),
+  };
+  return {
+    ...preview,
+    qualityScore: scorePreviewQuality(prospect, preview),
   };
 }
 

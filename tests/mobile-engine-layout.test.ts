@@ -44,11 +44,13 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.match(mobileCss, /\.prospect-preview-site\[data-layout="project-led"\] \.prospect-preview-hero,/);
   assert.match(mobileCss, /\.prospect-preview-nav div\s*{\s*display: none;/);
   assert.match(mobileCss, /\.prospect-preview-actions\s*{\s*align-items: stretch;\s*flex-direction: column;/);
+  assert.match(mobileCss, /\.prospect-preview-hero__visual img\s*{\s*min-height: 18rem;\s*aspect-ratio: 4 \/ 3;/);
+  assert.match(mobileCss, /\.prospect-preview-service-list article,\s*\.prospect-preview-service-list article:first-child\s*{\s*grid-column: 1 \/ -1;\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.prospect-preview-contact form\s*{\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.prospect-preview-footer\s*{\s*flex-direction: column;/);
   assert.match(mobileCss, /\.prospect-preview-why,/);
   assert.doesNotMatch(css, /--preview-green|--preview-lime/);
-  assert.doesNotMatch(css.slice(css.indexOf(".protected-prospect-preview")), /linear-gradient/);
+  assert.match(css, /prospect-preview-visual-caption/);
 });
 
 test("Outreach Package bulk review exposes the complete human approval workflow on mobile", () => {
