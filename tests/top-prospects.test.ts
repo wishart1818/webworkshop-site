@@ -19,6 +19,7 @@ import {
   prepareTopProspectArtifacts,
   prospectPreviewLink,
   publicProspectPreviewLink,
+  topProspectJobStatuses,
   topProspectRejectionReason,
   topProspectResultDisposition,
   validateTopProspectInput,
@@ -124,6 +125,13 @@ test("Top Prospects input applies bounded production-safe limits", () => {
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, mode: "unknown" }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, workflowType: "unknown" }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, outreachPreference: "cold_call_everyone" }).ok, false);
+});
+
+test("Top Prospects job statuses include waiting and partial completion states", () => {
+  assert.ok(topProspectJobStatuses.includes("NEEDS_NEXT_BATCH"));
+  assert.ok(topProspectJobStatuses.includes("PARTIAL_RESULTS_READY"));
+  assert.ok(topProspectJobStatuses.includes("COMPLETED_WITH_PARTIAL_RESULTS"));
+  assert.ok(topProspectJobStatuses.includes("FAILED_AFTER_DISCOVERY"));
 });
 
 test("duplicate normalization and franchise screening are deterministic", () => {

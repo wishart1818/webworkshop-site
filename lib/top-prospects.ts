@@ -17,7 +17,16 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-export const topProspectJobStatuses = ["QUEUED", "RUNNING", "COMPLETED", "FAILED"] as const;
+export const topProspectJobStatuses = [
+  "QUEUED",
+  "RUNNING",
+  "NEEDS_NEXT_BATCH",
+  "PARTIAL_RESULTS_READY",
+  "COMPLETED",
+  "COMPLETED_WITH_PARTIAL_RESULTS",
+  "FAILED",
+  "FAILED_AFTER_DISCOVERY",
+] as const;
 export type TopProspectJobStatus = (typeof topProspectJobStatuses)[number];
 
 export const prospectModes = ["strict", "growth", "volume"] as const;

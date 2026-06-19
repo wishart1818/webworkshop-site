@@ -160,9 +160,41 @@ function matchesContactFilter(result: TopProspectResult, filter: ContactFilter) 
 }
 
 function jobProgress(job: TopProspectJob) {
-  if (job.status === "COMPLETED") return 100;
+  if (job.status === "COMPLETED" || job.status === "COMPLETED_WITH_PARTIAL_RESULTS") return 100;
   if (job.stage === "DISCOVER") return 5;
   return Math.min(98, Math.round((job.scannedCount / Math.max(1, job.discoveredCount)) * 100));
+}
+
+function jobStatusLabel(status: TopProspectJob["status"]) {
+  const labels: Record<TopProspectJob["status"], string> = {
+    QUEUED: "queued",
+    RUNNING: "running",
+    NEEDS_NEXT_BATCH: "needs next batch",
+    PARTIAL_RESULTS_READY: "partial results ready",
+    COMPLETED: "completed",
+    COMPLETED_WITH_PARTIAL_RESULTS: "completed with partial results",
+    FAILED: "failed",
+    FAILED_AFTER_DISCOVERY: "failed after discovery",
+  };
+  return labels[status] ?? status.toLowerCase();
+}
+
+function jobIsActive(status: TopProspectJob["status"]) {
+  return ["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY"].includes(status);
+}
+
+function jobIsComplete(status: TopProspectJob["status"]) {
+  return status === "COMPLETED" || status === "COMPLETED_WITH_PARTIAL_RESULTS";
+}
+
+function jobStatusDescription(job: TopProspectJob) {
+  if (jobIsComplete(job.status)) return `${workflowLabels[job.input.workflowType]} results and artifacts are ready for review.`;
+  if (job.status === "FAILED" || job.status === "FAILED_AFTER_DISCOVERY") return "Processing stopped before completion. Review the diagnostic below.";
+  if (job.status === "NEEDS_NEXT_BATCH" || job.status === "PARTIAL_RESULTS_READY") {
+    const remaining = Math.max(0, Math.min(job.discoveredCount, job.input.businessesToScan) - job.scannedCount);
+    return `Discovery complete. Run next saved batch to analyze ${remaining} prospect${remaining === 1 ? "" : "s"}.`;
+  }
+  return "You can leave this page. Analysis and generated artifacts are saved after every batch.";
 }
 
 function safeWebsite(value: string) {
@@ -186,6 +218,21 @@ function partialDiscoverySummary(diagnostics: DiscoveryDiagnostics | null) {
   return issues.length ? `Partial results: ${issues.join(" / ")}` : "";
 }
 
+function StageProgress({ job, preparedArtifacts }: { job: TopProspectJob; preparedArtifacts: number }) {
+  const discovered = job.discoveredCount;
+  const scanTarget = Math.max(1, Math.min(discovered || job.input.businessesToScan, job.input.businessesToScan));
+  const scanProgress = Math.min(100, Math.round((job.scannedCount / scanTarget) * 100));
+  const artifactProgress = Math.min(100, Math.round((preparedArtifacts / Math.max(1, discovered)) * 100));
+  return (
+    <div className="engine-stage-progress" aria-label="Top Prospects stage progress">
+      <span><b>Discovery</b><i>{discovered ? "Complete" : job.stage === "DISCOVER" ? "Running" : "Waiting"}</i></span>
+      <span><b>Website scan</b><i>{job.scannedCount}/{scanTarget} scanned · {scanProgress}%</i></span>
+      <span><b>Preview generation</b><i>{preparedArtifacts}/{discovered || 0} generated · {artifactProgress}%</i></span>
+      <span><b>Outreach packages</b><i>{preparedArtifacts}/{discovered || 0} generated · {artifactProgress}%</i></span>
+    </div>
+  );
+}
+
 export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Props) {
   const [jobs, setJobs] = useState<TopProspectJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -201,7 +248,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [selectedWorkflow, setSelectedWorkflow] = useState<TopProspectWorkflowType>("search");
   const [selectedOutreachPreference, setSelectedOutreachPreference] = useState<OutreachPreference>("written_only");
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
-  const activeJob = jobs.find((job) => ["QUEUED", "RUNNING"].includes(job.status));
+  const activeJob = jobs.find((job) => jobIsActive(job.status));
   const latestJob = activeJob ?? jobs[0];
   const best = jobs.find((job) => job.results.length)?.results[0];
   const queuedResults = latestJob ? [...latestJob.results, ...latestJob.reviewedNotRecommended] : [];
@@ -351,8 +398,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob && (
         <section className="engine-panel engine-job-progress" aria-live="polite">
           <div className="engine-panel__head">
-            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{latestJob.status === "COMPLETED" ? `${workflowLabels[latestJob.input.workflowType]} results and artifacts are ready for review.` : latestJob.status === "FAILED" ? "Processing stopped before completion. Review the diagnostic below." : "You can leave this page. Analysis and generated artifacts are saved after every batch."}</p></div>
-            <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase()}`}>{latestJob.status.toLowerCase()}</span>
+            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{jobStatusDescription(latestJob)}</p></div>
+            <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase().replaceAll("_", "-")}`}>{jobStatusLabel(latestJob.status)}</span>
           </div>
           <div className="engine-job-meta">
             <span>Job ID <code>{latestJob.id}</code></span>
@@ -364,15 +411,16 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span>Outreach <b>{outreachPreferenceLabels[latestJob.input.outreachPreference]}</b></span>
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
+          <StageProgress job={latestJob} preparedArtifacts={preparedArtifacts} />
           <div className="engine-job-stats">
             <span><b>{latestJob.discoveredCount}</b> discovered</span>
             <span><b>{latestJob.scannedCount}</b> scanned</span>
             <span><b>{latestJob.qualifiedCount}</b> qualified</span>
             <span><b>{latestJob.skippedCount}</b> skipped</span>
-            {["QUEUED", "RUNNING"].includes(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Run next saved batch</button>}
-            {latestJob.status === "FAILED" && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
+            {jobIsActive(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">{latestJob.stage === "DISCOVER" ? "Continue discovery" : "Run next saved batch"}</button>}
+            {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
           </div>
-          {latestJob.status === "FAILED" && latestJob.failureClassification && (
+          {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && latestJob.failureClassification && (
             <div className="engine-job-failure" role="alert">
               <b>{failureLabels[latestJob.failureClassification]}</b>
               <p>{latestJob.errorMessage}</p>
@@ -424,7 +472,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob?.results.length ? (
         <section className="engine-panel engine-top-results">
           <div className="engine-panel__head"><div><h2>{latestJob.input.prospectType === "no_website_social_only" ? "No Website / Social Only Prospects" : latestJob.input.prospectType === "all" ? "Ranked Prospects Across All Types" : "Ranked Top Prospects"}</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Kept separate from redesign prospects and ranked by presence gap, activity, contactability, and local fit." : latestJob.input.prospectType === "all" ? "Redesign and no-website opportunities are ranked together using the scoring model appropriate to each business." : `${modeLabels[latestJob.input.mode]} ranks qualified local businesses by a public-data sales heuristic, not verified revenue.`}</p></div><span>{latestJob.results.length} ready for review</span></div>
-          {latestJob.status === "COMPLETED" && latestJob.results.length < latestJob.input.finalProspectsWanted && (
+          {jobIsComplete(latestJob.status) && latestJob.results.length < latestJob.input.finalProspectsWanted && (
             <p className="engine-skip-summary">{latestJob.input.prospectType === "no_website_social_only" ? `Only ${latestJob.results.length} active no-website prospects found. Increase radius or scan count to find more.` : `Only ${latestJob.results.length} prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.`}</p>
           )}
           <ContactFilterBar contactFilter={contactFilter} setContactFilter={setContactFilter} />
@@ -448,7 +496,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             ))}
           </div>
         </section>
-      ) : !latestJob || latestJob.status === "COMPLETED" ? (
+      ) : !latestJob || jobIsComplete(latestJob.status) ? (
         <section className="engine-panel"><EmptyState title="No ranked Top Prospects yet" body={latestJob ? latestJob.input.prospectType === "no_website_social_only" ? "No active, contactable no-website prospects matched this search. Increase radius or scan count." : `No prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.` : "Start a search to discover, qualify, analyze, and rank local contractor businesses."} /></section>
       ) : null}
 

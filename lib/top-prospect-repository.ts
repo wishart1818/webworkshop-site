@@ -3,7 +3,7 @@ import { activity } from "@/lib/prospect-engine";
 import { getProspectDatabase, getProspect, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { discoveryDiagnosticsFromJson, discoveryLeadsFromJson } from "@/lib/lead-discovery";
-import { parseTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
+import { encodeTopProspectJobFailure, parseTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import type {
   OutreachPackageAction,
   TopProspectInput,
@@ -33,6 +33,20 @@ const jobInclude = {
 } satisfies Prisma.TopProspectJobInclude;
 
 type JobRow = Prisma.TopProspectJobGetPayload<{ include: typeof jobInclude }>;
+const staleRunningMs = 10 * 60_000;
+const activeTopProspectStatuses = ["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY"];
+
+function discoveryHasPartialIssues(value: Prisma.JsonValue | null) {
+  const diagnostics = discoveryDiagnosticsFromJson(value);
+  return Boolean(
+    diagnostics?.tradeDiagnostics?.some((trade) => trade.status === "partial" || trade.status === "skipped" || trade.rateLimitedProviders?.length)
+    || Object.values(diagnostics?.providerDiagnostics ?? {}).some((provider) => ["rate_limited", "failed", "timed_out"].includes(provider.status)),
+  );
+}
+
+function waitingStatusForSavedDiscovery(value: Prisma.JsonValue | null) {
+  return discoveryHasPartialIssues(value) ? "PARTIAL_RESULTS_READY" : "NEEDS_NEXT_BATCH";
+}
 
 function recordValue(value: Prisma.JsonValue | null): Record<string, number> {
   if (!value || Array.isArray(value) || typeof value !== "object") return {};
@@ -154,7 +168,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
 export async function createTopProspectJob(input: TopProspectInput) {
   await ensureTopProspectSchema();
   const database = getProspectDatabase();
-  const active = await database.topProspectJob.findFirst({ where: { status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
+  await reconcileStaleTopProspectJobs();
+  const active = await database.topProspectJob.findFirst({ where: { status: { in: activeTopProspectStatuses } }, select: { id: true } });
   if (active) throw new Error("A Top Prospects search is already running.");
   const job = await database.topProspectJob.create({
     data: {
@@ -194,6 +209,7 @@ export async function getTopProspectJob(id: string) {
 
 export async function listTopProspectJobs() {
   await ensureTopProspectSchema();
+  await reconcileStaleTopProspectJobs();
   const rows = await getProspectDatabase().topProspectJob.findMany({ include: jobInclude, orderBy: { createdAt: "desc" }, take: 10 });
   return Promise.all(rows.map(toJob));
 }
@@ -231,15 +247,70 @@ export async function getPublicProspectPreview(token: string) {
 
 export async function findResumableTopProspectJobId(now = new Date()) {
   await ensureTopProspectSchema();
+  await reconcileStaleTopProspectJobs(now);
   const row = await getProspectDatabase().topProspectJob.findFirst({
     where: {
-      status: { in: ["QUEUED", "RUNNING"] },
+      status: { in: activeTopProspectStatuses },
       OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
     },
     orderBy: { createdAt: "asc" },
     select: { id: true },
   });
   return row?.id ?? null;
+}
+
+export async function reconcileStaleTopProspectJobs(now = new Date()) {
+  const database = getProspectDatabase();
+  const staleBefore = new Date(now.getTime() - staleRunningMs);
+  const rows = await database.topProspectJob.findMany({
+    where: {
+      status: "RUNNING",
+      updatedAt: { lte: staleBefore },
+      OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+    },
+    select: {
+      id: true,
+      stage: true,
+      discoveredLeads: true,
+    },
+  });
+  for (const row of rows) {
+    const leads = discoveryLeadsFromJson(row.discoveredLeads);
+    if (leads.length > 0 && row.stage === "DISCOVER") {
+      await database.topProspectJob.update({
+        where: { id: row.id },
+        data: {
+          status: waitingStatusForSavedDiscovery(row.discoveredLeads),
+          stage: "ANALYZE",
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+      continue;
+    }
+    if (leads.length > 0 && row.stage === "ANALYZE") {
+      await database.topProspectJob.update({
+        where: { id: row.id },
+        data: {
+          status: waitingStatusForSavedDiscovery(row.discoveredLeads),
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+      continue;
+    }
+    if (leads.length === 0 && row.stage !== "COMPLETE") {
+      await database.topProspectJob.update({
+        where: { id: row.id },
+        data: {
+          status: "FAILED_AFTER_DISCOVERY",
+          errorMessage: encodeTopProspectJobFailure("discovery_provider_error", "Discovery stopped before saved eligible prospects were available."),
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+    }
+  }
 }
 
 function packageResultFromJob(job: TopProspectJob, resultId: string) {

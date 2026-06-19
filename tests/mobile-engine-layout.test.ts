@@ -6,6 +6,8 @@ const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "
 const topProspectsWorkspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
 const prospectEngineWorkspace = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
 const prospectEngine = readFileSync(new URL("../lib/prospect-engine.ts", import.meta.url), "utf8");
+const topProspectWorker = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
+const topProspectRepository = readFileSync(new URL("../lib/top-prospect-repository.ts", import.meta.url), "utf8");
 const mobileStart = css.indexOf("@media (max-width: 767px)");
 const mobileEnd = css.indexOf("@media (max-width: 420px)");
 const mobileCss = css.slice(mobileStart, mobileEnd);
@@ -79,6 +81,17 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /defaultValue="50"/);
   assert.match(topProspectsWorkspace, /defaultValue="15"/);
   assert.match(topProspectsWorkspace, /total all-trades budget/);
+  assert.match(topProspectsWorkspace, /Discovery complete\. Run next saved batch to analyze/);
+  assert.match(topProspectsWorkspace, /Website scan/);
+  assert.match(topProspectsWorkspace, /Preview generation/);
+  assert.match(topProspectsWorkspace, /Outreach packages/);
+  assert.match(topProspectsWorkspace, /NEEDS_NEXT_BATCH/);
+  assert.match(topProspectsWorkspace, /PARTIAL_RESULTS_READY/);
+  assert.match(topProspectWorker, /BATCH_SIZE = 3/);
+  assert.match(topProspectWorker, /waitingStatusForDiscovery/);
+  assert.match(topProspectWorker, /status: done \? "RUNNING" : waitingStatus/);
+  assert.match(topProspectRepository, /reconcileStaleTopProspectJobs/);
+  assert.match(topProspectRepository, /staleRunningMs = 10 \* 60_000/);
   assert.match(topProspectsWorkspace, /Outreach preference/);
   assert.match(topProspectsWorkspace, /Written outreach only/);
   assert.match(topProspectsWorkspace, /Phone allowed/);

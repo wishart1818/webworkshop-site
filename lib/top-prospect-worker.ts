@@ -47,8 +47,9 @@ import {
 } from "@/lib/top-prospect-diagnostics";
 
 const LEASE_MS = 90_000;
-const BATCH_SIZE = 1;
+const BATCH_SIZE = 3;
 const contactedStatuses = new Set(["Contacted", "Interested", "Proposal Sent", "Closed Won", "Closed Lost"]);
+const resumableStatuses = ["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY", "FAILED", "FAILED_AFTER_DISCOVERY"];
 
 function emptySourceCounts(): DiscoverySourceCounts {
   return { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 };
@@ -91,19 +92,22 @@ function combineBooleanState(values: Array<boolean | null>) {
   return null;
 }
 
-function combineProviderDiagnostics(results: DiscoveryResult[]): DiscoveryProviderDiagnostics {
+function combineProviderDiagnosticsFromTradeDiagnostics(tradeDiagnostics: TradeDiscoveryDiagnostic[]): DiscoveryProviderDiagnostics {
   const combined = emptyProviderDiagnostics();
   for (const provider of discoveryProviders) {
-    const items = results.map((result) => result.diagnostics.providerDiagnostics[provider]);
-    combined[provider] = {
-      configured: combineBooleanState(items.map((item) => item.configured)),
-      queryExecuted: combineBooleanState(items.map((item) => item.queryExecuted)),
-      status: combineProviderStatus(items),
-      returnedCount: items.reduce((total, item) => total + item.returnedCount, 0),
-      withinRadiusCount: items.reduce((total, item) => total + item.withinRadiusCount, 0),
-      afterDeduplicationCount: items.reduce((total, item) => total + item.afterDeduplicationCount, 0),
-      usableWebsiteCount: items.reduce((total, item) => total + item.usableWebsiteCount, 0),
-    };
+    const items = tradeDiagnostics.map((trade) => trade.providerDiagnostics[provider]).filter(Boolean);
+    combined[provider] = items.length
+      ? {
+          configured: combineBooleanState(items.map((item) => item.configured)),
+          queryExecuted: combineBooleanState(items.map((item) => item.queryExecuted)),
+          status: combineProviderStatus(items),
+          returnedCount: items.reduce((total, item) => total + item.returnedCount, 0),
+          withinRadiusCount: items.reduce((total, item) => total + item.withinRadiusCount, 0),
+          afterDeduplicationCount: items.reduce((total, item) => total + item.afterDeduplicationCount, 0),
+          usableWebsiteCount: items.reduce((total, item) => total + item.usableWebsiteCount, 0),
+          retryCount: items.reduce((total, item) => total + (item.retryCount ?? 0), 0),
+        }
+      : combined[provider];
   }
   return combined;
 }
@@ -221,11 +225,27 @@ export function combineTradeDiscoveryResults(input: {
     radiusKm: input.radiusKm,
     categorySignals: input.results.flatMap((item) => item.result.diagnostics.categorySignals),
     sourceCounts: combineSourceCounts(input.results.map((item) => item.result)),
-    providerDiagnostics: combineProviderDiagnostics(input.results.map((item) => item.result)),
+    providerDiagnostics: combineProviderDiagnosticsFromTradeDiagnostics(tradeDiagnostics),
     finalMergedCount: allLeads.length,
     tradeDiagnostics,
   };
   return { leads, diagnostics };
+}
+
+function discoveryHasPartialIssues(diagnostics: DiscoveryDiagnostics | null | undefined) {
+  return Boolean(
+    diagnostics?.tradeDiagnostics?.some((trade) => trade.status === "partial" || trade.status === "skipped" || trade.rateLimitedProviders?.length)
+    || Object.values(diagnostics?.providerDiagnostics ?? {}).some((provider) => ["rate_limited", "failed", "timed_out"].includes(provider.status)),
+  );
+}
+
+function waitingStatusForDiscovery(discovery: DiscoveryResult) {
+  if (discovery.leads.length === 0) return "FAILED_AFTER_DISCOVERY";
+  return discoveryHasPartialIssues(discovery.diagnostics) ? "PARTIAL_RESULTS_READY" : "NEEDS_NEXT_BATCH";
+}
+
+function completedStatusForDiscovery(discoveredLeads: Prisma.JsonValue | null) {
+  return discoveryHasPartialIssues(discoveryDiagnosticsFromJson(discoveredLeads)) ? "COMPLETED_WITH_PARTIAL_RESULTS" : "COMPLETED";
 }
 
 export function tradeFailureDiscoveryResult(input: {
@@ -399,7 +419,7 @@ async function claimJob(jobId: string) {
   const claimed = await database.topProspectJob.updateMany({
     where: {
       id: jobId,
-      status: { in: ["QUEUED", "RUNNING", "FAILED"] },
+      status: { in: resumableStatuses },
       OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
     },
     data: { status: "RUNNING", leaseToken: token, leaseUntil: new Date(now.getTime() + LEASE_MS), errorMessage: null },
@@ -415,7 +435,7 @@ async function releaseLease(jobId: string, token: string) {
   });
 }
 
-async function finalizeJob(jobId: string, wanted: number) {
+async function finalizeJob(jobId: string, wanted: number, discoveredLeads: Prisma.JsonValue | null) {
   const database = getProspectDatabase();
   const ranked = await database.topProspectResult.findMany({
     where: { jobId, selected: true },
@@ -429,7 +449,7 @@ async function finalizeJob(jobId: string, wanted: number) {
     })),
     database.topProspectJob.update({
       where: { id: jobId },
-      data: { status: "COMPLETED", stage: "COMPLETE", completedAt: new Date(), leaseToken: null, leaseUntil: null },
+      data: { status: completedStatusForDiscovery(discoveredLeads), stage: "COMPLETE", completedAt: new Date(), leaseToken: null, leaseUntil: null },
     }),
   ]);
 }
@@ -626,14 +646,36 @@ export async function processTopProspectJob(jobId: string) {
         },
       });
       console.info("[top-prospects] Discovery completed.", { jobId: job.id, ...discovery.diagnostics });
+      const status = waitingStatusForDiscovery(discovery);
       await getProspectDatabase().topProspectJob.update({
         where: { id: job.id },
-        data: { discoveredLeads: discovery as unknown as Prisma.InputJsonValue, stage: "ANALYZE", leaseToken: null, leaseUntil: null },
+        data: {
+          discoveredLeads: discovery as unknown as Prisma.InputJsonValue,
+          stage: discovery.leads.length ? "ANALYZE" : "DISCOVER",
+          status,
+          errorMessage: status === "FAILED_AFTER_DISCOVERY"
+            ? encodeTopProspectJobFailure("discovery_provider_error", "Discovery completed with no eligible prospects. Review provider diagnostics and adjust the search.")
+            : null,
+          leaseToken: null,
+          leaseUntil: null,
+        },
       });
-      return { status: "running" as const, shouldContinue: true };
+      return { status: status.toLowerCase() as "needs_next_batch" | "partial_results_ready" | "failed_after_discovery", shouldContinue: discovery.leads.length > 0 };
     }
 
     const leads = discoveryLeadsFromJson(job.discoveredLeads);
+    if (leads.length === 0) {
+      await getProspectDatabase().topProspectJob.updateMany({
+        where: { id: job.id, leaseToken: token },
+        data: {
+          status: "FAILED_AFTER_DISCOVERY",
+          errorMessage: encodeTopProspectJobFailure("discovery_provider_error", "No saved eligible prospects were available for analysis."),
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+      return { status: "failed_after_discovery" as const, shouldContinue: false };
+    }
     const mode = normalizeProspectMode(job.prospectMode);
     const outreachPreference = normalizeOutreachPreference(job.outreachPreference);
     const batch = leads.slice(job.nextLeadIndex, job.nextLeadIndex + BATCH_SIZE);
@@ -653,9 +695,13 @@ export async function processTopProspectJob(jobId: string) {
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
     const done = nextLeadIndex >= leads.length || nextLeadIndex >= job.businessesToScan;
+    const waitingStatus = discoveryHasPartialIssues(discoveryDiagnosticsFromJson(job.discoveredLeads))
+      ? "PARTIAL_RESULTS_READY"
+      : "NEEDS_NEXT_BATCH";
     await getProspectDatabase().topProspectJob.update({
       where: { id: job.id },
       data: {
+        status: done ? "RUNNING" : waitingStatus,
         nextLeadIndex,
         scannedCount: { increment: batch.length },
         qualifiedCount: { increment: qualified },
@@ -666,10 +712,10 @@ export async function processTopProspectJob(jobId: string) {
       },
     });
     if (done) {
-      await finalizeJob(job.id, job.finalProspectsWanted);
+      await finalizeJob(job.id, job.finalProspectsWanted, job.discoveredLeads);
       return { status: "completed" as const, shouldContinue: false };
     }
-    return { status: "running" as const, shouldContinue: true };
+    return { status: waitingStatus.toLowerCase() as "needs_next_batch" | "partial_results_ready", shouldContinue: true };
   } catch (error) {
     const failure = safeTopProspectJobFailure(error);
     await getProspectDatabase().topProspectJob.updateMany({
