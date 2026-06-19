@@ -142,7 +142,7 @@ test("website analysis failures classify into persistent presence-gap states", (
   assert.equal(broken.analysis, undefined);
   assert.equal(broken.websiteStatus, "http_404");
   assert.ok(broken.websiteAnalysisAttemptedAt);
-  assert.deepEqual(prospectPresenceLabels(broken), ["Broken website", "Phone only"]);
+  assert.deepEqual(prospectPresenceLabels(broken), ["Broken website", "Phone only", "Phone-only / written outreach blocked", "Needs manual contact research"]);
 });
 
 test("no-website prospects still generate ownership-focused outreach", () => {

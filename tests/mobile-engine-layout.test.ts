@@ -4,6 +4,7 @@ import test from "node:test";
 
 const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
 const topProspectsWorkspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
+const prospectEngineWorkspace = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
 const prospectEngine = readFileSync(new URL("../lib/prospect-engine.ts", import.meta.url), "utf8");
 const mobileStart = css.indexOf("@media (max-width: 767px)");
 const mobileEnd = css.indexOf("@media (max-width: 420px)");
@@ -54,6 +55,9 @@ test("Outreach Package bulk review exposes the complete human approval workflow 
   assert.match(topProspectsWorkspace, /Approve to Send/);
   assert.match(topProspectsWorkspace, /Email quality checks/);
   assert.match(topProspectsWorkspace, /Public preview link/);
+  assert.match(topProspectsWorkspace, /Send-ready/);
+  assert.match(topProspectsWorkspace, /Phone-only \/ written outreach blocked/);
+  assert.match(topProspectsWorkspace, /Missing written contact method/);
   assert.match(topProspectsWorkspace, /Mark Sent/);
   assert.match(topProspectsWorkspace, /Skip/);
   assert.match(topProspectsWorkspace, /Open Lovable/);
@@ -66,6 +70,16 @@ test("Outreach Package bulk review exposes the complete human approval workflow 
 
 test("Top Prospects exposes modes, background batch workflow, queue, and requested score labels", () => {
   assert.match(topProspectsWorkspace, /Prospect mode/);
+  assert.match(topProspectsWorkspace, /Outreach preference/);
+  assert.match(topProspectsWorkspace, /Written outreach only/);
+  assert.match(topProspectsWorkspace, /Phone allowed/);
+  assert.match(topProspectsWorkspace, /Email available/);
+  assert.match(topProspectsWorkspace, /Contact form available/);
+  assert.match(topProspectsWorkspace, /Social message available/);
+  assert.match(topProspectsWorkspace, /Hide phone-only leads/);
+  assert.match(topProspectsWorkspace, /Send-ready only/);
+  assert.match(topProspectsWorkspace, /Needs contact research/);
+  assert.match(prospectEngineWorkspace, /Filter by contact method/);
   assert.match(topProspectsWorkspace, /Morning Prospect Batch/);
   assert.match(topProspectsWorkspace, /Auto Prospect Queue/);
   assert.match(topProspectsWorkspace, /Final weighted sales/);

@@ -10,10 +10,13 @@ import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { analyzePublicWebsite, classifyWebsiteAnalysisFailure } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
+  likelySupplierOrDistributor,
   normalizeProspectMode,
+  normalizeOutreachPreference,
   normalizeWebsite,
   prepareTopProspectArtifacts,
   publicProspectPreviewLink,
+  type OutreachPreference,
   type ProspectMode,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
@@ -95,6 +98,7 @@ async function saveTopProspectResult(
   jobId: string,
   prospect: Prospect,
   mode: ProspectMode,
+  outreachPreference: OutreachPreference,
 ) {
   const database = getProspectDatabase();
   const existingResult = await database.topProspectResult.findUnique({
@@ -102,8 +106,8 @@ async function saveTopProspectResult(
     select: { publicPreviewToken: true },
   });
   const publicPreviewToken = existingResult?.publicPreviewToken ?? createPublicPreviewToken();
-  const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken));
-  const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode);
+  const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken), outreachPreference);
+  const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode, outreachPreference);
   const scores = prepared.assessment.salesScores;
   await saveProspect({
     ...prepared.prospect,
@@ -161,9 +165,14 @@ async function processLead(
   lead: DiscoveredLead,
   summary: Record<string, number>,
   mode: ProspectMode,
+  outreachPreference: OutreachPreference,
 ) {
   if (likelyNationalOrLargeBrand(lead)) {
     addSkip(summary, "national_large_brand");
+    return false;
+  }
+  if (likelySupplierOrDistributor(lead)) {
+    addSkip(summary, "supplier_distributor");
     return false;
   }
   if (lead.inactive) {
@@ -197,7 +206,7 @@ async function processLead(
       recoverableTopProspect(existing, jobCreatedAt)
       || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach && existing.preview)
     ) {
-      const rejectionReason = await saveTopProspectResult(jobId, existing, mode);
+      const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
       return rejectionReason === null;
     }
@@ -240,7 +249,7 @@ async function processLead(
       ...prospect.activities,
     ],
   };
-  const rejectionReason = await saveTopProspectResult(jobId, prospect, mode);
+  const rejectionReason = await saveTopProspectResult(jobId, prospect, mode, outreachPreference);
   if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
   return rejectionReason === null;
 }
@@ -281,6 +290,7 @@ export async function processTopProspectJob(jobId: string) {
 
     const leads = discoveryLeadsFromJson(job.discoveredLeads);
     const mode = normalizeProspectMode(job.prospectMode);
+    const outreachPreference = normalizeOutreachPreference(job.outreachPreference);
     const batch = leads.slice(job.nextLeadIndex, job.nextLeadIndex + BATCH_SIZE);
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;
@@ -294,7 +304,7 @@ export async function processTopProspectJob(jobId: string) {
           recommendedContactMethod: lead.recommendedContactMethod,
         });
       }
-      if (await processLead(job.id, job.createdAt, lead, summary, mode)) qualified += 1;
+      if (await processLead(job.id, job.createdAt, lead, summary, mode, outreachPreference)) qualified += 1;
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
     const done = nextLeadIndex >= leads.length || nextLeadIndex >= job.businessesToScan;

@@ -93,6 +93,23 @@ test("unapproved outreach renders compliance review and disabled copy controls",
   assert.match(html, /disabled=""/);
 });
 
+test("phone-only outreach drafts show written-outreach block before approval", () => {
+  const prospect = withOutreach({
+    ...structuredClone(seedProspects[1]),
+    email: "",
+    contactFormUrl: "",
+    profileUrl: "",
+    classification: "phone_only",
+    recommendedContactMethod: "needs_manual_contact_research",
+  });
+  const html = renderDetail(prospect, "Outreach");
+
+  assert.match(html, /Written outreach is blocked/);
+  assert.match(html, /Needs manual contact research/);
+  assert.match(html, /Approve personal draft/);
+  assert.match(html, /disabled=""/);
+});
+
 test("preview workspace renders the complete contractor strategy", () => {
   const prospect = withPreview(structuredClone(seedProspects[2]));
   const html = renderDetail(prospect, "Preview");

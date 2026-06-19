@@ -185,9 +185,9 @@ test("No Website / Social Only discovery keeps active businesses and classifies 
   assert.equal(result.leads[0].classification, "social_only");
   assert.equal(result.leads[0].recommendedContactMethod, "message_on_facebook");
   assert.equal(result.leads[1].classification, "phone_only");
-  assert.equal(result.leads[1].recommendedContactMethod, "call_first");
+  assert.equal(result.leads[1].recommendedContactMethod, "needs_manual_contact_research");
   assert.equal(result.leads[2].classification, "not_enough_contact_info");
-  assert.equal(result.leads[2].recommendedContactMethod, "needs_manual_contact_research");
+  assert.equal(result.leads[2].recommendedContactMethod, "do_not_contact");
 });
 
 test("All Prospect Types discovery returns redesign and no-website opportunities together", () => {

@@ -5,6 +5,7 @@ import {
   generateOutreach,
   generatePreview,
   prospectContactMethodIsUsable,
+  prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
   type Analysis,
   type Prospect,
@@ -21,6 +22,9 @@ export type ProspectMode = (typeof prospectModes)[number];
 
 export const topProspectWorkflowTypes = ["search", "morning_batch"] as const;
 export type TopProspectWorkflowType = (typeof topProspectWorkflowTypes)[number];
+
+export const outreachPreferences = ["written_only", "phone_allowed"] as const;
+export type OutreachPreference = (typeof outreachPreferences)[number];
 
 export const outreachPackageStatuses = [
   "NOT_GENERATED",
@@ -45,6 +49,7 @@ export type TopProspectInput = {
   prospectType: ProspectSearchType;
   mode: ProspectMode;
   workflowType: TopProspectWorkflowType;
+  outreachPreference: OutreachPreference;
 };
 
 export type ProspectSalesScores = {
@@ -82,6 +87,8 @@ export const topProspectRejectionReasons = [
   "No usable contact path",
   "Inactive business",
   "Duplicate/bad fit",
+  "Supplier/distributor",
+  "Phone-only / written outreach blocked",
   "Below final cutoff",
 ] as const;
 export type TopProspectRejectionReason = (typeof topProspectRejectionReasons)[number];
@@ -111,9 +118,22 @@ export type OutreachEmailQualityCheck = {
 
 export type OutreachEmailQuality = {
   ready: boolean;
+  readinessLabel: SendReadinessLabel;
   checks: OutreachEmailQualityCheck[];
   issues: string[];
 };
+
+export const sendReadinessLabels = [
+  "Send-ready",
+  "Needs review",
+  "Missing written contact method",
+  "Phone-only / written outreach blocked",
+  "Preview quality issue",
+  "Unsupported claim",
+  "Too generic",
+  "Bad fit",
+] as const;
+export type SendReadinessLabel = (typeof sendReadinessLabels)[number];
 
 export type TopProspectJob = {
   id: string;
@@ -167,6 +187,22 @@ const nationalOrLargeBrandSignals = [
   "renewal by andersen",
 ];
 
+const supplierDistributorSignals = [
+  "building supply",
+  "distribution",
+  "distributor",
+  "exterior supply",
+  "lumber",
+  "material supply",
+  "materials",
+  "roofing products",
+  "roofing supply",
+  "siding supply",
+  "supplier",
+  "supply company",
+  "wholesale",
+];
+
 export function normalizeWebsite(value: string) {
   if (!value.trim()) return "";
   const url = new URL(value);
@@ -181,6 +217,11 @@ export function likelyFranchise(lead: Pick<DiscoveredLead, "businessName" | "web
 export function likelyNationalOrLargeBrand(lead: Pick<DiscoveredLead, "businessName" | "website">) {
   const value = `${lead.businessName} ${normalizeWebsite(lead.website)}`.toLowerCase();
   return nationalOrLargeBrandSignals.some((signal) => value.includes(signal));
+}
+
+export function likelySupplierOrDistributor(lead: Pick<DiscoveredLead, "businessName" | "website">) {
+  const value = `${lead.businessName} ${normalizeWebsite(lead.website)}`.toLowerCase();
+  return supplierDistributorSignals.some((signal) => value.includes(signal));
 }
 
 function websiteFit(score: number) {
@@ -218,6 +259,12 @@ export function normalizeTopProspectWorkflowType(value: unknown): TopProspectWor
     : "search";
 }
 
+export function normalizeOutreachPreference(value: unknown): OutreachPreference {
+  return typeof value === "string" && outreachPreferences.includes(value as OutreachPreference)
+    ? value as OutreachPreference
+    : "written_only";
+}
+
 export function normalizeOutreachPackageStatus(value: unknown): OutreachPackageStatus {
   return typeof value === "string" && outreachPackageStatuses.includes(value as OutreachPackageStatus)
     ? value as OutreachPackageStatus
@@ -248,11 +295,35 @@ function isPublicPreviewLink(value: string) {
   }
 }
 
-export function evaluateOutreachEmailQuality(prospect: Prospect, previewLink: string): OutreachEmailQuality {
+export function prospectHasWrittenContactMethod(prospect: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl">) {
+  return prospectWrittenContactMethodIsUsable(prospect);
+}
+
+export function prospectHasPhoneContactMethod(prospect: Pick<Prospect, "recommendedContactMethod" | "phone">) {
+  return prospect.recommendedContactMethod === "call_first" && Boolean(prospect.phone);
+}
+
+export function evaluateOutreachEmailQuality(
+  prospect: Prospect,
+  previewLink: string,
+  outreachPreference: OutreachPreference = "written_only",
+): OutreachEmailQuality {
   const outreach = prospect.outreach;
   const drafts = outreach ? [outreach.concise, outreach.detailed, ...outreach.followUps] : [];
   const combined = drafts.join("\n");
   const mainEmails = outreach ? [outreach.concise, outreach.detailed] : [];
+  const writtenContactReady = prospectHasWrittenContactMethod(prospect);
+  const phoneOnlyBlocked = outreachPreference === "written_only"
+    && !writtenContactReady
+    && Boolean(prospect.phone || prospect.classification === "phone_only" || prospect.recommendedContactMethod === "call_first");
+  const usableContactReady = outreachPreference === "phone_allowed"
+    ? prospectContactMethodIsUsable(prospect)
+    : writtenContactReady;
+  const badFit = prospect.inactive
+    || prospect.classification === "national_large_brand"
+    || prospect.classification === "duplicate_bad_fit"
+    || likelyNationalOrLargeBrand(prospect)
+    || likelySupplierOrDistributor(prospect);
   const publicLinkReady = isPublicPreviewLink(previewLink)
     && mainEmails.every((draft) => draft.includes(previewLink))
     && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier email/i.test(draft)));
@@ -294,17 +365,19 @@ export function evaluateOutreachEmailQuality(prospect: Prospect, previewLink: st
       passed: drafts.length >= 4 && drafts.every((draft) => /\[Add your business postal address before sending\]/i.test(draft)),
     },
     {
-      key: "usable_contact_method",
-      label: "A usable public contact method exists",
-      passed: prospectContactMethodIsUsable(prospect),
+      key: "written_contact_method",
+      label: outreachPreference === "written_only" ? "A usable written contact method exists" : "A usable public contact method exists",
+      passed: usableContactReady,
+    },
+    {
+      key: "phone_only_blocked",
+      label: "Phone-only leads are blocked from written outreach",
+      passed: !phoneOnlyBlocked,
     },
     {
       key: "active_local_business",
       label: "Business appears active, local, and independently operated",
-      passed: !prospect.inactive
-        && prospect.classification !== "national_large_brand"
-        && prospect.classification !== "duplicate_bad_fit"
-        && !likelyNationalOrLargeBrand(prospect),
+      passed: !badFit,
     },
     {
       key: "supported_facts_only",
@@ -313,17 +386,29 @@ export function evaluateOutreachEmailQuality(prospect: Prospect, previewLink: st
         && !/\b(?:licensed|insured|certified|award(?:ed|-winning)?|guaranteed?|warrant(?:y|ies)|testimonials?|years? (?:of experience|in business)|recent local (?:work|projects?|roofs?))\b/i.test(combined),
     },
   ];
-  return {
-    ready: checks.every((check) => check.passed),
-    checks,
-    issues: checks.filter((check) => !check.passed).map((check) => check.label),
-  };
+  const issues = checks.filter((check) => !check.passed).map((check) => check.label);
+  const readinessLabel: SendReadinessLabel = issues.length === 0
+    ? "Send-ready"
+    : badFit
+      ? "Bad fit"
+      : !publicLinkReady
+        ? "Preview quality issue"
+        : phoneOnlyBlocked
+          ? "Phone-only / written outreach blocked"
+          : !writtenContactReady && outreachPreference === "written_only"
+            ? "Missing written contact method"
+            : checks.some((check) => check.key === "supported_facts_only" && !check.passed)
+              ? "Unsupported claim"
+              : checks.some((check) => ["real_strength", "missed_opportunity", "clear_cta"].includes(check.key) && !check.passed)
+                ? "Too generic"
+                : "Needs review";
+  return { ready: issues.length === 0, readinessLabel, checks, issues };
 }
 
-export function assertOutreachEmailReady(prospect: Prospect, previewLink: string) {
-  const quality = evaluateOutreachEmailQuality(prospect, previewLink);
+export function assertOutreachEmailReady(prospect: Prospect, previewLink: string, outreachPreference: OutreachPreference = "written_only") {
+  const quality = evaluateOutreachEmailQuality(prospect, previewLink, outreachPreference);
   if (!quality.ready) {
-    throw new Error(`This Outreach Package cannot be approved before all email quality checks pass: ${quality.issues.join(", ")}.`);
+    throw new Error(`This Outreach Package cannot be approved before all email quality checks pass. Send readiness: ${quality.readinessLabel}. Required fixes: ${quality.issues.join(", ")}.`);
   }
   return quality;
 }
@@ -512,12 +597,21 @@ export function topProspectRejectionReason(
   prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
+  outreachPreference: OutreachPreference = "written_only",
 ): TopProspectRejectionReason | null {
   if (likelyNationalOrLargeBrand(prospect)) return "National/large brand";
+  if (likelySupplierOrDistributor(prospect)) return "Supplier/distributor";
   if (prospect.inactive) return "Inactive business";
   if (prospect.classification === "duplicate_bad_fit") return "Duplicate/bad fit";
+  const usableContact = outreachPreference === "phone_allowed"
+    ? prospectContactMethodIsUsable(prospect)
+    : prospectHasWrittenContactMethod(prospect);
+  const phoneOnlyBlocked = outreachPreference === "written_only"
+    && !usableContact
+    && Boolean(prospect.phone || prospect.classification === "phone_only" || prospect.recommendedContactMethod === "call_first");
   if (prospect.prospectType === "no_website_social_only") {
-    if (!prospectContactMethodIsUsable(prospect)) return "No usable contact path";
+    if (phoneOnlyBlocked) return "Phone-only / written outreach blocked";
+    if (!usableContact) return "No usable contact path";
     if (assessment.presenceScores && assessment.presenceScores.finalSalesScore < 45) return "Weak sales fit";
     return null;
   }
@@ -526,7 +620,8 @@ export function topProspectRejectionReason(
     if (!hasMeaningfulImprovementGap(prospect)) return "Low redesign opportunity";
     return null;
   }
-  if (!prospectContactMethodIsUsable(prospect)) return "No usable contact path";
+  if (phoneOnlyBlocked) return "Phone-only / written outreach blocked";
+  if (!usableContact) return "No usable contact path";
   if (mode === "growth") {
     if (websiteScore !== undefined && websiteScore > 90) return "Already strong website";
     if (assessment.opportunityScore < 45) return "Weak sales fit";
@@ -543,8 +638,9 @@ export function topProspectResultDisposition(
   prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
+  outreachPreference: OutreachPreference = "written_only",
 ) {
-  const salesFitRejection = topProspectRejectionReason(prospect, assessment, mode);
+  const salesFitRejection = topProspectRejectionReason(prospect, assessment, mode, outreachPreference);
   return {
     selected: persistedSelected && salesFitRejection === null,
     rejectionReason: salesFitRejection ?? (persistedSelected ? null : "Below final cutoff" as const),
@@ -595,7 +691,10 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
   ].join("\n\n");
 }
 
-export function prepareTopProspectArtifacts(prospect: Prospect, previewLink = prospectPreviewLink(prospect.id)) {
+export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: string, outreachPreference: OutreachPreference = "written_only") {
+  if (!isPublicPreviewLink(previewLink)) {
+    throw new Error("A public /p/ preview link is required before generating prospect-facing outreach artifacts.");
+  }
   const withArtifacts = {
     ...prospect,
     outreach: generateOutreach(prospect, previewLink),
@@ -609,7 +708,7 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink = pr
     assessment,
     buildPrompt: generateWebsiteBuildPrompt(withArtifacts, assessment),
     previewLink,
-    emailQuality: evaluateOutreachEmailQuality(withArtifacts, previewLink),
+    emailQuality: evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference),
   };
 }
 
@@ -626,6 +725,9 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   if (input.workflowType !== undefined && !topProspectWorkflowTypes.includes(input.workflowType as TopProspectWorkflowType)) {
     return { ok: false, error: "Select a supported Top Prospects workflow." };
   }
+  if (input.outreachPreference !== undefined && !outreachPreferences.includes(input.outreachPreference as OutreachPreference)) {
+    return { ok: false, error: "Select a supported outreach preference." };
+  }
   if (input.prospectType !== undefined && !prospectSearchTypes.includes(input.prospectType as ProspectSearchType)) {
     return { ok: false, error: "Select a supported prospect type." };
   }
@@ -634,6 +736,7 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
     : "redesign";
   const mode = normalizeProspectMode(input.mode);
   const workflowType = normalizeTopProspectWorkflowType(input.workflowType);
+  const outreachPreference = normalizeOutreachPreference(input.outreachPreference);
   if (!trade || !trades.includes(trade)) return { ok: false, error: "Select a supported trade." };
   if (!/^[A-Za-z .'-]{2,100}$/.test(city)) return { ok: false, error: "Enter a valid city." };
   if (!/^[A-Z]{2}$/.test(state)) return { ok: false, error: "Enter a two-letter state code." };
@@ -642,5 +745,5 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   if (!Number.isInteger(finalProspectsWanted) || finalProspectsWanted < 1 || finalProspectsWanted > 25 || finalProspectsWanted > businessesToScan) {
     return { ok: false, error: "Final prospects wanted must be between 1 and 25 and no greater than businesses to scan." };
   }
-  return { ok: true, value: { trade, city, state, radiusKm, businessesToScan, finalProspectsWanted, prospectType, mode, workflowType } };
+  return { ok: true, value: { trade, city, state, radiusKm, businessesToScan, finalProspectsWanted, prospectType, mode, workflowType, outreachPreference } };
 }

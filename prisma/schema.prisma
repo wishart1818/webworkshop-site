@@ -71,6 +71,7 @@ model TopProspectJob {
   prospectMode      String              @default("strict")
   prospectType      String              @default("redesign")
   workflowType      String              @default("search")
+  outreachPreference String             @default("written_only")
   status            String              @default("QUEUED")
   stage             String              @default("DISCOVER")
   discoveredLeads   Json?

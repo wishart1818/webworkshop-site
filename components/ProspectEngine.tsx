@@ -11,6 +11,7 @@ import {
   activity,
   createProspect,
   prospectPresenceLabels,
+  prospectWrittenContactMethodIsUsable,
   prospectSortOptions,
   prospectStatuses,
   sortProspects,
@@ -25,6 +26,17 @@ import {
 } from "@/lib/prospect-engine";
 
 type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "System";
+type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
+
+function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
+  if (filter === "all") return true;
+  if (filter === "email") return Boolean(prospect.email);
+  if (filter === "form") return Boolean(prospect.contactFormUrl);
+  if (filter === "social") return prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social";
+  if (filter === "hide_phone_only") return prospect.classification !== "phone_only" && prospect.recommendedContactMethod !== "call_first";
+  if (filter === "send_ready") return Boolean(prospect.outreach?.approved) && prospectWrittenContactMethodIsUsable(prospect);
+  return prospect.recommendedContactMethod === "needs_manual_contact_research" || prospect.classification === "phone_only";
+}
 type SyncState = "loading" | "saved" | "saving" | "error";
 
 export function ProspectEngine() {
@@ -36,6 +48,7 @@ export function ProspectEngine() {
   const [trade, setTrade] = useState<"All" | TradeCategory>("All");
   const [status, setStatus] = useState<"All" | ProspectStatus>("All");
   const [sort, setSort] = useState<ProspectSort>("priority");
+  const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [showLeadSearch, setShowLeadSearch] = useState(false);
   const [discoveredLeads, setDiscoveredLeads] = useState<DiscoveredLead[]>([]);
@@ -106,10 +119,11 @@ export function ProspectEngine() {
         prospects
           .filter((prospect) => trade === "All" || prospect.trade === trade)
           .filter((prospect) => status === "All" || prospect.status === status)
+          .filter((prospect) => matchesContactFilter(prospect, contactFilter))
           .filter((prospect) => `${prospect.businessName} ${prospect.city} ${prospect.state}`.toLowerCase().includes(query.toLowerCase())),
-        sort,
-      ),
-    [prospects, query, sort, status, trade],
+      sort,
+    ),
+    [contactFilter, prospects, query, sort, status, trade],
   );
 
   const metrics = useMemo(
@@ -372,13 +386,14 @@ export function ProspectEngine() {
               <label className="engine-mobile-search"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
               <select aria-label="Filter by trade" onChange={(event) => setTrade(event.target.value as "All" | TradeCategory)} value={trade}><option>All</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select>
               <select aria-label="Filter by status" onChange={(event) => setStatus(event.target.value as "All" | ProspectStatus)} value={status}><option>All</option>{prospectStatuses.map((item) => <option key={item}>{item}</option>)}</select>
+              <select aria-label="Filter by contact method" onChange={(event) => setContactFilter(event.target.value as ContactFilter)} value={contactFilter}><option value="all">All contacts</option><option value="email">Email available</option><option value="form">Contact form available</option><option value="social">Social message available</option><option value="hide_phone_only">Hide phone-only leads</option><option value="send_ready">Send-ready only</option><option value="needs_research">Needs contact research</option></select>
               <select aria-label="Sort prospects" onChange={(event) => setSort(event.target.value as ProspectSort)} value={sort}>{prospectSortOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
               <span>{filtered.length} matching prospects</span>
             </div>
             <div className="engine-workspace">
               <section className="engine-panel engine-list-panel">
                 <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
-                {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setQuery(""); }} />}
+                {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
               {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
             </div>

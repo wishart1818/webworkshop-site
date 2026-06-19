@@ -14,6 +14,7 @@ import {
 } from "@/lib/prospect-engine";
 import type {
   OutreachPackageAction,
+  OutreachPreference,
   ProspectMode,
   TopProspectJob,
   TopProspectResult,
@@ -134,10 +135,28 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
   send_email: "Send email",
   submit_contact_form: "Submit contact form",
   message_on_facebook: "Message on Facebook",
+  message_on_social: "Message on social",
   call_first: "Call first",
   needs_manual_contact_research: "Needs manual contact research",
   do_not_contact: "Do not contact",
 };
+
+const outreachPreferenceLabels: Record<OutreachPreference, string> = {
+  written_only: "Written outreach only",
+  phone_allowed: "Phone allowed",
+};
+
+type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
+
+function matchesContactFilter(result: TopProspectResult, filter: ContactFilter) {
+  if (filter === "all") return true;
+  if (filter === "email") return Boolean(result.prospect.email);
+  if (filter === "form") return Boolean(result.prospect.contactFormUrl);
+  if (filter === "social") return result.prospect.recommendedContactMethod === "message_on_facebook" || result.prospect.recommendedContactMethod === "message_on_social";
+  if (filter === "hide_phone_only") return result.prospect.classification !== "phone_only" && result.prospect.recommendedContactMethod !== "call_first";
+  if (filter === "send_ready") return result.emailQuality.ready;
+  return result.prospect.recommendedContactMethod === "needs_manual_contact_research" || result.emailQuality.readinessLabel === "Missing written contact method" || result.emailQuality.readinessLabel === "Phone-only / written outreach blocked";
+}
 
 function jobProgress(job: TopProspectJob) {
   if (job.status === "COMPLETED") return 100;
@@ -167,10 +186,14 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [selectedMode, setSelectedMode] = useState<ProspectMode>("strict");
   const [selectedProspectType, setSelectedProspectType] = useState<ProspectSearchType>("redesign");
   const [selectedWorkflow, setSelectedWorkflow] = useState<TopProspectWorkflowType>("search");
+  const [selectedOutreachPreference, setSelectedOutreachPreference] = useState<OutreachPreference>("written_only");
+  const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const activeJob = jobs.find((job) => ["QUEUED", "RUNNING"].includes(job.status));
   const latestJob = activeJob ?? jobs[0];
   const best = jobs.find((job) => job.results.length)?.results[0];
   const queuedResults = latestJob ? [...latestJob.results, ...latestJob.reviewedNotRecommended] : [];
+  const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
+  const filteredReviewedNotRecommended = latestJob ? latestJob.reviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const preparedArtifacts = queuedResults.filter((result) => result.prospect.preview && result.prospect.outreach && result.buildPrompt).length;
 
   const loadJobs = useCallback(async () => {
@@ -218,6 +241,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           prospectType: form.get("prospectType"),
           mode: selectedMode,
           workflowType: selectedWorkflow,
+          outreachPreference: selectedOutreachPreference,
         }),
       });
       const payload = (await response.json()) as TopProspectApiPayload;
@@ -293,6 +317,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         </div>
         <form onSubmit={startJob}>
           <label>Run as<select name="workflowType" onChange={(event) => setSelectedWorkflow(event.target.value as TopProspectWorkflowType)} value={selectedWorkflow}><option value="search">Top Prospects Search</option><option value="morning_batch">Morning Prospect Batch</option></select></label>
+          <label>Outreach preference<select name="outreachPreference" onChange={(event) => setSelectedOutreachPreference(event.target.value as OutreachPreference)} value={selectedOutreachPreference}><option value="written_only">Written outreach only</option><option value="phone_allowed">Phone allowed</option></select></label>
           <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectSearchType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option><option value="all">All Prospect Types</option></select></label>
           <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
           <label>Trade<select name="trade">{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -301,7 +326,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Radius<select name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
           <label>Businesses to scan<input defaultValue="50" max="100" min="5" name="businessesToScan" type="number" /></label>
           <label>Final prospects wanted<input defaultValue="10" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
-          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
+          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
             {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}
           </button>
@@ -323,6 +348,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span>{latestJob.input.prospectType === "no_website_social_only" ? <>Scoring <b>Presence Gap + Sales Fit</b></> : <>Mode <b>{modeLabels[latestJob.input.mode]}</b></>}</span>
             <span>Type <b>{prospectTypeLabels[latestJob.input.prospectType]}</b></span>
             <span>Workflow <b>{workflowLabels[latestJob.input.workflowType]}</b></span>
+            <span>Outreach <b>{outreachPreferenceLabels[latestJob.input.outreachPreference]}</b></span>
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
           <div className="engine-job-stats">
@@ -363,8 +389,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div><h2>Outreach Package Review</h2><p>Review the business-specific preview, email, pitch, and builder handoff. Approve or skip without opening each prospect record.</p></div>
             <span>{latestJob.results.filter((result) => result.packageStatus === "READY_FOR_REVIEW").length} ready for review</span>
           </div>
+          <ContactFilterBar contactFilter={contactFilter} setContactFilter={setContactFilter} />
           <div className="engine-package-review-grid">
-            {latestJob.results.map((result) => (
+            {filteredResults.map((result) => (
               <PackageReviewCard
                 actioning={packageActioning}
                 key={result.id}
@@ -374,6 +401,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               />
             ))}
           </div>
+          {filteredResults.length === 0 && <EmptyState title="No packages match this contact filter" body="Choose a broader contact filter to review the rest of this batch." action={() => setContactFilter("all")} />}
         </section>
       ) : null}
 
@@ -385,9 +413,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           {latestJob.status === "COMPLETED" && latestJob.results.length < latestJob.input.finalProspectsWanted && (
             <p className="engine-skip-summary">{latestJob.input.prospectType === "no_website_social_only" ? `Only ${latestJob.results.length} active no-website prospects found. Increase radius or scan count to find more.` : `Only ${latestJob.results.length} prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.`}</p>
           )}
+          <ContactFilterBar contactFilter={contactFilter} setContactFilter={setContactFilter} />
           <div className="engine-top-table" role="table" aria-label="Top prospects">
             <div className="engine-top-table__head" role="row"><span>Rank / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
-            {latestJob.results.map((result) => (
+            {filteredResults.map((result) => (
               <article key={result.id} role="row">
                 <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
@@ -414,7 +443,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-panel__head"><div><h2>Reviewed but not recommended</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Active no-website leads that did not meet the contactability or website-need threshold." : "Analyzed leads that did not meet the selected mode's sales-fit threshold."}</p></div><span>{latestJob.reviewedNotRecommended.length} reviewed</span></div>
           <div className="engine-top-table" role="table" aria-label="Reviewed but not recommended prospects">
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
-            {latestJob.reviewedNotRecommended.map((result) => (
+            {filteredReviewedNotRecommended.map((result) => (
               <article key={result.id} role="row">
                 <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
@@ -425,6 +454,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               </article>
             ))}
           </div>
+          {filteredReviewedNotRecommended.length === 0 && <EmptyState title="No reviewed leads match this contact filter" body="Choose a broader contact filter to inspect the remaining rejected leads." action={() => setContactFilter("all")} />}
         </section>
       ) : null}
 
@@ -450,7 +480,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <div><span>Public preview link</span><a href={outreachResult.previewLink} rel="noreferrer" target="_blank">{outreachResult.previewLink}</a><small>Safe to include in a prospect email. Internal Prospect Engine pages remain protected.</small></div>
               </div>
               <section className="engine-email-quality" aria-label="Email quality checks">
-                <div className="engine-copy-head"><h3>Email quality checks</h3><b className={outreachResult.emailQuality.ready ? "is-ready" : "needs-fixes"}>{outreachResult.emailQuality.ready ? "Send-ready" : "Needs fixes"}</b></div>
+                <div className="engine-copy-head"><h3>Email quality checks</h3><b className={outreachResult.emailQuality.ready ? "is-ready" : "needs-fixes"}>{outreachResult.emailQuality.readinessLabel}</b></div>
                 <ul>
                   {outreachResult.emailQuality.checks.map((check) => (
                     <li className={check.passed ? "is-passed" : "is-failed"} key={check.key}>
@@ -459,10 +489,11 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                     </li>
                   ))}
                 </ul>
+                {!outreachResult.emailQuality.ready && <p className="engine-copy-warning">Email copy is blocked until this package is send-ready. Current blocker: {outreachResult.emailQuality.readinessLabel}.</p>}
               </section>
               <section><h3>Subject lines</h3><ul>{outreachResult.prospect.outreach.subjects.map((subject) => <li key={subject}>{subject}</li>)}</ul></section>
-              <section><div className="engine-copy-head"><h3>Short email with preview</h3><button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short email"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
-              <section><div className="engine-copy-head"><h3>Detailed email with preview</h3><button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed email"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>
+              <section><div className="engine-copy-head"><h3>Short email with preview</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short email"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
+              <section><div className="engine-copy-head"><h3>Detailed email with preview</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed email"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>
               <section><h3>Follow-ups</h3>{outreachResult.prospect.outreach.followUps.map((followUp, index) => <div className="engine-package-follow-up" key={followUp}><b>Follow-up {index + 1}</b><pre>{followUp}</pre></div>)}</section>
             </div>
             <footer>
@@ -478,6 +509,28 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           </dialog>
         </div>
       )}
+    </div>
+  );
+}
+
+function ContactFilterBar({
+  contactFilter,
+  setContactFilter,
+}: {
+  contactFilter: ContactFilter;
+  setContactFilter: (filter: ContactFilter) => void;
+}) {
+  return (
+    <div className="engine-contact-filters" aria-label="Contact filters">
+      <label>Contact filter<select onChange={(event) => setContactFilter(event.target.value as ContactFilter)} value={contactFilter}>
+        <option value="all">All contacts</option>
+        <option value="email">Email available</option>
+        <option value="form">Contact form available</option>
+        <option value="social">Social message available</option>
+        <option value="hide_phone_only">Hide phone-only leads</option>
+        <option value="send_ready">Send-ready only</option>
+        <option value="needs_research">Needs contact research</option>
+      </select></label>
     </div>
   );
 }
@@ -524,7 +577,7 @@ function PackageReviewCard({
         <span>Recommended contact</span>
         <p>{contactMethodLabels[result.prospect.recommendedContactMethod]}</p>
         <span>Email quality</span>
-        <p><b>{result.emailQuality.ready ? "Send-ready" : `Needs ${result.emailQuality.issues.length} fix${result.emailQuality.issues.length === 1 ? "" : "es"}`}</b></p>
+        <p><b>{result.emailQuality.readinessLabel}</b></p>
         <span>Recommended pitch</span>
         <p>{result.pitchAngle}</p>
         <span>Email preview</span>

@@ -15,6 +15,7 @@ import {
   calculateProspectSalesScores,
   calculateNoWebsitePresenceScores,
   evaluateOutreachEmailQuality,
+  normalizeOutreachPreference,
   normalizeOutreachPackageStatus,
   normalizeProspectMode,
   normalizeTopProspectWorkflowType,
@@ -38,7 +39,11 @@ function recordValue(value: Prisma.JsonValue | null): Record<string, number> {
   return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number"));
 }
 
-async function toResult(row: JobRow["results"][number], mode: TopProspectInput["mode"]): Promise<TopProspectResult> {
+async function toResult(
+  row: JobRow["results"][number],
+  mode: TopProspectInput["mode"],
+  outreachPreference: TopProspectInput["outreachPreference"],
+): Promise<TopProspectResult> {
   const prospect = await getProspect(row.prospectId);
   if (!prospect) throw new Error("Top prospect result references a missing prospect.");
   const presenceScores = prospect.prospectType === "no_website_social_only"
@@ -82,7 +87,7 @@ async function toResult(row: JobRow["results"][number], mode: TopProspectInput["
     whyMayBuy: row.whyMayBuy,
     pitchAngle: row.pitchAngle,
   };
-  const { selected, rejectionReason } = topProspectResultDisposition(row.selected, prospect, assessment, mode);
+  const { selected, rejectionReason } = topProspectResultDisposition(row.selected, prospect, assessment, mode, outreachPreference);
   return {
     id: row.id,
     rank: row.rank,
@@ -97,7 +102,7 @@ async function toResult(row: JobRow["results"][number], mode: TopProspectInput["
     packageApprovedAt: row.packageApprovedAt?.toISOString() ?? null,
     packageSentAt: row.packageSentAt?.toISOString() ?? null,
     packageSkippedAt: row.packageSkippedAt?.toISOString() ?? null,
-    emailQuality: evaluateOutreachEmailQuality(prospect, row.previewLink),
+    emailQuality: evaluateOutreachEmailQuality(prospect, row.previewLink, outreachPreference),
     prospect,
   };
 }
@@ -106,7 +111,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
   const failure = parseTopProspectJobFailure(row.errorMessage);
   const mode = normalizeProspectMode(row.prospectMode);
   const workflowType = normalizeTopProspectWorkflowType(row.workflowType);
-  const allResults = await Promise.all(row.results.map((result) => toResult(result, mode)));
+  const outreachPreference = normalizeOutreachPreference(row.outreachPreference);
+  const allResults = await Promise.all(row.results.map((result) => toResult(result, mode, outreachPreference)));
   const recommended = allResults
     .filter((result) => result.selected)
     .sort((left, right) => (left.rank ?? 999) - (right.rank ?? 999) || right.salesScores.weightedSalesScore - left.salesScores.weightedSalesScore);
@@ -125,6 +131,7 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
       prospectType: row.prospectType as TopProspectInput["prospectType"],
       mode,
       workflowType,
+      outreachPreference,
     },
     status: row.status as TopProspectJob["status"],
     stage: row.stage,
@@ -160,6 +167,7 @@ export async function createTopProspectJob(input: TopProspectInput) {
       prospectMode: input.mode,
       prospectType: input.prospectType,
       workflowType: input.workflowType,
+      outreachPreference: input.outreachPreference,
     },
   });
   console.info("[top-prospects] Job created.", {
@@ -173,6 +181,7 @@ export async function createTopProspectJob(input: TopProspectInput) {
     mode: job.prospectMode,
     prospectType: job.prospectType,
     workflowType: job.workflowType,
+    outreachPreference: job.outreachPreference,
   });
   return job;
 }
@@ -240,7 +249,10 @@ function packageResultFromJob(job: TopProspectJob, resultId: string) {
 export async function updateTopProspectOutreachPackage(resultId: string, action: OutreachPackageAction) {
   await ensureTopProspectSchema();
   const database = getProspectDatabase();
-  const result = await database.topProspectResult.findUnique({ where: { id: resultId } });
+  const result = await database.topProspectResult.findUnique({
+    where: { id: resultId },
+    include: { job: { select: { outreachPreference: true } } },
+  });
   if (!result) return null;
   const prospect = await getProspect(result.prospectId);
   if (!prospect) throw new Error("Outreach package references a missing prospect.");
@@ -254,7 +266,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
 
   if (action === "generate") {
     const publicPreviewToken = result.publicPreviewToken ?? createPublicPreviewToken();
-    const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken));
+    const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken), normalizeOutreachPreference(result.job?.outreachPreference));
     const saved = await saveProspect({
       ...prepared.prospect,
       activities: [
@@ -289,7 +301,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
     console.info("[outreach-package] Package generated.", { resultId, prospectId: saved.id });
   } else {
     if (action === "approve") {
-      assertOutreachEmailReady(prospect, result.previewLink);
+      assertOutreachEmailReady(prospect, result.previewLink, normalizeOutreachPreference(result.job?.outreachPreference));
     }
     const now = new Date();
     const statusData = action === "ready_for_review"

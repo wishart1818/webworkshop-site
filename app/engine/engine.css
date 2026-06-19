@@ -524,6 +524,25 @@ body:has(.engine-shell) {
   min-width: 10rem;
 }
 
+.engine-contact-filters {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.75rem 1rem 0;
+}
+
+.engine-contact-filters label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--engine-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.engine-contact-filters select {
+  min-width: 13rem;
+}
+
 .engine-mobile-search {
   display: none;
 }
@@ -2272,6 +2291,16 @@ body:has(.engine-shell) {
   color: #823729;
 }
 
+.engine-copy-warning {
+  margin: 0.6rem 0 0;
+  border: 1px solid #efc7b8;
+  background: #fff5f1;
+  padding: 0.65rem 0.75rem;
+  color: #823729;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
 .engine-package-dialog pre {
   max-height: 18rem;
   overflow: auto;
@@ -2902,6 +2931,22 @@ body:has(.engine-shell) {
 
   .engine-filters select {
     flex: 1 1 8rem;
+    min-width: 0;
+  }
+
+  .engine-contact-filters {
+    justify-content: stretch;
+    padding: 0.75rem 0.75rem 0;
+  }
+
+  .engine-contact-filters label {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .engine-contact-filters select {
+    width: 100%;
     min-width: 0;
   }
 

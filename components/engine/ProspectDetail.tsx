@@ -8,6 +8,7 @@ import {
   priorityRationale,
   prospectHasUnusableWebsite,
   prospectPresenceLabels,
+  prospectWrittenContactMethodIsUsable,
   prospectStatuses,
   scoreLabels,
   websiteAvailabilityLabels,
@@ -34,6 +35,7 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
   send_email: "Send email",
   submit_contact_form: "Submit contact form",
   message_on_facebook: "Message on Facebook",
+  message_on_social: "Message on social",
   call_first: "Call first",
   needs_manual_contact_research: "Needs manual contact research",
   do_not_contact: "Do not contact",
@@ -232,6 +234,7 @@ function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "p
   const outreach = prospect.outreach!;
   const [complianceConfirmed, setComplianceConfirmed] = useState(false);
   const [copied, setCopied] = useState("");
+  const writtenContactReady = prospectWrittenContactMethodIsUsable(prospect);
 
   async function copyDraft(label: string, value: string) {
     try {
@@ -261,6 +264,7 @@ function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "p
         <div>
           <b>{outreach.approved ? "Approved for personal sending" : "Human review required"}</b>
           <p>{outreach.approved ? "This draft has been reviewed. Copy it into your normal email workflow and complete the postal-address placeholder before sending." : "Review facts, tone, recipient details, sender identity, and opt-out handling before approving."}</p>
+          {!writtenContactReady && <p className="engine-copy-warning">Written outreach is blocked for this prospect because no email, contact form, or social message path is available. Treat it as Needs manual contact research.</p>}
           {!outreach.approved && (
             <label className="engine-compliance-check">
               <input checked={complianceConfirmed} onChange={(event) => setComplianceConfirmed(event.target.checked)} type="checkbox" />
@@ -268,7 +272,7 @@ function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "p
             </label>
           )}
         </div>
-        <button className="engine-button engine-button--primary" disabled={!outreach.approved && !complianceConfirmed} onClick={toggleApproval} type="button">
+        <button className="engine-button engine-button--primary" disabled={!writtenContactReady || (!outreach.approved && !complianceConfirmed)} onClick={toggleApproval} type="button">
           {outreach.approved ? "Remove approval" : "Approve personal draft"}
         </button>
       </div>

@@ -11,6 +11,7 @@ import {
   generateWebsiteBuildPrompt,
   likelyFranchise,
   likelyNationalOrLargeBrand,
+  likelySupplierOrDistributor,
   normalizeWebsite,
   normalizeOutreachPackageStatus,
   outreachPackageActionAllowed,
@@ -66,6 +67,7 @@ test("Top Prospects input applies bounded production-safe limits", () => {
     assert.equal(valid.value.mode, "strict");
     assert.equal(valid.value.workflowType, "search");
     assert.equal(valid.value.prospectType, "redesign");
+    assert.equal(valid.value.outreachPreference, "written_only");
   }
 
   const morningBatch = validateTopProspectInput({
@@ -77,9 +79,10 @@ test("Top Prospects input applies bounded production-safe limits", () => {
     finalProspectsWanted: 10,
     mode: "growth",
     workflowType: "morning_batch",
+    outreachPreference: "phone_allowed",
   });
   assert.equal(morningBatch.ok, true);
-  if (morningBatch.ok) assert.deepEqual([morningBatch.value.mode, morningBatch.value.workflowType], ["growth", "morning_batch"]);
+  if (morningBatch.ok) assert.deepEqual([morningBatch.value.mode, morningBatch.value.workflowType, morningBatch.value.outreachPreference], ["growth", "morning_batch", "phone_allowed"]);
   const noWebsite = validateTopProspectInput({
     trade: "Roofing",
     city: "Findlay",
@@ -107,6 +110,7 @@ test("Top Prospects input applies bounded production-safe limits", () => {
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 11 }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, mode: "unknown" }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, workflowType: "unknown" }).ok, false);
+  assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, outreachPreference: "cold_call_everyone" }).ok, false);
 });
 
 test("duplicate normalization and franchise screening are deterministic", () => {
@@ -114,6 +118,7 @@ test("duplicate normalization and franchise screening are deterministic", () => 
   assert.equal(likelyFranchise({ businessName: "SERVPRO of Findlay", website: "https://example.com" }), true);
   assert.equal(likelyFranchise({ businessName: "North Main Roofing", website: "https://northmain.example" }), false);
   assert.equal(likelyNationalOrLargeBrand({ businessName: "Erie Home", website: "https://eriehome.com" }), true);
+  assert.equal(likelySupplierOrDistributor({ businessName: "ABC Roofing Supply", website: "https://abc-roofing-supply.example" }), true);
 });
 
 test("public discovery rejects records explicitly marked inactive", () => {
@@ -209,6 +214,28 @@ test("Top Prospects recommendation gate explains every sales-fit rejection", () 
   assert.equal(topProspectRejectionReason(prospect, manualAssessment(80)), null);
 });
 
+test("written outreach readiness blocks phone-only leads from send-ready approval", () => {
+  const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
+  const prospect = {
+    ...structuredClone(seedProspects[0]),
+    website: "",
+    profileUrl: "",
+    prospectType: "no_website_social_only" as const,
+    classification: "phone_only" as const,
+    phone: "419-555-0100",
+    email: "",
+    contactFormUrl: "",
+    recommendedContactMethod: "needs_manual_contact_research" as const,
+    analysis: undefined,
+  };
+  const prepared = prepareTopProspectArtifacts(prospect, publicLink);
+
+  assert.equal(topProspectRejectionReason(prepared.prospect, prepared.assessment), "Phone-only / written outreach blocked");
+  assert.equal(prepared.emailQuality.ready, false);
+  assert.equal(prepared.emailQuality.readinessLabel, "Phone-only / written outreach blocked");
+  assert.throws(() => assertOutreachEmailReady(prepared.prospect, publicLink), /Phone-only \/ written outreach blocked/);
+});
+
 test("Prospect Modes preserve strict behavior and expand local qualification deliberately", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.businessName = "Local Roofing Company";
@@ -297,7 +324,7 @@ test("No Website / Social Only prospects receive separate presence scoring and o
 
   const scores = calculateNoWebsitePresenceScores(prospect);
   const assessment = assessNoWebsiteOpportunity(prospect);
-  const prepared = prepareTopProspectArtifacts(prospect);
+  const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF"));
 
   assert.ok(scores.onlinePresenceGapScore >= 80);
   assert.ok(scores.businessActivityScore > 0);
@@ -319,11 +346,14 @@ test("presence classification and contact recommendations cover public lead shap
   assert.equal(classifyProspectPresence({ website: "", profileUrl: "https://yelp.com/biz/local", phone: "", email: "", contactFormUrl: "" }), "listing_only");
   assert.equal(classifyProspectPresence({ website: "", profileUrl: "", phone: "419-555-0100", email: "", contactFormUrl: "" }), "phone_only");
   assert.equal(recommendProspectContactMethod({ classification: "social_only", profileUrl: "https://facebook.com/local", phone: "", email: "", contactFormUrl: "", inactive: false }), "message_on_facebook");
+  assert.equal(recommendProspectContactMethod({ classification: "social_only", profileUrl: "https://instagram.com/local", phone: "", email: "", contactFormUrl: "", inactive: false }), "message_on_social");
   assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "", contactFormUrl: "https://listing.example/contact", inactive: false }), "submit_contact_form");
+  assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "hello@example.com", contactFormUrl: "", inactive: false }), "send_email");
+  assert.equal(recommendProspectContactMethod({ classification: "phone_only", profileUrl: "", phone: "419-555-0100", email: "", contactFormUrl: "", inactive: false }), "needs_manual_contact_research");
 });
 
 test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
-  const prospect = withAnalysis(structuredClone(seedProspects[1]));
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
   const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF"));
   const prompt = generateWebsiteBuildPrompt(prepared.prospect, prepared.assessment);
 
@@ -349,7 +379,7 @@ test("public preview tokens are hard to guess and internal preview links fail se
   const publicLink = publicProspectPreviewLink(token);
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   const publicPackage = prepareTopProspectArtifacts(prospect, publicLink);
-  const internalPackage = prepareTopProspectArtifacts(prospect, prospectPreviewLink(prospect.id));
+  const internalLink = prospectPreviewLink(prospect.id);
   const scoreLeak = {
     ...publicPackage.prospect,
     outreach: {
@@ -360,10 +390,10 @@ test("public preview tokens are hard to guess and internal preview links fail se
 
   assert.match(token, /^[A-Za-z0-9_-]{32}$/);
   assert.equal(publicPackage.emailQuality.ready, true);
-  assert.equal(internalPackage.emailQuality.ready, false);
-  assert.ok(internalPackage.emailQuality.issues.some((issue) => /Public preview link/i.test(issue)));
+  assert.equal(evaluateOutreachEmailQuality(publicPackage.prospect, internalLink).ready, false);
+  assert.throws(() => prepareTopProspectArtifacts(prospect, internalLink), /public \/p\/ preview link/i);
   assert.equal(evaluateOutreachEmailQuality(scoreLeak, publicLink).ready, false);
-  assert.throws(() => assertOutreachEmailReady(internalPackage.prospect, internalPackage.previewLink), /cannot be approved/i);
+  assert.throws(() => assertOutreachEmailReady(publicPackage.prospect, internalLink), /cannot be approved/i);
   assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, publicLink));
 });
 
@@ -381,7 +411,7 @@ test("Outreach Package approval blocks unsafe no-website contact and unsupported
   prospect.analysis = undefined;
   const uncontactable = prepareTopProspectArtifacts(prospect, publicLink);
   assert.equal(uncontactable.emailQuality.ready, false);
-  assert.ok(uncontactable.emailQuality.issues.some((issue) => /usable public contact method/i.test(issue)));
+  assert.ok(uncontactable.emailQuality.issues.some((issue) => /usable written contact method/i.test(issue)));
   assert.equal(evaluateOutreachEmailQuality({ ...uncontactable.prospect, recommendedContactMethod: "call_first" }, publicLink).ready, false);
 
   const unsafe = {
@@ -412,7 +442,10 @@ test("Outreach Package lifecycle values remain explicit and backwards compatible
 
 test("interrupted Top Prospects artifacts can be recovered only by their active job", () => {
   const jobCreatedAt = new Date();
-  const prospect = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0]))).prospect;
+  const prospect = prepareTopProspectArtifacts(
+    withAnalysis(structuredClone(seedProspects[0])),
+    publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF"),
+  ).prospect;
   prospect.createdAt = new Date(jobCreatedAt.getTime() + 1_000).toISOString();
   prospect.activities.unshift({
     id: "automated-analysis",

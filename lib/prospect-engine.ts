@@ -50,6 +50,7 @@ export const recommendedContactMethods = [
   "send_email",
   "submit_contact_form",
   "message_on_facebook",
+  "message_on_social",
   "call_first",
   "needs_manual_contact_research",
   "do_not_contact",
@@ -472,6 +473,10 @@ function isSocialProfile(value: string) {
   return /(?:^|\/\/)(?:www\.)?(?:facebook|fb|instagram)\.com\//i.test(value);
 }
 
+function isInstagramProfile(value: string) {
+  return /(?:^|\/\/)(?:www\.)?instagram\.com\//i.test(value);
+}
+
 export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl">): ProspectClassification {
   if (input.website) return "website_redesign";
   if (isSocialProfile(input.profileUrl)) return "social_only";
@@ -503,9 +508,11 @@ export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" 
   if (["invalid_website", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) labels.push("Broken website");
   if (prospect.classification === "listing_only" || prospect.classification === "social_only") labels.push("Listing only");
   if (prospect.classification === "phone_only") labels.push("Phone only");
+  if (prospect.classification === "phone_only" || prospect.recommendedContactMethod === "call_first") labels.push("Phone-only / written outreach blocked");
   if (prospect.recommendedContactMethod === "needs_manual_contact_research") labels.push("Needs manual contact research");
   if (prospect.email) labels.push("Public email available");
   if (prospect.contactFormUrl) labels.push("Contact form available");
+  if (prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social") labels.push("Social message available");
   return [...new Set(labels)];
 }
 
@@ -514,15 +521,25 @@ export function recommendProspectContactMethod(input: Pick<Prospect, "classifica
   if (input.email) return "send_email";
   if (input.contactFormUrl) return "submit_contact_form";
   if (isFacebookProfile(input.profileUrl)) return "message_on_facebook";
-  if (input.phone) return "call_first";
-  return "needs_manual_contact_research";
+  if (isInstagramProfile(input.profileUrl)) return "message_on_social";
+  if (input.phone) return "needs_manual_contact_research";
+  return "do_not_contact";
 }
 
 export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl">) {
   if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
   if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.contactFormUrl);
   if (input.recommendedContactMethod === "message_on_facebook") return isFacebookProfile(input.profileUrl);
+  if (input.recommendedContactMethod === "message_on_social") return isSocialProfile(input.profileUrl);
   if (input.recommendedContactMethod === "call_first") return Boolean(input.phone);
+  return false;
+}
+
+export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl">) {
+  if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
+  if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.contactFormUrl);
+  if (input.recommendedContactMethod === "message_on_facebook") return isFacebookProfile(input.profileUrl);
+  if (input.recommendedContactMethod === "message_on_social") return isSocialProfile(input.profileUrl);
   return false;
 }
 
@@ -786,7 +803,7 @@ export const seedProspects: Prospect[] = [
   recentReviewCount: 0,
   sourceConfidence: 0,
   activitySignals: [],
-  recommendedContactMethod: email ? "send_email" : "call_first",
+  recommendedContactMethod: email ? "send_email" : "needs_manual_contact_research",
   inactive: false,
   websiteStatus: "unknown",
   websiteStatusDetail: "",
