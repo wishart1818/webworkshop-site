@@ -53,8 +53,10 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.doesNotMatch(css, /--preview-green|--preview-lime/);
   assert.match(css, /prospect-preview-visual-caption/);
   assert.doesNotMatch(prospectWebsitePreview, /picsum\.photos/);
-  assert.match(prospectWebsitePreview, /\/engine-preview-assets\/trades\/hvac-hero\.svg/);
-  assert.match(prospectWebsitePreview, /\/engine-preview-assets\/trades\/roofing-hero\.svg/);
+  assert.match(prospectWebsitePreview, /src: `\/engine-preview-assets\/trade-photos\/\$\{slug\}-\$\{slot\}\.jpg`/);
+  assert.match(prospectWebsitePreview, /tradePhotoAsset\("hvac", "hero"/);
+  assert.match(prospectWebsitePreview, /tradePhotoAsset\("roofing", "hero"/);
+  assert.match(prospectWebsitePreview, /fallbackSrc: `\/engine-preview-assets\/trades\/\$\{slug\}-\$\{slot\}\.svg`/);
   assert.doesNotMatch(prospectWebsitePreview, /prospect-preview-visual__mark|TradeVisualPanel/);
 });
 

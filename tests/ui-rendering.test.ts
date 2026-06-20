@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, statSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -8,6 +9,22 @@ import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePrev
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
+
+const coreTradePhotoSlugs: Record<(typeof coreServiceTrades)[number], string> = {
+  Roofing: "roofing",
+  HVAC: "hvac",
+  Plumbing: "plumbing",
+  Electrical: "electrical",
+  Landscaping: "landscaping",
+  "Power Washing": "power-washing",
+  Painting: "painting",
+  Concrete: "concrete",
+  Cleaning: "cleaning",
+  "Tree Service": "tree-service",
+  Fencing: "fencing",
+  Flooring: "flooring",
+  Remodeling: "remodeling",
+};
 
 function renderDetail(prospect: Prospect, detailTab: DetailTab) {
   return renderToStaticMarkup(createElement(ProspectDetail, {
@@ -142,12 +159,13 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /--prospect-primary:#174b78/);
   assert.match(html, /--prospect-accent:#2c94c6/);
   assert.match(html, /Request an estimate/);
-  assert.match(html, /Sample visual direction/);
-  assert.match(html, /\/engine-preview-assets\/trades\/roofing-hero\.svg/);
-  assert.match(html, /\/engine-preview-assets\/trades\/roofing-service\.svg/);
-  assert.match(html, /\/engine-preview-assets\/trades\/roofing-proof\.svg/);
-  assert.match(html, /Roofing concept visual with roofline/);
-  assert.match(html, /Trade-relevant concept visual/);
+  assert.match(html, /Representative image direction/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-hero\.jpg/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-service\.jpg/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-proof\.jpg/);
+  assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/roofing-hero\.svg"/);
+  assert.match(html, /Representative roofing photo with roofline/);
+  assert.match(html, /Representative trade image/);
   assert.match(html, /Replace with verified Blue Line Roofing photos before launch/);
   assert.match(html, /Sample layout content/);
   assert.match(html, /Why choose us/);
@@ -175,31 +193,17 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   }));
 
   assert.match(html, /Rick&#x27;s Affordable Heating &amp; Cooling/);
-  assert.match(html, /\/engine-preview-assets\/trades\/hvac-hero\.svg/);
-  assert.match(html, /\/engine-preview-assets\/trades\/hvac-service\.svg/);
-  assert.match(html, /\/engine-preview-assets\/trades\/hvac-proof\.svg/);
-  assert.match(html, /AC condenser, thermostat, ductwork, and home comfort equipment/);
-  assert.match(html, /HVAC service visual with thermostat, condenser, ductwork, and equipment details/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-hero\.jpg/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-service\.jpg/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-proof\.jpg/);
+  assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/hvac-hero\.svg"/);
+  assert.match(html, /outdoor AC condenser beside a residential home/);
+  assert.match(html, /furnace or air handler equipment and technician tools/);
+  assert.match(html, /thermostat, vent, and home comfort detail/);
   assert.doesNotMatch(html, /picsum\.photos|honey|coffee|food|nature|abstract|HVAC system/i);
 });
 
 test("core trade previews render deterministic local imagery by default", () => {
-  const tradeSlugs: Record<(typeof coreServiceTrades)[number], string> = {
-    Roofing: "roofing",
-    HVAC: "hvac",
-    Plumbing: "plumbing",
-    Electrical: "electrical",
-    Landscaping: "landscaping",
-    "Power Washing": "power-washing",
-    Painting: "painting",
-    Concrete: "concrete",
-    Cleaning: "cleaning",
-    "Tree Service": "tree-service",
-    Fencing: "fencing",
-    Flooring: "flooring",
-    Remodeling: "remodeling",
-  };
-
   for (const trade of coreServiceTrades) {
     const prospect = withPreview({
       ...structuredClone(seedProspects[0]),
@@ -211,23 +215,34 @@ test("core trade previews render deterministic local imagery by default", () => 
       publicView: true,
       savedPreview: prospect.preview,
     }));
-    const slug = tradeSlugs[trade];
+    const slug = coreTradePhotoSlugs[trade];
 
-    assert.match(html, new RegExp(`/engine-preview-assets/trades/${slug}-hero\\.svg`));
-    assert.match(html, new RegExp(`/engine-preview-assets/trades/${slug}-service\\.svg`));
-    assert.match(html, new RegExp(`/engine-preview-assets/trades/${slug}-proof\\.svg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-hero\\.jpg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-service\\.jpg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-proof\\.jpg`));
+    assert.match(html, new RegExp(`data-fallback-src="/engine-preview-assets/trades/${slug}-hero\\.svg"`));
     assert.doesNotMatch(html, /picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
     assert.doesNotMatch(html, /prospect-preview-visual__mark|prospect-preview-visual__details/);
   }
 });
 
+test("core trade photo library covers each preview section", () => {
+  for (const slug of Object.values(coreTradePhotoSlugs)) {
+    for (const slot of ["hero", "service", "proof"] as const) {
+      const asset = new URL(`../public/engine-preview-assets/trade-photos/${slug}-${slot}.jpg`, import.meta.url);
+      assert.equal(existsSync(asset), true, `${slug}-${slot}.jpg should exist`);
+      assert.ok(statSync(asset).size > 20_000, `${slug}-${slot}.jpg should be a real preview image`);
+    }
+  }
+});
+
 test("priority trades use matching preview image language", () => {
   const expected = [
-    ["HVAC", /AC condenser, thermostat, ductwork/i],
-    ["Roofing", /roofline, shingle detail, and inspection/i],
-    ["Plumbing", /sink, pipes, fixture, and water service/i],
-    ["Landscaping", /lawn, garden beds, hardscape/i],
-    ["Electrical", /breaker panel, outlet, wiring/i],
+    ["HVAC", /outdoor AC condenser/i],
+    ["Roofing", /roofline, shingle detail/i],
+    ["Plumbing", /under-sink service, visible pipes/i],
+    ["Landscaping", /lawn, planting beds, patio edge/i],
+    ["Electrical", /residential breaker panel service/i],
   ] as const;
 
   for (const [trade, pattern] of expected) {

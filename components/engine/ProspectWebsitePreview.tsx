@@ -27,6 +27,7 @@ type ProspectPreviewProperties = CSSProperties & {
 
 type TradeVisualAsset = {
   src: string;
+  fallbackSrc: string;
   alt: string;
 };
 
@@ -37,90 +38,98 @@ type TradeVisualProfile = {
   texture: string;
 };
 
+function tradePhotoAsset(slug: string, slot: "hero" | "service" | "proof", alt: string): TradeVisualAsset {
+  return {
+    src: `/engine-preview-assets/trade-photos/${slug}-${slot}.jpg`,
+    fallbackSrc: `/engine-preview-assets/trades/${slug}-${slot}.svg`,
+    alt,
+  };
+}
+
 const tradeVisuals: Record<Prospect["trade"], TradeVisualProfile> = {
   Roofing: {
-    hero: { src: "/engine-preview-assets/trades/roofing-hero.svg", alt: "Roofing concept visual with roofline, shingle detail, and inspection cues" },
-    service: { src: "/engine-preview-assets/trades/roofing-service.svg", alt: "Roofing service visual with shingles, roof repair, and inspection equipment" },
-    proof: { src: "/engine-preview-assets/trades/roofing-proof.svg", alt: "Sample roofing project proof visual with roof inspection and shingle details" },
-    texture: "Sturdy roofline, material detail, and local exterior work",
+    hero: tradePhotoAsset("roofing", "hero", "Representative roofing photo with roofline, shingle detail, gutter edge, and inspection context"),
+    service: tradePhotoAsset("roofing", "service", "Representative roofing service photo with shingles, flashing, gutter edge, and inspection tools"),
+    proof: tradePhotoAsset("roofing", "proof", "Representative roofing example photo with roof inspection and repair context"),
+    texture: "Roofline, shingle detail, and practical inspection cues",
   },
   HVAC: {
-    hero: { src: "/engine-preview-assets/trades/hvac-hero.svg", alt: "HVAC concept visual with an AC condenser, thermostat, ductwork, and home comfort equipment" },
-    service: { src: "/engine-preview-assets/trades/hvac-service.svg", alt: "HVAC service visual with thermostat, condenser, ductwork, and equipment details" },
-    proof: { src: "/engine-preview-assets/trades/hvac-proof.svg", alt: "Sample HVAC project proof visual with air handler, condenser, and ductwork cues" },
-    texture: "Clean equipment, airflow, and reliable service cues",
+    hero: tradePhotoAsset("hvac", "hero", "Representative HVAC photo with an outdoor AC condenser beside a residential home"),
+    service: tradePhotoAsset("hvac", "service", "Representative HVAC service photo with furnace or air handler equipment and technician tools"),
+    proof: tradePhotoAsset("hvac", "proof", "Representative HVAC example photo with thermostat, vent, and home comfort detail"),
+    texture: "AC equipment, home comfort details, and service-call context",
   },
   Landscaping: {
-    hero: { src: "/engine-preview-assets/trades/landscaping-hero.svg", alt: "Landscaping concept visual with lawn, garden beds, hardscape, and outdoor space cues" },
-    service: { src: "/engine-preview-assets/trades/landscaping-service.svg", alt: "Landscaping service visual with planting, patio, lawn, and maintenance details" },
-    proof: { src: "/engine-preview-assets/trades/landscaping-proof.svg", alt: "Sample landscaping project proof visual with outdoor living and yard improvement cues" },
-    texture: "Finished outdoor spaces and before-after potential",
+    hero: tradePhotoAsset("landscaping", "hero", "Representative landscaping photo with lawn, planting beds, patio edge, and outdoor service context"),
+    service: tradePhotoAsset("landscaping", "service", "Representative landscaping service photo with planting bed, mulch, edging, and hand tools"),
+    proof: tradePhotoAsset("landscaping", "proof", "Representative landscaping example photo with finished patio edge, lawn, shrubs, and outdoor living space"),
+    texture: "Lawn, planting detail, and finished outdoor space",
   },
   Plumbing: {
-    hero: { src: "/engine-preview-assets/trades/plumbing-hero.svg", alt: "Plumbing concept visual with sink, pipes, fixture, and water service details" },
-    service: { src: "/engine-preview-assets/trades/plumbing-service.svg", alt: "Plumbing service visual with pipe repair, fixture, and water heater cues" },
-    proof: { src: "/engine-preview-assets/trades/plumbing-proof.svg", alt: "Sample plumbing project proof visual with water heater, fixture, and pipe details" },
-    texture: "Clean repair detail, response clarity, and simple next steps",
+    hero: tradePhotoAsset("plumbing", "hero", "Representative plumbing photo with under-sink service, visible pipes, and repair tools"),
+    service: tradePhotoAsset("plumbing", "service", "Representative plumbing service photo with water heater, pipe fittings, and service tools"),
+    proof: tradePhotoAsset("plumbing", "proof", "Representative plumbing example photo with repaired drain trap, supply lines, and service tools"),
+    texture: "Clean repair detail, water systems, and practical service cues",
   },
   Electrical: {
-    hero: { src: "/engine-preview-assets/trades/electrical-hero.svg", alt: "Electrical concept visual with breaker panel, outlet, wiring, and lighting cues" },
-    service: { src: "/engine-preview-assets/trades/electrical-service.svg", alt: "Electrical service visual with outlets, breaker panel, wiring, and lighting details" },
-    proof: { src: "/engine-preview-assets/trades/electrical-proof.svg", alt: "Sample electrical project proof visual with light fixture, panel, and wiring cues" },
-    texture: "Sharp safety cues, clear scope, and dependable work",
+    hero: tradePhotoAsset("electrical", "hero", "Representative electrical photo with residential breaker panel service and insulated tools"),
+    service: tradePhotoAsset("electrical", "service", "Representative electrical service photo with breaker panel, tools, and safe work context"),
+    proof: tradePhotoAsset("electrical", "proof", "Representative electrical example photo with lighting installation, tools, and clean work area"),
+    texture: "Breaker panels, lighting work, and safe installation cues",
   },
   "Power Washing": {
-    hero: { src: "/engine-preview-assets/trades/power-washing-hero.svg", alt: "Power washing concept visual with spray wand, siding, and cleaned exterior surfaces" },
-    service: { src: "/engine-preview-assets/trades/power-washing-service.svg", alt: "Power washing service visual with siding wash, spray equipment, and driveway cleaning cues" },
-    proof: { src: "/engine-preview-assets/trades/power-washing-proof.svg", alt: "Sample power washing proof visual with cleaned driveway and exterior surface details" },
-    texture: "Before-after contrast, exterior detail, and quick quoting",
+    hero: tradePhotoAsset("power-washing", "hero", "Representative power washing photo with spray equipment and exterior cleaning context"),
+    service: tradePhotoAsset("power-washing", "service", "Representative power washing service photo with siding wash and surface cleaning detail"),
+    proof: tradePhotoAsset("power-washing", "proof", "Representative power washing example photo with cleaned driveway and exterior surface detail"),
+    texture: "Exterior cleaning, surface detail, and before-after potential",
   },
   Painting: {
-    hero: { src: "/engine-preview-assets/trades/painting-hero.svg", alt: "Painting concept visual with paint roller, wall finish, trim, and refresh cues" },
-    service: { src: "/engine-preview-assets/trades/painting-service.svg", alt: "Painting service visual with trim, roller, paint tray, and finish details" },
-    proof: { src: "/engine-preview-assets/trades/painting-proof.svg", alt: "Sample painting project proof visual with paint tray, roller, and finished trim cues" },
-    texture: "Clean prep, careful finish, and color confidence",
+    hero: tradePhotoAsset("painting", "hero", "Representative painting photo with roller, wall finish, trim, and room refresh context"),
+    service: tradePhotoAsset("painting", "service", "Representative painting service photo with trim, roller, paint tray, and careful prep"),
+    proof: tradePhotoAsset("painting", "proof", "Representative painting example photo with finish detail, roller, and clean trim"),
+    texture: "Prep, finish detail, and color confidence",
   },
   Concrete: {
-    hero: { src: "/engine-preview-assets/trades/concrete-hero.svg", alt: "Concrete concept visual with driveway, walkway, and flatwork finishing details" },
-    service: { src: "/engine-preview-assets/trades/concrete-service.svg", alt: "Concrete service visual with trowel, driveway, walkway, and finish cues" },
-    proof: { src: "/engine-preview-assets/trades/concrete-proof.svg", alt: "Sample concrete project proof visual with walkway, driveway, and finish detail" },
-    texture: "Material strength, clean edges, and practical planning",
+    hero: tradePhotoAsset("concrete", "hero", "Representative concrete photo with driveway, walkway, and flatwork context"),
+    service: tradePhotoAsset("concrete", "service", "Representative concrete service photo with trowel, surface finish, and flatwork detail"),
+    proof: tradePhotoAsset("concrete", "proof", "Representative concrete example photo with walkway, driveway, and finished surface"),
+    texture: "Concrete surfaces, clean edges, and practical planning",
   },
   Cleaning: {
-    hero: { src: "/engine-preview-assets/trades/cleaning-hero.svg", alt: "Cleaning concept visual with clean interior, equipment, and organized service cues" },
-    service: { src: "/engine-preview-assets/trades/cleaning-service.svg", alt: "Cleaning service visual with supplies, clean room, checklist, and equipment details" },
-    proof: { src: "/engine-preview-assets/trades/cleaning-proof.svg", alt: "Sample cleaning proof visual with fresh interior and cleaning equipment cues" },
-    texture: "Fresh surfaces, organized scope, and easy booking",
+    hero: tradePhotoAsset("cleaning", "hero", "Representative cleaning photo with clean interior, equipment, and organized service context"),
+    service: tradePhotoAsset("cleaning", "service", "Representative cleaning service photo with supplies, clean room, and equipment"),
+    proof: tradePhotoAsset("cleaning", "proof", "Representative cleaning example photo with fresh interior and cleaning equipment"),
+    texture: "Fresh surfaces, equipment, and organized scope",
   },
   "Tree Service": {
-    hero: { src: "/engine-preview-assets/trades/tree-service-hero.svg", alt: "Tree service concept visual with tree trimming, equipment, and cleanup cues" },
-    service: { src: "/engine-preview-assets/trades/tree-service-service.svg", alt: "Tree service visual with trimming, removal equipment, and yard cleanup details" },
-    proof: { src: "/engine-preview-assets/trades/tree-service-proof.svg", alt: "Sample tree service proof visual with equipment, trimming, and cleanup cues" },
-    texture: "Safety-first outdoor work and cleanup expectations",
+    hero: tradePhotoAsset("tree-service", "hero", "Representative tree service photo with tree care, trimming context, and outdoor equipment"),
+    service: tradePhotoAsset("tree-service", "service", "Representative tree service photo with trimming, removal equipment, and cleanup context"),
+    proof: tradePhotoAsset("tree-service", "proof", "Representative tree service example photo with equipment, trimming, and yard cleanup"),
+    texture: "Tree care, equipment, and cleanup expectations",
   },
   Fencing: {
-    hero: { src: "/engine-preview-assets/trades/fencing-hero.svg", alt: "Fencing concept visual with fence panels, gate, and yard boundary cues" },
-    service: { src: "/engine-preview-assets/trades/fencing-service.svg", alt: "Fencing service visual with gate, fence line, materials, and yard details" },
-    proof: { src: "/engine-preview-assets/trades/fencing-proof.svg", alt: "Sample fencing project proof visual with installed fence, gate, and yard cues" },
-    texture: "Cedar, clean lines, privacy, and property fit",
+    hero: tradePhotoAsset("fencing", "hero", "Representative fencing photo with fence panels, gate, and yard boundary context"),
+    service: tradePhotoAsset("fencing", "service", "Representative fencing service photo with gate, fence line, materials, and yard detail"),
+    proof: tradePhotoAsset("fencing", "proof", "Representative fencing example photo with installed fence, gate, and yard context"),
+    texture: "Fence lines, gates, privacy, and property fit",
   },
   Flooring: {
-    hero: { src: "/engine-preview-assets/trades/flooring-hero.svg", alt: "Flooring concept visual with hardwood planks, tile, and installation details" },
-    service: { src: "/engine-preview-assets/trades/flooring-service.svg", alt: "Flooring service visual with tile, planks, installation tools, and finished surface cues" },
-    proof: { src: "/engine-preview-assets/trades/flooring-proof.svg", alt: "Sample flooring project proof visual with installed floor, tile, and plank details" },
-    texture: "Warm interior surfaces and clean installation detail",
+    hero: tradePhotoAsset("flooring", "hero", "Representative flooring photo with hardwood planks, tile, and installation context"),
+    service: tradePhotoAsset("flooring", "service", "Representative flooring service photo with tile, planks, installation tools, and finished surface"),
+    proof: tradePhotoAsset("flooring", "proof", "Representative flooring example photo with installed floor, tile, and plank detail"),
+    texture: "Floor surfaces, installation detail, and interior finish",
   },
   Remodeling: {
-    hero: { src: "/engine-preview-assets/trades/remodeling-hero.svg", alt: "Remodeling concept visual with kitchen, bath, room planning, and material cues" },
-    service: { src: "/engine-preview-assets/trades/remodeling-service.svg", alt: "Remodeling service visual with bath, kitchen, planning, and room improvement details" },
-    proof: { src: "/engine-preview-assets/trades/remodeling-proof.svg", alt: "Sample remodeling project proof visual with room plan, kitchen, bath, and material cues" },
-    texture: "Finished spaces, material choices, and planning clarity",
+    hero: tradePhotoAsset("remodeling", "hero", "Representative remodeling photo with kitchen, bath, room planning, and material context"),
+    service: tradePhotoAsset("remodeling", "service", "Representative remodeling service photo with bath, kitchen, planning, and room improvement detail"),
+    proof: tradePhotoAsset("remodeling", "proof", "Representative remodeling example photo with room plan, kitchen, bath, and material detail"),
+    texture: "Finished spaces, materials, and planning clarity",
   },
   "General Contractor": {
-    hero: { src: "/engine-preview-assets/trades/general-contractor-hero.svg", alt: "General contractor concept visual with framing, materials, blueprint, and construction planning cues" },
-    service: { src: "/engine-preview-assets/trades/general-contractor-service.svg", alt: "General contractor service visual with blueprint, framing, materials, and build process details" },
-    proof: { src: "/engine-preview-assets/trades/general-contractor-proof.svg", alt: "Sample construction project proof visual with materials, framing, and planning cues" },
-    texture: "Project progress, finished spaces, and communication clarity",
+    hero: tradePhotoAsset("general-contractor", "hero", "Representative construction photo with framing, materials, blueprint, and project planning context"),
+    service: tradePhotoAsset("general-contractor", "service", "Representative general contractor service photo with blueprint, framing, materials, and build process detail"),
+    proof: tradePhotoAsset("general-contractor", "proof", "Representative construction example photo with materials, framing, and planning context"),
+    texture: "Project progress, materials, and communication clarity",
   },
 };
 
@@ -133,6 +142,7 @@ function TradeVisualImage({ asset, slot }: { asset: TradeVisualAsset; slot: "her
         width={960}
         height={720}
         priority={slot === "hero"}
+        data-fallback-src={asset.fallbackSrc}
         unoptimized
       />
     </figure>
@@ -202,9 +212,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <aside className="prospect-preview-hero__visual">
             <TradeVisualImage asset={visual.hero} slot="hero" />
             <div className="prospect-preview-visual-caption">
-              <small>Sample visual direction</small>
+              <small>Representative image direction</small>
               <strong>{visual.texture}</strong>
-              <span>Trade-relevant concept visual. Replace with verified {prospect.businessName} photos before launch.</span>
+              <span>Representative trade image. Replace with verified {prospect.businessName} photos before launch.</span>
             </div>
           </aside>
         </section>
