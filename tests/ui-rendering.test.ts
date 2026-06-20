@@ -143,15 +143,40 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /--prospect-accent:#2c94c6/);
   assert.match(html, /Request an estimate/);
   assert.match(html, /Sample visual direction/);
-  assert.match(html, /picsum\.photos\/seed\/roofing-blue-line-roofing-hero-service-visual/);
+  assert.match(html, /Roofline/);
+  assert.match(html, /Trade-relevant concept visual/);
   assert.match(html, /Replace with verified Blue Line Roofing photos before launch/);
   assert.match(html, /Sample layout content/);
   assert.match(html, /Why choose us/);
   assert.match(html, /Service area/);
   assert.match(html, /Call \(419\) 555-0142/);
   assert.match(html, /data-layout="(?:trust-led|clean-split)"/);
+  assert.doesNotMatch(html, /picsum\.photos|honey|coffee|liquid/i);
   assert.doesNotMatch(html, /--preview-green|--preview-lime/);
   assert.doesNotMatch(html, /Concept prepared for manual review in WebWorkshop Prospect Engine/);
+});
+
+test("HVAC public preview uses trade-specific equipment visuals instead of random stock imagery", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects.find((item) => item.trade === "HVAC") ?? seedProspects[0]),
+    businessName: "Rick's Affordable Heating & Cooling",
+    trade: "HVAC",
+    city: "Toledo",
+    state: "OH",
+  });
+  const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    publicView: true,
+    savedPreview: prospect.preview,
+  }));
+
+  assert.match(html, /Rick&#x27;s Affordable Heating &amp; Cooling/);
+  assert.match(html, /HVAC system/);
+  assert.match(html, /Thermostat/);
+  assert.match(html, /AC condenser/);
+  assert.match(html, /Ductwork/);
+  assert.match(html, /Furnace, AC condenser, ductwork, vent, and thermostat detail/);
+  assert.doesNotMatch(html, /picsum\.photos|honey|coffee|food|nature|abstract/i);
 });
 
 test("public website preview exposes only the prospect concept with no engine navigation", () => {

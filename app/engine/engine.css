@@ -2889,12 +2889,6 @@ body:has(.engine-shell) {
     var(--prospect-surface);
 }
 
-.prospect-preview-site img {
-  display: block;
-  width: 100%;
-  object-fit: cover;
-}
-
 .prospect-preview-nav {
   position: sticky;
   z-index: 2;
@@ -2963,13 +2957,6 @@ body:has(.engine-shell) {
   padding: 0;
 }
 
-.prospect-preview-hero__visual img {
-  min-height: 30rem;
-  border-radius: 16px;
-  aspect-ratio: 5 / 6;
-  box-shadow: 0 10px 18px color-mix(in srgb, var(--prospect-primary) 16%, transparent);
-}
-
 .prospect-preview-visual-caption {
   display: grid;
   gap: 0.35rem;
@@ -2995,6 +2982,122 @@ body:has(.engine-shell) {
   color: var(--prospect-muted);
   font-size: 0.78rem;
   line-height: 1.45;
+}
+
+.prospect-preview-visual {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  min-height: 17rem;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--prospect-accent) 22%, transparent), transparent 8rem),
+    linear-gradient(135deg, color-mix(in srgb, var(--prospect-primary) 88%, #ffffff 6%), color-mix(in srgb, var(--prospect-primary) 58%, var(--prospect-accent) 24%));
+  box-shadow: 0 10px 18px color-mix(in srgb, var(--prospect-primary) 16%, transparent);
+  color: #ffffff;
+  isolation: isolate;
+}
+
+.prospect-preview-visual::before {
+  content: "";
+  position: absolute;
+  inset: 1rem;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.prospect-preview-visual::after {
+  content: "";
+  position: absolute;
+  inset: auto -8% -22% 30%;
+  height: 52%;
+  border-radius: 999px 999px 0 0;
+  background: rgb(255 255 255 / 0.12);
+  transform: rotate(-8deg);
+}
+
+.prospect-preview-visual--hero {
+  min-height: 30rem;
+  aspect-ratio: 5 / 6;
+}
+
+.prospect-preview-visual--service {
+  min-height: 13rem;
+  aspect-ratio: 4 / 3;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.prospect-preview-visual--proof {
+  min-height: 17rem;
+  aspect-ratio: 4 / 5;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.prospect-preview-visual__canvas {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  gap: 1rem;
+  min-height: inherit;
+  padding: clamp(1.2rem, 4vw, 2rem);
+}
+
+.prospect-preview-visual__mark {
+  max-width: 12ch;
+  color: #ffffff;
+  font-family: var(--prospect-heading-font);
+  font-size: clamp(1.55rem, 3vw, 3rem);
+  font-weight: 900;
+  line-height: 0.98;
+}
+
+.prospect-preview-visual__line {
+  display: block;
+  width: min(100%, 16rem);
+  height: 0.55rem;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.34);
+}
+
+.prospect-preview-visual__line:nth-child(3) {
+  width: min(72%, 11rem);
+  background: color-mix(in srgb, var(--prospect-accent) 74%, #ffffff 18%);
+}
+
+.prospect-preview-visual__disc {
+  position: absolute;
+  right: clamp(1.2rem, 5vw, 2.2rem);
+  bottom: clamp(1.2rem, 5vw, 2.2rem);
+  width: clamp(4rem, 12vw, 7rem);
+  height: clamp(4rem, 12vw, 7rem);
+  border: 0.65rem solid rgb(255 255 255 / 0.24);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+}
+
+.prospect-preview-visual__details {
+  position: absolute;
+  z-index: 1;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.prospect-preview-visual__details span {
+  border: 1px solid rgb(255 255 255 / 0.26);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.14);
+  padding: 0.35rem 0.55rem;
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 850;
 }
 
 .prospect-preview-trust {
@@ -3055,12 +3158,6 @@ body:has(.engine-shell) {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
 }
 
-.prospect-preview-service-list img {
-  height: 100%;
-  min-height: 13rem;
-  aspect-ratio: 4 / 3;
-}
-
 .prospect-preview-service-list article > div {
   display: grid;
   align-content: center;
@@ -3117,11 +3214,6 @@ body:has(.engine-shell) {
   border-radius: 14px;
   background: var(--prospect-surface);
   padding: 0;
-}
-
-.prospect-preview-projects img {
-  min-height: 17rem;
-  aspect-ratio: 4 / 5;
 }
 
 .prospect-preview-projects b {
@@ -3728,7 +3820,7 @@ body:has(.engine-shell) {
     min-height: 17rem;
   }
 
-  .prospect-preview-hero__visual img {
+  .prospect-preview-visual--hero {
     min-height: 18rem;
     aspect-ratio: 4 / 3;
   }
@@ -3739,8 +3831,8 @@ body:has(.engine-shell) {
     grid-template-columns: 1fr;
   }
 
-  .prospect-preview-service-list img,
-  .prospect-preview-projects img {
+  .prospect-preview-visual--service,
+  .prospect-preview-visual--proof {
     min-height: 12rem;
     aspect-ratio: 16 / 10;
   }

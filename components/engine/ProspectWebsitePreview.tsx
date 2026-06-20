@@ -1,5 +1,4 @@
 import React, { type CSSProperties } from "react";
-import Image from "next/image";
 import {
   generatePreview,
   previewStyleProfile,
@@ -25,96 +24,144 @@ type ProspectPreviewProperties = CSSProperties & {
   "--prospect-body-font": string;
 };
 
-const tradeVisuals: Record<Prospect["trade"], { hero: string; service: string; proof: string; texture: string }> = {
+type TradeVisualProfile = {
+  hero: string;
+  service: string;
+  proof: string;
+  texture: string;
+  motif: string;
+  details: string[];
+};
+
+const tradeVisuals: Record<Prospect["trade"], TradeVisualProfile> = {
   Roofing: {
     hero: "Durable roofline and exterior service visual",
     service: "Roof material and inspection detail",
     proof: "Sample roof project photo slot",
     texture: "Sturdy roofline, material detail, and local exterior work",
+    motif: "Roofline",
+    details: ["Shingles", "Flashing", "Inspection"],
   },
   HVAC: {
-    hero: "Clean home comfort and equipment service visual",
-    service: "HVAC equipment and technician detail",
-    proof: "Sample comfort service photo slot",
+    hero: "HVAC equipment, ductwork, thermostat, and home comfort visual",
+    service: "Furnace, AC condenser, ductwork, vent, and thermostat detail",
+    proof: "Sample HVAC equipment and service proof slot",
     texture: "Clean equipment, airflow, and reliable service cues",
+    motif: "HVAC system",
+    details: ["Thermostat", "AC condenser", "Ductwork"],
   },
   Landscaping: {
     hero: "Outdoor living and finished yard visual",
     service: "Planting, hardscape, and seasonal detail",
     proof: "Sample landscape project photo slot",
     texture: "Finished outdoor spaces and before-after potential",
+    motif: "Outdoor plan",
+    details: ["Planting", "Hardscape", "Seasonal care"],
   },
   Plumbing: {
     hero: "Practical home plumbing service visual",
     service: "Fixture, pipe, and repair detail",
     proof: "Sample plumbing work photo slot",
     texture: "Clean repair detail, response clarity, and simple next steps",
+    motif: "Plumbing repair",
+    details: ["Fixtures", "Pipes", "Water heater"],
   },
   Electrical: {
     hero: "Safe residential electrical service visual",
     service: "Panel, lighting, and installation detail",
     proof: "Sample electrical project photo slot",
     texture: "Sharp safety cues, clear scope, and dependable work",
+    motif: "Electrical panel",
+    details: ["Panel", "Lighting", "Safety"],
   },
   "Power Washing": {
     hero: "Clean exterior surface transformation visual",
     service: "Surface cleaning and soft-wash detail",
     proof: "Sample washing result photo slot",
     texture: "Before-after contrast, exterior detail, and quick quoting",
+    motif: "Clean surface",
+    details: ["Siding", "Concrete", "Soft wash"],
   },
   Painting: {
     hero: "Fresh exterior or interior painting visual",
     service: "Prep, color, and finish detail",
     proof: "Sample painting project photo slot",
     texture: "Clean prep, careful finish, and color confidence",
+    motif: "Paint finish",
+    details: ["Prep", "Color", "Trim"],
   },
   Concrete: {
     hero: "Durable concrete and flatwork visual",
     service: "Driveway, patio, and finish detail",
     proof: "Sample concrete project photo slot",
     texture: "Material strength, clean edges, and practical planning",
+    motif: "Concrete layout",
+    details: ["Driveway", "Patio", "Finish"],
   },
   Cleaning: {
     hero: "Bright, organized cleaning service visual",
     service: "Clean room and checklist detail",
     proof: "Sample cleaning result photo slot",
     texture: "Fresh surfaces, organized scope, and easy booking",
+    motif: "Clean room",
+    details: ["Checklist", "Rooms", "Schedule"],
   },
   "Tree Service": {
     hero: "Outdoor tree care and safety visual",
     service: "Crew, equipment, and cleanup detail",
     proof: "Sample tree service photo slot",
     texture: "Safety-first outdoor work and cleanup expectations",
+    motif: "Tree care",
+    details: ["Trimming", "Removal", "Cleanup"],
   },
   Fencing: {
     hero: "Finished fence and property boundary visual",
     service: "Material, gate, and fence-line detail",
     proof: "Sample fencing project photo slot",
     texture: "Cedar, clean lines, privacy, and property fit",
+    motif: "Fence line",
+    details: ["Privacy", "Gate", "Materials"],
   },
   Flooring: {
     hero: "Finished flooring and interior surface visual",
     service: "Wood, plank, and installation detail",
     proof: "Sample flooring project photo slot",
     texture: "Warm interior surfaces and clean installation detail",
+    motif: "Floor pattern",
+    details: ["Planks", "Refinish", "Install"],
   },
   Remodeling: {
     hero: "Finished home improvement space visual",
     service: "Material, planning, and room detail",
     proof: "Sample remodeling project photo slot",
     texture: "Finished spaces, material choices, and planning clarity",
+    motif: "Room plan",
+    details: ["Kitchen", "Bath", "Planning"],
   },
   "General Contractor": {
     hero: "Residential construction and project planning visual",
     service: "Build process and material detail",
     proof: "Sample construction project photo slot",
     texture: "Project progress, finished spaces, and communication clarity",
+    motif: "Project build",
+    details: ["Planning", "Materials", "Schedule"],
   },
 };
 
-function previewImageUrl(prospect: Prospect, slot: string, width: number, height: number) {
-  const seed = encodeURIComponent(`${prospect.trade}-${prospect.businessName}-${slot}`.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-"));
-  return `https://picsum.photos/seed/${seed}/${width}/${height}`;
+function TradeVisualPanel({ label, slot, visual }: { label: string; slot: "hero" | "service" | "proof"; visual: TradeVisualProfile }) {
+  return (
+    <div aria-label={label} className={`prospect-preview-visual prospect-preview-visual--${slot}`} role="img">
+      <div className="prospect-preview-visual__canvas">
+        <span className="prospect-preview-visual__mark">{visual.motif}</span>
+        <span className="prospect-preview-visual__line" />
+        <span className="prospect-preview-visual__line" />
+        <span className="prospect-preview-visual__disc" />
+      </div>
+      <div className="prospect-preview-visual__details" aria-hidden="true">
+        {visual.details.map((detail) => <span key={detail}>{detail}</span>)}
+      </div>
+    </div>
+  );
 }
 
 export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
@@ -178,11 +225,11 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             </div>
           </div>
           <aside className="prospect-preview-hero__visual">
-            <Image alt={visual.hero} height={760} priority sizes="(max-width: 767px) 100vw, 42vw" src={previewImageUrl(prospect, "hero-service-visual", 960, 760)} unoptimized width={960} />
+            <TradeVisualPanel label={visual.hero} slot="hero" visual={visual} />
             <div className="prospect-preview-visual-caption">
               <small>Sample visual direction</small>
               <strong>{visual.texture}</strong>
-              <span>Replace with verified {prospect.businessName} photos before launch.</span>
+              <span>Trade-relevant concept visual. Replace with verified {prospect.businessName} photos before launch.</span>
             </div>
           </aside>
         </section>
@@ -200,7 +247,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-service-list">
             {services.map((item, index) => (
               <article key={item}>
-                <Image alt={index === 0 ? visual.service : `${item} sample service visual`} height={380} sizes="(max-width: 767px) 100vw, 34vw" src={previewImageUrl(prospect, `service-${index}-${item}`, 520, 380)} unoptimized width={520} />
+                <TradeVisualPanel label={index === 0 ? visual.service : `${item} trade-relevant service visual`} slot="service" visual={visual} />
                 <div>
                   <h3>{item}</h3>
                   <p>Understand the scope, practical next steps, and what to expect before the work begins.</p>
@@ -236,7 +283,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-projects">
             {(noWebsiteProspect ? ["Verified project story", "Approved project photos", "Confirmed scope and outcome"] : ["Local project story", "Before and after", "Scope and outcome"]).map((item, index) => (
               <article key={item}>
-                <Image alt={index === 0 ? visual.proof : `${item} sample layout slot`} height={640} sizes="(max-width: 767px) 100vw, 28vw" src={previewImageUrl(prospect, `proof-${index}-${item}`, 520, 640)} unoptimized width={520} />
+                <TradeVisualPanel label={index === 0 ? visual.proof : `${item} sample layout slot`} slot="proof" visual={visual} />
                 <b>{item}</b>
                 <span>Sample layout content. Use verified photos, locations, scope, and outcomes supplied by the business.</span>
               </article>
