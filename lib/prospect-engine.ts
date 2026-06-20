@@ -816,10 +816,16 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   const trade = prospect.trade.toLowerCase();
   const playbook = contractorPlaybooks[prospect.trade];
   const styleProfile = generateProspectStyleProfile(prospect);
+  const displayCity = prospect.city.trim().toLowerCase().replace(/\b([a-z])/g, (character) => character.toUpperCase());
+  const displayState = prospect.state.trim().toUpperCase();
+  const escapedCity = prospect.city.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const serviceArea = prospect.serviceArea
+    ? escapedCity ? prospect.serviceArea.replace(new RegExp(escapedCity, "gi"), displayCity) : prospect.serviceArea
+    : `${displayCity}, ${displayState}`;
   const verifiedProofAreas = playbook.trustProof.map((item) => `verified ${item}`).join(", ");
   const heroHeadlines: Record<TradeCategory, string> = {
     Roofing: "Roofing work that protects your home and earns your confidence.",
-    HVAC: "Comfort restored with clear service and practical options.",
+    HVAC: "Heating and cooling help without the runaround.",
     Plumbing: "Straight answers and dependable help for plumbing problems.",
     Electrical: "Safe, clear electrical work for homes and growing needs.",
     Landscaping: "Outdoor spaces planned for the way you want to live.",
@@ -843,9 +849,9 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   const preview: PreviewConcept = {
     direction: `A clean, local-first ${trade} website that feels like ${prospect.businessName}: ${styleProfile.tone.replace("-", " ")}, clear, and easy to hire.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} Use ${styleProfile.primaryColor} as the restrained primary brand color and ${styleProfile.accentColor} only for focused emphasis. Use tasteful generic service imagery when real photos are unavailable, with sample areas clearly labeled.`,
-    hero: `${prospect.businessName} serves ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`} with a clearer path from service need to direct contact.`,
+    hero: `${prospect.businessName} serves ${serviceArea} with a clearer path from service need to direct contact.`,
     heroHeadline: heroHeadlines[prospect.trade],
-    heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`}.`,
+    heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${serviceArea}.`,
     serviceHighlights: playbook.services.map(titleCase),
     trustItems,
     styleProfile,

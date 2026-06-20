@@ -2926,13 +2926,16 @@ body:has(.engine-shell) {
 }
 
 .prospect-preview-hero {
-  grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.92fr);
-  min-height: 42rem;
+  grid-template-columns: minmax(0, 0.9fr) minmax(24rem, 1.1fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  min-height: 0;
+  padding-block: clamp(3rem, 6vw, 5rem);
   background: transparent;
 }
 
 .prospect-preview-hero__content h1 {
-  max-width: 14ch;
+  max-width: 13ch;
+  font-size: clamp(2.8rem, 5vw, 4.7rem);
   letter-spacing: -0.035em;
   text-wrap: balance;
 }
@@ -2950,7 +2953,7 @@ body:has(.engine-shell) {
 .prospect-preview-hero__visual {
   display: grid;
   gap: 0.85rem;
-  align-self: stretch;
+  align-self: center;
   border: 0;
   border-radius: 16px;
   background: transparent;
@@ -2990,7 +2993,7 @@ body:has(.engine-shell) {
   min-height: 17rem;
   border-radius: 16px;
   background: color-mix(in srgb, var(--prospect-soft) 88%, #ffffff);
-  box-shadow: 0 18px 36px color-mix(in srgb, var(--prospect-primary) 18%, transparent);
+  box-shadow: 0 8px 8px color-mix(in srgb, var(--prospect-primary) 14%, transparent);
   margin: 0;
 }
 
@@ -3023,8 +3026,8 @@ body:has(.engine-shell) {
 }
 
 .prospect-preview-image--hero {
-  min-height: 30rem;
-  aspect-ratio: 5 / 6;
+  min-height: 25rem;
+  aspect-ratio: 4 / 3;
 }
 
 .prospect-preview-image--service {
@@ -3077,20 +3080,28 @@ body:has(.engine-shell) {
 }
 
 .prospect-preview-services {
-  grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr);
-  align-items: start;
+  display: block;
+  padding-block: clamp(3rem, 6vw, 5.5rem);
+}
+
+.prospect-preview-services .prospect-preview-section__intro {
+  max-width: 58rem;
+  margin-bottom: clamp(1.75rem, 4vw, 3rem);
+}
+
+.prospect-preview-services .prospect-preview-section__intro h2 {
+  max-width: 20ch;
 }
 
 .prospect-preview-service-list {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
   border-top: 0;
 }
 
 .prospect-preview-service-list article {
   display: grid;
-  grid-column: span 3;
   grid-template-columns: 1fr;
   overflow: hidden;
   gap: 0;
@@ -3101,14 +3112,15 @@ body:has(.engine-shell) {
 }
 
 .prospect-preview-service-list article:first-child {
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  grid-column: auto;
+  grid-template-columns: 1fr;
 }
 
 .prospect-preview-service-list article > div {
   display: grid;
-  align-content: center;
-  padding: 1.1rem;
+  align-content: start;
+  min-height: 11rem;
+  padding: 1.25rem;
 }
 
 .prospect-preview-service-list h3 {
@@ -3148,6 +3160,46 @@ body:has(.engine-shell) {
 
 .prospect-preview-work {
   background: var(--prospect-soft);
+}
+
+.prospect-preview-proof-layout {
+  display: grid;
+  grid-template-columns: minmax(20rem, 1.08fr) minmax(18rem, 0.92fr);
+  gap: clamp(1.5rem, 4vw, 4rem);
+  align-items: stretch;
+  margin-top: clamp(1.5rem, 4vw, 3rem);
+}
+
+.prospect-preview-proof-layout .prospect-preview-image--proof {
+  min-height: 25rem;
+  aspect-ratio: 4 / 3;
+  border-radius: 14px;
+}
+
+.prospect-preview-proof-notes {
+  display: grid;
+  align-content: stretch;
+  border-top: 1px solid var(--prospect-line);
+}
+
+.prospect-preview-proof-notes article {
+  display: grid;
+  align-content: center;
+  gap: 0.45rem;
+  border-bottom: 1px solid var(--prospect-line);
+  padding: 1.25rem 0;
+}
+
+.prospect-preview-proof-notes b {
+  color: var(--prospect-ink);
+  font-size: 1rem;
+}
+
+.prospect-preview-proof-notes span {
+  max-width: 48ch;
+  color: var(--prospect-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
 }
 
 .prospect-preview-projects {
@@ -3778,9 +3830,19 @@ body:has(.engine-shell) {
     grid-template-columns: 1fr;
   }
 
+  .prospect-preview-service-list,
+  .prospect-preview-proof-layout {
+    grid-template-columns: 1fr;
+  }
+
   .prospect-preview-image--service,
   .prospect-preview-image--proof {
     min-height: 12rem;
+    aspect-ratio: 16 / 10;
+  }
+
+  .prospect-preview-proof-layout .prospect-preview-image--proof {
+    min-height: 15rem;
     aspect-ratio: 16 / 10;
   }
 

@@ -183,8 +183,9 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
     ...structuredClone(seedProspects.find((item) => item.trade === "HVAC") ?? seedProspects[0]),
     businessName: "Rick's Affordable Heating & Cooling",
     trade: "HVAC",
-    city: "Toledo",
-    state: "OH",
+    city: "toledo",
+    state: "oh",
+    serviceArea: "toledo and nearby communities",
   });
   const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
     prospect,
@@ -195,11 +196,32 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Rick&#x27;s Affordable Heating &amp; Cooling/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-hero\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-service\.jpg/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-detail\.jpg/);
+  assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-support\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-proof\.jpg/);
   assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/hvac-hero\.svg"/);
   assert.match(html, /outdoor AC condenser beside a residential home/);
   assert.match(html, /furnace or air handler equipment and technician tools/);
   assert.match(html, /thermostat, vent, and home comfort detail/);
+  assert.match(html, /HVAC in Toledo, OH/);
+  assert.match(html, /Heating and cooling help without the runaround\./);
+  assert.match(html, /A clearer way to schedule heating and cooling service\./);
+  assert.match(html, /Heating and cooling repair/);
+  assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
+  assert.match(html, /System installation/);
+  assert.match(html, /Compare replacement or new-system options/);
+  assert.match(html, /Maintenance and tune-ups/);
+  assert.match(html, /Plan seasonal system checks, filter and airflow review/);
+  assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b/);
+  const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(imageSources.slice(0, 5), [
+    "/engine-preview-assets/trade-photos/hvac-hero.jpg",
+    "/engine-preview-assets/trade-photos/hvac-service.jpg",
+    "/engine-preview-assets/trade-photos/hvac-detail.jpg",
+    "/engine-preview-assets/trade-photos/hvac-support.jpg",
+    "/engine-preview-assets/trade-photos/hvac-proof.jpg",
+  ]);
+  assert.equal(new Set(imageSources.slice(0, 5)).size, 5);
   assert.doesNotMatch(html, /picsum\.photos|honey|coffee|food|nature|abstract|HVAC system/i);
 });
 
@@ -219,6 +241,8 @@ test("core trade previews render deterministic local imagery by default", () => 
 
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-hero\\.jpg`));
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-service\\.jpg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-detail\\.jpg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-support\\.jpg`));
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-proof\\.jpg`));
     assert.match(html, new RegExp(`data-fallback-src="/engine-preview-assets/trades/${slug}-hero\\.svg"`));
     assert.doesNotMatch(html, /picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
@@ -228,7 +252,7 @@ test("core trade previews render deterministic local imagery by default", () => 
 
 test("core trade photo library covers each preview section", () => {
   for (const slug of Object.values(coreTradePhotoSlugs)) {
-    for (const slot of ["hero", "service", "proof"] as const) {
+    for (const slot of ["hero", "service", "detail", "support", "proof"] as const) {
       const asset = new URL(`../public/engine-preview-assets/trade-photos/${slug}-${slot}.jpg`, import.meta.url);
       assert.equal(existsSync(asset), true, `${slug}-${slot}.jpg should exist`);
       assert.ok(statSync(asset).size > 20_000, `${slug}-${slot}.jpg should be a real preview image`);

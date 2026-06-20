@@ -56,7 +56,7 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.match(prospectWebsitePreview, /src: `\/engine-preview-assets\/trade-photos\/\$\{slug\}-\$\{slot\}\.jpg`/);
   assert.match(prospectWebsitePreview, /tradePhotoAsset\("hvac", "hero"/);
   assert.match(prospectWebsitePreview, /tradePhotoAsset\("roofing", "hero"/);
-  assert.match(prospectWebsitePreview, /fallbackSrc: `\/engine-preview-assets\/trades\/\$\{slug\}-\$\{slot\}\.svg`/);
+  assert.match(prospectWebsitePreview, /fallbackSrc: `\/engine-preview-assets\/trades\/\$\{slug\}-\$\{slot === "detail" \|\| slot === "support" \? "service" : slot\}\.svg`/);
   assert.doesNotMatch(prospectWebsitePreview, /prospect-preview-visual__mark|TradeVisualPanel/);
 });
 

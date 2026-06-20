@@ -90,6 +90,21 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.match(preview.portfolioDirection, /sample layout/i);
 });
 
+test("preview generation normalizes city and state capitalization", () => {
+  const preview = generatePreview({
+    ...structuredClone(seedProspects[0]),
+    trade: "HVAC",
+    city: "toledo",
+    state: "oh",
+    serviceArea: "toledo and nearby communities",
+  });
+
+  assert.equal(preview.heroHeadline, "Heating and cooling help without the runaround.");
+  assert.match(preview.hero, /Toledo and nearby communities/);
+  assert.match(preview.heroSupporting ?? "", /Toledo and nearby communities/);
+  assert.doesNotMatch(`${preview.hero} ${preview.heroSupporting}`, /\btoledo\b/);
+});
+
 test("preview intelligence changes meaningfully by contractor trade", () => {
   const roofing = generatePreview(structuredClone(seedProspects[0]));
   const plumbing = generatePreview(structuredClone(seedProspects[3]));
