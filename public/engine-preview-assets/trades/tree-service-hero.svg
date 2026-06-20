@@ -1,0 +1,18 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<title id="title">tree service hero concept visual</title>
+<desc id="desc">Deterministic trade-relevant concept imagery for a prospect website preview.</desc>
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#dcebd8"/><stop offset="1" stop-color="#f8f7f1"/></linearGradient>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#15201e" flood-opacity="0.18"/></filter>
+</defs>
+<rect width="960" height="720" fill="url(#sky)"/>
+<path d="M0 410C150 378 242 455 420 414C602 372 720 400 960 356V720H0V410Z" fill="#cfdac4"/>
+<rect x="72" y="74" width="816" height="548" rx="30" fill="#ffffff" filter="url(#shadow)"/>
+<rect x="72" y="74" width="816" height="548" rx="30" stroke="#3f6f38" stroke-opacity="0.16" stroke-width="2"/>
+<circle cx="802" cy="146" r="54" fill="#9d7b45" opacity="0.18"/>
+<circle cx="158" cy="568" r="78" fill="#3f6f38" opacity="0.10"/>
+<g transform="translate(98 112) scale(1.28)"><path d="M182 126v162" stroke="#b98455" stroke-width="30" stroke-linecap="round"/><circle cx="182" cy="100" r="72" fill="#72995c"/><circle cx="124" cy="144" r="54" fill="#9d7b45"/><circle cx="238" cy="148" r="58" fill="#72995c"/><path d="M68 288h250" stroke="#3f6f38" stroke-width="18" stroke-linecap="round"/></g><g transform="translate(548 118) scale(0.9)"><rect x="58" y="54" width="240" height="206" rx="6" fill="#f8f6ef" stroke="#3f6f38" stroke-width="12"/><rect x="86" y="86" width="184" height="146" fill="#f4e9e0"/><path d="M72 64h212M72 250h212M64 72v176M292 72v176" stroke="#9d7b45" stroke-width="12"/><path d="M106 260l88 38" stroke="#1f2524" stroke-width="12" stroke-linecap="round"/></g><g transform="translate(588 382) scale(0.72)"><rect x="76" y="96" width="220" height="128" rx="16" fill="#f8f6ef" stroke="#3f6f38" stroke-width="12"/><circle cx="132" cy="160" r="32" fill="#9d7b45"/><circle cx="236" cy="160" r="32" fill="#9d7b45"/><path d="M98 252h200" stroke="#b98455" stroke-width="22" stroke-linecap="round"/></g>
+
+
+<rect x="110" y="612" width="740" height="12" rx="6" fill="#3f6f38" opacity="0.15"/>
+</svg>

@@ -7,7 +7,7 @@ import { DiscoveryFunnel } from "../components/engine/DiscoveryFunnel";
 import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePreview";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
-import { seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
+import { coreServiceTrades, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 
 function renderDetail(prospect: Prospect, detailTab: DetailTab) {
   return renderToStaticMarkup(createElement(ProspectDetail, {
@@ -143,7 +143,10 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /--prospect-accent:#2c94c6/);
   assert.match(html, /Request an estimate/);
   assert.match(html, /Sample visual direction/);
-  assert.match(html, /Roofline/);
+  assert.match(html, /\/engine-preview-assets\/trades\/roofing-hero\.svg/);
+  assert.match(html, /\/engine-preview-assets\/trades\/roofing-service\.svg/);
+  assert.match(html, /\/engine-preview-assets\/trades\/roofing-proof\.svg/);
+  assert.match(html, /Roofing concept visual with roofline/);
   assert.match(html, /Trade-relevant concept visual/);
   assert.match(html, /Replace with verified Blue Line Roofing photos before launch/);
   assert.match(html, /Sample layout content/);
@@ -154,6 +157,7 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.doesNotMatch(html, /picsum\.photos|honey|coffee|liquid/i);
   assert.doesNotMatch(html, /--preview-green|--preview-lime/);
   assert.doesNotMatch(html, /Concept prepared for manual review in WebWorkshop Prospect Engine/);
+  assert.doesNotMatch(html, /prospect-preview-visual__mark|role="img"/);
 });
 
 test("HVAC public preview uses trade-specific equipment visuals instead of random stock imagery", () => {
@@ -171,12 +175,76 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   }));
 
   assert.match(html, /Rick&#x27;s Affordable Heating &amp; Cooling/);
-  assert.match(html, /HVAC system/);
-  assert.match(html, /Thermostat/);
-  assert.match(html, /AC condenser/);
-  assert.match(html, /Ductwork/);
-  assert.match(html, /Furnace, AC condenser, ductwork, vent, and thermostat detail/);
-  assert.doesNotMatch(html, /picsum\.photos|honey|coffee|food|nature|abstract/i);
+  assert.match(html, /\/engine-preview-assets\/trades\/hvac-hero\.svg/);
+  assert.match(html, /\/engine-preview-assets\/trades\/hvac-service\.svg/);
+  assert.match(html, /\/engine-preview-assets\/trades\/hvac-proof\.svg/);
+  assert.match(html, /AC condenser, thermostat, ductwork, and home comfort equipment/);
+  assert.match(html, /HVAC service visual with thermostat, condenser, ductwork, and equipment details/);
+  assert.doesNotMatch(html, /picsum\.photos|honey|coffee|food|nature|abstract|HVAC system/i);
+});
+
+test("core trade previews render deterministic local imagery by default", () => {
+  const tradeSlugs: Record<(typeof coreServiceTrades)[number], string> = {
+    Roofing: "roofing",
+    HVAC: "hvac",
+    Plumbing: "plumbing",
+    Electrical: "electrical",
+    Landscaping: "landscaping",
+    "Power Washing": "power-washing",
+    Painting: "painting",
+    Concrete: "concrete",
+    Cleaning: "cleaning",
+    "Tree Service": "tree-service",
+    Fencing: "fencing",
+    Flooring: "flooring",
+    Remodeling: "remodeling",
+  };
+
+  for (const trade of coreServiceTrades) {
+    const prospect = withPreview({
+      ...structuredClone(seedProspects[0]),
+      businessName: `${trade} Sample Business`,
+      trade,
+    });
+    const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+      prospect,
+      publicView: true,
+      savedPreview: prospect.preview,
+    }));
+    const slug = tradeSlugs[trade];
+
+    assert.match(html, new RegExp(`/engine-preview-assets/trades/${slug}-hero\\.svg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trades/${slug}-service\\.svg`));
+    assert.match(html, new RegExp(`/engine-preview-assets/trades/${slug}-proof\\.svg`));
+    assert.doesNotMatch(html, /picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
+    assert.doesNotMatch(html, /prospect-preview-visual__mark|prospect-preview-visual__details/);
+  }
+});
+
+test("priority trades use matching preview image language", () => {
+  const expected = [
+    ["HVAC", /AC condenser, thermostat, ductwork/i],
+    ["Roofing", /roofline, shingle detail, and inspection/i],
+    ["Plumbing", /sink, pipes, fixture, and water service/i],
+    ["Landscaping", /lawn, garden beds, hardscape/i],
+    ["Electrical", /breaker panel, outlet, wiring/i],
+  ] as const;
+
+  for (const [trade, pattern] of expected) {
+    const prospect = withPreview({
+      ...structuredClone(seedProspects[0]),
+      businessName: `${trade} Preview Co.`,
+      trade,
+    });
+    const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+      prospect,
+      publicView: true,
+      savedPreview: prospect.preview,
+    }));
+
+    assert.match(html, pattern);
+    assert.doesNotMatch(html, /random|stock|placeholder|abstract visual panel/i);
+  }
 });
 
 test("public website preview exposes only the prospect concept with no engine navigation", () => {
@@ -194,7 +262,7 @@ test("public website preview exposes only the prospect concept with no engine na
 
   assert.match(html, /Concept preview\. Not a live client website\./);
   assert.match(html, /data-preview-access="public"/);
-  assert.doesNotMatch(html, /\/engine|Back to Prospect Engine|Private operator note|Website score|Opportunity score/i);
+  assert.doesNotMatch(html, /href="\/engine"|Back to Prospect Engine|Private operator note|Website score|Opportunity score/i);
 });
 
 test("no-website public preview uses supported-fact placeholders instead of invented proof", () => {

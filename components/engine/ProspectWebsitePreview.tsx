@@ -1,3 +1,4 @@
+import Image from "next/image";
 import React, { type CSSProperties } from "react";
 import {
   generatePreview,
@@ -24,143 +25,117 @@ type ProspectPreviewProperties = CSSProperties & {
   "--prospect-body-font": string;
 };
 
+type TradeVisualAsset = {
+  src: string;
+  alt: string;
+};
+
 type TradeVisualProfile = {
-  hero: string;
-  service: string;
-  proof: string;
+  hero: TradeVisualAsset;
+  service: TradeVisualAsset;
+  proof: TradeVisualAsset;
   texture: string;
-  motif: string;
-  details: string[];
 };
 
 const tradeVisuals: Record<Prospect["trade"], TradeVisualProfile> = {
   Roofing: {
-    hero: "Durable roofline and exterior service visual",
-    service: "Roof material and inspection detail",
-    proof: "Sample roof project photo slot",
+    hero: { src: "/engine-preview-assets/trades/roofing-hero.svg", alt: "Roofing concept visual with roofline, shingle detail, and inspection cues" },
+    service: { src: "/engine-preview-assets/trades/roofing-service.svg", alt: "Roofing service visual with shingles, roof repair, and inspection equipment" },
+    proof: { src: "/engine-preview-assets/trades/roofing-proof.svg", alt: "Sample roofing project proof visual with roof inspection and shingle details" },
     texture: "Sturdy roofline, material detail, and local exterior work",
-    motif: "Roofline",
-    details: ["Shingles", "Flashing", "Inspection"],
   },
   HVAC: {
-    hero: "HVAC equipment, ductwork, thermostat, and home comfort visual",
-    service: "Furnace, AC condenser, ductwork, vent, and thermostat detail",
-    proof: "Sample HVAC equipment and service proof slot",
+    hero: { src: "/engine-preview-assets/trades/hvac-hero.svg", alt: "HVAC concept visual with an AC condenser, thermostat, ductwork, and home comfort equipment" },
+    service: { src: "/engine-preview-assets/trades/hvac-service.svg", alt: "HVAC service visual with thermostat, condenser, ductwork, and equipment details" },
+    proof: { src: "/engine-preview-assets/trades/hvac-proof.svg", alt: "Sample HVAC project proof visual with air handler, condenser, and ductwork cues" },
     texture: "Clean equipment, airflow, and reliable service cues",
-    motif: "HVAC system",
-    details: ["Thermostat", "AC condenser", "Ductwork"],
   },
   Landscaping: {
-    hero: "Outdoor living and finished yard visual",
-    service: "Planting, hardscape, and seasonal detail",
-    proof: "Sample landscape project photo slot",
+    hero: { src: "/engine-preview-assets/trades/landscaping-hero.svg", alt: "Landscaping concept visual with lawn, garden beds, hardscape, and outdoor space cues" },
+    service: { src: "/engine-preview-assets/trades/landscaping-service.svg", alt: "Landscaping service visual with planting, patio, lawn, and maintenance details" },
+    proof: { src: "/engine-preview-assets/trades/landscaping-proof.svg", alt: "Sample landscaping project proof visual with outdoor living and yard improvement cues" },
     texture: "Finished outdoor spaces and before-after potential",
-    motif: "Outdoor plan",
-    details: ["Planting", "Hardscape", "Seasonal care"],
   },
   Plumbing: {
-    hero: "Practical home plumbing service visual",
-    service: "Fixture, pipe, and repair detail",
-    proof: "Sample plumbing work photo slot",
+    hero: { src: "/engine-preview-assets/trades/plumbing-hero.svg", alt: "Plumbing concept visual with sink, pipes, fixture, and water service details" },
+    service: { src: "/engine-preview-assets/trades/plumbing-service.svg", alt: "Plumbing service visual with pipe repair, fixture, and water heater cues" },
+    proof: { src: "/engine-preview-assets/trades/plumbing-proof.svg", alt: "Sample plumbing project proof visual with water heater, fixture, and pipe details" },
     texture: "Clean repair detail, response clarity, and simple next steps",
-    motif: "Plumbing repair",
-    details: ["Fixtures", "Pipes", "Water heater"],
   },
   Electrical: {
-    hero: "Safe residential electrical service visual",
-    service: "Panel, lighting, and installation detail",
-    proof: "Sample electrical project photo slot",
+    hero: { src: "/engine-preview-assets/trades/electrical-hero.svg", alt: "Electrical concept visual with breaker panel, outlet, wiring, and lighting cues" },
+    service: { src: "/engine-preview-assets/trades/electrical-service.svg", alt: "Electrical service visual with outlets, breaker panel, wiring, and lighting details" },
+    proof: { src: "/engine-preview-assets/trades/electrical-proof.svg", alt: "Sample electrical project proof visual with light fixture, panel, and wiring cues" },
     texture: "Sharp safety cues, clear scope, and dependable work",
-    motif: "Electrical panel",
-    details: ["Panel", "Lighting", "Safety"],
   },
   "Power Washing": {
-    hero: "Clean exterior surface transformation visual",
-    service: "Surface cleaning and soft-wash detail",
-    proof: "Sample washing result photo slot",
+    hero: { src: "/engine-preview-assets/trades/power-washing-hero.svg", alt: "Power washing concept visual with spray wand, siding, and cleaned exterior surfaces" },
+    service: { src: "/engine-preview-assets/trades/power-washing-service.svg", alt: "Power washing service visual with siding wash, spray equipment, and driveway cleaning cues" },
+    proof: { src: "/engine-preview-assets/trades/power-washing-proof.svg", alt: "Sample power washing proof visual with cleaned driveway and exterior surface details" },
     texture: "Before-after contrast, exterior detail, and quick quoting",
-    motif: "Clean surface",
-    details: ["Siding", "Concrete", "Soft wash"],
   },
   Painting: {
-    hero: "Fresh exterior or interior painting visual",
-    service: "Prep, color, and finish detail",
-    proof: "Sample painting project photo slot",
+    hero: { src: "/engine-preview-assets/trades/painting-hero.svg", alt: "Painting concept visual with paint roller, wall finish, trim, and refresh cues" },
+    service: { src: "/engine-preview-assets/trades/painting-service.svg", alt: "Painting service visual with trim, roller, paint tray, and finish details" },
+    proof: { src: "/engine-preview-assets/trades/painting-proof.svg", alt: "Sample painting project proof visual with paint tray, roller, and finished trim cues" },
     texture: "Clean prep, careful finish, and color confidence",
-    motif: "Paint finish",
-    details: ["Prep", "Color", "Trim"],
   },
   Concrete: {
-    hero: "Durable concrete and flatwork visual",
-    service: "Driveway, patio, and finish detail",
-    proof: "Sample concrete project photo slot",
+    hero: { src: "/engine-preview-assets/trades/concrete-hero.svg", alt: "Concrete concept visual with driveway, walkway, and flatwork finishing details" },
+    service: { src: "/engine-preview-assets/trades/concrete-service.svg", alt: "Concrete service visual with trowel, driveway, walkway, and finish cues" },
+    proof: { src: "/engine-preview-assets/trades/concrete-proof.svg", alt: "Sample concrete project proof visual with walkway, driveway, and finish detail" },
     texture: "Material strength, clean edges, and practical planning",
-    motif: "Concrete layout",
-    details: ["Driveway", "Patio", "Finish"],
   },
   Cleaning: {
-    hero: "Bright, organized cleaning service visual",
-    service: "Clean room and checklist detail",
-    proof: "Sample cleaning result photo slot",
+    hero: { src: "/engine-preview-assets/trades/cleaning-hero.svg", alt: "Cleaning concept visual with clean interior, equipment, and organized service cues" },
+    service: { src: "/engine-preview-assets/trades/cleaning-service.svg", alt: "Cleaning service visual with supplies, clean room, checklist, and equipment details" },
+    proof: { src: "/engine-preview-assets/trades/cleaning-proof.svg", alt: "Sample cleaning proof visual with fresh interior and cleaning equipment cues" },
     texture: "Fresh surfaces, organized scope, and easy booking",
-    motif: "Clean room",
-    details: ["Checklist", "Rooms", "Schedule"],
   },
   "Tree Service": {
-    hero: "Outdoor tree care and safety visual",
-    service: "Crew, equipment, and cleanup detail",
-    proof: "Sample tree service photo slot",
+    hero: { src: "/engine-preview-assets/trades/tree-service-hero.svg", alt: "Tree service concept visual with tree trimming, equipment, and cleanup cues" },
+    service: { src: "/engine-preview-assets/trades/tree-service-service.svg", alt: "Tree service visual with trimming, removal equipment, and yard cleanup details" },
+    proof: { src: "/engine-preview-assets/trades/tree-service-proof.svg", alt: "Sample tree service proof visual with equipment, trimming, and cleanup cues" },
     texture: "Safety-first outdoor work and cleanup expectations",
-    motif: "Tree care",
-    details: ["Trimming", "Removal", "Cleanup"],
   },
   Fencing: {
-    hero: "Finished fence and property boundary visual",
-    service: "Material, gate, and fence-line detail",
-    proof: "Sample fencing project photo slot",
+    hero: { src: "/engine-preview-assets/trades/fencing-hero.svg", alt: "Fencing concept visual with fence panels, gate, and yard boundary cues" },
+    service: { src: "/engine-preview-assets/trades/fencing-service.svg", alt: "Fencing service visual with gate, fence line, materials, and yard details" },
+    proof: { src: "/engine-preview-assets/trades/fencing-proof.svg", alt: "Sample fencing project proof visual with installed fence, gate, and yard cues" },
     texture: "Cedar, clean lines, privacy, and property fit",
-    motif: "Fence line",
-    details: ["Privacy", "Gate", "Materials"],
   },
   Flooring: {
-    hero: "Finished flooring and interior surface visual",
-    service: "Wood, plank, and installation detail",
-    proof: "Sample flooring project photo slot",
+    hero: { src: "/engine-preview-assets/trades/flooring-hero.svg", alt: "Flooring concept visual with hardwood planks, tile, and installation details" },
+    service: { src: "/engine-preview-assets/trades/flooring-service.svg", alt: "Flooring service visual with tile, planks, installation tools, and finished surface cues" },
+    proof: { src: "/engine-preview-assets/trades/flooring-proof.svg", alt: "Sample flooring project proof visual with installed floor, tile, and plank details" },
     texture: "Warm interior surfaces and clean installation detail",
-    motif: "Floor pattern",
-    details: ["Planks", "Refinish", "Install"],
   },
   Remodeling: {
-    hero: "Finished home improvement space visual",
-    service: "Material, planning, and room detail",
-    proof: "Sample remodeling project photo slot",
+    hero: { src: "/engine-preview-assets/trades/remodeling-hero.svg", alt: "Remodeling concept visual with kitchen, bath, room planning, and material cues" },
+    service: { src: "/engine-preview-assets/trades/remodeling-service.svg", alt: "Remodeling service visual with bath, kitchen, planning, and room improvement details" },
+    proof: { src: "/engine-preview-assets/trades/remodeling-proof.svg", alt: "Sample remodeling project proof visual with room plan, kitchen, bath, and material cues" },
     texture: "Finished spaces, material choices, and planning clarity",
-    motif: "Room plan",
-    details: ["Kitchen", "Bath", "Planning"],
   },
   "General Contractor": {
-    hero: "Residential construction and project planning visual",
-    service: "Build process and material detail",
-    proof: "Sample construction project photo slot",
+    hero: { src: "/engine-preview-assets/trades/general-contractor-hero.svg", alt: "General contractor concept visual with framing, materials, blueprint, and construction planning cues" },
+    service: { src: "/engine-preview-assets/trades/general-contractor-service.svg", alt: "General contractor service visual with blueprint, framing, materials, and build process details" },
+    proof: { src: "/engine-preview-assets/trades/general-contractor-proof.svg", alt: "Sample construction project proof visual with materials, framing, and planning cues" },
     texture: "Project progress, finished spaces, and communication clarity",
-    motif: "Project build",
-    details: ["Planning", "Materials", "Schedule"],
   },
 };
 
-function TradeVisualPanel({ label, slot, visual }: { label: string; slot: "hero" | "service" | "proof"; visual: TradeVisualProfile }) {
+function TradeVisualImage({ asset, slot }: { asset: TradeVisualAsset; slot: "hero" | "service" | "proof" }) {
   return (
-    <div aria-label={label} className={`prospect-preview-visual prospect-preview-visual--${slot}`} role="img">
-      <div className="prospect-preview-visual__canvas">
-        <span className="prospect-preview-visual__mark">{visual.motif}</span>
-        <span className="prospect-preview-visual__line" />
-        <span className="prospect-preview-visual__line" />
-        <span className="prospect-preview-visual__disc" />
-      </div>
-      <div className="prospect-preview-visual__details" aria-hidden="true">
-        {visual.details.map((detail) => <span key={detail}>{detail}</span>)}
-      </div>
-    </div>
+    <figure className={`prospect-preview-image prospect-preview-image--${slot}`} data-preview-image-slot={slot}>
+      <Image
+        alt={asset.alt}
+        src={asset.src}
+        width={960}
+        height={720}
+        priority={slot === "hero"}
+        unoptimized
+      />
+    </figure>
   );
 }
 
@@ -225,7 +200,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             </div>
           </div>
           <aside className="prospect-preview-hero__visual">
-            <TradeVisualPanel label={visual.hero} slot="hero" visual={visual} />
+            <TradeVisualImage asset={visual.hero} slot="hero" />
             <div className="prospect-preview-visual-caption">
               <small>Sample visual direction</small>
               <strong>{visual.texture}</strong>
@@ -247,7 +222,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-service-list">
             {services.map((item, index) => (
               <article key={item}>
-                <TradeVisualPanel label={index === 0 ? visual.service : `${item} trade-relevant service visual`} slot="service" visual={visual} />
+                <TradeVisualImage asset={index === 0 ? visual.service : visual.hero} slot="service" />
                 <div>
                   <h3>{item}</h3>
                   <p>Understand the scope, practical next steps, and what to expect before the work begins.</p>
@@ -283,7 +258,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-projects">
             {(noWebsiteProspect ? ["Verified project story", "Approved project photos", "Confirmed scope and outcome"] : ["Local project story", "Before and after", "Scope and outcome"]).map((item, index) => (
               <article key={item}>
-                <TradeVisualPanel label={index === 0 ? visual.proof : `${item} sample layout slot`} slot="proof" visual={visual} />
+                <TradeVisualImage asset={index === 0 ? visual.proof : visual.service} slot="proof" />
                 <b>{item}</b>
                 <span>Sample layout content. Use verified photos, locations, scope, and outcomes supplied by the business.</span>
               </article>

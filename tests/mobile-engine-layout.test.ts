@@ -45,7 +45,7 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.match(mobileCss, /\.prospect-preview-site\[data-layout="project-led"\] \.prospect-preview-hero,/);
   assert.match(mobileCss, /\.prospect-preview-nav div\s*{\s*display: none;/);
   assert.match(mobileCss, /\.prospect-preview-actions\s*{\s*align-items: stretch;\s*flex-direction: column;/);
-  assert.match(mobileCss, /\.prospect-preview-visual--hero\s*{\s*min-height: 18rem;\s*aspect-ratio: 4 \/ 3;/);
+  assert.match(mobileCss, /\.prospect-preview-image--hero\s*{\s*min-height: 18rem;\s*aspect-ratio: 4 \/ 3;/);
   assert.match(mobileCss, /\.prospect-preview-service-list article,\s*\.prospect-preview-service-list article:first-child\s*{\s*grid-column: 1 \/ -1;\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.prospect-preview-contact form\s*{\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.prospect-preview-footer\s*{\s*flex-direction: column;/);
@@ -53,6 +53,9 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.doesNotMatch(css, /--preview-green|--preview-lime/);
   assert.match(css, /prospect-preview-visual-caption/);
   assert.doesNotMatch(prospectWebsitePreview, /picsum\.photos/);
+  assert.match(prospectWebsitePreview, /\/engine-preview-assets\/trades\/hvac-hero\.svg/);
+  assert.match(prospectWebsitePreview, /\/engine-preview-assets\/trades\/roofing-hero\.svg/);
+  assert.doesNotMatch(prospectWebsitePreview, /prospect-preview-visual__mark|TradeVisualPanel/);
 });
 
 test("Outreach Package bulk review exposes the complete human approval workflow on mobile", () => {

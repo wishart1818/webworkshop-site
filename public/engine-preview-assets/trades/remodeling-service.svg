@@ -1,0 +1,18 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<title id="title">remodeling service concept visual</title>
+<desc id="desc">Deterministic trade-relevant concept imagery for a prospect website preview.</desc>
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e2e5ea"/><stop offset="1" stop-color="#f8f7f1"/></linearGradient>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#15201e" flood-opacity="0.18"/></filter>
+</defs>
+<rect width="960" height="720" fill="url(#sky)"/>
+<path d="M0 385C150 353 242 430 420 389C602 347 720 375 960 331V720H0V385Z" fill="#d6d3cf"/>
+<rect x="72" y="74" width="816" height="548" rx="30" fill="#ffffff" filter="url(#shadow)"/>
+<rect x="72" y="74" width="816" height="548" rx="30" stroke="#405169" stroke-opacity="0.16" stroke-width="2"/>
+<circle cx="802" cy="146" r="54" fill="#d88b4a" opacity="0.18"/>
+<circle cx="158" cy="568" r="78" fill="#405169" opacity="0.10"/>
+
+<g transform="translate(98 126) scale(1.08)"><rect x="70" y="132" width="236" height="94" rx="34" fill="#f8f6ef" stroke="#405169" stroke-width="12"/><path d="M98 132V88c0-32 68-32 68 0" stroke="#1f2524" stroke-width="14" fill="none"/><path d="M82 238h210" stroke="#d88b4a" stroke-width="16" stroke-linecap="round"/><circle cx="244" cy="104" r="30" fill="#dbe8e8"/></g><g transform="translate(530 140) scale(0.86)"><rect x="54" y="58" width="260" height="216" fill="#f8f6ef" stroke="#405169" stroke-width="12"/><rect x="84" y="94" width="78" height="110" fill="#dbe8e8"/><rect x="188" y="94" width="88" height="64" fill="#ead2bd"/><path d="M84 230h192" stroke="#d88b4a" stroke-width="18"/><path d="M188 174h88" stroke="#1f2524" stroke-width="10"/></g><g transform="translate(540 386) scale(0.7)"><rect x="56" y="64" width="250" height="208" fill="#f8f6ef" stroke="#405169" stroke-width="12"/><path d="M98 108h78v68h-78zM196 108h66v124h-66zM98 196h78v36h-78z" stroke="#1f2524" stroke-width="10" fill="none"/><path d="M58 292h246" stroke="#d88b4a" stroke-width="16" stroke-linecap="round"/></g>
+
+<rect x="110" y="612" width="740" height="12" rx="6" fill="#405169" opacity="0.15"/>
+</svg>

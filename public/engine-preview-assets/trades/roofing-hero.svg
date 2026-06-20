@@ -1,0 +1,18 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<title id="title">roofing hero concept visual</title>
+<desc id="desc">Deterministic trade-relevant concept imagery for a prospect website preview.</desc>
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#dbe8ef"/><stop offset="1" stop-color="#f8f7f1"/></linearGradient>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#15201e" flood-opacity="0.18"/></filter>
+</defs>
+<rect width="960" height="720" fill="url(#sky)"/>
+<path d="M0 410C150 378 242 455 420 414C602 372 720 400 960 356V720H0V410Z" fill="#d9c9b5"/>
+<rect x="72" y="74" width="816" height="548" rx="30" fill="#ffffff" filter="url(#shadow)"/>
+<rect x="72" y="74" width="816" height="548" rx="30" stroke="#8d321f" stroke-opacity="0.16" stroke-width="2"/>
+<circle cx="802" cy="146" r="54" fill="#d8653c" opacity="0.18"/>
+<circle cx="158" cy="568" r="78" fill="#8d321f" opacity="0.10"/>
+<g transform="translate(98 112) scale(1.28)"><path d="M0 120L170 25L340 120H290V230H50V120H0Z" fill="#f8f6ef"/><path d="M0 120L170 25L340 120" fill="none" stroke="#8d321f" stroke-width="26" stroke-linejoin="round"/><rect x="74" y="124" width="190" height="106" fill="#efe6d8"/><path d="M78 146h178M78 174h178M78 202h178" stroke="#d8653c" stroke-width="8" opacity=".65"/></g><g transform="translate(548 118) scale(0.9)"><path d="M20 70h330v170H20z" fill="#8d321f"/><g stroke="#f0d5c0" stroke-width="6" opacity=".72"><path d="M20 105h330M20 140h330M20 175h330M20 210h330"/><path d="M70 70v35M130 105v35M190 70v35M250 105v35M310 70v35"/></g><path d="M250 40l64 60" stroke="#1f2524" stroke-width="12" stroke-linecap="round"/><path d="M314 100l-28 30" stroke="#1f2524" stroke-width="12" stroke-linecap="round"/></g><g transform="translate(588 382) scale(0.72)"><path d="M10 160L180 58l170 102" stroke="#8d321f" stroke-width="24" stroke-linecap="round" fill="none"/><path d="M70 174h230v70H70z" fill="#f8f6ef"/><path d="M250 38v206" stroke="#d8653c" stroke-width="14" stroke-linecap="round"/><circle cx="250" cy="28" r="24" fill="#1f2524"/><path d="M116 122l-36 122" stroke="#1f2524" stroke-width="12" stroke-linecap="round"/></g>
+
+
+<rect x="110" y="612" width="740" height="12" rx="6" fill="#8d321f" opacity="0.15"/>
+</svg>
