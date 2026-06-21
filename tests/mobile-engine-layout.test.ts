@@ -5,6 +5,7 @@ import test from "node:test";
 const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
 const topProspectsWorkspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
 const prospectWebsitePreview = readFileSync(new URL("../components/engine/ProspectWebsitePreview.tsx", import.meta.url), "utf8");
+const tradePreviewImage = readFileSync(new URL("../components/engine/TradePreviewImage.tsx", import.meta.url), "utf8");
 const prospectEngineWorkspace = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
 const prospectEngine = readFileSync(new URL("../lib/prospect-engine.ts", import.meta.url), "utf8");
 const topProspectWorker = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
@@ -45,7 +46,7 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.match(mobileCss, /\.prospect-preview-site\[data-layout="project-led"\] \.prospect-preview-hero,/);
   assert.match(mobileCss, /\.prospect-preview-nav div\s*{\s*display: none;/);
   assert.match(mobileCss, /\.prospect-preview-actions\s*{\s*align-items: stretch;\s*flex-direction: column;/);
-  assert.match(mobileCss, /\.prospect-preview-image--hero\s*{\s*min-height: 18rem;\s*aspect-ratio: 4 \/ 3;/);
+  assert.match(mobileCss, /\.prospect-preview-image--hero\s*{\s*aspect-ratio: 4 \/ 3;/);
   assert.match(mobileCss, /\.prospect-preview-service-list article,\s*\.prospect-preview-service-list article:first-child\s*{\s*grid-column: 1 \/ -1;\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.prospect-preview-contact form\s*{\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.prospect-preview-footer\s*{\s*flex-direction: column;/);
@@ -57,6 +58,10 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.match(prospectWebsitePreview, /tradePhotoAsset\("hvac", "hero"/);
   assert.match(prospectWebsitePreview, /tradePhotoAsset\("roofing", "hero"/);
   assert.match(prospectWebsitePreview, /fallbackSrc: `\/engine-preview-assets\/trades\/\$\{slug\}-\$\{slot === "detail" \|\| slot === "support" \? "service" : slot\}\.svg`/);
+  assert.match(tradePreviewImage, /onError={handleImageError}/);
+  assert.match(tradePreviewImage, /current === "photo" \? "fallback" : "unavailable"/);
+  assert.match(css, /contain: layout paint;/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*\.prospect-preview-proof-layout\s*{\s*grid-template-columns: minmax\(0, 1fr\);/);
   assert.doesNotMatch(prospectWebsitePreview, /prospect-preview-visual__mark|TradeVisualPanel/);
 });
 

@@ -1,8 +1,9 @@
-import Image from "next/image";
 import React, { type CSSProperties } from "react";
+import { TradePreviewImage } from "@/components/engine/TradePreviewImage";
 import {
   generatePreview,
   previewStyleProfile,
+  tradeCategories,
   type PreviewConcept,
   type Prospect,
 } from "@/lib/prospect-engine";
@@ -278,6 +279,10 @@ function titleCaseLocation(value: string) {
   return value.trim().toLowerCase().replace(/\b([a-z])/g, (character) => character.toUpperCase());
 }
 
+function normalizeTradeName(value: string): Prospect["trade"] {
+  return tradeCategories.find((trade) => trade.toLowerCase() === value.trim().toLowerCase()) ?? "General Contractor";
+}
+
 function normalizeLocationCopy(value: string, rawCity: string, displayCity: string, rawState: string, displayState: string) {
   if (!value) return value;
   const escapedCity = rawCity.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -295,31 +300,19 @@ function trustItemDescription(item: string) {
   return "The next step is clear without extra searching.";
 }
 
-function TradeVisualImage({ asset, slot }: { asset: TradeVisualAsset; slot: "hero" | "service" | "proof" }) {
-  return (
-    <figure className={`prospect-preview-image prospect-preview-image--${slot}`} data-preview-image-slot={slot}>
-      <Image
-        alt={asset.alt}
-        src={asset.src}
-        width={960}
-        height={720}
-        priority={slot === "hero"}
-        data-fallback-src={asset.fallbackSrc}
-        unoptimized
-      />
-    </figure>
-  );
-}
-
 export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
-  const preview = savedPreview ?? generatePreview(prospect);
-  const styleProfile = previewStyleProfile(prospect, preview);
+  const displayTrade = normalizeTradeName(prospect.trade);
+  const renderProspect = displayTrade === prospect.trade ? prospect : { ...prospect, trade: displayTrade };
+  const preview = savedPreview ?? generatePreview(renderProspect);
+  const styleProfile = previewStyleProfile(renderProspect, preview);
   const displayCity = titleCaseLocation(prospect.city);
   const displayState = prospect.state.trim().toUpperCase();
-  const normalizeCopy = (value: string) => normalizeLocationCopy(value, prospect.city, displayCity, prospect.state, displayState);
+  const escapedTrade = prospect.trade.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const normalizeCopy = (value: string) => normalizeLocationCopy(value, prospect.city, displayCity, prospect.state, displayState)
+    .replace(new RegExp(`\\b${escapedTrade}\\b`, "gi"), displayTrade);
   const serviceArea = normalizeCopy(prospect.serviceArea || `${displayCity}, ${displayState}`);
-  const visual = tradeVisuals[prospect.trade];
-  const pageCopy = tradePageCopy[prospect.trade];
+  const visual = tradeVisuals[displayTrade];
+  const pageCopy = tradePageCopy[displayTrade];
   const heroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const serviceSummary = normalizeCopy(preview.hero);
   const trustItems = (preview.trustItems ?? [
@@ -328,7 +321,6 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
     "Services explained clearly",
     "Simple estimate next step",
   ]).map(normalizeCopy);
-  const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   const style = {
     "--prospect-primary": styleProfile.primaryColor,
     "--prospect-accent": styleProfile.accentColor,
@@ -358,7 +350,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <a className="prospect-preview-brand" href="#top">{prospect.businessName}</a>
           <div>
             <a href="#services">Services</a>
-            <a href="#work">Our work</a>
+            <a href="#work">Proof concept</a>
             <a href="#contact">Contact</a>
           </div>
           <a className="prospect-preview-button" href="#contact">{styleProfile.ctaLabel}</a>
@@ -366,7 +358,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
         <section className="prospect-preview-hero" id="top">
           <div className="prospect-preview-hero__content">
-            <span className="prospect-preview-kicker">{prospect.trade} in {displayCity}, {displayState}</span>
+            <span className="prospect-preview-kicker">{displayTrade} in {displayCity}, {displayState}</span>
             <h1>{pageCopy.heroHeadline}</h1>
             <p>{heroSupporting}</p>
             <div className="prospect-preview-actions">
@@ -377,7 +369,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             </div>
           </div>
           <aside className="prospect-preview-hero__visual">
-            <TradeVisualImage asset={visual.hero} slot="hero" />
+            <TradePreviewImage {...visual.hero} fallbackLabel={`${displayTrade} service visual`} slot="hero" />
             <div className="prospect-preview-visual-caption">
               <small>Representative image direction</small>
               <strong>{visual.texture}</strong>
@@ -399,7 +391,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-service-list">
             {pageCopy.services.map((item, index) => (
               <article key={item.title}>
-                <TradeVisualImage asset={visual.services[index]} slot="service" />
+                <TradePreviewImage {...visual.services[index]} fallbackLabel={`${displayTrade} service visual`} slot="service" />
                 <div>
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
@@ -413,7 +405,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Why choose us</span>
             <h2>Useful proof, placed where it builds confidence.</h2>
-            <p>{preview.trustStrategy}</p>
+            <p>{normalizeCopy(preview.trustStrategy)}</p>
           </div>
           <div>
             {trustItems.slice(0, 3).map((item) => (
@@ -428,14 +420,14 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
         <section className="prospect-preview-work" id="work">
           <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">{noWebsiteProspect ? "Project proof concept" : "Recent local work"}</span>
-            <h2>{noWebsiteProspect ? "A clear place for verified work." : "Proof that makes the next decision easier."}</h2>
-            <p>{preview.portfolioDirection}</p>
+            <span className="prospect-preview-kicker">Suggested proof section</span>
+            <h2>How project proof could be shown.</h2>
+            <p>This sample layout shows where verified photos, project scope, and outcomes could appear after the business supplies them.</p>
           </div>
           <div className="prospect-preview-proof-layout">
-            <TradeVisualImage asset={visual.proof} slot="proof" />
+            <TradePreviewImage {...visual.proof} fallbackLabel={`${displayTrade} project-proof visual`} slot="proof" />
             <div className="prospect-preview-proof-notes">
-              {(noWebsiteProspect ? ["Verified project story", "Approved project photos", "Confirmed scope and outcome"] : ["Local project context", "Before-and-after evidence", "Confirmed scope and outcome"]).map((item) => (
+              {["Suggested project context", "Before-and-after layout", "Verified scope and outcome"].map((item) => (
                 <article key={item}>
                   <b>{item}</b>
                   <span>Sample layout content. Add only verified photos, locations, scope, and outcomes supplied by the business.</span>
@@ -456,7 +448,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>A simple path to the right next step.</h2>
-            <p>{preview.leadCaptureStrategy}</p>
+            <p>{normalizeCopy(preview.leadCaptureStrategy)}</p>
           </div>
           <form>
             <label>Name<input disabled /></label>
@@ -468,7 +460,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
         <footer className="prospect-preview-footer">
           <strong>{prospect.businessName}</strong>
-          <span>{prospect.trade} · {serviceArea}</span>
+          <span>{displayTrade} | {serviceArea}</span>
           {prospect.phone && <a href={`tel:${prospect.phone}`}>{prospect.phone}</a>}
         </footer>
       </div>

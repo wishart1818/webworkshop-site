@@ -187,6 +187,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
     state: "oh",
     serviceArea: "toledo and nearby communities",
   });
+  prospect.trade = "hvac" as Prospect["trade"];
   const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
     prospect,
     publicView: true,
@@ -212,6 +213,10 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Compare replacement or new-system options/);
   assert.match(html, /Maintenance and tune-ups/);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
+  assert.match(html, /Suggested proof section/);
+  assert.match(html, /How project proof could be shown\./);
+  assert.match(html, /after the business supplies them/);
+  assert.doesNotMatch(html, /Recent local work|Our work/);
   assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b/);
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(imageSources.slice(0, 5), [
@@ -319,9 +324,9 @@ test("no-website public preview uses supported-fact placeholders instead of inve
     savedPreview: prospect.preview,
   }));
 
-  assert.match(html, /Project proof concept/);
-  assert.match(html, /verified work/i);
-  assert.match(html, /Approved project photos/);
+  assert.match(html, /Suggested proof section/);
+  assert.match(html, /verified photos/i);
+  assert.match(html, /Suggested project context/);
   assert.match(html, /Sample layout content/);
   assert.match(html, /Replace with verified/);
   assert.doesNotMatch(html, /Recent local work|licensed|insured|award-winning|warranties/i);
