@@ -3184,6 +3184,295 @@ body:has(.engine-shell) {
   justify-self: end;
 }
 
+.engine-autopilot-activity {
+  display: grid;
+  gap: 0.85rem;
+  border: 1px solid #b7d8cd;
+  background: #fbfdfb;
+  padding: 0.95rem;
+}
+
+.engine-autopilot-activity--running {
+  border-color: #76b8a6;
+  background: #f0fbf6;
+}
+
+.engine-autopilot-activity--completed-with-warnings,
+.engine-autopilot-activity--paused {
+  border-color: #e2c17b;
+  background: #fffaf0;
+}
+
+.engine-autopilot-activity--failed {
+  border-color: #df9c8d;
+  background: #fff6f2;
+}
+
+.engine-autopilot-activity__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.engine-autopilot-activity__head > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.engine-autopilot-activity__head p,
+.engine-autopilot-activity__head h3,
+.engine-autopilot-activity__head span {
+  margin: 0;
+}
+
+.engine-autopilot-activity__head p,
+.engine-autopilot-timeline h4,
+.engine-autopilot-details h4 {
+  color: var(--engine-accent-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.engine-autopilot-activity__head h3 {
+  color: var(--engine-ink);
+  font-size: 1.05rem;
+}
+
+.engine-autopilot-activity__head span {
+  color: #425850;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.engine-autopilot-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.engine-autopilot-activity-grid article,
+.engine-autopilot-activity-metrics article {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.7rem;
+}
+
+.engine-autopilot-activity-grid span,
+.engine-autopilot-activity-metrics span,
+.engine-autopilot-timeline time,
+.engine-autopilot-details dt {
+  color: var(--engine-accent-dark);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.engine-autopilot-activity-grid strong,
+.engine-autopilot-activity-metrics strong,
+.engine-autopilot-details dd,
+.engine-autopilot-details li b {
+  color: var(--engine-ink);
+  font-weight: 900;
+}
+
+.engine-autopilot-activity-grid p {
+  margin: 0;
+  color: #425850;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.engine-autopilot-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.engine-autopilot-progress > div {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 0.65rem;
+  border: 1px solid #c7d9d2;
+  background: white;
+}
+
+.engine-autopilot-progress span {
+  display: block;
+  height: 100%;
+  min-width: 0.25rem;
+  background: var(--engine-accent);
+}
+
+.engine-autopilot-progress b {
+  min-width: 3rem;
+  color: var(--engine-ink);
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+.engine-autopilot-activity-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.engine-autopilot-activity-empty {
+  margin: 0;
+  border: 1px solid #c7d9d2;
+  background: white;
+  padding: 0.75rem;
+  color: #425850;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.engine-autopilot-activity-metrics strong {
+  font-size: 1.15rem;
+}
+
+.engine-autopilot-activity-alert {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.75rem;
+}
+
+.engine-autopilot-activity-alert b {
+  color: var(--engine-ink);
+  font-size: 0.82rem;
+}
+
+.engine-autopilot-activity-alert ul,
+.engine-autopilot-timeline ol,
+.engine-autopilot-details ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-autopilot-activity-alert li {
+  color: #425850;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.engine-autopilot-activity-alert--warning {
+  border-color: #e2c17b;
+  background: #fffaf0;
+}
+
+.engine-autopilot-activity-alert--error {
+  border-color: #df9c8d;
+  background: #fff6f2;
+}
+
+.engine-autopilot-timeline {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.engine-autopilot-timeline h4,
+.engine-autopilot-details h4,
+.engine-autopilot-details p,
+.engine-autopilot-details dl,
+.engine-autopilot-details dd {
+  margin: 0;
+}
+
+.engine-autopilot-timeline__item {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: 0.75rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.65rem;
+}
+
+.engine-autopilot-timeline__item div {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.engine-autopilot-timeline__item b {
+  color: var(--engine-ink);
+  font-size: 0.82rem;
+}
+
+.engine-autopilot-timeline__item span,
+.engine-autopilot-details p,
+.engine-autopilot-details li span {
+  color: #425850;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.engine-autopilot-timeline__item--warning {
+  border-color: #e2c17b;
+  background: #fffaf0;
+}
+
+.engine-autopilot-timeline__item--error {
+  border-color: #df9c8d;
+  background: #fff6f2;
+}
+
+.engine-autopilot-timeline__item--success {
+  border-color: #a9d7c9;
+  background: #f3fcf8;
+}
+
+.engine-autopilot-details {
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.75rem;
+}
+
+.engine-autopilot-details summary {
+  cursor: pointer;
+  color: var(--engine-ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.engine-autopilot-details__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.engine-autopilot-details section {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.engine-autopilot-details dl,
+.engine-autopilot-details li {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid var(--engine-line);
+  background: #f8faf8;
+  padding: 0.65rem;
+}
+
+.engine-autopilot-details dl div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.engine-autopilot-details dd {
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .engine-autopilot-report-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -4549,6 +4838,9 @@ body:has(.engine-shell) {
 
   .engine-autopilot-form,
   .engine-autopilot-summary,
+  .engine-autopilot-activity-grid,
+  .engine-autopilot-activity-metrics,
+  .engine-autopilot-details__grid,
   .engine-autopilot-queues,
   .engine-autopilot-disabled-reasons {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4929,6 +5221,9 @@ body:has(.engine-shell) {
 
   .engine-autopilot-form,
   .engine-autopilot-summary,
+  .engine-autopilot-activity-grid,
+  .engine-autopilot-activity-metrics,
+  .engine-autopilot-details__grid,
   .engine-autopilot-queues,
   .engine-autopilot-disabled-reasons,
   .engine-autopilot-report-grid {
@@ -4948,6 +5243,30 @@ body:has(.engine-shell) {
   .engine-autopilot-actions {
     display: grid;
     justify-content: stretch;
+  }
+
+  .engine-autopilot-activity__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .engine-autopilot-activity__head .engine-button {
+    width: 100%;
+  }
+
+  .engine-autopilot-progress {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .engine-autopilot-progress b {
+    text-align: left;
+  }
+
+  .engine-autopilot-timeline__item {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
   }
 
   .engine-autopilot-form-footer > .engine-button {

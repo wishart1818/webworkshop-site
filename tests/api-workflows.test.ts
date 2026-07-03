@@ -63,6 +63,8 @@ test("Autopilot dashboard actions start, report, and smoke-test without sending"
   assert.equal(initial.status, 200);
   assert.equal(initialPayload.autopilot.campaign.status, "draft");
   assert.equal(initialPayload.autopilot.campaign.settings.excludePreviouslyReviewed, true);
+  assert.equal(initialPayload.autopilot.activity.status, "not_started");
+  assert.match(initialPayload.autopilot.activity.entries[0].label, /No Autopilot activity yet/);
 
   const started = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
     method: "POST",
@@ -80,6 +82,9 @@ test("Autopilot dashboard actions start, report, and smoke-test without sending"
   assert.equal(started.status, 200);
   assert.equal(startedPayload.autopilot.campaign.status, "running");
   assert.equal(startedPayload.autopilot.marketTargets.length, 2);
+  assert.ok(["completed", "completed_with_warnings"].includes(startedPayload.autopilot.activity.status));
+  assert.ok(startedPayload.autopilot.activity.entries.some((entry: { label: string }) => /Starting Autopilot campaign/.test(entry.label)));
+  assert.ok(startedPayload.autopilot.activity.queueRouting.some((entry: { label: string }) => entry.label === "Email Draft Ready"));
   assert.match(startedPayload.autopilot.campaign.notifications[0].body, /Nothing was sent|Nothing will be contacted automatically/);
 
   const smoke = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
@@ -90,6 +95,9 @@ test("Autopilot dashboard actions start, report, and smoke-test without sending"
   assert.equal(smoke.status, 200);
   assert.equal(smokePayload.smokeTest.passed, true);
   assert.equal(smokePayload.smokeTest.report.fakeOnly, true);
+  assert.equal(smokePayload.autopilot.activity.fakeOnly, true);
+  assert.equal(smokePayload.autopilot.activity.providerDiagnostics[0].provider, "Fake Smoke Test");
+  assert.ok(smokePayload.autopilot.activity.entries.some((entry: { label: string }) => /Fake Smoke Test Activity/.test(entry.label)));
   assert.ok(smokePayload.smokeTest.fixtureResults.some((fixture: { actualQueue: string }) => fixture.actualQueue === "blockedBadFit"));
 });
 

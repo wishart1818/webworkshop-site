@@ -25,6 +25,7 @@ import {
   autopilotQueueKeys,
   autopilotQueueLabels,
   defaultAutopilotCampaignSettings,
+  type AutopilotActivityStatus,
   type AutopilotCampaignSettings,
   type AutopilotDashboard,
   type AutopilotQueueKey,
@@ -175,6 +176,14 @@ export function AutonomousGrowthWorkspace() {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (dashboard?.autopilot.activity.status !== "running") return;
+    const activityTimer = window.setInterval(() => {
+      void loadDashboard();
+    }, 4000);
+    return () => window.clearInterval(activityTimer);
+  }, [dashboard?.autopilot.activity.status, loadDashboard]);
 
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -433,6 +442,7 @@ export function AutonomousGrowthWorkspace() {
         disabled={saving}
         onDownload={() => downloadAutopilotCsv(autopilot)}
         onPause={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")}
+        onRefreshActivity={() => void loadDashboard()}
         onResume={() => void postAutopilot("resume_autopilot", {}, "Autopilot resumed. No outreach was sent.")}
         onRunBatch={() => void postAutopilot("run_autopilot_batch", {}, "Autopilot batch report refreshed. Nothing was sent.")}
         onSmokeTest={() => void postAutopilot("run_fake_autopilot_smoke_test")}
@@ -591,6 +601,22 @@ function optionLabel(value: string) {
   return value.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
+const autopilotActivityStatusLabels: Record<AutopilotActivityStatus, string> = {
+  not_started: "Not started",
+  running: "Running",
+  completed: "Completed",
+  completed_with_warnings: "Completed with warnings",
+  paused: "Paused",
+  failed: "Failed",
+};
+
+function formatActivityTime(value: string) {
+  if (!value) return "Not recorded";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 type AutopilotActionReasons = Record<"start" | "smoke" | "batch" | "pause" | "resume" | "stop", string[]>;
 
 function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean): AutopilotActionReasons {
@@ -677,11 +703,164 @@ function AutopilotActionRow({
   );
 }
 
+function AutopilotLiveActivitySection({
+  autopilot,
+  disabled,
+  onRefresh,
+}: {
+  autopilot: AutopilotDashboard;
+  disabled: boolean;
+  onRefresh: () => void;
+}) {
+  const { activity } = autopilot;
+  const metricCards = [
+    ["Raw records", activity.rawRecordsFound],
+    ["Duplicates removed", activity.duplicatesRemoved],
+    ["Bad-fit blocked", activity.badFitLeadsBlocked],
+    ["Phone-only blocked", activity.phoneOnlyLeadsBlocked],
+    ["Websites scanned", activity.websitesScanned],
+    ["Previews generated", activity.previewsGenerated],
+    ["Previews passing QA", activity.previewsPassingQa],
+    ["DM scripts generated", activity.dmScriptsGenerated],
+    ["Email drafts generated", activity.emailDraftsGenerated],
+  ] as const;
+  return (
+    <section className={`engine-autopilot-activity engine-autopilot-activity--${activity.status}`} aria-labelledby="autopilot-live-activity-title">
+      <div className="engine-autopilot-activity__head">
+        <div>
+          <p>{activity.fakeOnly ? "Fake Smoke Test Activity — no providers, no outreach." : "Live campaign visibility"}</p>
+          <h3 id="autopilot-live-activity-title">Autopilot Live Activity</h3>
+          <span>Updates automatically while a run is active. Use Refresh Activity any time to pull the latest safe status.</span>
+        </div>
+        <button className="engine-button" disabled={disabled} onClick={onRefresh} type="button">Refresh Activity</button>
+      </div>
+
+      <div className="engine-autopilot-activity-grid" aria-label="Autopilot current activity">
+        <article>
+          <span>Current status</span>
+          <strong>{autopilotActivityStatusLabels[activity.status]}</strong>
+          <p>{activity.currentStep}</p>
+        </article>
+        <article>
+          <span>Current step</span>
+          <strong>{activity.currentStep}</strong>
+          <p>Last updated {formatActivityTime(activity.lastUpdatedAt)}</p>
+        </article>
+        <article>
+          <span>City</span>
+          <strong>{activity.currentCity || "Not active"}</strong>
+          <p>Trade: {activity.currentTrade || autopilot.campaign.settings.trade}</p>
+        </article>
+        <article>
+          <span>Provider</span>
+          <strong>{activity.currentProvider || "Not active"}</strong>
+          <p>{activity.fakeOnly ? "Fake run only" : "Provider details appear below when recorded."}</p>
+        </article>
+      </div>
+
+      <div className="engine-autopilot-progress" aria-label={`Autopilot progress ${activity.progressPercent}%`}>
+        <div><span style={{ width: `${activity.progressPercent}%` }} /></div>
+        <b>{activity.progressPercent}%</b>
+      </div>
+
+      {activity.status === "not_started" ? (
+        <p className="engine-autopilot-activity-empty">No Autopilot activity yet. Start Autopilot or run the fake smoke test to see live steps.</p>
+      ) : null}
+
+      <div className="engine-autopilot-activity-metrics" aria-label="Autopilot activity metrics">
+        {metricCards.map(([label, value]) => (
+          <article key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </article>
+        ))}
+      </div>
+
+      {activity.warnings.length ? (
+        <div className="engine-autopilot-activity-alert engine-autopilot-activity-alert--warning" role="status">
+          <b>Current warnings</b>
+          <ul>{activity.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+        </div>
+      ) : null}
+      {activity.errors.length ? (
+        <div className="engine-autopilot-activity-alert engine-autopilot-activity-alert--error" role="alert">
+          <b>Current errors</b>
+          <ul>{activity.errors.map((activityError) => <li key={activityError}>{activityError}</li>)}</ul>
+        </div>
+      ) : null}
+
+      <div className="engine-autopilot-timeline" aria-label="Autopilot run log">
+        <h4>Run log</h4>
+        <ol>
+          {activity.entries.map((entry) => (
+            <li className={`engine-autopilot-timeline__item engine-autopilot-timeline__item--${entry.level}`} key={entry.id}>
+              <time dateTime={entry.createdAt}>{formatActivityTime(entry.createdAt)}</time>
+              <div>
+                <b>{entry.label}</b>
+                <span>{entry.detail}</span>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <details className="engine-autopilot-details">
+        <summary>View details</summary>
+        <div className="engine-autopilot-details__grid">
+          <section>
+            <h4>Provider diagnostics</h4>
+            {activity.providerDiagnostics.length ? activity.providerDiagnostics.map((provider) => (
+              <dl key={provider.provider}>
+                <div><dt>Provider</dt><dd>{provider.provider}</dd></div>
+                <div><dt>Status</dt><dd>{optionLabel(provider.status)}</dd></div>
+                <div><dt>Raw records</dt><dd>{provider.rawRecords}</dd></div>
+                <div><dt>Within radius</dt><dd>{provider.withinRadius}</dd></div>
+                <div><dt>After deduplication</dt><dd>{provider.afterDeduplication}</dd></div>
+                <div><dt>Usable websites</dt><dd>{provider.usableWebsites}</dd></div>
+              </dl>
+            )) : <p>Provider diagnostics are not recorded yet.</p>}
+          </section>
+          <section>
+            <h4>City breakdown</h4>
+            {activity.cityBreakdown.length ? activity.cityBreakdown.map((city) => (
+              <dl key={city.city}>
+                <div><dt>City</dt><dd>{city.city}</dd></div>
+                <div><dt>Status</dt><dd>{optionLabel(city.status)}</dd></div>
+                <div><dt>Raw records</dt><dd>{city.rawRecords}</dd></div>
+                <div><dt>Qualified</dt><dd>{city.qualified}</dd></div>
+                <div><dt>Blocked</dt><dd>{city.blocked}</dd></div>
+                <div><dt>Reason</dt><dd>{city.reason}</dd></div>
+              </dl>
+            )) : <p>City progress has not been recorded yet.</p>}
+          </section>
+          <section>
+            <h4>Blocked reasons</h4>
+            {activity.blockedReasons.length ? (
+              <ul>{activity.blockedReasons.map((blocked) => <li key={blocked.reason}><b>{blocked.count}</b><span>{blocked.reason}</span></li>)}</ul>
+            ) : <p>No blocked reasons recorded yet.</p>}
+          </section>
+          <section>
+            <h4>Queue routing</h4>
+            <ul>
+              {activity.queueRouting.map((queue) => <li key={queue.queue}><b>{queue.count}</b><span>{queue.label}</span></li>)}
+            </ul>
+          </section>
+          <section>
+            <h4>Next recommended run</h4>
+            <p>{activity.nextRecommendedRun}</p>
+          </section>
+        </div>
+      </details>
+    </section>
+  );
+}
+
 function AutopilotCampaignPanel({
   autopilot,
   disabled,
   onDownload,
   onPause,
+  onRefreshActivity,
   onResume,
   onRunBatch,
   onSmokeTest,
@@ -692,6 +871,7 @@ function AutopilotCampaignPanel({
   disabled: boolean;
   onDownload: () => void;
   onPause: () => void;
+  onRefreshActivity: () => void;
   onResume: () => void;
   onRunBatch: () => void;
   onSmokeTest: () => void;
@@ -723,6 +903,12 @@ function AutopilotCampaignPanel({
         onRunBatch={onRunBatch}
         onSmokeTest={onSmokeTest}
         onStop={onStop}
+      />
+
+      <AutopilotLiveActivitySection
+        autopilot={autopilot}
+        disabled={disabled}
+        onRefresh={onRefreshActivity}
       />
 
       <div className="engine-autopilot-summary">

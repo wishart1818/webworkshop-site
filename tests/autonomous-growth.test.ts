@@ -295,6 +295,84 @@ test("Autopilot dashboard shows latest run queue counts when fake smoke test doe
   assert.equal(dashboard.exportRows.length, 0);
 });
 
+test("Autopilot Live Activity shows a clear empty state before the first run", () => {
+  const campaign = { ...createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0)), status: "draft" as const };
+  const dashboard = buildAutopilotDashboard(campaign, [], true);
+
+  assert.equal(dashboard.activity.status, "not_started");
+  assert.equal(dashboard.activity.progressPercent, 0);
+  assert.equal(dashboard.activity.currentStep, "No Autopilot run has started");
+  assert.match(dashboard.activity.entries[0].label, /No Autopilot activity yet/);
+  assert.equal(dashboard.activity.queueRouting.length, 6);
+});
+
+test("fake Autopilot smoke activity records fake provider, blocked reasons, and queue routing without sending", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const smoke = runFakeAutopilotSmokeTest(campaign, new Date(1));
+  const dashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, smoke.report, new Date(2)), [], true);
+  const labels = dashboard.activity.entries.map((entry) => entry.label).join(" | ");
+
+  assert.equal(dashboard.activity.fakeOnly, true);
+  assert.equal(dashboard.activity.status, "completed");
+  assert.match(labels, /Fake Smoke Test Activity — no providers, no outreach/);
+  assert.match(labels, /Estimated \d+ provider requests/);
+  assert.match(labels, /Blocked 2 bad-fit or unsafe leads/);
+  assert.match(labels, /Created 1 manual DM scripts and 1 email drafts/);
+  assert.equal(dashboard.activity.providerDiagnostics[0].provider, "Fake Smoke Test");
+  assert.equal(dashboard.activity.providerDiagnostics[0].status, "fake_only");
+  assert.ok(dashboard.activity.blockedReasons.some((blocked) => blocked.count === 2));
+  assert.ok(dashboard.activity.queueRouting.some((queue) => queue.queue === "emailDraftReady" && queue.count === 1));
+  assert.ok(dashboard.activity.entries.every((entry) => !/sent automatically/i.test(entry.detail) || /Nothing was sent|No outreach was sent/i.test(entry.detail)));
+});
+
+test("Autopilot Live Activity surfaces provider, city, warning, and failed status details", () => {
+  const campaign = createAutopilotCampaign({
+    ...defaultAutopilotCampaignSettings,
+    customCities: "Toledo, OH; Tampa, FL",
+    trade: "Pressure Washing",
+  }, new Date(0));
+  const reportCampaign = attachAutopilotRunReport(campaign, {
+    id: "run-warning",
+    campaignId: campaign.id,
+    status: "needs_review",
+    startedAt: new Date(1).toISOString(),
+    completedAt: new Date(2).toISOString(),
+    marketTargets: ["Toledo, OH", "Tampa, FL"],
+    providerRequestEstimate: 8,
+    prospectsDiscovered: 3,
+    prospectsQualified: 1,
+    packagesGenerated: 1,
+    queueCounts: {
+      readyForManualDm: 0,
+      needsPreviewReview: 0,
+      loomNeeded: 0,
+      emailDraftReady: 1,
+      blockedBadFit: 2,
+      needsHumanResearch: 0,
+    },
+    failedCities: [{ city: "Tampa, FL", reason: "Azure Maps timed out" }],
+    safetyFindings: ["No outreach was sent."],
+    recommendations: ["Try Toledo next."],
+    nextRunRecommendation: "Try Toledo next.",
+  }, new Date(3));
+  const dashboard = buildAutopilotDashboard(reportCampaign, [
+    queueItem({ id: "queue-provider", sourceProvider: "Azure Maps", city: "Toledo, OH", status: "Eligible", emailBody: "Draft", previewQualityScore: 91 }),
+    queueItem({ id: "queue-phone", sourceProvider: "Azure Maps", city: "Tampa, FL", status: "Blocked", contactSource: "Phone", blockedReason: "Phone-only lead blocked by written outreach rules.", email: "" }),
+  ], true);
+
+  assert.equal(dashboard.activity.status, "completed_with_warnings");
+  assert.match(dashboard.activity.warnings.join(" "), /Azure Maps timed out/);
+  assert.equal(dashboard.activity.currentCity, "Tampa, FL");
+  assert.equal(dashboard.activity.currentProvider, "Azure Maps");
+  assert.equal(dashboard.activity.phoneOnlyLeadsBlocked, 1);
+  assert.ok(dashboard.activity.cityBreakdown.some((city) => city.city === "Tampa, FL" && city.status === "failed"));
+  assert.ok(dashboard.activity.providerDiagnostics.some((provider) => provider.provider === "Azure Maps" && provider.rawRecords === 2));
+
+  const failedDashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, { ...reportCampaign.latestRunReport!, status: "blocked" }, new Date(4)), [], true);
+  assert.equal(failedDashboard.activity.status, "failed");
+  assert.match(failedDashboard.activity.errors.join(" "), /blocking rule/);
+});
+
 test("Autopilot queue classification keeps Loom and weak preview items manual", () => {
   assert.equal(autopilotQueueKeyForItem(queueItem({ status: "Loom Needed", previewQualityScore: 92 })), "loomNeeded");
   assert.equal(autopilotQueueKeyForItem(queueItem({ status: "Needs Review", previewQualityScore: 74 })), "needsPreviewReview");

@@ -124,6 +124,65 @@ export type AutopilotRunReport = {
   fakeOnly?: boolean;
 };
 
+export const autopilotActivityStatuses = ["not_started", "running", "completed", "completed_with_warnings", "paused", "failed"] as const;
+export type AutopilotActivityStatus = (typeof autopilotActivityStatuses)[number];
+
+export type AutopilotActivityEntry = {
+  id: string;
+  level: "info" | "warning" | "error" | "success";
+  label: string;
+  detail: string;
+  createdAt: string;
+};
+
+export type AutopilotProviderActivity = {
+  provider: string;
+  status: "not_recorded" | "succeeded" | "failed" | "timed_out" | "zero_results" | "fake_only";
+  rawRecords: number;
+  withinRadius: number;
+  afterDeduplication: number;
+  usableWebsites: number;
+  detail: string;
+};
+
+export type AutopilotCityActivity = {
+  city: string;
+  status: "completed" | "failed" | "not_recorded";
+  rawRecords: number;
+  qualified: number;
+  blocked: number;
+  reason: string;
+};
+
+export type AutopilotActivitySnapshot = {
+  status: AutopilotActivityStatus;
+  currentStep: string;
+  progressPercent: number;
+  currentCity: string;
+  currentTrade: string;
+  currentProvider: string;
+  rawRecordsFound: number;
+  duplicatesRemoved: number;
+  badFitLeadsBlocked: number;
+  phoneOnlyLeadsBlocked: number;
+  websitesScanned: number;
+  previewsGenerated: number;
+  previewsPassingQa: number;
+  dmScriptsGenerated: number;
+  emailDraftsGenerated: number;
+  queueCounts: AutopilotQueueCounts;
+  warnings: string[];
+  errors: string[];
+  lastUpdatedAt: string;
+  fakeOnly: boolean;
+  entries: AutopilotActivityEntry[];
+  providerDiagnostics: AutopilotProviderActivity[];
+  cityBreakdown: AutopilotCityActivity[];
+  blockedReasons: Array<{ reason: string; count: number }>;
+  queueRouting: Array<{ queue: AutopilotQueueKey; label: string; count: number }>;
+  nextRecommendedRun: string;
+};
+
 export type AutopilotCampaign = {
   id: string;
   status: AutopilotCampaignStatus;
@@ -139,6 +198,7 @@ export type AutopilotCampaign = {
 export type AutopilotDashboard = {
   campaign: AutopilotCampaign;
   queues: Record<AutopilotQueueKey, OutreachQueueItem[]>;
+  activity: AutopilotActivitySnapshot;
   providerRequestEstimate: number;
   marketTargets: string[];
   databaseConfigured: boolean;
@@ -568,6 +628,284 @@ export function runFakeAutopilotSmokeTest(campaign: AutopilotCampaign, now = new
   };
 }
 
+function countPhoneOnlyBlocked(queue: OutreachQueueItem[]) {
+  return queue.filter((item) => {
+    const text = `${item.contactSource} ${item.blockedReason} ${item.status}`.toLowerCase();
+    return text.includes("phone") && (text.includes("blocked") || item.status === "Blocked" || item.status === "Bad Fit");
+  }).length;
+}
+
+function countPreviewsPassingQa(queue: OutreachQueueItem[], report: AutopilotRunReport) {
+  if (!queue.length) return Math.min(report.packagesGenerated, report.queueCounts.emailDraftReady + report.queueCounts.readyForManualDm + report.queueCounts.loomNeeded);
+  return queue.filter((item) => item.previewLink && Number(item.previewQualityScore) >= 85).length;
+}
+
+function blockedReasonsForQueue(queue: OutreachQueueItem[], report: AutopilotRunReport) {
+  const counts = new Map<string, number>();
+  for (const item of queue) {
+    const queueKey = autopilotQueueKeyForItem(item);
+    if (queueKey !== "blockedBadFit") continue;
+    const reason = item.blockedReason || item.detectedIssues?.[0] || "Blocked by safety or fit rules";
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  if (!counts.size && report.queueCounts.blockedBadFit) {
+    counts.set(report.fakeOnly ? "Fake blocked fixture, no outreach sent" : "Blocked by safety or fit rules", report.queueCounts.blockedBadFit);
+  }
+  return [...counts.entries()].map(([reason, count]) => ({ reason, count }));
+}
+
+function providerDiagnosticsForQueue(queue: OutreachQueueItem[], report: AutopilotRunReport): AutopilotProviderActivity[] {
+  if (report.fakeOnly) {
+    return [{
+      provider: "Fake Smoke Test",
+      status: "fake_only",
+      rawRecords: report.prospectsDiscovered,
+      withinRadius: report.prospectsDiscovered,
+      afterDeduplication: report.prospectsDiscovered,
+      usableWebsites: report.packagesGenerated,
+      detail: "Uses fake leads only. No provider calls. No outreach.",
+    }];
+  }
+  const grouped = new Map<string, OutreachQueueItem[]>();
+  for (const item of queue) {
+    const provider = item.sourceProvider || "Not recorded";
+    grouped.set(provider, [...(grouped.get(provider) ?? []), item]);
+  }
+  if (!grouped.size) {
+    return [{
+      provider: "Top Prospects discovery",
+      status: "not_recorded",
+      rawRecords: report.prospectsDiscovered,
+      withinRadius: report.prospectsDiscovered,
+      afterDeduplication: report.prospectsDiscovered,
+      usableWebsites: report.packagesGenerated,
+      detail: "Provider-level diagnostics were not recorded for this Autopilot summary.",
+    }];
+  }
+  return [...grouped.entries()].map(([provider, items]) => ({
+    provider,
+    status: items.length ? "succeeded" : "zero_results",
+    rawRecords: items.length,
+    withinRadius: items.length,
+    afterDeduplication: items.length,
+    usableWebsites: items.filter((item) => Boolean(item.website)).length,
+    detail: "Counts are summarized from saved queue items for this run.",
+  }));
+}
+
+function cityBreakdownForReport(campaign: AutopilotCampaign, queue: OutreachQueueItem[], report: AutopilotRunReport): AutopilotCityActivity[] {
+  const failed = new Map(report.failedCities.map((city) => [city.city, city.reason]));
+  const queueByCity = new Map<string, OutreachQueueItem[]>();
+  for (const item of queue) {
+    const city = item.city || "Not recorded";
+    queueByCity.set(city, [...(queueByCity.get(city) ?? []), item]);
+  }
+  const targets = report.marketTargets.length ? report.marketTargets : autopilotMarketTargets(campaign.settings).map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`);
+  if (!targets.length) {
+    return [{
+      city: "Not recorded",
+      status: "not_recorded",
+      rawRecords: report.prospectsDiscovered,
+      qualified: report.prospectsQualified,
+      blocked: report.queueCounts.blockedBadFit,
+      reason: "City breakdown was not recorded for this run.",
+    }];
+  }
+  return targets.map((city) => {
+    const items = queueByCity.get(city) ?? [];
+    const failedReason = failed.get(city);
+    return {
+      city,
+      status: failedReason ? "failed" as const : "completed" as const,
+      rawRecords: items.length || Math.round(report.prospectsDiscovered / targets.length),
+      qualified: items.length ? items.filter((item) => autopilotQueueKeyForItem(item) !== "blockedBadFit").length : Math.round(report.prospectsQualified / targets.length),
+      blocked: items.length ? items.filter((item) => autopilotQueueKeyForItem(item) === "blockedBadFit").length : Math.round(report.queueCounts.blockedBadFit / targets.length),
+      reason: failedReason ?? "Completed without a city-level failure.",
+    };
+  });
+}
+
+function activityEntriesForReport(campaign: AutopilotCampaign, report: AutopilotRunReport, queue: OutreachQueueItem[]): AutopilotActivityEntry[] {
+  const startedAt = report.startedAt;
+  const providerDiagnostics = providerDiagnosticsForQueue(queue, report);
+  const entries: AutopilotActivityEntry[] = [
+    {
+      id: `${report.id}-start`,
+      level: "info",
+      label: report.fakeOnly ? "Fake Smoke Test Activity — no providers, no outreach." : "Starting Autopilot campaign",
+      detail: report.fakeOnly ? "Fake fixtures are sorted into review queues only." : "Campaign prepared prospects, previews, scripts, and queues. Nothing was sent.",
+      createdAt: startedAt,
+    },
+    {
+      id: `${report.id}-cities`,
+      level: "info",
+      label: `Parsed ${report.marketTargets.length || autopilotMarketTargets(campaign.settings).length} cities`,
+      detail: report.marketTargets.join(", ") || "No market targets were recorded.",
+      createdAt: startedAt,
+    },
+    {
+      id: `${report.id}-requests`,
+      level: report.providerRequestEstimate > 20 ? "warning" : "info",
+      label: `Estimated ${report.providerRequestEstimate} provider requests`,
+      detail: report.providerRequestEstimate > 20 ? "This may take longer and use more provider requests." : "Provider request load is modest.",
+      createdAt: startedAt,
+    },
+  ];
+  for (const target of report.marketTargets.slice(0, 8)) {
+    entries.push({
+      id: `${report.id}-city-${target}`,
+      level: "info",
+      label: `Searching ${target}`,
+      detail: `${campaign.settings.trade} search target queued for safe discovery.`,
+      createdAt: startedAt,
+    });
+  }
+  for (const provider of providerDiagnostics) {
+    entries.push({
+      id: `${report.id}-provider-${provider.provider}`,
+      level: provider.status === "failed" || provider.status === "timed_out" ? "error" : provider.status === "zero_results" ? "warning" : "success",
+      label: `${provider.provider} returned ${provider.rawRecords} records`,
+      detail: provider.detail,
+      createdAt: report.completedAt,
+    });
+  }
+  const phoneOnly = countPhoneOnlyBlocked(queue);
+  entries.push(
+    {
+      id: `${report.id}-dedupe`,
+      level: "info",
+      label: "Removed 0 duplicates",
+      detail: "Duplicate removal count was not recorded separately for this Autopilot summary.",
+      createdAt: report.completedAt,
+    },
+    {
+      id: `${report.id}-blocked`,
+      level: report.queueCounts.blockedBadFit ? "warning" : "success",
+      label: `Blocked ${report.queueCounts.blockedBadFit} bad-fit or unsafe leads`,
+      detail: phoneOnly ? `${phoneOnly} phone-only lead${phoneOnly === 1 ? "" : "s"} blocked under written outreach rules.` : "Written outreach safety rules stayed active.",
+      createdAt: report.completedAt,
+    },
+    {
+      id: `${report.id}-scan`,
+      level: "info",
+      label: `Scanning ${queue.filter((item) => Boolean(item.website)).length || report.packagesGenerated} websites`,
+      detail: "Website and preview work stayed in review-only queues.",
+      createdAt: report.completedAt,
+    },
+    {
+      id: `${report.id}-previews`,
+      level: "success",
+      label: `Generated ${report.packagesGenerated} previews`,
+      detail: `${countPreviewsPassingQa(queue, report)} preview${countPreviewsPassingQa(queue, report) === 1 ? "" : "s"} passed QA or were routed for review.`,
+      createdAt: report.completedAt,
+    },
+    {
+      id: `${report.id}-scripts`,
+      level: "success",
+      label: `Created ${report.queueCounts.readyForManualDm} manual DM scripts and ${report.queueCounts.emailDraftReady} email drafts`,
+      detail: "Drafts require human review. No outreach was sent.",
+      createdAt: report.completedAt,
+    },
+    {
+      id: `${report.id}-finish`,
+      level: report.status === "completed" ? "success" : report.status === "blocked" ? "error" : "warning",
+      label: report.status === "blocked" ? "Autopilot run failed" : report.status === "needs_review" ? "Finished run with warnings" : "Finished run",
+      detail: report.nextRunRecommendation,
+      createdAt: report.completedAt,
+    },
+  );
+  return entries;
+}
+
+function autopilotActivityStatus(campaign: AutopilotCampaign, report: AutopilotRunReport | null): AutopilotActivityStatus {
+  if (!report) {
+    if (campaign.status === "running") return "running";
+    if (campaign.status === "paused") return "paused";
+    return "not_started";
+  }
+  if (campaign.status === "paused") return "paused";
+  if (report.status === "blocked") return "failed";
+  if (report.status === "needs_review" || report.failedCities.length) return "completed_with_warnings";
+  return "completed";
+}
+
+function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueueItem[], now = new Date()): AutopilotActivitySnapshot {
+  const report = campaign.latestRunReport;
+  const queueCounts = report?.queueCounts ?? campaign.queueCounts;
+  const queueRouting = autopilotQueueKeys.map((key) => ({ queue: key, label: autopilotQueueLabels[key], count: queueCounts[key] }));
+  if (!report) {
+    return {
+      status: autopilotActivityStatus(campaign, null),
+      currentStep: campaign.status === "running" ? "Waiting for the first activity update" : "No Autopilot run has started",
+      progressPercent: campaign.status === "running" ? 10 : 0,
+      currentCity: "",
+      currentTrade: displayTradeCategory(campaign.settings.trade),
+      currentProvider: "",
+      rawRecordsFound: 0,
+      duplicatesRemoved: 0,
+      badFitLeadsBlocked: 0,
+      phoneOnlyLeadsBlocked: 0,
+      websitesScanned: 0,
+      previewsGenerated: 0,
+      previewsPassingQa: 0,
+      dmScriptsGenerated: 0,
+      emailDraftsGenerated: 0,
+      queueCounts,
+      warnings: [],
+      errors: [],
+      lastUpdatedAt: campaign.updatedAt || now.toISOString(),
+      fakeOnly: false,
+      entries: [{
+        id: `${campaign.id}-activity-empty`,
+        level: "info",
+        label: "No Autopilot activity yet. Start Autopilot or run the fake smoke test to see live steps.",
+        detail: "This panel will show discovery, filtering, preview, script, and queue routing progress.",
+        createdAt: campaign.updatedAt || now.toISOString(),
+      }],
+      providerDiagnostics: [],
+      cityBreakdown: [],
+      blockedReasons: [],
+      queueRouting,
+      nextRecommendedRun: "Start Autopilot or run the fake smoke test to generate activity.",
+    };
+  }
+  const providerDiagnostics = providerDiagnosticsForQueue(queue, report);
+  const phoneOnlyLeadsBlocked = countPhoneOnlyBlocked(queue);
+  const warnings = [
+    ...(report.status === "needs_review" ? ["Run completed with warnings and needs review."] : []),
+    ...report.failedCities.map((city) => `${city.city}: ${city.reason}`),
+  ];
+  const errors = report.status === "blocked" ? ["Run failed or paused by a blocking rule."] : [];
+  return {
+    status: autopilotActivityStatus(campaign, report),
+    currentStep: report.status === "completed" ? "Run finished, review queues are ready" : report.status === "blocked" ? "Run stopped by a blocking rule" : "Run finished with warnings",
+    progressPercent: report.status === "blocked" ? 100 : 100,
+    currentCity: report.marketTargets.at(-1) ?? "",
+    currentTrade: displayTradeCategory(campaign.settings.trade),
+    currentProvider: providerDiagnostics.at(-1)?.provider ?? "",
+    rawRecordsFound: report.prospectsDiscovered,
+    duplicatesRemoved: 0,
+    badFitLeadsBlocked: Math.max(0, report.queueCounts.blockedBadFit - phoneOnlyLeadsBlocked),
+    phoneOnlyLeadsBlocked,
+    websitesScanned: queue.filter((item) => Boolean(item.website)).length || report.packagesGenerated,
+    previewsGenerated: report.packagesGenerated,
+    previewsPassingQa: countPreviewsPassingQa(queue, report),
+    dmScriptsGenerated: queue.filter((item) => Boolean(item.dmScript)).length || report.queueCounts.readyForManualDm,
+    emailDraftsGenerated: queue.filter((item) => Boolean(item.emailBody)).length || report.queueCounts.emailDraftReady,
+    queueCounts,
+    warnings,
+    errors,
+    lastUpdatedAt: report.completedAt || campaign.updatedAt || now.toISOString(),
+    fakeOnly: Boolean(report.fakeOnly),
+    entries: activityEntriesForReport(campaign, report, queue),
+    providerDiagnostics,
+    cityBreakdown: cityBreakdownForReport(campaign, queue, report),
+    blockedReasons: blockedReasonsForQueue(queue, report),
+    queueRouting,
+    nextRecommendedRun: report.nextRunRecommendation,
+  };
+}
+
 export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false): AutopilotDashboard {
   const queues = autopilotQueuesForItems(queue);
   const liveQueueCounts = autopilotQueueCountsForItems(queue);
@@ -577,6 +915,7 @@ export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
   return {
     campaign: { ...campaign, queueCounts },
     queues,
+    activity: buildAutopilotActivity({ ...campaign, queueCounts }, queue),
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     marketTargets,
     databaseConfigured,
