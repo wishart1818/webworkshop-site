@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { activity } from "@/lib/prospect-engine";
+import { upsertAutonomousQueueItemFromPackage } from "@/lib/autonomous-growth-repository";
 import { getProspectDatabase, getProspect, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { discoveryDiagnosticsFromJson, discoveryLeadsFromJson } from "@/lib/lead-discovery";
@@ -391,6 +392,20 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
       },
     });
     console.info("[outreach-package] Package generated.", { resultId, prospectId: saved.id });
+    try {
+      await upsertAutonomousQueueItemFromPackage({
+        outreachPreference: normalizeOutreachPreference(result.job?.outreachPreference),
+        previewLink: prepared.previewLink,
+        prospect: saved,
+        topProspectResultId: resultId,
+      });
+    } catch (queueError) {
+      console.error("[autonomous-growth] Unable to sync Outreach Package into queue.", {
+        resultId,
+        prospectId: saved.id,
+        error: queueError instanceof Error ? queueError.name : "unknown",
+      });
+    }
   } else {
     if (action === "approve") {
       assertOutreachEmailReady(prospect, result.previewLink, normalizeOutreachPreference(result.job?.outreachPreference));

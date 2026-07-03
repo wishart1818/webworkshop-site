@@ -4,6 +4,7 @@ import test from "node:test";
 
 const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
 const topProspectsWorkspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
+const autonomousGrowthWorkspace = readFileSync(new URL("../components/engine/AutonomousGrowthWorkspace.tsx", import.meta.url), "utf8");
 const prospectWebsitePreview = readFileSync(new URL("../components/engine/ProspectWebsitePreview.tsx", import.meta.url), "utf8");
 const tradePreviewImage = readFileSync(new URL("../components/engine/TradePreviewImage.tsx", import.meta.url), "utf8");
 const prospectEngineWorkspace = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
@@ -30,16 +31,38 @@ test("engine phone layout removes desktop-width result overflow", () => {
   assert.match(mobileCss, /\.engine-provider-diagnostic dl\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(mobileCss, /\.engine-trade-diagnostics \[role="row"\]\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(mobileCss, /\.engine-auto-queue__summary\s*{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(mobileCss, /\.engine-autonomous-settings\s*{\s*grid-template-columns: 1fr;/);
+  assert.match(mobileCss, /\.engine-autonomous-table article\s*{\s*padding: 0\.85rem;/);
+  assert.match(css, /\.engine-autonomous-table__head,\s*\.engine-autonomous-table article\s*{\s*display: grid;/);
 });
 
 test("engine phone controls and navigation account for iPhone interaction constraints", () => {
   assert.match(css, /padding-bottom: calc\(var\(--engine-mobile-nav-height\) \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(css, /padding: 0\.4rem 0\.4rem calc\(0\.4rem \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(css, /grid-template-columns: repeat\(6, 1fr\)/);
   assert.match(mobileCss, /\.engine-top-prospect-launcher button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /min-height: 2\.75rem;\s*font-size: 1rem;/);
   assert.match(mobileCss, /\.engine-empty__actions \.engine-button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /\.engine-inline-actions \.engine-button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /\.engine-prospect-labels span,/);
+});
+
+test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export", () => {
+  assert.match(prospectEngineWorkspace, /Autonomous Growth/);
+  assert.match(autonomousGrowthWorkspace, /Safe autonomous prospecting/);
+  assert.match(autonomousGrowthWorkspace, /Outreach mode/);
+  assert.match(autonomousGrowthWorkspace, /Global kill switch/);
+  assert.match(autonomousGrowthWorkspace, /Dry Run/);
+  assert.match(autonomousGrowthWorkspace, /Manual Approval/);
+  assert.match(autonomousGrowthWorkspace, /Auto Email Pilot/);
+  assert.match(autonomousGrowthWorkspace, /Export CSV/);
+  assert.match(autonomousGrowthWorkspace, /Auto Email Pilot gates/);
+  assert.match(autonomousGrowthWorkspace, /Regenerate preview/);
+  assert.match(autonomousGrowthWorkspace, /Mark reviewed/);
+  assert.match(autonomousGrowthWorkspace, /Dry-run and review queue/);
+  assert.match(css, /\.engine-autonomous-hero\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-safety-grid\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autonomous-table \.engine-result-actions\s*{\s*display: flex;\s*flex-wrap: wrap;/);
 });
 
 test("protected prospect previews remain readable and business-themed on phones", () => {

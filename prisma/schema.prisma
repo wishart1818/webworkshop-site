@@ -132,6 +132,59 @@ model TopProspectResult {
   @@index([packageStatus, createdAt])
 }
 
+model AutonomousGrowthSettings {
+  id                         String   @id @default("default")
+  mode                       String   @default("off")
+  killSwitch                 Boolean  @default(true)
+  targetCities               Json     @default("[]")
+  targetServiceAreas         Json     @default("[]")
+  targetTrades               Json     @default("[]")
+  excludedTrades             Json     @default("[]")
+  maxProspectsScannedPerDay  Int      @default(25)
+  maxPreviewsGeneratedPerDay Int      @default(10)
+  maxEmailsQueuedPerDay      Int      @default(5)
+  maxEmailsSentPerDay        Int      @default(5)
+  emailCooldownMinutes       Int      @default(7)
+  followUpsEnabled           Boolean  @default(false)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+model OutreachQueueItem {
+  id                  String   @id @default(cuid())
+  prospectId          String?
+  topProspectResultId String?
+  businessName        String
+  trade               String
+  city                String
+  website             String?
+  email               String?
+  contactSource       String
+  contactConfidence   Int      @default(0)
+  previewLink         String
+  previewQualityScore Int      @default(0)
+  subjectLine         String
+  emailBody           String
+  dmScript            String
+  loomTalkingPoints   String
+  eligibilityReason   String
+  blockedReason       String?
+  status              String   @default("Draft")
+  sourceProvider      String?
+  queuedDate          DateTime?
+  sentDate            DateTime?
+  followUpDate        DateTime?
+  replyStatus         String?
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([topProspectResultId])
+  @@index([status, createdAt])
+  @@index([trade, city])
+  @@index([prospectId])
+}
+
 model Analysis {
   id                String   @id @default(cuid())
   prospectId        String

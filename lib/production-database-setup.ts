@@ -2,6 +2,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { NextResponse } from "next/server";
 import {
+  AUTONOMOUS_GROWTH_MIGRATION_CHECKSUM,
+  AUTONOMOUS_GROWTH_MIGRATION_ID,
+  AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS,
   NO_WEBSITE_PROSPECT_MIGRATION_CHECKSUM,
   NO_WEBSITE_PROSPECT_MIGRATION_ID,
   NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS,
@@ -32,8 +35,10 @@ const REQUIRED_TABLES = [
   "Activity",
   "Analysis",
   "AuditEvent",
+  "AutonomousGrowthSettings",
   "Note",
   "OutreachDraft",
+  "OutreachQueueItem",
   "PreviewConcept",
   "Prospect",
   "RateLimitBucket",
@@ -42,6 +47,8 @@ const REQUIRED_TABLES = [
   "TopProspectResult",
 ] as const;
 const ADDITIVE_TOP_PROSPECT_TABLES = new Set(["TopProspectJob", "TopProspectResult"]);
+const ADDITIVE_AUTONOMOUS_GROWTH_TABLES = new Set(["AutonomousGrowthSettings", "OutreachQueueItem"]);
+const ADDITIVE_ENGINE_TABLES = new Set([...ADDITIVE_TOP_PROSPECT_TABLES, ...ADDITIVE_AUTONOMOUS_GROWTH_TABLES]);
 
 const MIGRATIONS = [
   {
@@ -134,6 +141,11 @@ const MIGRATIONS = [
     id: OUTREACH_PREFERENCE_MIGRATION_ID,
     checksum: OUTREACH_PREFERENCE_MIGRATION_CHECKSUM,
     statements: OUTREACH_PREFERENCE_MIGRATION_STATEMENTS,
+  },
+  {
+    id: AUTONOMOUS_GROWTH_MIGRATION_ID,
+    checksum: AUTONOMOUS_GROWTH_MIGRATION_CHECKSUM,
+    statements: AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS,
   },
 ] as const;
 
@@ -296,10 +308,10 @@ async function presentRequiredTables(transaction: SetupTransaction) {
 }
 
 function isExistingEngineSchema(existing: Set<string>) {
-  return (
-    REQUIRED_TABLES.every((table) => ADDITIVE_TOP_PROSPECT_TABLES.has(table) || existing.has(table))
-    && [...ADDITIVE_TOP_PROSPECT_TABLES].every((table) => !existing.has(table))
-  );
+  const missing = REQUIRED_TABLES.filter((table) => !existing.has(table));
+  return REQUIRED_TABLES.every((table) => ADDITIVE_ENGINE_TABLES.has(table) || existing.has(table))
+    && missing.length > 0
+    && missing.every((table) => ADDITIVE_ENGINE_TABLES.has(table));
 }
 
 function migrationRecord(migration: (typeof MIGRATIONS)[number], index: number) {
@@ -324,7 +336,11 @@ export async function initializeProductionDatabase(
         await runSetupPhase("migration_sql", async () => {
           await transaction.$executeRawUnsafe(CREATE_MIGRATION_TABLE);
           const topProspectMigrationIndex = MIGRATIONS.findIndex((migration) => migration.id === TOP_PROSPECT_MIGRATION_ID);
-          const migrations = additiveUpgrade ? MIGRATIONS.slice(topProspectMigrationIndex) : MIGRATIONS;
+          const autonomousMigrationIndex = MIGRATIONS.findIndex((migration) => migration.id === AUTONOMOUS_GROWTH_MIGRATION_ID);
+          const missingTopProspects = !existing.has("TopProspectJob") || !existing.has("TopProspectResult");
+          const migrations = additiveUpgrade
+            ? MIGRATIONS.slice(missingTopProspects ? topProspectMigrationIndex : autonomousMigrationIndex)
+            : MIGRATIONS;
           for (const migration of migrations) {
             const index = MIGRATIONS.indexOf(migration);
             // These statements are fixed, repository-owned migration DDL. No request data reaches raw SQL.

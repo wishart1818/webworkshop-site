@@ -278,17 +278,19 @@ test("database initializer refuses completed and partial schemas without applyin
 
 test("database initializer safely upgrades the complete legacy engine schema", async () => {
   const legacyTables = productionSetupManifest.requiredTables.filter(
-    (table) => table !== "TopProspectJob" && table !== "TopProspectResult",
+    (table) => !["TopProspectJob", "TopProspectResult", "AutonomousGrowthSettings", "OutreachQueueItem"].includes(table),
   );
   const upgrade = fakeDatabase(legacyTables);
 
   assert.equal(await initializeProductionDatabase(upgrade.database), "upgraded");
   assert.ok(upgrade.statements.some((statement) => statement.includes('CREATE TABLE "TopProspectJob"')));
   assert.ok(upgrade.statements.some((statement) => statement.includes('CREATE TABLE "TopProspectResult"')));
+  assert.ok(upgrade.statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "AutonomousGrowthSettings"')));
+  assert.ok(upgrade.statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "OutreachQueueItem"')));
   assert.ok(!upgrade.statements.some((statement) => statement.includes('CREATE TABLE "Prospect"')));
   assert.equal(
     upgrade.statements.filter((statement) => statement.startsWith('INSERT INTO "_prisma_migrations"')).length,
-    8,
+    9,
   );
 });
 

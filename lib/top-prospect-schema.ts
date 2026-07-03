@@ -17,6 +17,8 @@ export const WEBSITE_AVAILABILITY_MIGRATION_ID = "20260614_website_availability"
 export const WEBSITE_AVAILABILITY_MIGRATION_CHECKSUM = "5b7c9ac49943bee6694553f1d36f8f0fa13ddcb6ea64e8b1e65dd7da48b39715";
 export const OUTREACH_PREFERENCE_MIGRATION_ID = "20260619_outreach_preference";
 export const OUTREACH_PREFERENCE_MIGRATION_CHECKSUM = "171b83b3229e6bae9328cd5448b08b7ac4c7d5d3fd7af591e6b990f0fa7569a6";
+export const AUTONOMOUS_GROWTH_MIGRATION_ID = "20260620_autonomous_growth";
+export const AUTONOMOUS_GROWTH_MIGRATION_CHECKSUM = "f5ed776c260e24514be1b14dc2d92f3a966a1ba8c647497bc83ba73a8ae0c7d8";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -60,6 +62,14 @@ export const OUTREACH_PREFERENCE_MIGRATION_STATEMENTS = [
   `ALTER TABLE "TopProspectJob" ADD COLUMN IF NOT EXISTS "outreachPreference" TEXT NOT NULL DEFAULT 'written_only'`,
   `UPDATE "Prospect" SET "recommendedContactMethod" = 'message_on_social' WHERE "recommendedContactMethod" = 'needs_manual_contact_research' AND "profileUrl" ~* 'instagram\\.com' AND ("publicEmail" IS NULL OR "publicEmail" = '') AND ("contactFormUrl" IS NULL OR "contactFormUrl" = '')`,
   `UPDATE "Prospect" SET "recommendedContactMethod" = 'needs_manual_contact_research' WHERE "recommendedContactMethod" = 'call_first' AND ("publicEmail" IS NULL OR "publicEmail" = '') AND ("contactFormUrl" IS NULL OR "contactFormUrl" = '') AND ("profileUrl" IS NULL OR "profileUrl" !~* '(facebook|fb|instagram)\\.com')`,
+] as const;
+export const AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "AutonomousGrowthSettings" ("id" TEXT NOT NULL DEFAULT 'default', "mode" TEXT NOT NULL DEFAULT 'off', "killSwitch" BOOLEAN NOT NULL DEFAULT true, "targetCities" JSONB NOT NULL DEFAULT '[]'::jsonb, "targetServiceAreas" JSONB NOT NULL DEFAULT '[]'::jsonb, "targetTrades" JSONB NOT NULL DEFAULT '[]'::jsonb, "excludedTrades" JSONB NOT NULL DEFAULT '[]'::jsonb, "maxProspectsScannedPerDay" INTEGER NOT NULL DEFAULT 25, "maxPreviewsGeneratedPerDay" INTEGER NOT NULL DEFAULT 10, "maxEmailsQueuedPerDay" INTEGER NOT NULL DEFAULT 5, "maxEmailsSentPerDay" INTEGER NOT NULL DEFAULT 5, "emailCooldownMinutes" INTEGER NOT NULL DEFAULT 7, "followUpsEnabled" BOOLEAN NOT NULL DEFAULT false, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "AutonomousGrowthSettings_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "OutreachQueueItem" ("id" TEXT NOT NULL, "prospectId" TEXT, "topProspectResultId" TEXT, "businessName" TEXT NOT NULL, "trade" TEXT NOT NULL, "city" TEXT NOT NULL, "website" TEXT, "email" TEXT, "contactSource" TEXT NOT NULL, "contactConfidence" INTEGER NOT NULL DEFAULT 0, "previewLink" TEXT NOT NULL, "previewQualityScore" INTEGER NOT NULL DEFAULT 0, "subjectLine" TEXT NOT NULL, "emailBody" TEXT NOT NULL, "dmScript" TEXT NOT NULL, "loomTalkingPoints" TEXT NOT NULL, "eligibilityReason" TEXT NOT NULL, "blockedReason" TEXT, "status" TEXT NOT NULL DEFAULT 'Draft', "sourceProvider" TEXT, "queuedDate" TIMESTAMP(3), "sentDate" TIMESTAMP(3), "followUpDate" TIMESTAMP(3), "replyStatus" TEXT, "notes" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "OutreachQueueItem_pkey" PRIMARY KEY ("id"))`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "OutreachQueueItem_topProspectResultId_key" ON "OutreachQueueItem"("topProspectResultId")`,
+  `CREATE INDEX IF NOT EXISTS "OutreachQueueItem_status_createdAt_idx" ON "OutreachQueueItem"("status", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "OutreachQueueItem_trade_city_idx" ON "OutreachQueueItem"("trade", "city")`,
+  `CREATE INDEX IF NOT EXISTS "OutreachQueueItem_prospectId_idx" ON "OutreachQueueItem"("prospectId")`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -143,6 +153,13 @@ async function applyOutreachPreferenceUpgrade(transaction: SchemaTransaction) {
   await recordMigration(transaction, OUTREACH_PREFERENCE_MIGRATION_ID, OUTREACH_PREFERENCE_MIGRATION_CHECKSUM, "000000000011");
 }
 
+async function applyAutonomousGrowthUpgrade(transaction: SchemaTransaction) {
+  for (const statement of AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, AUTONOMOUS_GROWTH_MIGRATION_ID, AUTONOMOUS_GROWTH_MIGRATION_CHECKSUM, "000000000012");
+}
+
 export class TopProspectSchemaLockUnavailableError extends Error {
   constructor() {
     super("Another Top Prospects schema initialization currently holds the transaction lock.");
@@ -184,6 +201,7 @@ export async function initializeTopProspectSchema(
         await applyProspectClassificationUpgrade(transaction);
         await applyWebsiteAvailabilityUpgrade(transaction);
         await applyOutreachPreferenceUpgrade(transaction);
+        await applyAutonomousGrowthUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -199,6 +217,7 @@ export async function initializeTopProspectSchema(
       await applyProspectClassificationUpgrade(transaction);
       await applyWebsiteAvailabilityUpgrade(transaction);
       await applyOutreachPreferenceUpgrade(transaction);
+      await applyAutonomousGrowthUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
+import { AutonomousGrowthWorkspace } from "@/components/engine/AutonomousGrowthWorkspace";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type SystemPayload } from "@/components/engine/SystemWorkspace";
@@ -25,7 +26,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "System";
+type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "Autonomous Growth" | "System";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
 
 function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
@@ -302,7 +303,7 @@ export function ProspectEngine() {
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "System"] as WorkspaceTab[]).map((tab) => (
+          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "Autonomous Growth", "System"] as WorkspaceTab[]).map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
               {tab}
             </button>
@@ -419,6 +420,10 @@ export function ProspectEngine() {
               </section>
             ))}
           </div>
+        )}
+
+        {workspaceTab === "Autonomous Growth" && (
+          <AutonomousGrowthWorkspace />
         )}
 
         {workspaceTab === "System" && (
