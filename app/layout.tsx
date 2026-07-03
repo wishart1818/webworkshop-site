@@ -137,7 +137,7 @@ export default function RootLayout({
               <div>
                 <p className="text-sm font-bold">Built For</p>
                 <p className="mt-3 text-sm leading-6 text-[#d9e3dd]">
-                  Roofers, landscapers, HVAC companies, plumbers, power washing teams, and local service
+                  Roofers, landscapers, HVAC companies, plumbers, pressure washing teams, and local service
                   businesses.
                 </p>
               </div>

@@ -159,6 +159,33 @@ test("multi-source discovery merges business identity and prioritizes enriched l
   assert.ok((result.leads[0].sourceConfidence ?? 0) > (result.leads[1].sourceConfidence ?? 0));
 });
 
+test("discovery marks institutional, supplier, and mismatched businesses as bad fit", () => {
+  const result = mergeDiscoveryCandidates({
+    latitude: 41.65,
+    longitude: -83.54,
+    city: "toledo",
+    state: "oh",
+    trade: "Electrical",
+    radiusKm: 50,
+    limit: 50,
+    candidates: [
+      { source: "osm", businessName: "Campus Electrical Operations", website: "https://facilities.example.edu/electrical", phone: "419-555-0100" },
+      { source: "bing", businessName: "Toledo Electrical Equipment Supply", website: "https://toledo-electrical-supply.example", phone: "419-555-0200" },
+      { source: "google", businessName: "BrightWire Electric", website: "https://saunatimes.example", phone: "419-555-0300" },
+      { source: "yelp", businessName: "Neighborhood Electrical Repair", website: "https://neighborhood-electric.example", phone: "419-555-0400" },
+    ],
+  });
+
+  const byName = new Map(result.leads.map((lead) => [lead.businessName, lead]));
+  assert.equal(byName.get("Campus Electrical Operations")?.classification, "duplicate_bad_fit");
+  assert.equal(byName.get("Toledo Electrical Equipment Supply")?.classification, "duplicate_bad_fit");
+  assert.equal(byName.get("BrightWire Electric")?.classification, "duplicate_bad_fit");
+  assert.equal(byName.get("Neighborhood Electrical Repair")?.classification, "website_redesign");
+  assert.equal(byName.get("Campus Electrical Operations")?.inactive, true);
+  assert.equal(byName.get("Neighborhood Electrical Repair")?.inactive, false);
+  assert.ok(result.leads.every((lead) => lead.city === "Toledo" && lead.state === "OH" && lead.trade === "Electrical"));
+});
+
 test("No Website / Social Only discovery keeps active businesses and classifies contact readiness", () => {
   const candidates = [
     { source: "google" as const, businessName: "Social Only Roofing", website: "https://facebook.com/social-roofing", profileUrl: "https://facebook.com/social-roofing", phone: "419-555-0100", reviewCount: 28, rating: 4.7 },

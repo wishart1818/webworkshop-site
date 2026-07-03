@@ -1,9 +1,12 @@
 import React, { type CSSProperties } from "react";
 import { TradePreviewImage } from "@/components/engine/TradePreviewImage";
 import {
+  displayStateCode,
+  displayTradeCategory,
   generatePreview,
+  normalizeTradeCategory,
   previewStyleProfile,
-  tradeCategories,
+  titleCaseLocation,
   type PreviewConcept,
   type Prospect,
 } from "@/lib/prospect-engine";
@@ -110,7 +113,7 @@ const tradeVisuals: Record<Prospect["trade"], TradeVisualProfile> = {
     proof: tradePhotoAsset("electrical", "proof", "Representative electrical example photo with lighting installation, tools, and clean work area"),
     texture: "Breaker panels, lighting work, and safe installation cues",
   },
-  "Power Washing": {
+  "Pressure Washing": {
     hero: tradePhotoAsset("power-washing", "hero", "Representative power washing photo with spray equipment and exterior cleaning context"),
     services: [
       tradePhotoAsset("power-washing", "service", "Representative power washing service photo with siding wash and surface cleaning detail"),
@@ -228,7 +231,7 @@ const tradePageCopy: Record<Prospect["trade"], TradePageCopy> = {
     { title: "Installation", description: "Plan beds, plants, edging, and hardscape details with a defined scope." },
     { title: "Seasonal maintenance", description: "Organize recurring care, cleanups, and seasonal property needs." },
   ] },
-  "Power Washing": { heroHeadline: "A cleaner exterior starts with the right surface plan.", servicesHeadline: "Exterior cleaning for the surfaces that need attention.", servicesIntro: "Show the likely scope and make it easy to request a property-specific quote.", services: [
+  "Pressure Washing": { heroHeadline: "A cleaner exterior starts with the right surface plan.", servicesHeadline: "Exterior cleaning for the surfaces that need attention.", servicesIntro: "Show the likely scope and make it easy to request a property-specific quote.", services: [
     { title: "House washing", description: "Plan exterior siding and trim cleaning around the property materials." },
     { title: "Concrete cleaning", description: "Address driveways, walks, patios, and other hard surfaces." },
     { title: "Roof and soft washing", description: "Request a surface-aware cleaning approach for more sensitive exterior areas." },
@@ -275,12 +278,8 @@ const tradePageCopy: Record<Prospect["trade"], TradePageCopy> = {
   ] },
 };
 
-function titleCaseLocation(value: string) {
-  return value.trim().toLowerCase().replace(/\b([a-z])/g, (character) => character.toUpperCase());
-}
-
 function normalizeTradeName(value: string): Prospect["trade"] {
-  return tradeCategories.find((trade) => trade.toLowerCase() === value.trim().toLowerCase()) ?? "General Contractor";
+  return normalizeTradeCategory(value) ?? "General Contractor";
 }
 
 function normalizeLocationCopy(value: string, rawCity: string, displayCity: string, rawState: string, displayState: string) {
@@ -301,18 +300,19 @@ function trustItemDescription(item: string) {
 }
 
 export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
-  const displayTrade = normalizeTradeName(prospect.trade);
-  const renderProspect = displayTrade === prospect.trade ? prospect : { ...prospect, trade: displayTrade };
+  const canonicalTrade = normalizeTradeName(prospect.trade);
+  const displayTrade = displayTradeCategory(canonicalTrade);
+  const renderProspect = canonicalTrade === prospect.trade ? prospect : { ...prospect, trade: canonicalTrade };
   const preview = savedPreview ?? generatePreview(renderProspect);
   const styleProfile = previewStyleProfile(renderProspect, preview);
   const displayCity = titleCaseLocation(prospect.city);
-  const displayState = prospect.state.trim().toUpperCase();
+  const displayState = displayStateCode(prospect.state);
   const escapedTrade = prospect.trade.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const normalizeCopy = (value: string) => normalizeLocationCopy(value, prospect.city, displayCity, prospect.state, displayState)
     .replace(new RegExp(`\\b${escapedTrade}\\b`, "gi"), displayTrade);
   const serviceArea = normalizeCopy(prospect.serviceArea || `${displayCity}, ${displayState}`);
-  const visual = tradeVisuals[displayTrade];
-  const pageCopy = tradePageCopy[displayTrade];
+  const visual = tradeVisuals[canonicalTrade];
+  const pageCopy = tradePageCopy[canonicalTrade];
   const heroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const serviceSummary = normalizeCopy(preview.hero);
   const trustItems = (preview.trustItems ?? [

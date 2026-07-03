@@ -330,6 +330,6 @@ test("lead discovery rejects invalid input before provider access", async () => 
   resetDiscoveryThrottleForTests();
   await assert.rejects(
     discoverContractors({ city: "", state: "Ohio", trade: "Roofing", radiusKm: 999 }),
-    /valid city/,
+    /one city at a time/,
   );
 });

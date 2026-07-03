@@ -9,7 +9,9 @@ import {
   calculateProspectSalesScores,
   evaluateOutreachEmailQuality,
   generateWebsiteBuildPrompt,
+  hasClearLocalServiceIntent,
   likelyFranchise,
+  likelyInstitutionalOrNonBusiness,
   likelyNationalOrLargeBrand,
   likelySupplierOrDistributor,
   normalizeWebsite,
@@ -24,12 +26,16 @@ import {
   topProspectRejectionReason,
   topProspectResultDisposition,
   validateTopProspectInput,
+  websiteBusinessMismatch,
   type OpportunityAssessment,
 } from "../lib/top-prospects";
 import {
   classifyProspectPresence,
+  displayTradeCategory,
+  normalizeTradeCategory,
   recommendProspectContactMethod,
   seedProspects,
+  titleCaseLocation,
   withAnalysis,
 } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
@@ -141,6 +147,70 @@ test("duplicate normalization and franchise screening are deterministic", () => 
   assert.equal(likelyFranchise({ businessName: "North Main Roofing", website: "https://northmain.example" }), false);
   assert.equal(likelyNationalOrLargeBrand({ businessName: "Erie Home", website: "https://eriehome.com" }), true);
   assert.equal(likelySupplierOrDistributor({ businessName: "ABC Roofing Supply", website: "https://abc-roofing-supply.example" }), true);
+});
+
+test("institutional, supplier, and mismatched website leads are blocked before review", () => {
+  const institutional = withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "University Campus Roofing Operations",
+    website: "https://facilities.example.edu/roofing",
+    trade: "Roofing",
+  });
+  const supplier = withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Toledo Roofing Equipment Supply",
+    website: "https://toledo-roofing-supply.example",
+    trade: "Roofing",
+  });
+  const mismatch = withAnalysis({
+    ...structuredClone(seedProspects[4]),
+    businessName: "BrightWire Electric",
+    website: "https://saunatimes.example",
+    trade: "Electrical",
+  });
+  const unclear = withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Northwest Holdings",
+    website: "https://northwestholdings.example",
+    trade: "Roofing",
+  });
+
+  assert.equal(likelyInstitutionalOrNonBusiness(institutional), true);
+  assert.equal(likelySupplierOrDistributor(supplier), true);
+  assert.equal(websiteBusinessMismatch(mismatch), true);
+  assert.equal(hasClearLocalServiceIntent(unclear), false);
+  assert.equal(topProspectRejectionReason(institutional, manualAssessment(80)), "Institutional/non-business page");
+  assert.equal(topProspectRejectionReason(supplier, manualAssessment(80)), "Supplier/distributor");
+  assert.equal(topProspectRejectionReason(mismatch, manualAssessment(80)), "Website/business mismatch");
+  assert.equal(topProspectRejectionReason(unclear, manualAssessment(80)), "No clear local service intent");
+});
+
+test("display normalization keeps HVAC, Toledo, OH, and Pressure Washing labels consistent", () => {
+  const valid = validateTopProspectInput({
+    trade: "power washing",
+    city: "toledo",
+    state: "oh",
+    radiusKm: 25,
+    businessesToScan: 10,
+    finalProspectsWanted: 5,
+  });
+
+  assert.equal(normalizeTradeCategory("Power Washing"), "Pressure Washing");
+  assert.equal(displayTradeCategory("hvac"), "HVAC");
+  assert.equal(displayTradeCategory("Power Washing"), "Pressure Washing");
+  assert.equal(titleCaseLocation("sylvania"), "Sylvania");
+  assert.equal(valid.ok, true);
+  if (valid.ok) assert.deepEqual([valid.value.trade, valid.value.city, valid.value.state], ["Pressure Washing", "Toledo", "OH"]);
+
+  const multiCity = validateTopProspectInput({
+    trade: "Roofing",
+    city: "Toledo, Sylvania",
+    state: "OH",
+    radiusKm: 25,
+    businessesToScan: 10,
+    finalProspectsWanted: 5,
+  });
+  assert.deepEqual(multiCity, { ok: false, error: "Enter one city at a time." });
 });
 
 test("public discovery rejects records explicitly marked inactive", () => {

@@ -1,5 +1,8 @@
 import {
+  displayTradeCategory,
+  normalizeTradeCategory,
   prospectWrittenContactMethodIsUsable,
+  titleCaseLocation,
   type PreviewConcept,
   type Prospect,
   type TradeCategory,
@@ -230,7 +233,7 @@ export const defaultAutonomousStyleProfiles: Record<string, AutonomousStyleProfi
     strengths: ["lush service visuals", "clear curb appeal", "simple quote path"],
     cautions: ["avoid generic nature imagery", "label sample proof clearly"],
   },
-  "Power Washing": {
+  "Pressure Washing": {
     name: "Bold curb appeal",
     direction: "Bold before/after, fast quote, curb appeal.",
     strengths: ["visible surface improvement", "fast quote CTA", "driveway and siding proof"],
@@ -269,7 +272,7 @@ export const defaultAutonomousGrowthSettings: AutonomousGrowthSettings = {
   targetServiceAreas: [],
   targetTrades: [
     "Landscaping",
-    "Power Washing",
+    "Pressure Washing",
     "Cleaning",
     "Painting",
     "Roofing",
@@ -310,6 +313,19 @@ function stringArray(value: unknown) {
   return [];
 }
 
+function tradeArray(value: unknown) {
+  return stringArray(value).map(normalizeTradeCategory).filter((item): item is TradeCategory => Boolean(item));
+}
+
+function normalizeStyleProfiles(value: unknown) {
+  const profiles = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, AutonomousStyleProfile>
+    : defaultAutonomousStyleProfiles;
+  return Object.fromEntries(
+    Object.entries(profiles).map(([trade, profile]) => [displayTradeCategory(trade), profile]),
+  );
+}
+
 export function normalizeAutonomousGrowthSettings(value: Partial<AutonomousGrowthSettings> = {}): AutonomousGrowthSettings {
   return {
     ...defaultAutonomousGrowthSettings,
@@ -318,17 +334,15 @@ export function normalizeAutonomousGrowthSettings(value: Partial<AutonomousGrowt
     killSwitch: value.killSwitch ?? defaultAutonomousGrowthSettings.killSwitch,
     targetCities: stringArray(value.targetCities),
     targetServiceAreas: stringArray(value.targetServiceAreas),
-    targetTrades: stringArray(value.targetTrades) as TradeCategory[],
-    excludedTrades: stringArray(value.excludedTrades) as TradeCategory[],
+    targetTrades: value.targetTrades === undefined ? defaultAutonomousGrowthSettings.targetTrades : tradeArray(value.targetTrades),
+    excludedTrades: value.excludedTrades === undefined ? defaultAutonomousGrowthSettings.excludedTrades : tradeArray(value.excludedTrades),
     maxProspectsScannedPerDay: clampCap(value.maxProspectsScannedPerDay, 25, 0, 500),
     maxPreviewsGeneratedPerDay: clampCap(value.maxPreviewsGeneratedPerDay, 10, 0, 100),
     maxEmailsQueuedPerDay: clampCap(value.maxEmailsQueuedPerDay, 5, 0, 100),
     maxEmailsSentPerDay: clampCap(value.maxEmailsSentPerDay, 5, 0, 25),
     emailCooldownMinutes: clampCap(value.emailCooldownMinutes, 7, 5, 120),
     followUpsEnabled: value.followUpsEnabled ?? false,
-    styleProfiles: value.styleProfiles && typeof value.styleProfiles === "object" && !Array.isArray(value.styleProfiles)
-      ? value.styleProfiles as Record<string, AutonomousStyleProfile>
-      : defaultAutonomousStyleProfiles,
+    styleProfiles: normalizeStyleProfiles(value.styleProfiles),
   };
 }
 
@@ -636,12 +650,12 @@ export function evaluateSelfReview({
 }
 
 export function manualDmScript(prospect: Prospect, previewLink: string) {
-  return `Hi ${prospect.businessName}, I put together a short concept for a clearer ${prospect.trade} website direction. No pressure, but you can preview it here: ${previewLink}`;
+  return `Hi ${prospect.businessName}, I put together a short concept for a clearer ${displayTradeCategory(prospect.trade)} website direction. No pressure, but you can preview it here: ${previewLink}`;
 }
 
 export function loomTalkingPoints(prospect: Prospect, previewLink: string) {
   return [
-    `Open with how homeowners in ${prospect.city} would find and trust ${prospect.businessName}.`,
+    `Open with how homeowners in ${titleCaseLocation(prospect.city)} would find and trust ${prospect.businessName}.`,
     `Point out one clear service path and one estimate action, without mentioning internal scores.`,
     `Show the public concept preview: ${previewLink}`,
     "Close by asking whether this direction would be worth a short call.",

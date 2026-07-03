@@ -5,9 +5,11 @@ import {
   prospectClassifications,
   recommendedContactMethods,
   classifyProspectPresence,
+  displayStateCode,
+  normalizeTradeCategory,
   recommendProspectContactMethod,
   scoreLabels,
-  tradeCategories,
+  titleCaseLocation,
   type Activity,
   type Analysis,
   type OutreachDraft,
@@ -21,7 +23,6 @@ import {
   type ProspectClassification,
   type RecommendedContactMethod,
   type ScoreKey,
-  type TradeCategory,
 } from "@/lib/prospect-engine";
 
 type ValidationResult = { ok: true; value: Prospect } | { ok: false; error: string };
@@ -211,8 +212,8 @@ export function validateProspect(input: unknown): ValidationResult {
     const parsedProfileUrl = validateUrl(profileUrl, "Profile URL");
     const parsedContactFormUrl = validateUrl(text(input.contactFormUrl ?? "", "Contact form URL", 2048, false), "Contact form URL");
 
-    const trade = text(input.trade, "Trade", 40) as TradeCategory;
-    if (!tradeCategories.includes(trade)) throw new Error("Trade category is not supported.");
+    const trade = normalizeTradeCategory(text(input.trade, "Trade", 40));
+    if (!trade) throw new Error("Trade category is not supported.");
 
     const status = text(input.status, "Status", 40) as ProspectStatus;
     if (!prospectStatuses.includes(status)) throw new Error("Pipeline status is not supported.");
@@ -269,8 +270,8 @@ export function validateProspect(input: unknown): ValidationResult {
         email,
         contactFormUrl: parsedContactFormUrl,
         address: text(input.address ?? "", "Address", 500, false),
-        city: text(input.city, "City", 100),
-        state: text(input.state, "State", 2).toUpperCase(),
+        city: titleCaseLocation(text(input.city, "City", 100)),
+        state: displayStateCode(text(input.state, "State", 2)),
         trade,
         status,
         serviceArea: text(input.serviceArea, "Service area", 300),

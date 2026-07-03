@@ -16,7 +16,7 @@ const coreTradePhotoSlugs: Record<(typeof coreServiceTrades)[number], string> = 
   Plumbing: "plumbing",
   Electrical: "electrical",
   Landscaping: "landscaping",
-  "Power Washing": "power-washing",
+  "Pressure Washing": "power-washing",
   Painting: "painting",
   Concrete: "concrete",
   Cleaning: "cleaning",

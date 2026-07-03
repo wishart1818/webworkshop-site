@@ -379,6 +379,6 @@ export const contractorTypes = [
   "Landscaping",
   "HVAC",
   "Plumbing",
-  "Power washing",
+  "Pressure washing",
   "Local service teams",
 ];

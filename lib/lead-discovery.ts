@@ -1,13 +1,21 @@
 import {
   classifyProspectPresence,
+  displayStateCode,
   recommendProspectContactMethod,
-  tradeCategories,
+  normalizeTradeCategory,
+  titleCaseLocation,
   type ProspectClassification,
   type ProspectSearchType,
   type ProspectType,
   type RecommendedContactMethod,
   type TradeCategory,
 } from "@/lib/prospect-engine";
+import {
+  hasClearLocalServiceIntent,
+  likelyInstitutionalOrNonBusiness,
+  likelySupplierOrDistributor,
+  websiteBusinessMismatch,
+} from "@/lib/top-prospects";
 import { TopProspectStageError } from "@/lib/top-prospect-diagnostics";
 
 export type DiscoveredLead = {
@@ -139,7 +147,7 @@ const signalsByTrade: Record<TradeCategory, TradeDiscoverySignals> = {
   Plumbing: { exactCrafts: ["plumber"], namePattern: "plumb" },
   Electrical: { exactCrafts: ["electrician"], namePattern: "electric" },
   Landscaping: { exactCrafts: ["landscaper"], namePattern: "landscap|lawn care|lawn service" },
-  "Power Washing": { exactCrafts: [], namePattern: "power wash|pressure wash|soft wash" },
+  "Pressure Washing": { exactCrafts: [], namePattern: "power wash|pressure wash|soft wash" },
   Painting: { exactCrafts: ["painter"], namePattern: "paint|painting" },
   Concrete: { exactCrafts: [], namePattern: "concrete|masonry|flatwork|driveway" },
   Cleaning: { exactCrafts: ["cleaner"], namePattern: "cleaning|cleaner|maid|janitorial" },
@@ -187,10 +195,6 @@ async function fetchWithBackoff(
     await new Promise((resolve) => setTimeout(resolve, retryAfterMs(response, providerDelayMs() * (attempt + 2))));
   }
   throw new Error("unreachable");
-}
-
-function validTrade(value: unknown): value is TradeCategory {
-  return typeof value === "string" && tradeCategories.includes(value as TradeCategory);
 }
 
 function normalizeWebsite(value: string) {
@@ -326,11 +330,12 @@ function normalizeTradeDiagnostics(value: unknown): TradeDiscoveryDiagnostic[] {
   return value.flatMap((item): TradeDiscoveryDiagnostic[] => {
     if (!item || Array.isArray(item) || typeof item !== "object") return [];
     const candidate = item as Partial<TradeDiscoveryDiagnostic>;
-    if (!validTrade(candidate.trade)) return [];
+    const trade = normalizeTradeCategory(candidate.trade);
+    if (!trade) return [];
     const sourceCounts = emptySourceCounts();
     const status = candidate.status && ["completed", "partial", "skipped"].includes(candidate.status) ? candidate.status : undefined;
     return [{
-      trade: candidate.trade,
+      trade,
       ...(status ? { status } : {}),
       rawProviderCount: finiteNumber(candidate.rawProviderCount) ?? 0,
       withinRadiusCount: finiteNumber(candidate.withinRadiusCount) ?? 0,
@@ -541,6 +546,7 @@ export function mergeDiscoveryCandidates(input: {
 
   const qualified = merged.flatMap((candidate): DiscoveredLead[] => {
     const requestedType = input.prospectType ?? "redesign";
+    const trade = normalizeTradeCategory(input.trade) ?? input.trade;
     const ownedWebsite = isUsableBusinessWebsite(candidate.website) ? candidate.website : "";
     const profileUrl = candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : "");
     const prospectType: ProspectType = ownedWebsite ? "redesign" : "no_website_social_only";
@@ -565,7 +571,12 @@ export function mergeDiscoveryCandidates(input: {
       const website = ownedWebsite ? normalizeWebsite(ownedWebsite) : "";
       const normalizedProfileUrl = profileUrl && validWebsite(profileUrl) ? normalizeWebsite(profileUrl) : "";
       const taggedState = candidate.state?.trim() ?? "";
-      const classification = candidate.inactive
+      const fitProbe = { businessName: candidate.businessName, website, trade };
+      const badFit = likelyInstitutionalOrNonBusiness(fitProbe)
+        || likelySupplierOrDistributor(fitProbe)
+        || websiteBusinessMismatch(fitProbe)
+        || !hasClearLocalServiceIntent(fitProbe);
+      const classification = candidate.inactive || badFit
         ? "duplicate_bad_fit" as const
         : classifyProspectPresence({
             website,
@@ -580,7 +591,7 @@ export function mergeDiscoveryCandidates(input: {
         phone: candidate.phone ?? "",
         email: candidate.email ?? "",
         contactFormUrl: candidate.contactFormUrl ?? "",
-        inactive: candidate.inactive ?? false,
+        inactive: candidate.inactive || badFit,
       });
       return [{
         businessName: candidate.businessName.trim(),
@@ -592,10 +603,10 @@ export function mergeDiscoveryCandidates(input: {
         email: candidate.email ?? "",
         contactFormUrl: candidate.contactFormUrl ?? "",
         address: candidate.address ?? "",
-        city: candidate.city?.trim() || input.city.trim(),
-        state: (/^[A-Za-z]{2}$/.test(taggedState) ? taggedState : input.state).toUpperCase(),
-        trade: input.trade,
-        serviceArea: `${input.city.trim()} and nearby communities`,
+        city: titleCaseLocation(candidate.city?.trim() || input.city.trim()),
+        state: displayStateCode(/^[A-Za-z]{2}$/.test(taggedState) ? taggedState : input.state),
+        trade,
+        serviceArea: `${titleCaseLocation(input.city.trim())} and nearby communities`,
         sources: candidate.sources,
         sourceConfidence: sourceConfidence(candidate),
         rating: candidate.rating,
@@ -603,7 +614,7 @@ export function mergeDiscoveryCandidates(input: {
         recentReviewCount: candidate.recentReviewCount,
         activitySignals: [...new Set(activitySignals)],
         recommendedContactMethod,
-        inactive: candidate.inactive ?? false,
+        inactive: candidate.inactive || badFit,
       }];
     } catch {
       return [];
@@ -651,7 +662,7 @@ export function mergeDiscoveryCandidates(input: {
       afterQualificationFilteringCount: qualified.length,
       returnedCount: leads.length,
       radiusKm: input.radiusKm,
-      categorySignals: discoveryCategorySignals(input.trade),
+      categorySignals: discoveryCategorySignals(normalizeTradeCategory(input.trade) ?? input.trade),
       sourceCounts: input.sourceCounts ?? emptySourceCounts(),
       providerDiagnostics,
       finalMergedCount: merged.length,
@@ -916,8 +927,10 @@ export async function discoverContractorsWithDiagnostics(input: {
   skipThrottle?: boolean;
   logger?: DiscoveryLogger;
 }): Promise<DiscoveryResult> {
-  if (!validTrade(input.trade)) throw new Error("Trade category is not supported.");
-  if (!input.city.trim() || !/^[A-Za-z .'-]{2,100}$/.test(input.city.trim())) throw new Error("Enter a valid city.");
+  const trade = normalizeTradeCategory(input.trade);
+  if (!trade) throw new Error("Trade category is not supported.");
+  const city = titleCaseLocation(input.city);
+  if (city.includes(",") || !city || !/^[A-Za-z .'-]{2,100}$/.test(city)) throw new Error("Enter one city at a time.");
   if (!/^[A-Za-z]{2}$/.test(input.state.trim())) throw new Error("Enter a two-letter state code.");
   if (![10, 25, 50].includes(input.radiusKm)) throw new Error("Discovery radius is not supported.");
   const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 25)));
@@ -939,7 +952,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   };
 
   const geocodeUrl = new URL(nominatimUrl);
-  geocodeUrl.searchParams.set("q", `${input.city}, ${input.state}, USA`);
+  geocodeUrl.searchParams.set("q", `${city}, ${displayStateCode(input.state)}, USA`);
   geocodeUrl.searchParams.set("format", "jsonv2");
   geocodeUrl.searchParams.set("limit", "1");
   geocodeUrl.searchParams.set("countrycodes", "us");
@@ -974,7 +987,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   }
 
   const radiusMeters = input.radiusKm * 1_000;
-  const queries = buildTradeDiscoveryQueries(input.trade, radiusMeters, latitude, longitude);
+  const queries = buildTradeDiscoveryQueries(trade, radiusMeters, latitude, longitude);
   async function providerElements(query: string, queryKind: "primary" | "enrichment", required: boolean) {
     input.logger?.("provider_queried", { queryKind, radiusKm: input.radiusKm });
     let discoveryResponse: Response;
@@ -1055,9 +1068,9 @@ export async function discoverContractorsWithDiagnostics(input: {
   const yellowPagesUrl = process.env.YELLOW_PAGES_API_URL?.trim() ?? "";
   const yellowPagesKey = process.env.YELLOW_PAGES_API_KEY?.trim() ?? "";
   const yellowUrl = yellowPagesUrl ? providerUrl(yellowPagesUrl) : null;
-  yellowUrl?.searchParams.set("trade", input.trade);
-  yellowUrl?.searchParams.set("city", input.city);
-  yellowUrl?.searchParams.set("state", input.state);
+  yellowUrl?.searchParams.set("trade", trade);
+  yellowUrl?.searchParams.set("city", city);
+  yellowUrl?.searchParams.set("state", displayStateCode(input.state));
   yellowUrl?.searchParams.set("radiusKm", String(input.radiusKm));
   yellowUrl?.searchParams.set("limit", String(limit));
 
@@ -1065,7 +1078,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   const bingUrl = azureMapsKey
     ? providerUrl(process.env.AZURE_MAPS_POI_API_URL, "https://atlas.microsoft.com/search/poi/json")
     : providerUrl(process.env.BING_LOCAL_API_URL, "https://dev.virtualearth.net/REST/v1/LocalSearch/");
-  bingUrl?.searchParams.set("query", `${input.trade} near ${input.city}, ${input.state}`);
+  bingUrl?.searchParams.set("query", `${trade} near ${city}, ${displayStateCode(input.state)}`);
   if (azureMapsKey) {
     bingUrl?.searchParams.set("api-version", "1.0");
     bingUrl?.searchParams.set("subscription-key", azureMapsKey);
@@ -1079,7 +1092,7 @@ export async function discoverContractorsWithDiagnostics(input: {
     if (bingKey) bingUrl?.searchParams.set("key", bingKey);
   }
   const yelpUrl = providerUrl(process.env.YELP_API_URL, "https://api.yelp.com/v3/businesses/search");
-  yelpUrl?.searchParams.set("term", input.trade);
+  yelpUrl?.searchParams.set("term", trade);
   yelpUrl?.searchParams.set("latitude", String(latitude));
   yelpUrl?.searchParams.set("longitude", String(longitude));
   yelpUrl?.searchParams.set("radius", String(Math.min(40_000, radiusMeters)));
@@ -1101,7 +1114,7 @@ export async function discoverContractorsWithDiagnostics(input: {
           "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.formattedAddress,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
         },
         body: JSON.stringify({
-          textQuery: `${input.trade} near ${input.city}, ${input.state}`,
+          textQuery: `${trade} near ${city}, ${displayStateCode(input.state)}`,
           pageSize: Math.min(20, limit),
           includePureServiceAreaBusinesses: true,
           locationBias: { circle: { center: { latitude, longitude }, radius: Math.min(50_000, radiusMeters) } },
@@ -1185,9 +1198,9 @@ export async function discoverContractorsWithDiagnostics(input: {
     candidates,
     latitude,
     longitude,
-    city: input.city,
-    state: input.state,
-    trade: input.trade,
+    city,
+    state: displayStateCode(input.state),
+    trade,
     radiusKm: input.radiusKm,
     limit,
     prospectType: input.prospectType,

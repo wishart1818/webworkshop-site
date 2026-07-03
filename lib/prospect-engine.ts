@@ -14,7 +14,7 @@ export const tradeCategories = [
   "Plumbing",
   "Electrical",
   "Landscaping",
-  "Power Washing",
+  "Pressure Washing",
   "Painting",
   "Concrete",
   "Cleaning",
@@ -34,7 +34,7 @@ export const coreServiceTrades = [
   "Plumbing",
   "Electrical",
   "Landscaping",
-  "Power Washing",
+  "Pressure Washing",
   "Painting",
   "Concrete",
   "Cleaning",
@@ -44,6 +44,29 @@ export const coreServiceTrades = [
   "Remodeling",
 ] as const satisfies readonly TradeCategory[];
 export type TopProspectTradeSelection = TradeCategory | typeof allCoreServiceTradesOption;
+
+export function normalizeTradeCategory(value: unknown): TradeCategory | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "power washing") return "Pressure Washing";
+  return tradeCategories.find((trade) => trade.toLowerCase() === normalized) ?? null;
+}
+
+export function displayTradeCategory(value: unknown) {
+  return normalizeTradeCategory(value) ?? (typeof value === "string" ? value.trim() : "");
+}
+
+export function titleCaseLocation(value: string) {
+  return value.trim().toLowerCase().replace(/\b([a-z])/g, (character) => character.toUpperCase());
+}
+
+export function displayStateCode(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function prospectTrade(prospect: Pick<Prospect, "trade">) {
+  return normalizeTradeCategory(prospect.trade) ?? "General Contractor";
+}
 export const prospectTypes = ["redesign", "no_website_social_only"] as const;
 export type ProspectType = (typeof prospectTypes)[number];
 export const websiteAvailabilityStatuses = [
@@ -271,7 +294,7 @@ const contractorPlaybooks: Record<TradeCategory, {
     leadDetails: ["service address", "project or issue", "property type", "preferred timing"],
     visualCue: "Use precise project photography, clear safety signals, and calm technical detail.",
   },
-  "Power Washing": {
+  "Pressure Washing": {
     homeownerNeed: "see the likely transformation and request a fast property quote",
     primaryCta: "Request a washing quote",
     services: ["house washing", "concrete cleaning", "roof and soft washing"],
@@ -371,7 +394,7 @@ const tradePreviewPalettes: Record<TradeCategory, PreviewPalette[]> = {
     { label: "Graphite and electric amber", primaryColor: "#303b46", accentColor: "#d99a18", surfaceColor: "#ffffff", softSurfaceColor: "#f3f5f6", inkColor: "#1b232b", mutedTextColor: "#596570", borderColor: "#d9dfe3" },
     { label: "Midnight blue and bright yellow", primaryColor: "#243c61", accentColor: "#d8a91d", surfaceColor: "#ffffff", softSurfaceColor: "#f1f4f8", inkColor: "#192433", mutedTextColor: "#566579", borderColor: "#d6dde7" },
   ],
-  "Power Washing": [
+  "Pressure Washing": [
     { label: "Crisp blue and aqua", primaryColor: "#17648b", accentColor: "#22a3a6", surfaceColor: "#ffffff", softSurfaceColor: "#edf7fa", inkColor: "#172830", mutedTextColor: "#536b76", borderColor: "#d1e3e9" },
     { label: "Ocean navy and clean cyan", primaryColor: "#244b70", accentColor: "#2b9eb3", surfaceColor: "#ffffff", softSurfaceColor: "#eff5f8", inkColor: "#192630", mutedTextColor: "#586b79", borderColor: "#d5e0e6" },
   ],
@@ -443,26 +466,28 @@ function previewTone(prospect: Prospect): PreviewStyleProfile["tone"] {
 }
 
 function previewLayout(prospect: Prospect): PreviewStyleProfile["layoutStyle"] {
-  if (["Landscaping", "Power Washing", "General Contractor", "Painting", "Fencing", "Flooring", "Remodeling"].includes(prospect.trade)) return "project-led";
-  if (["HVAC", "Plumbing", "Cleaning", "Tree Service"].includes(prospect.trade)) return "service-led";
-  if (prospect.trade === "Roofing") return stableIndex(prospect.businessName, 2) ? "trust-led" : "clean-split";
+  const trade = prospectTrade(prospect);
+  if (["Landscaping", "Pressure Washing", "General Contractor", "Painting", "Fencing", "Flooring", "Remodeling"].includes(trade)) return "project-led";
+  if (["HVAC", "Plumbing", "Cleaning", "Tree Service"].includes(trade)) return "service-led";
+  if (trade === "Roofing") return stableIndex(prospect.businessName, 2) ? "trust-led" : "clean-split";
   return "clean-split";
 }
 
 function previewCta(prospect: Prospect) {
-  if (prospect.trade === "Roofing") return /storm|damage|repair/i.test(prospect.businessName) ? "Schedule an inspection" : "Request an estimate";
-  if (prospect.trade === "HVAC") return "Schedule service";
-  if (prospect.trade === "Landscaping") return "Get a free quote";
-  if (prospect.trade === "Plumbing") return "Request service";
-  if (prospect.trade === "Electrical") return "Request an estimate";
-  if (prospect.trade === "Power Washing") return "Get a free quote";
-  if (prospect.trade === "Painting") return "Request a painting estimate";
-  if (prospect.trade === "Concrete") return "Request an estimate";
-  if (prospect.trade === "Cleaning") return "Request cleaning service";
-  if (prospect.trade === "Tree Service") return "Request tree service";
-  if (prospect.trade === "Fencing") return "Request a fencing estimate";
-  if (prospect.trade === "Flooring") return "Request a flooring estimate";
-  if (prospect.trade === "Remodeling") return "Discuss your project";
+  const trade = prospectTrade(prospect);
+  if (trade === "Roofing") return /storm|damage|repair/i.test(prospect.businessName) ? "Schedule an inspection" : "Request an estimate";
+  if (trade === "HVAC") return "Schedule service";
+  if (trade === "Landscaping") return "Get a free quote";
+  if (trade === "Plumbing") return "Request service";
+  if (trade === "Electrical") return "Request an estimate";
+  if (trade === "Pressure Washing") return "Get a free quote";
+  if (trade === "Painting") return "Request a painting estimate";
+  if (trade === "Concrete") return "Request an estimate";
+  if (trade === "Cleaning") return "Request cleaning service";
+  if (trade === "Tree Service") return "Request tree service";
+  if (trade === "Fencing") return "Request a fencing estimate";
+  if (trade === "Flooring") return "Request a flooring estimate";
+  if (trade === "Remodeling") return "Discuss your project";
   return "Discuss your project";
 }
 
@@ -473,7 +498,8 @@ export function generateProspectStyleProfile(prospect: Prospect): PreviewStylePr
     ? undefined
     : brandCuePalettes.find(({ pattern }) => pattern.test(hostname.replaceAll(/[-_.]/g, " ")));
   const selectedCue = nameCue ?? domainCue;
-  const tradePalettes = tradePreviewPalettes[prospect.trade];
+  const trade = prospectTrade(prospect);
+  const tradePalettes = tradePreviewPalettes[trade];
   const palette = selectedCue?.palette ?? tradePalettes[stableIndex(`${prospect.businessName}${hostname}`, tradePalettes.length)];
   const tone = previewTone(prospect);
   const typography = tone === "premium-craft"
@@ -483,8 +509,8 @@ export function generateProspectStyleProfile(prospect: Prospect): PreviewStylePr
       : { typographyStyle: "Clear, sturdy sans-serif with compact high-trust headings", headingFont: "Arial, Helvetica, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" };
   const brandSource: PreviewStyleProfile["brandSource"] = nameCue ? "business-name cue" : domainCue ? "website-domain cue" : "trade fallback";
   const reason = selectedCue
-    ? `${titleCase(selectedCue.cue)} informed the palette; the ${prospect.trade.toLowerCase()} category informed the trust, service, and layout treatment.`
-    : `No recognizable color cue was available, so the palette and layout use a restrained ${prospect.trade.toLowerCase()} direction suited to a ${tone.replace("-", " ")} local business.`;
+    ? `${titleCase(selectedCue.cue)} informed the palette; the ${displayTradeCategory(trade).toLowerCase()} category informed the trust, service, and layout treatment.`
+    : `No recognizable color cue was available, so the palette and layout use a restrained ${displayTradeCategory(trade).toLowerCase()} direction suited to a ${tone.replace("-", " ")} local business.`;
 
   return {
     name: `${palette.label} ${tone.replace("-", " ")}`,
@@ -531,7 +557,8 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     preview.styleProfile?.styleReason,
   ].filter(Boolean).join(" ");
   const mentionsBusiness = searchable.includes(prospect.businessName);
-  const mentionsTrade = new RegExp(prospect.trade, "i").test(searchable);
+  const trade = prospectTrade(prospect);
+  const mentionsTrade = new RegExp(displayTradeCategory(trade), "i").test(searchable);
   const mentionsCity = new RegExp(`\\b${prospect.city}\\b`, "i").test(searchable);
   const hasStyleProfile = Boolean(preview.styleProfile);
   const hasTradeServices = (preview.serviceHighlights?.length ?? 0) >= 3;
@@ -609,7 +636,7 @@ export function sortProspects(prospects: Prospect[], sort: ProspectSort) {
 }
 
 export function analyzeProspect(prospect: Prospect): Analysis {
-  const basis = `${prospect.businessName}${prospect.website}${prospect.trade}`;
+  const basis = `${prospect.businessName}${prospect.website}${displayTradeCategory(prospectTrade(prospect))}`;
   const keys = Object.keys(scoreLabels) as ScoreKey[];
   const scores = Object.fromEntries(keys.map((key, index) => [key, seededScore(basis, index)])) as Record<
     ScoreKey,
@@ -630,7 +657,7 @@ export function analyzeProspect(prospect: Prospect): Analysis {
     strengths,
     weaknesses,
     summary: `${prospect.businessName} has a usable foundation, but the website makes homeowners work too hard to understand services, proof, and the next step.`,
-    redesignDirection: `Build a mobile-first ${prospect.trade.toLowerCase()} site around service urgency, recent work, service-area proof, and one clear estimate path.`,
+    redesignDirection: `Build a mobile-first ${displayTradeCategory(prospectTrade(prospect)).toLowerCase()} site around service urgency, recent work, service-area proof, and one clear estimate path.`,
     analyzedAt: now(),
   };
 }
@@ -750,11 +777,12 @@ function strongestAndWeakestObservation(analysis: Analysis) {
 }
 
 function outreachGoal(prospect: Prospect) {
-  if (prospect.trade === "Roofing") return "help turn more local visitors into roofing estimate requests";
-  if (prospect.trade === "HVAC") return "help turn more local visitors into service and replacement inquiries";
-  if (prospect.trade === "Cleaning") return "help turn more local visitors into booked cleaning inquiries";
-  if (prospect.trade === "Tree Service") return "help turn more local visitors into tree service requests";
-  return `help turn more local visitors into ${prospect.trade.toLowerCase()} estimate requests`;
+  const trade = prospectTrade(prospect);
+  if (trade === "Roofing") return "help turn more local visitors into roofing estimate requests";
+  if (trade === "HVAC") return "help turn more local visitors into service and replacement inquiries";
+  if (trade === "Cleaning") return "help turn more local visitors into booked cleaning inquiries";
+  if (trade === "Tree Service") return "help turn more local visitors into tree service requests";
+  return `help turn more local visitors into ${displayTradeCategory(trade).toLowerCase()} estimate requests`;
 }
 
 const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
@@ -764,12 +792,13 @@ function conceptPreviewSentence(previewLink: string, lead = "I put together a sh
 }
 
 function localTradePhrase(prospect: Prospect) {
-  return `local ${prospect.trade.toLowerCase()} businesses around ${prospect.city}`;
+  return `local ${displayTradeCategory(prospectTrade(prospect)).toLowerCase()} businesses around ${titleCaseLocation(prospect.city)}`;
 }
 
 export function generateOutreach(prospect: Prospect, previewLink = ""): OutreachDraft {
   if (prospect.prospectType === "no_website_social_only") {
-    const playbook = contractorPlaybooks[prospect.trade];
+    const trade = prospectTrade(prospect);
+    const playbook = contractorPlaybooks[trade];
     const activityProof = prospect.reviewCount > 0
       ? `${prospect.reviewCount} public reviews`
       : "an active local business presence";
@@ -778,7 +807,7 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
       subjects: [
         `A website concept for ${prospect.businessName}`,
         `Own the online home for ${prospect.businessName}`,
-        `Turn ${prospect.city} searches into direct inquiries`,
+        `Turn ${titleCaseLocation(prospect.city)} searches into direct inquiries`,
       ],
       concise: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
       detailed: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, a clear service area, space for customer proof you can verify, and a direct "${playbook.primaryCta}" action.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
@@ -791,14 +820,15 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
     };
   }
   const analysis = prospect.analysis ?? analyzeProspect(prospect);
-  const playbook = contractorPlaybooks[prospect.trade];
+  const trade = prospectTrade(prospect);
+  const playbook = contractorPlaybooks[trade];
   const { strength, opportunity } = strongestAndWeakestObservation(analysis);
   const goal = outreachGoal(prospect);
   const previewSentence = conceptPreviewSentence(previewLink);
   return {
     subjects: [
       `A website idea for ${prospect.businessName}`,
-      `${prospect.trade} website notes for ${prospect.city}`,
+      `${displayTradeCategory(trade)} website notes for ${titleCaseLocation(prospect.city)}`,
       `A clearer quote path for ${prospect.businessName}`,
     ],
     concise: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: ${opportunity}\n\n${previewSentence}\n\nThe idea is to ${goal}. If the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
@@ -813,8 +843,10 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
 }
 
 export function generatePreview(prospect: Prospect): PreviewConcept {
-  const trade = prospect.trade.toLowerCase();
-  const playbook = contractorPlaybooks[prospect.trade];
+  const trade = prospectTrade(prospect);
+  const displayTrade = displayTradeCategory(trade);
+  const tradeLower = displayTrade.toLowerCase();
+  const playbook = contractorPlaybooks[trade];
   const styleProfile = generateProspectStyleProfile(prospect);
   const displayCity = prospect.city.trim().toLowerCase().replace(/\b([a-z])/g, (character) => character.toUpperCase());
   const displayState = prospect.state.trim().toUpperCase();
@@ -829,7 +861,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     Plumbing: "Straight answers and dependable help for plumbing problems.",
     Electrical: "Safe, clear electrical work for homes and growing needs.",
     Landscaping: "Outdoor spaces planned for the way you want to live.",
-    "Power Washing": "A cleaner property, with the difference easy to see.",
+    "Pressure Washing": "A cleaner property, with the difference easy to see.",
     Painting: "Painting projects made clearer from prep to final coat.",
     Concrete: "Durable concrete work planned with practical details.",
     Cleaning: "Reliable cleaning with clear scope and easy scheduling.",
@@ -847,10 +879,10 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   ];
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   const preview: PreviewConcept = {
-    direction: `A clean, local-first ${trade} website that feels like ${prospect.businessName}: ${styleProfile.tone.replace("-", " ")}, clear, and easy to hire.`,
+    direction: `A clean, local-first ${tradeLower} website that feels like ${prospect.businessName}: ${styleProfile.tone.replace("-", " ")}, clear, and easy to hire.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} Use ${styleProfile.primaryColor} as the restrained primary brand color and ${styleProfile.accentColor} only for focused emphasis. Use tasteful generic service imagery when real photos are unavailable, with sample areas clearly labeled.`,
     hero: `${prospect.businessName} serves ${serviceArea} with a clearer path from service need to direct contact.`,
-    heroHeadline: heroHeadlines[prospect.trade],
+    heroHeadline: heroHeadlines[trade],
     heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${serviceArea}.`,
     serviceHighlights: playbook.services.map(titleCase),
     trustItems,
@@ -948,8 +980,19 @@ type CreateProspectInput = Omit<
 
 export function createProspect(input: CreateProspectInput): Prospect {
   const createdAt = now();
+  const trade = normalizeTradeCategory(input.trade) ?? "General Contractor";
+  const city = titleCaseLocation(input.city);
+  const state = displayStateCode(input.state);
+  const escapedInputCity = input.city.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const serviceArea = input.serviceArea
+    ? escapedInputCity ? input.serviceArea.replace(new RegExp(escapedInputCity, "gi"), city) : input.serviceArea
+    : `${city} and nearby communities`;
   const prospect: Prospect = {
     ...input,
+    city,
+    state,
+    trade,
+    serviceArea,
     profileUrl: input.profileUrl ?? "",
     prospectType: input.prospectType ?? "redesign",
     classification: input.classification ?? "not_enough_contact_info",
@@ -984,7 +1027,7 @@ export const seedProspects: Prospect[] = [
   ["Evergreen Outdoor Works", "https://example.com/evergreen-outdoor", "(614) 555-0129", "office@evergreen.example", "Dublin", "OH", "Landscaping", "Growing"],
   ["ClearFlow Plumbing", "https://example.com/clearflow", "(567) 555-0134", "", "Lima", "OH", "Plumbing", "Established"],
   ["BrightWire Electric", "https://example.com/brightwire", "(419) 555-0171", "service@brightwire.example", "Perrysburg", "OH", "Electrical", "Small"],
-  ["Freshline Power Washing", "https://example.com/freshline", "(419) 555-0160", "", "Bowling Green", "OH", "Power Washing", "Small"],
+  ["Freshline Pressure Washing", "https://example.com/freshline", "(419) 555-0160", "", "Bowling Green", "OH", "Pressure Washing", "Small"],
 ].map(([businessName, website, phone, email, city, state, trade, sizeIndicator], index) => ({
   id: `seed-prospect-${index + 1}`,
   businessName,

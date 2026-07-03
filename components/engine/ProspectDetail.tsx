@@ -4,6 +4,8 @@ import React, { useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState } from "@/components/engine/EngineStates";
 import {
   activity,
+  displayStateCode,
+  displayTradeCategory,
   previewStyleProfile,
   priorityRationale,
   prospectHasUnusableWebsite,
@@ -11,6 +13,7 @@ import {
   prospectWrittenContactMethodIsUsable,
   prospectStatuses,
   scoreLabels,
+  titleCaseLocation,
   websiteAvailabilityLabels,
   type Prospect,
   type ProspectClassification,
@@ -76,6 +79,10 @@ function safeWebsiteUrl(value: string) {
   }
 }
 
+function prospectLocationLine(prospect: Pick<Prospect, "trade" | "city" | "state">) {
+  return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
+}
+
 function ScoreRing({ value }: { value: number }) {
   return (
     <span className="engine-score" style={{ "--score": `${value * 3.6}deg` } as CSSProperties}>
@@ -107,7 +114,7 @@ export function ProspectDetail({
           <span>{prospect.businessName.charAt(0)}</span>
           <div>
             <h2>{prospect.businessName}</h2>
-            <p>{prospect.trade}{" \u00b7 "}{prospect.city}, {prospect.state}</p>
+            <p>{prospectLocationLine(prospect)}</p>
             <small>{priorityRationale(prospect)}</small>
           </div>
         </div>
@@ -325,7 +332,7 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
   return (
     <div className="engine-stack">
       <section className="engine-preview-hero">
-        <span>{prospect.trade} concept</span>
+        <span>{displayTradeCategory(prospect.trade)} concept</span>
         <h3>{preview.direction}</h3>
         <p>{preview.hero}</p>
         <button type="button">{styleProfile.ctaLabel}</button>

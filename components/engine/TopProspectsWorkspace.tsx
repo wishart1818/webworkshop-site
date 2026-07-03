@@ -6,8 +6,11 @@ import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   allCoreServiceTradesOption,
+  displayStateCode,
+  displayTradeCategory,
   previewStyleProfile,
   prospectPresenceLabels,
+  titleCaseLocation,
   tradeCategories,
   type ProspectClassification,
   type ProspectSearchType,
@@ -207,6 +210,10 @@ function jobNextActionLabel(job: TopProspectJob) {
   return "Run next saved batch";
 }
 
+function prospectLocationLine(prospect: Pick<TopProspectResult["prospect"], "trade" | "city" | "state">) {
+  return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
+}
+
 function safeWebsite(value: string) {
   try {
     const url = new URL(value);
@@ -391,7 +398,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectSearchType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option><option value="all">All Prospect Types</option></select></label>
           <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
           <label>Trade<select defaultValue={allCoreServiceTradesOption} name="trade"><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>City<input name="city" required /></label>
+          <label>City<span>Enter one city at a time.</span><input name="city" required /></label>
           <label>State<input maxLength={2} name="state" required /></label>
           <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
           <label>Businesses to scan<input defaultValue="100" max="100" min="5" name="businessesToScan" type="number" /></label>
@@ -408,7 +415,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob && (
         <section className="engine-panel engine-job-progress" aria-live="polite">
           <div className="engine-panel__head">
-            <div><h2>{latestJob.input.trade} near {latestJob.input.city}, {latestJob.input.state}</h2><p>{jobStatusDescription(latestJob)}</p></div>
+            <div><h2>{displayTradeCategory(latestJob.input.trade)} near {titleCaseLocation(latestJob.input.city)}, {displayStateCode(latestJob.input.state)}</h2><p>{jobStatusDescription(latestJob)}</p></div>
             <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase().replaceAll("_", "-")}`}>{jobStatusLabel(latestJob)}</span>
           </div>
           <div className="engine-job-meta">
@@ -490,7 +497,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div className="engine-top-table__head" role="row"><span>Rank / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredResults.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><span>{result.prospect.trade} · {result.prospect.city}, {result.prospect.state}</span><ProspectPresenceLink result={result} /></div>
+                <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span><em>{result.pitchAngle}</em></div>
@@ -517,7 +524,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredReviewedNotRecommended.map((result) => (
               <article key={result.id} role="row">
-                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{result.prospect.trade} · {result.prospect.city}, {result.prospect.state}</span><ProspectPresenceLink result={result} /></div>
+                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
                 <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
@@ -637,12 +644,12 @@ function PackageReviewCard({
   return (
     <article className="engine-package-card">
       <header>
-        <div><span>#{result.rank ?? "Pending"} {result.prospect.trade}</span><h3>{result.prospect.businessName}</h3></div>
+        <div><span>#{result.rank ?? "Pending"} {displayTradeCategory(result.prospect.trade)}</span><h3>{result.prospect.businessName}</h3></div>
         <i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i>
       </header>
       <div className="engine-package-mini-preview" style={miniStyle}>
-        <span>{result.prospect.city}, {result.prospect.state}</span>
-        <strong>{preview?.heroHeadline ?? `${result.prospect.trade} service made easier to trust.`}</strong>
+        <span>{titleCaseLocation(result.prospect.city)}, {displayStateCode(result.prospect.state)}</span>
+        <strong>{preview?.heroHeadline ?? `${displayTradeCategory(result.prospect.trade)} service made easier to trust.`}</strong>
         <i>{profile.ctaLabel}</i>
       </div>
       <div className="engine-package-card__copy">

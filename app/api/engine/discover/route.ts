@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    const expected = /valid city|two-letter state|not supported|wait|Rate limit reached|could not be found/.test(message);
+    const expected = /valid city|one city at a time|two-letter state|not supported|wait|Rate limit reached|could not be found/.test(message);
     const providerFailure = /provider could not complete/.test(message);
     if (!expected && !providerFailure) console.error("Unable to discover leads.", error);
     await safeRecordAudit({ action: "lead_discovery", outcome: expected ? "rejected" : "failure", subject, metadata: { message } });

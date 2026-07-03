@@ -56,7 +56,7 @@ export function ContactForm() {
             <option>Landscaping</option>
             <option>HVAC</option>
             <option>Plumbing</option>
-            <option>Power washing</option>
+            <option>Pressure washing</option>
             <option>Other local service</option>
           </select>
         </label>

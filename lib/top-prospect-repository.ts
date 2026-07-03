@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { activity } from "@/lib/prospect-engine";
+import { activity, displayStateCode, normalizeTradeCategory, titleCaseLocation } from "@/lib/prospect-engine";
 import { upsertAutonomousQueueItemFromPackage } from "@/lib/autonomous-growth-repository";
 import { getProspectDatabase, getProspect, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
@@ -139,9 +139,9 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
   return {
     id: row.id,
     input: {
-      trade: row.tradeCategory as TopProspectInput["trade"],
-      city: row.city,
-      state: row.state,
+      trade: row.tradeCategory === "All Core Service Trades" ? row.tradeCategory : normalizeTradeCategory(row.tradeCategory) ?? "General Contractor",
+      city: titleCaseLocation(row.city),
+      state: displayStateCode(row.state),
       radiusKm: row.radiusKm,
       businessesToScan: row.businessesToScan,
       finalProspectsWanted: row.finalProspectsWanted,
@@ -176,9 +176,9 @@ export async function createTopProspectJob(input: TopProspectInput) {
   if (active) throw new Error("A Top Prospects search is already running.");
   const job = await database.topProspectJob.create({
     data: {
-      tradeCategory: input.trade,
-      city: input.city,
-      state: input.state,
+      tradeCategory: input.trade === "All Core Service Trades" ? input.trade : normalizeTradeCategory(input.trade) ?? "General Contractor",
+      city: titleCaseLocation(input.city),
+      state: displayStateCode(input.state),
       radiusKm: input.radiusKm,
       businessesToScan: input.businessesToScan,
       finalProspectsWanted: input.finalProspectsWanted,

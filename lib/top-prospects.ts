@@ -5,14 +5,17 @@ import {
   generateOutreach,
   generatePreview,
   allCoreServiceTradesOption,
+  displayStateCode,
+  displayTradeCategory,
   prospectContactMethodIsUsable,
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
   scorePreviewQuality,
+  normalizeTradeCategory,
   type Analysis,
   type OutreachDraft,
   type Prospect,
-  tradeCategories,
+  titleCaseLocation,
   prospectSearchTypes,
   type ProspectSearchType,
   type TopProspectTradeSelection,
@@ -102,6 +105,9 @@ export const topProspectRejectionReasons = [
   "Inactive business",
   "Duplicate/bad fit",
   "Supplier/distributor",
+  "Institutional/non-business page",
+  "Website/business mismatch",
+  "No clear local service intent",
   "Phone-only / written outreach blocked",
   "Below final cutoff",
 ] as const;
@@ -205,6 +211,10 @@ const nationalOrLargeBrandSignals = [
 ];
 
 const supplierDistributorSignals = [
+  "equipment",
+  "manufacturer",
+  "manufacturing",
+  "parts",
   "building supply",
   "distribution",
   "distributor",
@@ -217,12 +227,78 @@ const supplierDistributorSignals = [
   "siding supply",
   "supplier",
   "supply company",
+  "supply house",
+  "showroom",
+  "showroom-only",
   "wholesale",
+];
+
+const localServiceSignals = [
+  "service",
+  "services",
+  "repair",
+  "installation",
+  "install",
+  "maintenance",
+  "contractor",
+  "contracting",
+  "residential",
+  "commercial",
+  "emergency",
+  "estimate",
+  "quote",
+];
+
+const institutionalSignals = [
+  "campus operations",
+  "facility department",
+  "facilities department",
+  "facilities management",
+  "municipal",
+  "physical plant",
+  "public works",
+  "school district",
+  "university",
+  "campus",
+  "city of",
+  "county",
+  "government",
+  "department",
+];
+
+const domainTradeSignals: Record<TradeCategory, string[]> = {
+  Roofing: ["roof", "roofing", "shingle", "gutter"],
+  HVAC: ["hvac", "heating", "cooling", "air", "furnace"],
+  Plumbing: ["plumb", "drain", "waterheater", "water-heater"],
+  Electrical: ["electric", "electrical", "wire", "lighting", "panel"],
+  Landscaping: ["landscap", "lawn", "outdoor", "yard", "garden"],
+  "Pressure Washing": ["pressure", "powerwash", "power-wash", "softwash", "wash"],
+  Painting: ["paint", "painting"],
+  Concrete: ["concrete", "masonry", "flatwork", "driveway"],
+  Cleaning: ["clean", "maid", "janitor"],
+  "Tree Service": ["tree", "arbor", "stump"],
+  Fencing: ["fence", "fencing"],
+  Flooring: ["floor", "flooring", "hardwood", "tile"],
+  Remodeling: ["remodel", "renovation", "kitchen", "bath"],
+  "General Contractor": ["contractor", "construction", "builder", "build"],
+};
+
+const unrelatedBusinessDomainSignals = [
+  "bar",
+  "campus",
+  "coffee",
+  "dentist",
+  "hotel",
+  "law",
+  "restaurant",
+  "sauna",
+  "school",
+  "university",
 ];
 
 export function normalizeWebsite(value: string) {
   if (!value.trim()) return "";
-  const url = new URL(value);
+  const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
   return url.hostname.replace(/^www\./, "").toLowerCase();
 }
 
@@ -238,7 +314,80 @@ export function likelyNationalOrLargeBrand(lead: Pick<DiscoveredLead, "businessN
 
 export function likelySupplierOrDistributor(lead: Pick<DiscoveredLead, "businessName" | "website">) {
   const value = `${lead.businessName} ${normalizeWebsite(lead.website)}`.toLowerCase();
-  return supplierDistributorSignals.some((signal) => value.includes(signal));
+  const supplierSignal = supplierDistributorSignals.some((signal) => value.includes(signal));
+  const serviceSignal = localServiceSignals.some((signal) => value.includes(signal));
+  return supplierSignal && !serviceSignal;
+}
+
+export function likelyInstitutionalOrNonBusiness(lead: Pick<DiscoveredLead, "businessName" | "website">) {
+  const website = lead.website.trim();
+  let hostname = "";
+  let pathname = "";
+  try {
+    const url = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`);
+    hostname = url.hostname.replace(/^www\./, "").toLowerCase();
+    pathname = url.pathname.toLowerCase();
+  } catch {
+    hostname = website.toLowerCase();
+  }
+  const value = `${lead.businessName} ${hostname} ${pathname}`.toLowerCase();
+  return hostname.endsWith(".edu")
+    || hostname.endsWith(".gov")
+    || institutionalSignals.some((signal) => value.includes(signal));
+}
+
+function identityTokens(value: string) {
+  return value.toLowerCase()
+    .replace(/\b(llc|inc|company|co|corp|corporation|services?|service|the|and|of|for|a|an)\b/g, " ")
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4);
+}
+
+function hostnameTokens(value: string) {
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    return identityTokens(url.hostname.replace(/^www\./, "").replace(/\.[a-z.]+$/i, ""));
+  } catch {
+    return identityTokens(value);
+  }
+}
+
+export function websiteBusinessMismatch(
+  lead: Pick<DiscoveredLead, "businessName" | "website" | "trade">,
+) {
+  if (!lead.website.trim()) return false;
+  if (likelyInstitutionalOrNonBusiness(lead)) return true;
+  const trade = normalizeTradeCategory(lead.trade) ?? lead.trade;
+  const businessTokens = identityTokens(lead.businessName);
+  const domainTokens = hostnameTokens(lead.website);
+  const domainText = domainTokens.join(" ");
+  const sharesNameToken = businessTokens.some((token) => domainTokens.includes(token));
+  const expectedSignals = domainTradeSignals[trade] ?? [];
+  const domainMatchesTrade = expectedSignals.some((signal) => domainText.includes(signal.replace(/[^a-z0-9]/g, "")) || domainText.includes(signal));
+  const otherTradeSignals = Object.entries(domainTradeSignals)
+    .filter(([otherTrade]) => otherTrade !== trade)
+    .flatMap(([, signals]) => signals)
+    .some((signal) => domainText.includes(signal.replace(/[^a-z0-9]/g, "")) || domainText.includes(signal));
+  const unrelatedBusinessSignal = unrelatedBusinessDomainSignals.some((signal) => domainText.includes(signal));
+  return !sharesNameToken && (otherTradeSignals || unrelatedBusinessSignal) && !domainMatchesTrade;
+}
+
+export function hasClearLocalServiceIntent(lead: Pick<DiscoveredLead, "businessName" | "website" | "trade">) {
+  const trade = normalizeTradeCategory(lead.trade) ?? lead.trade;
+  let website = "";
+  try {
+    website = normalizeWebsite(lead.website);
+  } catch {
+    website = lead.website;
+  }
+  const value = `${lead.businessName} ${website}`.toLowerCase();
+  const tradeSignals = domainTradeSignals[trade] ?? [];
+  return tradeSignals.some((signal) => value.includes(signal.toLowerCase()))
+    || localServiceSignals.some((signal) => value.includes(signal));
+}
+
+function prospectTrade(prospect: Pick<Prospect, "trade">) {
+  return normalizeTradeCategory(prospect.trade) ?? "General Contractor";
 }
 
 function websiteFit(score: number) {
@@ -262,7 +411,7 @@ const tradeRevenuePotential: Record<TradeCategory, number> = {
   Plumbing: 76,
   Electrical: 74,
   Landscaping: 66,
-  "Power Washing": 54,
+  "Pressure Washing": 54,
   Painting: 62,
   Concrete: 70,
   Cleaning: 52,
@@ -414,7 +563,10 @@ export function evaluateOutreachEmailQuality(
     || prospect.classification === "national_large_brand"
     || prospect.classification === "duplicate_bad_fit"
     || likelyNationalOrLargeBrand(prospect)
-    || likelySupplierOrDistributor(prospect);
+    || likelySupplierOrDistributor(prospect)
+    || likelyInstitutionalOrNonBusiness(prospect)
+    || websiteBusinessMismatch(prospect)
+    || !hasClearLocalServiceIntent(prospect);
   const publicLinkReady = isPublicPreviewLink(previewLink)
     && mainEmails.every((draft) => draft.includes(previewLink))
     && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier email/i.test(draft)));
@@ -534,11 +686,12 @@ export function outreachPackageActionAllowed(status: OutreachPackageStatus, acti
 export function calculateProspectSalesScores(prospect: Prospect, opportunityScore: number): ProspectSalesScores {
   const analysis = prospect.analysis;
   if (!analysis) throw new Error("Sales scoring requires website analysis.");
+  const trade = prospectTrade(prospect);
   const broaderServiceArea = /\b(county|counties|regional|statewide|multiple|communities|nearby|greater)\b/i.test(prospect.serviceArea);
   const sizePotential = prospect.sizeIndicator === "Established" ? 86 : prospect.sizeIndicator === "Growing" ? 72 : 55;
   const revenueOpportunityScore = clampScore(
     sizePotential * 0.48
-    + tradeRevenuePotential[prospect.trade] * 0.34
+    + tradeRevenuePotential[trade] * 0.34
     + (broaderServiceArea ? 86 : prospect.serviceArea ? 64 : 48) * 0.18,
   );
   const contactabilityScore = clampScore(
@@ -605,6 +758,7 @@ export function assessOpportunity(prospect: Prospect): OpportunityAssessment {
   const trustScore = analysis.scores.trustSignals;
   const conversionScore = analysis.scores.conversionReadiness;
   const weakness = weakestLabel(analysis);
+  const tradeLabel = displayTradeCategory(prospectTrade(prospect)).toLowerCase();
   const score = Math.min(100, Math.round(
     websiteFit(analysis.overallScore)
     + (100 - contactScore) * 0.16
@@ -622,7 +776,7 @@ export function assessOpportunity(prospect: Prospect): OpportunityAssessment {
     presenceScores: null,
     mainWeakness: `The clearest opportunity is ${weakness}.`,
     whyMayBuy: `${prospect.businessName} has an active site and clear local service footprint, but its ${weakness} may be costing ready-to-hire visitors.`,
-    pitchAngle: `Lead with a practical ${prospect.trade.toLowerCase()} redesign that improves ${weakness}, local proof, and the path to a quote.`,
+    pitchAngle: `Lead with a practical ${tradeLabel} redesign that improves ${weakness}, local proof, and the path to a quote.`,
   };
 }
 
@@ -692,13 +846,16 @@ function hasMeaningfulImprovementGap(prospect: Pick<Prospect, "analysis">) {
 }
 
 export function topProspectRejectionReason(
-  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
   outreachPreference: OutreachPreference = "written_only",
 ): TopProspectRejectionReason | null {
+  if (likelyInstitutionalOrNonBusiness(prospect)) return "Institutional/non-business page";
   if (likelyNationalOrLargeBrand(prospect)) return "National/large brand";
   if (likelySupplierOrDistributor(prospect)) return "Supplier/distributor";
+  if (websiteBusinessMismatch(prospect)) return "Website/business mismatch";
+  if (!hasClearLocalServiceIntent(prospect)) return "No clear local service intent";
   if (prospect.inactive) return "Inactive business";
   if (prospect.classification === "duplicate_bad_fit") return "Duplicate/bad fit";
   const usableContact = outreachPreference === "phone_allowed"
@@ -733,7 +890,7 @@ export function topProspectRejectionReason(
 
 export function topProspectResultDisposition(
   persistedSelected: boolean,
-  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
   outreachPreference: OutreachPreference = "written_only",
@@ -750,6 +907,8 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
   const preview = prospect.preview ?? generatePreview(prospect);
   const styleProfile = previewStyleProfile(prospect, preview);
   const quality = preview.qualityScore ?? scorePreviewQuality(prospect, preview);
+  const tradeLabel = displayTradeCategory(prospectTrade(prospect)).toLowerCase();
+  const serviceArea = prospect.serviceArea || `${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
   const styleInstructions = [
     `Style profile: ${styleProfile.name}.`,
     `Palette: primary ${styleProfile.primaryColor}, accent ${styleProfile.accentColor}, main surface ${styleProfile.surfaceColor}, soft surface ${styleProfile.softSurfaceColor}, text ${styleProfile.inkColor}.`,
@@ -763,7 +922,7 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
   ].join("\n");
   if (prospect.prospectType === "no_website_social_only") {
     return [
-      `Create the first owned, polished, mobile-first website for ${prospect.businessName}, a ${prospect.trade.toLowerCase()} business serving ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`}.`,
+      `Create the first owned, polished, mobile-first website for ${prospect.businessName}, a ${tradeLabel} business serving ${serviceArea}.`,
       "The business currently appears to rely on public listings or social profiles. Build a permanent online home it controls rather than a redesign of an existing site.",
       `Positioning and pitch: ${assessment.pitchAngle}`,
       styleInstructions,
@@ -777,7 +936,7 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
   }
   if (!analysis) throw new Error("A website build prompt requires website analysis.");
   return [
-    `Create a polished, mobile-first website for ${prospect.businessName}, a ${prospect.trade.toLowerCase()} business serving ${prospect.serviceArea || `${prospect.city}, ${prospect.state}`}.`,
+    `Create a polished, mobile-first website for ${prospect.businessName}, a ${tradeLabel} business serving ${serviceArea}.`,
     `Primary business goal: turn local homeowners into qualified estimate requests. Primary opportunity: ${assessment.mainWeakness}`,
     `Positioning and pitch: ${assessment.pitchAngle}`,
     styleInstructions,
@@ -822,9 +981,9 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
 
 export function validateTopProspectInput(value: unknown): { ok: true; value: TopProspectInput } | { ok: false; error: string } {
   const input = value as Partial<TopProspectInput>;
-  const trade = input.trade;
-  const city = typeof input.city === "string" ? input.city.trim() : "";
-  const state = typeof input.state === "string" ? input.state.trim().toUpperCase() : "";
+  const normalizedTrade = input.trade === allCoreServiceTradesOption ? allCoreServiceTradesOption : normalizeTradeCategory(input.trade);
+  const city = typeof input.city === "string" ? titleCaseLocation(input.city) : "";
+  const state = typeof input.state === "string" ? displayStateCode(input.state) : "";
   const radiusKm = Number(input.radiusKm);
   const businessesToScan = Number(input.businessesToScan);
   const finalProspectsWanted = Number(input.finalProspectsWanted);
@@ -844,13 +1003,14 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   const mode = normalizeProspectMode(input.mode);
   const workflowType = normalizeTopProspectWorkflowType(input.workflowType);
   const outreachPreference = normalizeOutreachPreference(input.outreachPreference);
-  if (!trade || (trade !== allCoreServiceTradesOption && !tradeCategories.includes(trade as TradeCategory))) return { ok: false, error: "Select a supported trade." };
-  if (!/^[A-Za-z .'-]{2,100}$/.test(city)) return { ok: false, error: "Enter a valid city." };
+  if (!normalizedTrade) return { ok: false, error: "Select a supported trade." };
+  if (city.includes(",")) return { ok: false, error: "Enter one city at a time." };
+  if (!/^[A-Za-z .'-]{2,100}$/.test(city)) return { ok: false, error: "Enter one city at a time." };
   if (!/^[A-Z]{2}$/.test(state)) return { ok: false, error: "Enter a two-letter state code." };
   if (![10, 25, 50].includes(radiusKm)) return { ok: false, error: "Select a supported radius." };
   if (!Number.isInteger(businessesToScan) || businessesToScan < 5 || businessesToScan > 100) return { ok: false, error: "Businesses to scan must be between 5 and 100." };
   if (!Number.isInteger(finalProspectsWanted) || finalProspectsWanted < 1 || finalProspectsWanted > 25 || finalProspectsWanted > businessesToScan) {
     return { ok: false, error: "Final prospects wanted must be between 1 and 25 and no greater than businesses to scan." };
   }
-  return { ok: true, value: { trade, city, state, radiusKm, businessesToScan, finalProspectsWanted, prospectType, mode, workflowType, outreachPreference } };
+  return { ok: true, value: { trade: normalizedTrade, city, state, radiusKm, businessesToScan, finalProspectsWanted, prospectType, mode, workflowType, outreachPreference } };
 }
