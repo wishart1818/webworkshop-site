@@ -786,7 +786,10 @@ function AutopilotCampaignPanel({
       </form>
 
       <div className="engine-autopilot-queues" aria-label="Autopilot queue summary">
-        <p className="engine-autopilot-queue-note">Queues: Ready for Manual DM, Needs Preview Review, Loom Needed, Email Draft Ready, Blocked / Bad Fit, Needs Human Research. No email, form, social, phone, or Loom outreach is sent automatically.</p>
+        <p className="engine-autopilot-queue-note">
+          Queues: Ready for Manual DM, Needs Preview Review, Loom Needed, Email Draft Ready, Blocked / Bad Fit, Needs Human Research. No email, form, social, phone, or Loom outreach is sent automatically.
+          {autopilot.queueCountsSource === "latest_run_report" ? " Counts shown below come from the latest run report. Fake smoke-test counts do not create saved outreach items." : " Counts shown below come from saved outreach queue items."}
+        </p>
         {autopilotQueueKeys.map((key) => (
           <article key={key}>
             <span>{autopilotQueueLabels[key]}</span>

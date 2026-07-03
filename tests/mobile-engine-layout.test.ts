@@ -72,6 +72,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Needs Preview Review/);
   assert.match(autonomousGrowthWorkspace, /Email Draft Ready/);
   assert.match(autonomousGrowthWorkspace, /Blocked \/ Bad Fit/);
+  assert.match(autonomousGrowthWorkspace, /Counts shown below come from the latest run report\. Fake smoke-test counts do not create saved outreach items\./);
+  assert.match(autonomousGrowthWorkspace, /Counts shown below come from saved outreach queue items\./);
   assert.match(autonomousGrowthWorkspace, /No email, form, social, phone, or Loom outreach is sent automatically/);
   assert.match(autonomousGrowthWorkspace, /You have Loom walkthroughs to record/);
   assert.match(autonomousGrowthWorkspace, /Loom Needed Queue/);

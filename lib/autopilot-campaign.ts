@@ -142,6 +142,7 @@ export type AutopilotDashboard = {
   providerRequestEstimate: number;
   marketTargets: string[];
   databaseConfigured: boolean;
+  queueCountsSource: "saved_queue" | "latest_run_report";
   safeModeSummary: string[];
   exportRows: Array<Record<string, string | number>>;
 };
@@ -569,13 +570,17 @@ export function runFakeAutopilotSmokeTest(campaign: AutopilotCampaign, now = new
 
 export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false): AutopilotDashboard {
   const queues = autopilotQueuesForItems(queue);
+  const liveQueueCounts = autopilotQueueCountsForItems(queue);
+  const reportQueueCounts = campaign.latestRunReport?.queueCounts;
+  const queueCounts = reportQueueCounts ?? liveQueueCounts;
   const marketTargets = autopilotMarketTargets(campaign.settings).map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`);
   return {
-    campaign: { ...campaign, queueCounts: autopilotQueueCountsForItems(queue) },
+    campaign: { ...campaign, queueCounts },
     queues,
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     marketTargets,
     databaseConfigured,
+    queueCountsSource: reportQueueCounts ? "latest_run_report" : "saved_queue",
     safeModeSummary: [
       "Manual/social-safe mode is the default.",
       "The first Facebook DM never includes a preview link.",

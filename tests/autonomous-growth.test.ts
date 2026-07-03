@@ -25,6 +25,8 @@ import {
   autopilotProviderRequestEstimate,
   autopilotQueueKeyForItem,
   autopilotTopProspectInput,
+  attachAutopilotRunReport,
+  buildAutopilotDashboard,
   createAutopilotCampaign,
   defaultAutopilotCampaignSettings,
   runFakeAutopilotSmokeTest,
@@ -277,6 +279,20 @@ test("fake Autopilot smoke test routes fixtures into safe queues", () => {
   assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Sylvania Lawn Care" && fixture.actualQueue === "readyForManualDm"));
   assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Toledo HVAC Equipment Supply" && fixture.actualQueue === "blockedBadFit"));
   assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Maumee Concrete Repair" && fixture.actualQueue === "blockedBadFit"));
+});
+
+test("Autopilot dashboard shows latest run queue counts when fake smoke test does not save queue items", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const smoke = runFakeAutopilotSmokeTest(campaign, new Date(1));
+  const dashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, smoke.report, new Date(2)), [], true);
+
+  assert.equal(dashboard.queueCountsSource, "latest_run_report");
+  assert.equal(dashboard.campaign.queueCounts.emailDraftReady, 1);
+  assert.equal(dashboard.campaign.queueCounts.readyForManualDm, 1);
+  assert.equal(dashboard.campaign.queueCounts.needsPreviewReview, 1);
+  assert.equal(dashboard.campaign.queueCounts.loomNeeded, 1);
+  assert.equal(dashboard.campaign.queueCounts.blockedBadFit, 2);
+  assert.equal(dashboard.exportRows.length, 0);
 });
 
 test("Autopilot queue classification keeps Loom and weak preview items manual", () => {
