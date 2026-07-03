@@ -4,6 +4,7 @@ import { POST as analyze } from "../app/api/engine/analyze/route";
 import { POST as discover } from "../app/api/engine/discover/route";
 import { GET as list, POST as create, PUT as update } from "../app/api/engine/prospects/route";
 import { GET as systemStatus } from "../app/api/engine/system/route";
+import { GET as latestSelfCheck, POST as runSelfCheck } from "../app/api/engine/system/self-check/route";
 import { POST as updateOutreachPackage } from "../app/api/engine/top-prospects/results/[resultId]/package/route";
 import {
   memoryAuditEventsForTests,
@@ -29,6 +30,26 @@ test("system API reports development health and recent audit activity", async ()
   assert.equal(payload.status, "development");
   assert.equal(payload.checks.database.configured, false);
   assert.equal(payload.auditEvents[0].action, "test_event");
+});
+
+test("system self-check route stores a safe report for the System page", async () => {
+  const before = await latestSelfCheck();
+  const beforePayload = await before.json();
+  assert.ok("selfCheck" in beforePayload);
+
+  const run = await runSelfCheck();
+  const runPayload = await run.json();
+  assert.equal(run.status, 200);
+  assert.equal(runPayload.selfCheck.overallStatus, "Healthy");
+  assert.equal(runPayload.selfCheck.failed.length, 0);
+  assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "supplier_filter"));
+  assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "domain_mismatch_filter"));
+  assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "directory_only_logic"));
+  assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "self_review_no_send"));
+
+  const system = await systemStatus();
+  const systemPayload = await system.json();
+  assert.equal(systemPayload.selfCheck.lastRunAt, runPayload.selfCheck.lastRunAt);
 });
 
 test("system audit status remains available when PostgreSQL is unreachable", async () => {

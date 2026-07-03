@@ -12,6 +12,7 @@ import {
 } from "@/lib/prospect-engine";
 import {
   hasClearLocalServiceIntent,
+  isThirdPartyDirectoryUrl,
   likelyInstitutionalOrNonBusiness,
   likelySupplierOrDistributor,
   websiteBusinessMismatch,
@@ -91,6 +92,10 @@ export type CityDiscoveryDiagnostic = {
   usableWebsiteCount: number;
   returnedCount: number;
   providerDiagnostics: DiscoveryProviderDiagnostics;
+  providersAttempted?: string[];
+  skippedCount?: number;
+  qualifiedCount?: number;
+  mainSkipReasons?: string[];
   safeReason?: string;
 };
 
@@ -249,7 +254,7 @@ export function isSocialOrBusinessProfileUrl(value: string | undefined) {
 }
 
 export function isUsableBusinessWebsite(value: string | undefined) {
-  return validWebsite(value) && !isSocialOrBusinessProfileUrl(value);
+  return validWebsite(value) && !isSocialOrBusinessProfileUrl(value) && !isThirdPartyDirectoryUrl(value);
 }
 
 function websiteKey(value: string) {
@@ -578,7 +583,7 @@ export function mergeDiscoveryCandidates(input: {
     }
     if (!existing.sources.includes(candidate.source)) existing.sources.push(candidate.source);
     if (!isUsableBusinessWebsite(existing.website) && isUsableBusinessWebsite(candidate.website)) existing.website = candidate.website;
-    existing.profileUrl ||= candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : undefined);
+    existing.profileUrl ||= candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) || isThirdPartyDirectoryUrl(candidate.website) ? candidate.website : undefined);
     existing.phone ||= candidate.phone;
     existing.email ||= candidate.email;
     existing.contactFormUrl ||= candidate.contactFormUrl;
@@ -598,7 +603,7 @@ export function mergeDiscoveryCandidates(input: {
     const requestedType = input.prospectType ?? "redesign";
     const trade = normalizeTradeCategory(input.trade) ?? input.trade;
     const ownedWebsite = isUsableBusinessWebsite(candidate.website) ? candidate.website : "";
-    const profileUrl = candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) ? candidate.website : "");
+    const profileUrl = candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) || isThirdPartyDirectoryUrl(candidate.website) ? candidate.website : "");
     const prospectType: ProspectType = ownedWebsite ? "redesign" : "no_website_social_only";
     const activitySignals = [
       ...(candidate.activitySignals ?? []),
@@ -606,6 +611,7 @@ export function mergeDiscoveryCandidates(input: {
       ...((candidate.recentReviewCount ?? 0) > 0 ? ["recent_reviews"] : []),
       ...((candidate.rating ?? 0) > 0 ? ["public_rating"] : []),
       ...(profileUrl ? ["public_profile"] : []),
+      ...(isThirdPartyDirectoryUrl(candidate.website) || isThirdPartyDirectoryUrl(profileUrl) ? ["third_party_listing_only"] : []),
       ...(candidate.sources.length > 1 ? ["multiple_public_sources"] : []),
     ];
     const hasActivity = (candidate.reviewCount ?? 0) > 0

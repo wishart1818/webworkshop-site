@@ -14,7 +14,7 @@ const statusLabels: Record<DiscoveryProviderStatus, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
   timed_out: "Timed out",
-  zero_results: "Zero results",
+  zero_results: "No records returned",
   rate_limited: "Rate limited",
 };
 
@@ -86,16 +86,18 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
         <div className="engine-city-diagnostics" aria-label="City discovery diagnostics">
           <h3>City Breakdown</h3>
           <div role="table" aria-label="Discovery diagnostics by city">
-            <div role="row"><span>City</span><span>Status</span><span>Requested</span><span>Raw</span><span>Within radius</span><span>Returned</span></div>
+            <div role="row"><span>City</span><span>Status</span><span>Requested</span><span>Providers</span><span>Raw</span><span>Usable</span><span>Skipped</span><span>Qualified</span></div>
             {diagnostics.cityDiagnostics.map((city) => (
               <div key={city.label} role="row">
                 <strong>{city.label}</strong>
                 <span>{city.status}</span>
                 <span>{city.requestedCount}</span>
+                <span>{city.providersAttempted?.length ? city.providersAttempted.join(", ") : "None"}</span>
                 <span>{city.rawProviderCount}</span>
-                <span>{city.withinRadiusCount}</span>
-                <span>{city.returnedCount}</span>
-                {city.safeReason ? <small>{city.safeReason}</small> : null}
+                <span>{city.usableWebsiteCount}</span>
+                <span>{city.skippedCount ?? Math.max(0, city.afterDeduplicationCount - city.returnedCount)}</span>
+                <span>{city.qualifiedCount ?? city.returnedCount}</span>
+                {city.mainSkipReasons?.length || city.safeReason ? <small>{[...(city.mainSkipReasons ?? []), city.safeReason].filter(Boolean).join(" / ")}</small> : null}
               </div>
             ))}
           </div>

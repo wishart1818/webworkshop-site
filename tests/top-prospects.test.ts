@@ -10,6 +10,7 @@ import {
   evaluateOutreachEmailQuality,
   generateWebsiteBuildPrompt,
   hasClearLocalServiceIntent,
+  isThirdPartyDirectoryUrl,
   likelyFranchise,
   likelyInstitutionalOrNonBusiness,
   likelyNationalOrLargeBrand,
@@ -26,8 +27,10 @@ import {
   prospectPreviewLink,
   publicProspectPreviewLink,
   topProspectJobStatuses,
+  topProspectNextRunRecommendations,
   topProspectRejectionReason,
   topProspectResultDisposition,
+  thirdPartyListingOnly,
   validateTopProspectInput,
   websiteBusinessMismatch,
   type OpportunityAssessment,
@@ -186,6 +189,39 @@ test("institutional, supplier, and mismatched website leads are blocked before r
   assert.equal(topProspectRejectionReason(supplier, manualAssessment(80)), "Supplier/distributor");
   assert.equal(topProspectRejectionReason(mismatch, manualAssessment(80)), "Website/business mismatch");
   assert.equal(topProspectRejectionReason(unclear, manualAssessment(80)), "No clear local service intent");
+});
+
+test("real bad-run landscaping leads are blocked or kept out of send-ready review", () => {
+  const supplier = {
+    businessName: "D & D Landscaping Supply",
+    website: "",
+    trade: "Landscaping" as const,
+  };
+  const mismatch = withAnalysis({
+    ...structuredClone(seedProspects[2]),
+    businessName: "Otter Creek Landscaping",
+    website: "https://wreathfactoryonline.com",
+    trade: "Landscaping",
+  });
+  const directoryOnly = {
+    ...structuredClone(seedProspects[2]),
+    businessName: "Heritage Landscaping and Design",
+    website: "",
+    profileUrl: "https://hub.biz/heritage-landscaping-and-design",
+    email: "",
+    contactFormUrl: "",
+    recommendedContactMethod: "needs_manual_contact_research" as const,
+    classification: "listing_only" as const,
+    prospectType: "no_website_social_only" as const,
+    inactive: false,
+  };
+
+  assert.equal(likelySupplierOrDistributor(supplier), true);
+  assert.equal(websiteBusinessMismatch(mismatch), true);
+  assert.equal(isThirdPartyDirectoryUrl(directoryOnly.profileUrl), true);
+  assert.equal(thirdPartyListingOnly(directoryOnly), true);
+  assert.equal(topProspectRejectionReason(mismatch, manualAssessment(80)), "Website/business mismatch");
+  assert.equal(topProspectRejectionReason(directoryOnly, manualAssessment(80)), "Third-party listing only");
 });
 
 test("display normalization keeps HVAC, Toledo, OH, and Pressure Washing labels consistent", () => {
@@ -526,6 +562,65 @@ test("multi-city discovery merges duplicates and keeps city diagnostics", () => 
   assert.deepEqual(combined.leads[0].matchedCities?.sort(), ["Sylvania, OH", "Toledo, OH"]);
   assert.equal(combined.diagnostics.cityDiagnostics?.length, 2);
   assert.equal(combined.diagnostics.excludePreviouslyReviewed, true);
+});
+
+test("zero-qualified runs explain provider, supplier, directory, and contact-path issues", () => {
+  const recommendations = topProspectNextRunRecommendations({
+    job: {
+      input: {
+        trade: "Landscaping",
+        city: "Toledo, Sylvania, Perrysburg",
+        state: "OH",
+        radiusKm: 50,
+        businessesToScan: 50,
+        finalProspectsWanted: 10,
+        prospectType: "all",
+        mode: "growth",
+        workflowType: "search",
+        outreachPreference: "written_only",
+        excludePreviouslyReviewed: true,
+        cityTargets: [
+          { city: "Toledo", state: "OH", label: "Toledo, OH" },
+          { city: "Sylvania", state: "OH", label: "Sylvania, OH" },
+          { city: "Perrysburg", state: "OH", label: "Perrysburg, OH" },
+        ],
+      },
+      results: [],
+      reviewedNotRecommended: [],
+      skipSummary: {
+        supplier_distributor: 3,
+        third_party_listing_only: 2,
+        no_usable_contact_path: 2,
+      },
+      discoveryDiagnostics: {
+        rawProviderCount: 4,
+        afterDistanceFilteringCount: 4,
+        afterDuplicateFilteringCount: 4,
+        afterQualificationFilteringCount: 0,
+        returnedCount: 0,
+        radiusKm: 50,
+        categorySignals: [],
+        sourceCounts: { osm: 4, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+        providerDiagnostics: {
+          osm: { configured: true, queryExecuted: true, status: "failed", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+        finalMergedCount: 4,
+        cityDiagnostics: [{ city: "Sylvania", state: "OH", label: "Sylvania, OH", status: "failed", requestedCount: 17, rawProviderCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, returnedCount: 0, providerDiagnostics: {
+          osm: { configured: true, queryExecuted: true, status: "failed", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        } }],
+      },
+    },
+  });
+
+  assert.match(recommendations.join(" "), /suppliers|directories|mismatched/i);
+  assert.match(recommendations.join(" "), /Provider coverage was weak/i);
+  assert.match(recommendations.join(" "), /written contact path|Manual DM/i);
 });
 
 test("Top Prospects build version safely identifies the deployed commit", () => {

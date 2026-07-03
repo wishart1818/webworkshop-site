@@ -217,6 +217,37 @@ test("No Website / Social Only discovery keeps active businesses and classifies 
   assert.equal(result.leads[2].recommendedContactMethod, "do_not_contact");
 });
 
+test("third-party directory URLs are not treated as owned websites or send-ready contacts", () => {
+  const result = mergeDiscoveryCandidates({
+    candidates: [
+      {
+        source: "google",
+        businessName: "Heritage Landscaping and Design",
+        website: "https://hub.biz/heritage-landscaping-and-design",
+        phone: "419-555-0200",
+        reviewCount: 8,
+        rating: 4.2,
+      },
+    ],
+    latitude: 41.65,
+    longitude: -83.54,
+    city: "Toledo",
+    state: "OH",
+    trade: "Landscaping",
+    radiusKm: 50,
+    limit: 50,
+    prospectType: "all",
+  });
+
+  assert.equal(result.leads.length, 1);
+  assert.equal(result.leads[0].website, "");
+  assert.match(result.leads[0].profileUrl, /hub\.biz/);
+  assert.equal(result.leads[0].prospectType, "no_website_social_only");
+  assert.equal(result.leads[0].classification, "listing_only");
+  assert.equal(result.leads[0].recommendedContactMethod, "needs_manual_contact_research");
+  assert.ok(result.leads[0].activitySignals?.includes("third_party_listing_only"));
+});
+
 test("All Prospect Types discovery returns redesign and no-website opportunities together", () => {
   const result = mergeDiscoveryCandidates({
     candidates: [

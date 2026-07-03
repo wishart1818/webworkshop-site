@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { EmptyState, LoadingState } from "../components/engine/EngineStates";
 import { DiscoveryFunnel } from "../components/engine/DiscoveryFunnel";
 import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePreview";
+import { SystemWorkspace } from "../components/engine/SystemWorkspace";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
@@ -364,6 +365,30 @@ test("discovery funnel identifies each provider and the final merged count", () 
         yelp: { configured: true, queryExecuted: true, status: "rate_limited", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, retryCount: 2, httpStatus: 429 },
       },
       finalMergedCount: 27,
+      cityDiagnostics: [
+        {
+          city: "Sylvania",
+          state: "OH",
+          label: "Sylvania, OH",
+          status: "failed",
+          requestedCount: 17,
+          rawProviderCount: 0,
+          withinRadiusCount: 0,
+          afterDeduplicationCount: 0,
+          usableWebsiteCount: 0,
+          returnedCount: 0,
+          providersAttempted: ["osm"],
+          skippedCount: 0,
+          qualifiedCount: 0,
+          mainSkipReasons: ["Provider unavailable or timed out"],
+          providerDiagnostics: {
+            osm: { configured: true, queryExecuted: true, status: "failed", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            azureMaps: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          },
+        },
+      ],
       tradeDiagnostics: [
         {
           trade: "Roofing",
@@ -393,6 +418,7 @@ test("discovery funnel identifies each provider and the final merged count", () 
   assert.match(html, /Query executed/);
   assert.match(html, /Succeeded/);
   assert.match(html, /Rate limited/);
+  assert.match(html, /Not configured/);
   assert.match(html, /HTTP status/);
   assert.match(html, /429/);
   assert.match(html, /Retries/);
@@ -402,9 +428,48 @@ test("discovery funnel identifies each provider and the final merged count", () 
   assert.match(html, /Usable websites/);
   assert.match(html, /27<\/b> final merged records/);
   assert.match(html, /Trade Breakdown/);
+  assert.match(html, /City Breakdown/);
+  assert.match(html, /Sylvania, OH/);
+  assert.match(html, /Provider unavailable or timed out/);
   assert.match(html, /Roofing/);
   assert.match(html, /partial/);
   assert.match(html, /yelp/);
+});
+
+test("system workspace renders the protected self-check report and action", () => {
+  const html = renderToStaticMarkup(createElement(SystemWorkspace, {
+    system: {
+      status: "development",
+      checks: {
+        database: { configured: false, reachable: false, message: "PostgreSQL is not configured." },
+        authentication: { configured: true, message: "Engine access credentials are configured." },
+      },
+      auditEvents: [],
+      selfCheck: {
+        overallStatus: "Needs attention",
+        lastRunAt: "2026-07-03T12:00:00.000Z",
+        passed: [{ key: "supplier_filter", label: "Supplier/supply bad-fit filter works", status: "passed", reason: "D & D Landscaping Supply is blocked." }],
+        warnings: [{ key: "provider_partial", label: "Provider partial failure", status: "warning", reason: "One city had weak coverage.", suggestedFix: "Try a larger preset." }],
+        failed: [],
+        suggestedFixes: ["Try a larger preset."],
+      },
+    },
+    loading: false,
+    error: "",
+    onRefresh: () => undefined,
+    onRunSelfCheck: () => undefined,
+    selfCheckRunning: false,
+  }));
+
+  assert.match(html, /Run System Self-Check/);
+  assert.match(html, /Safe internal audit/);
+  assert.match(html, /never contacts prospects or changes outreach statuses/i);
+  assert.match(html, /Needs attention/);
+  assert.match(html, /Passed checks/);
+  assert.match(html, /Warnings/);
+  assert.match(html, /Failed checks/);
+  assert.match(html, /Suggested fixes/);
+  assert.match(html, /Supplier\/supply bad-fit filter works/);
 });
 
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {

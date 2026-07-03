@@ -125,6 +125,7 @@ export const topProspectRejectionReasons = [
   "Supplier/distributor",
   "Institutional/non-business page",
   "Website/business mismatch",
+  "Third-party listing only",
   "No clear local service intent",
   "Phone-only / written outreach blocked",
   "Below final cutoff",
@@ -233,11 +234,16 @@ const supplierDistributorSignals = [
   "equipment",
   "manufacturer",
   "manufacturing",
+  "material yard",
+  "mulch supply",
+  "nursery",
   "parts",
   "building supply",
   "distribution",
   "distributor",
   "exterior supply",
+  "landscape supply",
+  "landscaping supply",
   "lumber",
   "material supply",
   "materials",
@@ -249,6 +255,8 @@ const supplierDistributorSignals = [
   "supply house",
   "showroom",
   "showroom-only",
+  "stone supply",
+  "supplies",
   "wholesale",
 ];
 
@@ -307,12 +315,34 @@ const unrelatedBusinessDomainSignals = [
   "campus",
   "coffee",
   "dentist",
+  "factory",
   "hotel",
   "law",
   "restaurant",
   "sauna",
   "school",
   "university",
+  "wreath",
+];
+
+const thirdPartyDirectoryHosts = [
+  "bbb.org",
+  "chamberofcommerce.com",
+  "clutch.co",
+  "facebook.com",
+  "fb.com",
+  "g.page",
+  "google.com",
+  "homeadvisor.com",
+  "houzz.com",
+  "hub.biz",
+  "instagram.com",
+  "maps.app.goo.gl",
+  "manta.com",
+  "porch.com",
+  "thumbtack.com",
+  "yellowpages.com",
+  "yelp.com",
 ];
 
 export function normalizeWebsite(value: string) {
@@ -335,7 +365,28 @@ export function likelySupplierOrDistributor(lead: Pick<DiscoveredLead, "business
   const value = `${lead.businessName} ${normalizeWebsite(lead.website)}`.toLowerCase();
   const supplierSignal = supplierDistributorSignals.some((signal) => value.includes(signal));
   const serviceSignal = localServiceSignals.some((signal) => value.includes(signal));
+  const strongInstallSignal = /\b(install|installation|maintenance|design build|landscape design|lawn care|hardscape|snow removal|tree service)\b/i.test(value);
+  if (/\b(?:landscap(?:e|ing) supply|mulch supply|stone supply|material yard|supply house)\b/i.test(value)) return !strongInstallSignal;
+  if (/\bnursery\b/i.test(value)) return !strongInstallSignal;
   return supplierSignal && !serviceSignal;
+}
+
+export function isThirdPartyDirectoryUrl(value: string | undefined) {
+  if (!value?.trim()) return false;
+  try {
+    const host = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`).hostname.replace(/^www\./, "").toLowerCase();
+    return thirdPartyDirectoryHosts.some((directoryHost) => host === directoryHost || host.endsWith(`.${directoryHost}`));
+  } catch {
+    return false;
+  }
+}
+
+export function thirdPartyListingOnly(
+  prospect: Pick<Prospect, "website" | "profileUrl" | "email" | "contactFormUrl" | "recommendedContactMethod" | "classification">,
+) {
+  const hasDirectorySignal = isThirdPartyDirectoryUrl(prospect.website) || isThirdPartyDirectoryUrl(prospect.profileUrl) || prospect.classification === "listing_only";
+  const hasWrittenContact = Boolean(prospect.email || prospect.contactFormUrl || prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social");
+  return hasDirectorySignal && !hasWrittenContact;
 }
 
 export function likelyInstitutionalOrNonBusiness(lead: Pick<DiscoveredLead, "businessName" | "website">) {
@@ -877,6 +928,7 @@ export function topProspectRejectionReason(
   if (!hasClearLocalServiceIntent(prospect)) return "No clear local service intent";
   if (prospect.inactive) return "Inactive business";
   if (prospect.classification === "duplicate_bad_fit") return "Duplicate/bad fit";
+  if (thirdPartyListingOnly(prospect)) return "Third-party listing only";
   const usableContact = outreachPreference === "phone_allowed"
     ? prospectContactMethodIsUsable(prospect)
     : prospectHasWrittenContactMethod(prospect);
@@ -1147,12 +1199,18 @@ export function topProspectNextRunRecommendations(input: {
   const badFit = (job.skipSummary.institutional_non_business_page ?? 0)
     + (job.skipSummary.supplier_distributor ?? 0)
     + (job.skipSummary.website_business_mismatch ?? 0)
+    + (job.skipSummary.third_party_listing_only ?? 0)
     + (job.skipSummary.no_clear_local_service_intent ?? 0);
+  const providerFailures = (job.discoveryDiagnostics?.cityDiagnostics ?? []).filter((city) => city.status === "failed").length
+    + Object.values(job.discoveryDiagnostics?.providerDiagnostics ?? {}).filter((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status)).length;
+  const weakContact = (job.skipSummary.no_usable_contact_path ?? 0) + (job.skipSummary.third_party_listing_only ?? 0);
   if (targetCount > 1 && job.input.businessesToScan < targetCount * 20) {
     recommendations.push(`Increase scan count to ${Math.min(250, Math.max(150, targetCount * 20))} because you searched ${targetCount} cities.`);
   }
   if (phoneBlocked > Math.max(2, job.results.length)) recommendations.push("Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete next because this run had too many phone-only leads.");
-  if (badFit > Math.max(2, job.results.length)) recommendations.push(`Avoid ${displayTradeCategory(job.input.trade)} in ${cityLabel} for now because too many leads were bad fit or mismatched.`);
+  if (badFit > Math.max(2, job.results.length)) recommendations.push(`This market returned mostly suppliers, directories, or mismatched websites. Try Cleaning or Painting instead.`);
+  if (providerFailures > 0 && job.results.length === 0) recommendations.push(`Provider coverage was weak for ${cityLabel}. Try a larger preset, reduce cities, or lower scan count before retrying.`);
+  if (weakContact > Math.max(2, job.results.length)) recommendations.push("Too few leads had a written contact path. Use the Facebook Manual DM workflow or try a broader market before email outreach.");
   if ((job.results.length + job.reviewedNotRecommended.length) < Math.max(3, job.input.finalProspectsWanted / 2)) recommendations.push("Try Florida or Texas Suburbs next with Growth Mode for a broader written-outreach pool.");
   if (!recommendations.length) recommendations.push(`Best next run: keep ${displayTradeCategory(job.input.trade)} focused, then test one starter trade in the strongest city from ${cityLabel}.`);
   return recommendations.slice(0, 4);

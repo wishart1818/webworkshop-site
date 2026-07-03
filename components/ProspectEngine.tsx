@@ -71,6 +71,7 @@ export function ProspectEngine() {
   const [system, setSystem] = useState<SystemPayload | null>(null);
   const [systemLoading, setSystemLoading] = useState(false);
   const [systemError, setSystemError] = useState("");
+  const [selfCheckRunning, setSelfCheckRunning] = useState(false);
   const saveQueue = useRef<Promise<Prospect | null>>(Promise.resolve(null));
 
   const loadProspects = useCallback(async () => {
@@ -295,6 +296,22 @@ export function ProspectEngine() {
     });
   }
 
+  async function runSelfCheck() {
+    setSelfCheckRunning(true);
+    setSystemError("");
+    try {
+      const response = await fetch("/api/engine/system/self-check", { method: "POST" });
+      const payload = (await response.json()) as { selfCheck?: SystemPayload["selfCheck"]; error?: string };
+      if (!response.ok || !payload.selfCheck) throw new Error(payload.error || "Unable to run System Self-Check.");
+      await loadSystem();
+      setSystem((current) => current ? { ...current, selfCheck: payload.selfCheck } : current);
+    } catch (error) {
+      setSystemError(error instanceof Error ? error.message : "Unable to run System Self-Check.");
+    } finally {
+      setSelfCheckRunning(false);
+    }
+  }
+
   function runPresenceGapSelected() {
     updateSelected((prospect) => withPresenceGapReview(
       prospect,
@@ -435,7 +452,14 @@ export function ProspectEngine() {
         )}
 
         {workspaceTab === "System" && (
-          <SystemWorkspace error={systemError} loading={systemLoading} onRefresh={() => void loadSystem()} system={system} />
+          <SystemWorkspace
+            error={systemError}
+            loading={systemLoading}
+            onRefresh={() => void loadSystem()}
+            onRunSelfCheck={() => void runSelfCheck()}
+            selfCheckRunning={selfCheckRunning}
+            system={system}
+          />
         )}
       </main>
 

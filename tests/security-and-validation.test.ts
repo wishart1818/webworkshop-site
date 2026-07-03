@@ -94,7 +94,7 @@ test("authentication challenges missing credentials and accepts valid credential
   }
 });
 
-test("protected previews and Outreach Package actions inherit engine authentication", () => {
+test("protected previews, Outreach Package actions, and self-check inherit engine authentication", () => {
   const oldUsername = process.env.ENGINE_USERNAME;
   const oldPassword = process.env.ENGINE_PASSWORD;
   process.env.ENGINE_USERNAME = "operator";
@@ -102,8 +102,10 @@ test("protected previews and Outreach Package actions inherit engine authenticat
   try {
     const preview = middleware(new NextRequest("https://example.com/engine/previews/prospect-id"));
     const packageAction = middleware(new NextRequest("https://example.com/api/engine/top-prospects/results/result-id/package"));
+    const selfCheck = middleware(new NextRequest("https://example.com/api/engine/system/self-check"));
     assert.equal(preview?.status, 401);
     assert.equal(packageAction?.status, 401);
+    assert.equal(selfCheck?.status, 401);
   } finally {
     process.env.ENGINE_USERNAME = oldUsername;
     process.env.ENGINE_PASSWORD = oldPassword;

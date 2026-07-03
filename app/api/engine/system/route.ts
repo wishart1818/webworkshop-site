@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { engineAuthState } from "@/lib/engine-auth";
 import { databaseHealth, operationalMode, safeListAuditEvents } from "@/lib/operational-controls";
+import { latestSystemSelfCheckReport } from "@/lib/system-self-check";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,5 +43,6 @@ export async function GET() {
       },
     },
     auditEvents,
+    selfCheck: latestSystemSelfCheckReport(),
   });
 }

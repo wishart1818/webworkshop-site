@@ -305,6 +305,12 @@ export function combineCityDiscoveryResults(input: {
       usableWebsiteCount: result.diagnostics.afterQualificationFilteringCount,
       returnedCount: result.diagnostics.returnedCount,
       providerDiagnostics: result.diagnostics.providerDiagnostics,
+      providersAttempted: Object.entries(result.diagnostics.providerDiagnostics).filter(([, diagnostic]) => diagnostic.queryExecuted).map(([provider]) => provider),
+      skippedCount: Math.max(0, result.diagnostics.afterDuplicateFilteringCount - result.diagnostics.returnedCount),
+      qualifiedCount: result.diagnostics.returnedCount,
+      mainSkipReasons: result.leads.length === 0
+        ? (hasProviderProblem ? ["Provider unavailable or timed out"] : ["No usable records returned"])
+        : [],
       ...(result.leads.length === 0 && hasProviderProblem ? { safeReason: "Provider unavailable, timed out, or returned no eligible records for this city." } : {}),
     };
   });

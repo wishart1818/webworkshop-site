@@ -1342,6 +1342,13 @@ body:has(.engine-shell) {
   font-size: 0.76rem;
 }
 
+.engine-system-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+
 .engine-system-state {
   display: inline-flex;
   background: #e8eeea;
@@ -1409,6 +1416,96 @@ body:has(.engine-shell) {
   color: var(--engine-muted);
   font-size: 0.7rem;
   line-height: 1.5;
+}
+
+.engine-self-check {
+  margin-top: 1rem;
+}
+
+.engine-self-check__body {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+}
+
+.engine-self-check__body > p {
+  margin: 0;
+  color: var(--engine-muted);
+  font-size: 0.68rem;
+}
+
+.engine-self-check__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--engine-line);
+}
+
+.engine-self-check__summary span {
+  display: grid;
+  gap: 0.2rem;
+  border-right: 1px solid var(--engine-line);
+  padding: 0.8rem;
+  color: var(--engine-muted);
+  font-size: 0.68rem;
+}
+
+.engine-self-check__summary span:last-child {
+  border-right: 0;
+}
+
+.engine-self-check__summary b {
+  color: var(--engine-ink);
+  font-size: 1.1rem;
+}
+
+.engine-self-check__list,
+.engine-self-check__fixes {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.engine-self-check__list h3,
+.engine-self-check__fixes h3 {
+  margin: 0;
+  color: var(--engine-ink);
+  font-size: 0.78rem;
+}
+
+.engine-self-check__list > p,
+.engine-self-check-item p,
+.engine-self-check-item small,
+.engine-self-check__fixes li {
+  margin: 0;
+  color: var(--engine-muted);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.engine-self-check-item {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid var(--engine-line);
+  padding: 0.65rem;
+}
+
+.engine-self-check-item--failed {
+  border-color: #efc7bf;
+  background: #fff7f5;
+}
+
+.engine-self-check-item--warning {
+  border-color: #e7d08a;
+  background: #fffaf0;
+}
+
+.engine-self-check-item--passed {
+  border-color: #cfe4d8;
+  background: #f8fcfa;
+}
+
+.engine-self-check-item b {
+  color: var(--engine-ink);
+  font-size: 0.72rem;
 }
 
 .engine-audit-panel {
@@ -1780,7 +1877,7 @@ body:has(.engine-shell) {
 
 .engine-city-diagnostics [role="row"] {
   display: grid;
-  grid-template-columns: minmax(8rem, 1.5fr) repeat(5, minmax(4.5rem, 1fr));
+  grid-template-columns: minmax(8rem, 1.5fr) minmax(5rem, 0.8fr) repeat(6, minmax(4.5rem, 1fr));
   gap: 0.4rem;
   align-items: center;
   border: 1px solid var(--engine-line);
@@ -4442,6 +4539,24 @@ body:has(.engine-shell) {
   .engine-system-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .engine-system-actions,
+  .engine-system-actions .engine-button {
+    width: 100%;
+  }
+
+  .engine-self-check__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .engine-self-check__summary span {
+    border-right: 0;
+    border-bottom: 1px solid var(--engine-line);
+  }
+
+  .engine-self-check__summary span:last-child {
+    border-bottom: 0;
   }
 
   .engine-top-prospect-launcher form {
