@@ -22,6 +22,7 @@ import {
   prepareTopProspectArtifacts,
   publicProspectPreviewLink,
   recommendedMarketPresets,
+  type RecommendedMarketPreset,
   type TopProspectInput,
   type ProspectMode,
 } from "@/lib/top-prospects";
@@ -66,6 +67,8 @@ export const autopilotActionLabels = [
   "Run Fake Smoke Test",
 ] as const;
 
+export const autopilotCampaignDraftStorageKey = "webworkshop.autopilotCampaignDraft.v1";
+
 export type AutopilotStopRules = {
   pauseOnProviderFailure: boolean;
   pauseOnBadFitRatePercent: number;
@@ -94,6 +97,8 @@ export type AutopilotCampaignSettings = {
   loomNotifications: boolean;
   stopRules: AutopilotStopRules;
 };
+
+export type AutopilotCampaignDraft = Partial<Pick<AutopilotCampaignSettings, "marketPresetId" | "customCities" | "state" | "trade" | "prospectType" | "mode">>;
 
 export type AutopilotQueueCounts = Record<AutopilotQueueKey, number>;
 
@@ -277,6 +282,35 @@ function normalizeOutreachStyle(value: unknown): AutopilotOutreachStyle {
   return autopilotOutreachStyles.includes(value as AutopilotOutreachStyle) ? value as AutopilotOutreachStyle : defaultAutopilotCampaignSettings.outreachStyle;
 }
 
+function presetCitiesInput(preset: RecommendedMarketPreset) {
+  return preset.cities.map((city) => `${titleCaseLocation(city.city)}, ${displayStateCode(city.state)}`).join("; ");
+}
+
+function presetState(preset: RecommendedMarketPreset) {
+  if (!preset.cities.length) return "";
+  const firstState = displayStateCode(preset.cities[0].state);
+  return preset.cities.every((city) => displayStateCode(city.state) === firstState) ? firstState : "";
+}
+
+function stateName(value: string) {
+  const state = displayStateCode(value);
+  const names: Record<string, string> = {
+    FL: "Florida",
+    OH: "Ohio",
+    TX: "Texas",
+    NC: "North Carolina",
+    SC: "South Carolina",
+    TN: "Tennessee",
+    GA: "Georgia",
+    AZ: "Arizona",
+    NV: "Nevada",
+    CO: "Colorado",
+    IN: "Indiana",
+    MI: "Michigan",
+  };
+  return names[state] ?? state;
+}
+
 export function normalizeAutopilotCampaignSettings(input: Partial<AutopilotCampaignSettings> = {}): AutopilotCampaignSettings {
   const defaults = defaultAutopilotCampaignSettings;
   const stopRules: Partial<AutopilotStopRules> = input.stopRules ?? {};
@@ -305,6 +339,59 @@ export function normalizeAutopilotCampaignSettings(input: Partial<AutopilotCampa
       pauseAfterWeakPreviewCount: boundedNumber(stopRules.pauseAfterWeakPreviewCount, defaults.stopRules.pauseAfterWeakPreviewCount, 1, 25),
       stopWhenTotalProspectsReached: stopRules.stopWhenTotalProspectsReached !== false,
     },
+  };
+}
+
+export function autopilotPresetFields(presetId: string): Pick<AutopilotCampaignSettings, "marketPresetId" | "customCities" | "state"> | null {
+  const preset = recommendedMarketPresets.find((item) => item.id === presetId);
+  if (!preset) return null;
+  return {
+    marketPresetId: preset.id,
+    customCities: presetCitiesInput(preset),
+    state: presetState(preset),
+  };
+}
+
+export function autopilotDraftFromRecommendedMarket(preset: RecommendedMarketPreset, trade?: TopProspectTradeSelection): AutopilotCampaignDraft {
+  const presetFields = autopilotPresetFields(preset.id) ?? {};
+  return {
+    ...presetFields,
+    ...(trade ? { trade } : {}),
+  };
+}
+
+export function autopilotMarketMismatchWarning(settings: Pick<AutopilotCampaignSettings, "marketPresetId" | "customCities" | "state">) {
+  const preset = recommendedMarketPresets.find((item) => item.id === settings.marketPresetId);
+  if (!preset || !settings.customCities.trim()) return "";
+  const presetLabels = new Set(preset.cities.map((city) => `${titleCaseLocation(city.city)}, ${displayStateCode(city.state)}`));
+  const targets = parseTopProspectCityTargets(settings.customCities, settings.state);
+  if (!targets.length) return "";
+  const targetLabels = targets.map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`);
+  const exactMatch = targetLabels.length === presetLabels.size && targetLabels.every((label) => presetLabels.has(label));
+  if (exactMatch) return "";
+  const presetStates = new Set(preset.cities.map((city) => displayStateCode(city.state)));
+  const targetStateCounts = targets.reduce<Record<string, number>>((counts, target) => {
+    const state = displayStateCode(target.state);
+    counts[state] = (counts[state] ?? 0) + 1;
+    return counts;
+  }, {});
+  const dominantState = Object.entries(targetStateCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  if (dominantState && !presetStates.has(dominantState)) {
+    return `Market preset is ${preset.name}, but Custom cities appear to be ${stateName(dominantState)}. Update cities before starting.`;
+  }
+  return `Market preset is ${preset.name}, but Custom cities do not match that preset. Update cities before starting.`;
+}
+
+export function autopilotStartConfirmation(settings: AutopilotCampaignSettings) {
+  const preset = recommendedMarketPresets.find((item) => item.id === settings.marketPresetId);
+  const targets = autopilotMarketTargets(settings);
+  const market = preset?.name ?? (targets.map((target) => target.label).join("; ") || "Custom market");
+  return {
+    market,
+    citySummary: targets.map((target) => target.label).join("; "),
+    trade: displayTradeCategory(settings.trade),
+    duration: settings.duration === "run_once" ? "Run once" : settings.duration.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "),
+    safety: "No outreach will be sent automatically.",
   };
 }
 
@@ -469,6 +556,7 @@ export function buildAutopilotRunReport(campaign: AutopilotCampaign, queue: Outr
 export function attachAutopilotRunReport(campaign: AutopilotCampaign, report: AutopilotRunReport, now = new Date()): AutopilotCampaign {
   return {
     ...campaign,
+    status: report.status === "blocked" ? "paused" : "finished",
     queueCounts: report.queueCounts,
     latestRunReport: report,
     lastRunAt: report.completedAt,
@@ -823,8 +911,8 @@ function autopilotActivityStatus(campaign: AutopilotCampaign, report: AutopilotR
     if (campaign.status === "paused") return "paused";
     return "not_started";
   }
-  if (campaign.status === "paused") return "paused";
   if (report.status === "blocked") return "failed";
+  if (campaign.status === "paused") return "paused";
   if (report.status === "needs_review" || report.failedCities.length) return "completed_with_warnings";
   return "completed";
 }

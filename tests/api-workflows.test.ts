@@ -80,7 +80,7 @@ test("Autopilot dashboard actions start, report, and smoke-test without sending"
   }));
   const startedPayload = await started.json();
   assert.equal(started.status, 200);
-  assert.equal(startedPayload.autopilot.campaign.status, "running");
+  assert.equal(startedPayload.autopilot.campaign.status, "finished");
   assert.equal(startedPayload.autopilot.marketTargets.length, 2);
   assert.ok(["completed", "completed_with_warnings"].includes(startedPayload.autopilot.activity.status));
   assert.ok(startedPayload.autopilot.activity.entries.some((entry: { label: string }) => /Starting Autopilot campaign/.test(entry.label)));

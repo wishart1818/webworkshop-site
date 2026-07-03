@@ -19,17 +19,25 @@ import {
 import { allCoreServiceTradesOption, prospectSearchTypes, tradeCategories, type TradeCategory } from "@/lib/prospect-engine";
 import {
   autopilotCadences,
+  autopilotCampaignDraftStorageKey,
   autopilotDurations,
+  autopilotMarketMismatchWarning,
+  autopilotMarketTargets,
   autopilotOutreachStyles,
+  autopilotPresetFields,
+  autopilotProviderRequestEstimate,
   autopilotQueueCsv,
   autopilotQueueKeys,
   autopilotQueueLabels,
+  autopilotStartConfirmation,
   defaultAutopilotCampaignSettings,
+  normalizeAutopilotCampaignSettings,
   type AutopilotActivityStatus,
   type AutopilotCampaignSettings,
   type AutopilotDashboard,
   type AutopilotQueueKey,
   type AutopilotSmokeTestResult,
+  type AutopilotStopRules,
 } from "@/lib/autopilot-campaign";
 import { prospectModes, recommendedMarketPresets } from "@/lib/top-prospects";
 
@@ -622,6 +630,7 @@ type AutopilotActionReasons = Record<"start" | "smoke" | "batch" | "pause" | "re
 function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean): AutopilotActionReasons {
   const { campaign, marketTargets } = autopilot;
   const { settings } = campaign;
+  const effectivelyRunning = campaign.status === "running" && autopilot.activity.status === "running";
   const reasons: AutopilotActionReasons = {
     start: [],
     smoke: [],
@@ -640,8 +649,8 @@ function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean):
   if (!settings.excludePreviouslyReviewed || !settings.requirePreviewQuality85 || !settings.requireWrittenContact || !settings.manualDmMode) {
     reasons.start.push("safety setting required");
   }
-  if (campaign.status === "running") reasons.start.push("campaign already running");
-  if (campaign.status !== "running") reasons.pause.push("campaign is not running");
+  if (effectivelyRunning) reasons.start.push("campaign already running");
+  if (!effectivelyRunning) reasons.pause.push("campaign is not running");
   if (campaign.status !== "paused") reasons.resume.push("campaign is not paused");
   if (campaign.status === "stopped") reasons.stop.push("campaign already stopped");
   return reasons;
@@ -879,8 +888,53 @@ function AutopilotCampaignPanel({
   onStop: () => void;
 }) {
   const { campaign } = autopilot;
-  const settings = campaign.settings;
+  const [formSettings, setFormSettings] = useState<AutopilotCampaignSettings>(campaign.settings);
   const formId = "engine-autopilot-campaign-form";
+  const settings = useMemo(() => normalizeAutopilotCampaignSettings(formSettings), [formSettings]);
+  const formMarketTargets = useMemo(() => autopilotMarketTargets(settings), [settings]);
+  const formMarketLabels = useMemo(() => formMarketTargets.map((target) => target.label), [formMarketTargets]);
+  const formProviderRequestEstimate = useMemo(() => autopilotProviderRequestEstimate(settings), [settings]);
+  const startConfirmation = useMemo(() => autopilotStartConfirmation(settings), [settings]);
+  const marketMismatchWarning = useMemo(() => autopilotMarketMismatchWarning(settings), [settings]);
+  const actionAutopilot = useMemo<AutopilotDashboard>(() => ({
+    ...autopilot,
+    campaign: { ...autopilot.campaign, settings },
+    marketTargets: formMarketLabels,
+    providerRequestEstimate: formProviderRequestEstimate,
+  }), [autopilot, formMarketLabels, formProviderRequestEstimate, settings]);
+
+  useEffect(() => {
+    setFormSettings(campaign.settings);
+  }, [campaign.id, campaign.updatedAt, campaign.settings]);
+
+  useEffect(() => {
+    try {
+      const rawDraft = window.localStorage.getItem(autopilotCampaignDraftStorageKey);
+      if (!rawDraft) return;
+      const draft = JSON.parse(rawDraft) as Partial<AutopilotCampaignSettings>;
+      setFormSettings((current) => normalizeAutopilotCampaignSettings({ ...current, ...draft }));
+      window.localStorage.removeItem(autopilotCampaignDraftStorageKey);
+    } catch {
+      // Autopilot still works when browser storage is unavailable or stale.
+    }
+  }, []);
+
+  function updateFormSetting<Key extends keyof AutopilotCampaignSettings>(key: Key, value: AutopilotCampaignSettings[Key]) {
+    setFormSettings((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateStopRule<Key extends keyof AutopilotStopRules>(key: Key, value: AutopilotStopRules[Key]) {
+    setFormSettings((current) => ({ ...current, stopRules: { ...current.stopRules, [key]: value } }));
+  }
+
+  function updateMarketPreset(presetId: string) {
+    const presetFields = autopilotPresetFields(presetId);
+    setFormSettings((current) => normalizeAutopilotCampaignSettings({
+      ...current,
+      ...(presetFields ?? { marketPresetId: presetId }),
+    }));
+  }
+
   return (
     <section className="engine-panel engine-autopilot-campaign" aria-labelledby="autopilot-campaign-title">
       <div className="engine-panel__head">
@@ -894,8 +948,21 @@ function AutopilotCampaignPanel({
         </div>
       </div>
 
+      <div className="engine-autopilot-start-confirmation" role="status">
+        <b>Start Autopilot with:</b>
+        <span>Market: {startConfirmation.market}{startConfirmation.citySummary ? ` (${startConfirmation.citySummary})` : ""}</span>
+        <span>Trade: {startConfirmation.trade}</span>
+        <span>Duration: {startConfirmation.duration}</span>
+        <strong>{startConfirmation.safety}</strong>
+      </div>
+      {marketMismatchWarning ? (
+        <div className="engine-autopilot-market-warning" role="alert">
+          {marketMismatchWarning}
+        </div>
+      ) : null}
+
       <AutopilotActionRow
-        autopilot={autopilot}
+        autopilot={actionAutopilot}
         disabled={disabled}
         formId={formId}
         onPause={onPause}
@@ -912,52 +979,52 @@ function AutopilotCampaignPanel({
       />
 
       <div className="engine-autopilot-summary">
-        <article><span>Markets</span><strong>{autopilot.marketTargets.length}</strong><p>{autopilot.marketTargets.slice(0, 4).join(", ") || "Preset not selected"}</p></article>
-        <article><span>Provider load</span><strong>{autopilot.providerRequestEstimate}</strong><p>{autopilot.providerRequestEstimate > 20 ? "This may take longer and use more provider requests." : "Estimated requests for the next run."}</p></article>
+        <article><span>Markets</span><strong>{formMarketLabels.length}</strong><p>{formMarketLabels.slice(0, 4).join(", ") || "Preset not selected"}</p></article>
+        <article><span>Provider load</span><strong>{formProviderRequestEstimate}</strong><p>{formProviderRequestEstimate > 20 ? "This may take longer and use more provider requests." : "Estimated requests for the next run."}</p></article>
         <article><span>Trade</span><strong>{settings.trade}</strong><p>One trade at a time is recommended for better review quality.</p></article>
         <article><span>Safety</span><strong>No auto-send</strong><p>Manual/social-safe mode stays on by default.</p></article>
       </div>
 
       <form className="engine-autopilot-form" id={formId} onSubmit={onStart}>
-        <label>Campaign name<input defaultValue={settings.campaignName} name="campaignName" /></label>
-        <label>Market preset<select defaultValue={settings.marketPresetId} name="marketPresetId">
+        <label>Campaign name<input name="campaignName" onChange={(event) => updateFormSetting("campaignName", event.target.value)} value={formSettings.campaignName} /></label>
+        <label>Market preset<select name="marketPresetId" onChange={(event) => updateMarketPreset(event.target.value)} value={formSettings.marketPresetId}>
           {recommendedMarketPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
         </select></label>
-        <label className="engine-form-wide">Custom cities<textarea defaultValue={settings.customCities} name="customCities" placeholder="Toledo, OH; Sylvania, OH; Perrysburg, OH" /></label>
-        <label>Fallback state<input defaultValue={settings.state} maxLength={2} name="state" /></label>
-        <label>Trade<select defaultValue={settings.trade} name="trade">
+        <label className="engine-form-wide">Custom cities<textarea name="customCities" onChange={(event) => updateFormSetting("customCities", event.target.value)} placeholder="Toledo, OH; Sylvania, OH; Perrysburg, OH" value={formSettings.customCities} /></label>
+        <label>Fallback state<input maxLength={2} name="state" onChange={(event) => updateFormSetting("state", event.target.value.toUpperCase())} value={formSettings.state} /></label>
+        <label>Trade<select name="trade" onChange={(event) => updateFormSetting("trade", event.target.value as AutopilotCampaignSettings["trade"])} value={formSettings.trade}>
           {[...tradeCategories, allCoreServiceTradesOption].map((trade) => <option key={trade} value={trade}>{trade}</option>)}
         </select><small>New users should start with Landscaping, Pressure Washing, Cleaning, Painting, or Concrete before All Core Service Trades.</small></label>
-        <label>Prospect type<select defaultValue={settings.prospectType} name="prospectType">
+        <label>Prospect type<select name="prospectType" onChange={(event) => updateFormSetting("prospectType", event.target.value as AutopilotCampaignSettings["prospectType"])} value={formSettings.prospectType}>
           {prospectSearchTypes.map((type) => <option key={type} value={type}>{type === "all" ? "All Prospect Types" : optionLabel(type)}</option>)}
         </select></label>
-        <label>Prospect mode<select defaultValue={settings.mode} name="mode">
+        <label>Prospect mode<select name="mode" onChange={(event) => updateFormSetting("mode", event.target.value as AutopilotCampaignSettings["mode"])} value={formSettings.mode}>
           {prospectModes.map((mode) => <option key={mode} value={mode}>{optionLabel(mode)}</option>)}
         </select></label>
-        <label>Outreach style<select defaultValue={settings.outreachStyle} name="outreachStyle">
+        <label>Outreach style<select name="outreachStyle" onChange={(event) => updateFormSetting("outreachStyle", event.target.value as AutopilotCampaignSettings["outreachStyle"])} value={formSettings.outreachStyle}>
           {autopilotOutreachStyles.map((style) => <option key={style} value={style}>{style === "manual_social_safe" ? "Manual/social-safe" : optionLabel(style)}</option>)}
         </select></label>
-        <label>Duration<select defaultValue={settings.duration} name="duration">
+        <label>Duration<select name="duration" onChange={(event) => updateFormSetting("duration", event.target.value as AutopilotCampaignSettings["duration"])} value={formSettings.duration}>
           {autopilotDurations.map((duration) => <option key={duration} value={duration}>{duration === "run_once" ? "Run once" : optionLabel(duration)}</option>)}
         </select></label>
-        <label>Cadence<select defaultValue={settings.cadence} name="cadence">
+        <label>Cadence<select name="cadence" onChange={(event) => updateFormSetting("cadence", event.target.value as AutopilotCampaignSettings["cadence"])} value={formSettings.cadence}>
           {autopilotCadences.map((cadence) => <option key={cadence} value={cadence}>{cadence === "manual_only" ? "Manual only" : optionLabel(cadence)}</option>)}
         </select></label>
-        <label>Max prospects/run<input defaultValue={settings.maxProspectsPerRun} min="5" name="maxProspectsPerRun" type="number" /></label>
-        <label>Max previews/run<input defaultValue={settings.maxPreviewsPerRun} min="0" name="maxPreviewsPerRun" type="number" /></label>
-        <label>Max prospects total<input defaultValue={settings.maxProspectsTotal} min="1" name="maxProspectsTotal" type="number" /></label>
-        <label className="engine-toggle"><input defaultChecked={settings.excludePreviouslyReviewed} name="excludePreviouslyReviewed" type="checkbox" />Exclude previously reviewed prospects</label>
-        <label className="engine-toggle"><input defaultChecked={settings.requirePreviewQuality85} name="requirePreviewQuality85" type="checkbox" />Require preview QA 85+</label>
-        <label className="engine-toggle"><input defaultChecked={settings.requireWrittenContact} name="requireWrittenContact" type="checkbox" />Require written contact</label>
-        <label className="engine-toggle"><input defaultChecked={settings.manualDmMode} name="manualDmMode" type="checkbox" />Manual DM mode</label>
-        <label className="engine-toggle"><input defaultChecked={settings.loomNotifications} name="loomNotifications" type="checkbox" />Dashboard Loom notifications</label>
-        <label className="engine-toggle"><input defaultChecked={settings.stopRules.pauseOnProviderFailure} name="pauseOnProviderFailure" type="checkbox" />Pause on provider failure</label>
-        <label>Pause if bad-fit rate exceeds %<input defaultValue={settings.stopRules.pauseOnBadFitRatePercent} max="100" min="10" name="pauseOnBadFitRatePercent" type="number" /></label>
-        <label>Pause after weak previews<input defaultValue={settings.stopRules.pauseAfterWeakPreviewCount} min="1" name="pauseAfterWeakPreviewCount" type="number" /></label>
-        <label className="engine-toggle"><input defaultChecked={settings.stopRules.stopWhenTotalProspectsReached} name="stopWhenTotalProspectsReached" type="checkbox" />Stop at total prospect cap</label>
+        <label>Max prospects/run<input min="5" name="maxProspectsPerRun" onChange={(event) => updateFormSetting("maxProspectsPerRun", Number(event.target.value))} type="number" value={formSettings.maxProspectsPerRun} /></label>
+        <label>Max previews/run<input min="0" name="maxPreviewsPerRun" onChange={(event) => updateFormSetting("maxPreviewsPerRun", Number(event.target.value))} type="number" value={formSettings.maxPreviewsPerRun} /></label>
+        <label>Max prospects total<input min="1" name="maxProspectsTotal" onChange={(event) => updateFormSetting("maxProspectsTotal", Number(event.target.value))} type="number" value={formSettings.maxProspectsTotal} /></label>
+        <label className="engine-toggle"><input checked={formSettings.excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => updateFormSetting("excludePreviouslyReviewed", event.target.checked)} type="checkbox" />Exclude previously reviewed prospects</label>
+        <label className="engine-toggle"><input checked={formSettings.requirePreviewQuality85} name="requirePreviewQuality85" onChange={(event) => updateFormSetting("requirePreviewQuality85", event.target.checked)} type="checkbox" />Require preview QA 85+</label>
+        <label className="engine-toggle"><input checked={formSettings.requireWrittenContact} name="requireWrittenContact" onChange={(event) => updateFormSetting("requireWrittenContact", event.target.checked)} type="checkbox" />Require written contact</label>
+        <label className="engine-toggle"><input checked={formSettings.manualDmMode} name="manualDmMode" onChange={(event) => updateFormSetting("manualDmMode", event.target.checked)} type="checkbox" />Manual DM mode</label>
+        <label className="engine-toggle"><input checked={formSettings.loomNotifications} name="loomNotifications" onChange={(event) => updateFormSetting("loomNotifications", event.target.checked)} type="checkbox" />Dashboard Loom notifications</label>
+        <label className="engine-toggle"><input checked={formSettings.stopRules.pauseOnProviderFailure} name="pauseOnProviderFailure" onChange={(event) => updateStopRule("pauseOnProviderFailure", event.target.checked)} type="checkbox" />Pause on provider failure</label>
+        <label>Pause if bad-fit rate exceeds %<input max="100" min="10" name="pauseOnBadFitRatePercent" onChange={(event) => updateStopRule("pauseOnBadFitRatePercent", Number(event.target.value))} type="number" value={formSettings.stopRules.pauseOnBadFitRatePercent} /></label>
+        <label>Pause after weak previews<input min="1" name="pauseAfterWeakPreviewCount" onChange={(event) => updateStopRule("pauseAfterWeakPreviewCount", Number(event.target.value))} type="number" value={formSettings.stopRules.pauseAfterWeakPreviewCount} /></label>
+        <label className="engine-toggle"><input checked={formSettings.stopRules.stopWhenTotalProspectsReached} name="stopWhenTotalProspectsReached" onChange={(event) => updateStopRule("stopWhenTotalProspectsReached", event.target.checked)} type="checkbox" />Stop at total prospect cap</label>
         <footer className="engine-autopilot-form-footer">
           <AutopilotActionRow
-            autopilot={autopilot}
+            autopilot={actionAutopilot}
             disabled={disabled}
             formId={formId}
             insideForm

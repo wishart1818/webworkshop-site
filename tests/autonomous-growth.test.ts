@@ -22,8 +22,12 @@ import {
 } from "../lib/autonomous-growth";
 import {
   autopilotActionLabels,
+  autopilotDraftFromRecommendedMarket,
+  autopilotMarketMismatchWarning,
+  autopilotPresetFields,
   autopilotProviderRequestEstimate,
   autopilotQueueKeyForItem,
+  autopilotStartConfirmation,
   autopilotTopProspectInput,
   attachAutopilotRunReport,
   buildAutopilotDashboard,
@@ -32,7 +36,7 @@ import {
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
-import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink } from "../lib/top-prospects";
+import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets } from "../lib/top-prospects";
 import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 
 const publicLink = publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF");
@@ -268,6 +272,70 @@ test("Autopilot translates campaign settings into a safe Top Prospects run input
   assert.deepEqual(input.cityTargets.map((target) => target.label), ["Toledo, OH", "Tampa, FL"]);
 });
 
+test("Autopilot market preset syncing fills Florida cities, fallback state, and estimates without running", () => {
+  const floridaFields = autopilotPresetFields("florida");
+
+  assert.ok(floridaFields);
+  assert.equal(floridaFields.state, "FL");
+  assert.equal(floridaFields.customCities, "Tampa, FL; St. Petersburg, FL; Clearwater, FL; Lakeland, FL; Orlando, FL; Kissimmee, FL; Jacksonville, FL; St. Augustine, FL; Sarasota, FL; Fort Myers, FL");
+
+  const settings = {
+    ...defaultAutopilotCampaignSettings,
+    ...floridaFields,
+    trade: "Pressure Washing" as const,
+  };
+  const input = autopilotTopProspectInput(settings);
+
+  assert.equal(input.cityTargets.length, 10);
+  assert.equal(input.cityTargets[0].label, "Tampa, FL");
+  assert.equal(input.trade, "Pressure Washing");
+  assert.equal(autopilotProviderRequestEstimate(settings), 40);
+});
+
+test("Recommended Market trade selection can hand off selected cities and trade to Autopilot", () => {
+  const florida = recommendedMarketPresets.find((preset) => preset.id === "florida");
+
+  assert.ok(florida);
+  const draft = autopilotDraftFromRecommendedMarket(florida, "Pressure Washing");
+
+  assert.equal(draft.marketPresetId, "florida");
+  assert.equal(draft.state, "FL");
+  assert.equal(draft.trade, "Pressure Washing");
+  assert.match(draft.customCities ?? "", /Tampa, FL; St\. Petersburg, FL/);
+});
+
+test("Autopilot warns when preset and custom cities do not match", () => {
+  const warning = autopilotMarketMismatchWarning({
+    ...defaultAutopilotCampaignSettings,
+    marketPresetId: "florida",
+    customCities: "Toledo, OH; Sylvania, OH",
+    state: "OH",
+  });
+
+  assert.equal(warning, "Market preset is Florida, but Custom cities appear to be Ohio. Update cities before starting.");
+  assert.equal(autopilotMarketMismatchWarning({
+    ...defaultAutopilotCampaignSettings,
+    marketPresetId: "florida",
+    customCities: "Tampa, FL; St. Petersburg, FL; Clearwater, FL; Lakeland, FL; Orlando, FL; Kissimmee, FL; Jacksonville, FL; St. Augustine, FL; Sarasota, FL; Fort Myers, FL",
+    state: "FL",
+  }), "");
+});
+
+test("Autopilot start confirmation uses the selected market, trade, duration, and no-send safety", () => {
+  const confirmation = autopilotStartConfirmation({
+    ...defaultAutopilotCampaignSettings,
+    ...(autopilotPresetFields("florida") ?? {}),
+    trade: "Pressure Washing",
+    duration: "run_once",
+  });
+
+  assert.equal(confirmation.market, "Florida");
+  assert.match(confirmation.citySummary, /Tampa, FL/);
+  assert.equal(confirmation.trade, "Pressure Washing");
+  assert.equal(confirmation.duration, "Run once");
+  assert.equal(confirmation.safety, "No outreach will be sent automatically.");
+});
+
 test("fake Autopilot smoke test routes fixtures into safe queues", () => {
   const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
   const result = runFakeAutopilotSmokeTest(campaign, new Date(1));
@@ -286,6 +354,7 @@ test("Autopilot dashboard shows latest run queue counts when fake smoke test doe
   const smoke = runFakeAutopilotSmokeTest(campaign, new Date(1));
   const dashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, smoke.report, new Date(2)), [], true);
 
+  assert.equal(dashboard.campaign.status, "finished");
   assert.equal(dashboard.queueCountsSource, "latest_run_report");
   assert.equal(dashboard.campaign.queueCounts.emailDraftReady, 1);
   assert.equal(dashboard.campaign.queueCounts.readyForManualDm, 1);

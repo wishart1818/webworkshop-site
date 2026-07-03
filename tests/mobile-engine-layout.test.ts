@@ -51,6 +51,14 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(prospectEngineWorkspace, /Autonomous Growth/);
   assert.match(autonomousGrowthWorkspace, /Safe autonomous prospecting/);
   assert.match(autonomousGrowthWorkspace, /Autopilot Campaign/);
+  assert.match(autonomousGrowthWorkspace, /Start Autopilot with:/);
+  assert.match(autonomousGrowthWorkspace, /startConfirmation\.safety/);
+  assert.match(autonomousGrowthWorkspace, /marketMismatchWarning/);
+  assert.match(autonomousGrowthWorkspace, /updateMarketPreset/);
+  assert.match(autonomousGrowthWorkspace, /autopilotPresetFields/);
+  assert.match(autonomousGrowthWorkspace, /value=\{formSettings\.marketPresetId\}/);
+  assert.match(autonomousGrowthWorkspace, /value=\{formSettings\.customCities\}/);
+  assert.match(autonomousGrowthWorkspace, /value=\{formSettings\.state\}/);
   assert.match(autonomousGrowthWorkspace, /Autopilot Live Activity/);
   assert.match(autonomousGrowthWorkspace, /No Autopilot activity yet\. Start Autopilot or run the fake smoke test to see live steps\./);
   assert.match(autonomousGrowthWorkspace, /Fake Smoke Test Activity — no providers, no outreach\./);
@@ -86,6 +94,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Counts shown below come from the latest run report\. Fake smoke-test counts do not create saved outreach items\./);
   assert.match(autonomousGrowthWorkspace, /Counts shown below come from saved outreach queue items\./);
   assert.match(autonomousGrowthWorkspace, /No email, form, social, phone, or Loom outreach is sent automatically/);
+  assert.match(topProspectsWorkspace, /autopilotCampaignDraftStorageKey/);
+  assert.match(topProspectsWorkspace, /autopilotDraftFromRecommendedMarket/);
   assert.match(autonomousGrowthWorkspace, /You have Loom walkthroughs to record/);
   assert.match(autonomousGrowthWorkspace, /Loom Needed Queue/);
   assert.match(autonomousGrowthWorkspace, /Review-before-Loom checklist/);
@@ -117,6 +127,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /review score/);
   assert.match(css, /\.engine-autonomous-hero\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autopilot-action-card\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autopilot-start-confirmation,/);
+  assert.match(css, /\.engine-autopilot-market-warning\s*{\s*border-color: #e2c17b;/);
   assert.match(css, /\.engine-autopilot-activity\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autopilot-activity__head\s*{\s*display: flex;/);
   assert.match(css, /\.engine-autopilot-activity-grid\s*{\s*display: grid;/);

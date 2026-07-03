@@ -5,6 +5,7 @@ import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import { casualDmPlaybook } from "@/lib/autonomous-growth";
+import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket } from "@/lib/autopilot-campaign";
 import {
   allCoreServiceTradesOption,
   displayStateCode,
@@ -450,6 +451,13 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     setCityInput(fields.cityInput);
     setStateInput(fields.stateInput);
     if (fields.trade) setSelectedTrade(fields.trade);
+    if (mode === "replace") {
+      try {
+        window.localStorage.setItem(autopilotCampaignDraftStorageKey, JSON.stringify(autopilotDraftFromRecommendedMarket(preset, trade)));
+      } catch {
+        // The Top Prospects form still updates even when browser storage is unavailable.
+      }
+    }
     setMarketApplied(`${preset.name} filled the search fields. Click Find Top Prospects when you are ready.`);
     focusSearchFields();
   }

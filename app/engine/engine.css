@@ -3184,6 +3184,36 @@ body:has(.engine-shell) {
   justify-self: end;
 }
 
+.engine-autopilot-start-confirmation,
+.engine-autopilot-market-warning {
+  display: grid;
+  gap: 0.3rem;
+  border: 1px solid #b7d8cd;
+  background: #f2fbf7;
+  padding: 0.85rem;
+}
+
+.engine-autopilot-start-confirmation b,
+.engine-autopilot-start-confirmation strong {
+  color: var(--engine-ink);
+  font-size: 0.86rem;
+}
+
+.engine-autopilot-start-confirmation span {
+  color: #30473f;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.engine-autopilot-market-warning {
+  border-color: #e2c17b;
+  background: #fffaf0;
+  color: #4d2d00;
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
 .engine-autopilot-activity {
   display: grid;
   gap: 0.85rem;
