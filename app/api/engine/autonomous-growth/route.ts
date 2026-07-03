@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
+import { continueTopProspectJobAfterResponse } from "@/lib/top-prospect-continuation";
+import { createTopProspectJob } from "@/lib/top-prospect-repository";
+import { validateTopProspectInput } from "@/lib/top-prospects";
 import {
   getAutonomousGrowthDashboard,
+  pauseAutopilotCampaign,
   recordAutonomousFeedback,
   rewriteOutreachQueueItem,
+  resumeAutopilotCampaign,
+  runAutopilotNextBatchNow,
+  runFakeAutopilotSmokeTestForDashboard,
+  startAutopilotCampaign,
+  stopAutopilotCampaign,
   updateAutonomousGrowthSettings,
   updateOutreachQueueStatus,
 } from "@/lib/autonomous-growth-repository";
@@ -13,6 +22,7 @@ import {
   type AutonomousGrowthSettings,
   type OutreachQueueStatus,
 } from "@/lib/autonomous-growth";
+import { autopilotTopProspectInput, normalizeAutopilotCampaignSettings, type AutopilotCampaignSettings } from "@/lib/autopilot-campaign";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,6 +41,7 @@ export async function POST(request: Request) {
     const payload = await request.json() as {
       action?: string;
       settings?: Partial<AutonomousGrowthSettings>;
+      autopilotSettings?: Partial<AutopilotCampaignSettings>;
       queueItemId?: string;
       status?: OutreachQueueStatus;
       feedbackLabel?: AutonomousFeedbackLabel;
@@ -62,6 +73,41 @@ export async function POST(request: Request) {
       const item = await rewriteOutreachQueueItem(payload.queueItemId);
       if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item });
+    }
+    if (payload.action === "start_autopilot") {
+      const settings = normalizeAutopilotCampaignSettings(payload.autopilotSettings ?? {});
+      const autopilot = await startAutopilotCampaign(settings);
+      let topProspectJobId = "";
+      let topProspectJobWarning = "";
+      try {
+        const validation = validateTopProspectInput(autopilotTopProspectInput(settings));
+        if (!validation.ok) {
+          topProspectJobWarning = validation.error;
+        } else {
+          const job = await createTopProspectJob(validation.value);
+          topProspectJobId = job.id;
+          continueTopProspectJobAfterResponse(request, job.id);
+        }
+      } catch (error) {
+        topProspectJobWarning = "Autopilot campaign was saved, but the Top Prospects background run could not start. Check PostgreSQL and active job status.";
+        console.warn("[autonomous-growth] Autopilot Top Prospects handoff failed safely.", { error: error instanceof Error ? error.name : "unknown" });
+      }
+      return NextResponse.json({ autopilot, topProspectJobId, topProspectJobWarning });
+    }
+    if (payload.action === "pause_autopilot") {
+      return NextResponse.json({ autopilot: await pauseAutopilotCampaign() });
+    }
+    if (payload.action === "resume_autopilot") {
+      return NextResponse.json({ autopilot: await resumeAutopilotCampaign() });
+    }
+    if (payload.action === "stop_autopilot") {
+      return NextResponse.json({ autopilot: await stopAutopilotCampaign() });
+    }
+    if (payload.action === "run_autopilot_batch") {
+      return NextResponse.json({ autopilot: await runAutopilotNextBatchNow() });
+    }
+    if (payload.action === "run_fake_autopilot_smoke_test") {
+      return NextResponse.json(await runFakeAutopilotSmokeTestForDashboard());
     }
     return NextResponse.json({ error: "Select a supported Autonomous Growth action." }, { status: 400 });
   } catch (error) {

@@ -29,6 +29,15 @@ import {
   validateTopProspectInput,
   websiteBusinessMismatch,
 } from "@/lib/top-prospects";
+import {
+  autopilotActionLabels,
+  autopilotProviderRequestEstimate,
+  autopilotQueueKeyForItem,
+  createAutopilotCampaign,
+  defaultAutopilotCampaignSettings,
+  runFakeAutopilotSmokeTest,
+  transitionAutopilotCampaign,
+} from "@/lib/autopilot-campaign";
 
 export type SystemSelfCheckStatus = "passed" | "warning" | "failed";
 export type SystemSelfCheckOverallStatus = "Healthy" | "Needs attention" | "Blocking issue";
@@ -195,8 +204,29 @@ function autonomousChecks() {
   ];
 }
 
+function autopilotChecks() {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const paused = transitionAutopilotCampaign(campaign, "pause", new Date(1));
+  const resumed = transitionAutopilotCampaign(paused, "resume", new Date(2));
+  const stopped = transitionAutopilotCampaign(resumed, "stop", new Date(3));
+  const smokeTest = runFakeAutopilotSmokeTest(campaign, new Date(4));
+  const firstDmFixture = smokeTest.fixtureResults.find((fixture) => fixture.businessName === "Sylvania Lawn Care");
+  const defaultLoad = autopilotProviderRequestEstimate(defaultAutopilotCampaignSettings);
+  return [
+    check("autopilot_actions", "Autopilot action labels exist", ["Start Autopilot", "Pause Autopilot", "Resume Autopilot", "Stop Autopilot", "Run next batch now", "Run Fake Autopilot Smoke Test"].every((label) => autopilotActionLabels.includes(label as typeof autopilotActionLabels[number])), "Autopilot exposes the required operator actions.", "Review autopilotActionLabels."),
+    check("autopilot_defaults_safe", "Autopilot defaults are manual-safe", defaultAutopilotCampaignSettings.duration === "run_once" && defaultAutopilotCampaignSettings.cadence === "manual_only" && defaultAutopilotCampaignSettings.manualDmMode && defaultAutopilotCampaignSettings.requirePreviewQuality85 && defaultAutopilotCampaignSettings.requireWrittenContact && defaultAutopilotCampaignSettings.excludePreviouslyReviewed, "Autopilot defaults to run once, manual/social-safe, preview QA on, written contact required, and exclude previous on.", "Review defaultAutopilotCampaignSettings."),
+    check("autopilot_one_trade_default", "Autopilot starts with one trade", defaultAutopilotCampaignSettings.trade !== "All Core Service Trades", "Default testing avoids All Core Service Trades until selected intentionally.", "Review defaultAutopilotCampaignSettings.trade."),
+    check("autopilot_provider_load", "Autopilot estimates provider load", defaultLoad > 0, "Provider request load is shown before running.", "Review autopilotProviderRequestEstimate."),
+    check("autopilot_transitions", "Autopilot pause/resume/stop transitions work", paused.status === "paused" && resumed.status === "running" && stopped.status === "stopped", "Campaign actions change dashboard state and do not send outreach.", "Review transitionAutopilotCampaign."),
+    check("autopilot_smoke_test", "Fake Autopilot smoke test passes", smokeTest.passed, "Fake fixtures are sorted into safe queues with no provider calls or contact sending.", "Review runFakeAutopilotSmokeTest."),
+    check("autopilot_dm_no_link", "Fake Manual DM queue keeps first message link-free", Boolean(firstDmFixture?.passed) && smokeTest.report.safetyFindings.some((finding) => /disabled/i.test(finding)), "Manual DM smoke fixture stays safe and link-free.", "Review fakeAutopilotSmokeQueue."),
+    check("autopilot_phone_only_blocked", "Phone-only remains blocked in Autopilot", smokeTest.fixtureResults.some((fixture) => fixture.businessName === "Maumee Concrete Repair" && fixture.actualQueue === "blockedBadFit"), "Phone-only fixture is blocked under written outreach mode.", "Review autopilotQueueKeyForItem."),
+    check("autopilot_queue_classification", "Autopilot queue classification works", autopilotQueueKeyForItem({ status: "Loom Needed", contactSource: "Public email", previewQualityScore: 92, blockedReason: "", email: "owner@example.com" }) === "loomNeeded", "Loom-needed items stay in the manual Loom queue.", "Review autopilotQueueKeyForItem."),
+  ];
+}
+
 export function runSystemSelfCheck(now = new Date()): SystemSelfCheckReport {
-  const checks = [...topProspectChecks(), ...previewAndOutreachChecks(), ...autonomousChecks()];
+  const checks = [...topProspectChecks(), ...previewAndOutreachChecks(), ...autonomousChecks(), ...autopilotChecks()];
   const passed = checks.filter((item) => item.status === "passed");
   const warnings = checks.filter((item) => item.status === "warning");
   const failed = checks.filter((item) => item.status === "failed");

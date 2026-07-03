@@ -20,6 +20,16 @@ import {
   rewriteOutreachWithFixes,
   type OutreachQueueItem,
 } from "../lib/autonomous-growth";
+import {
+  autopilotActionLabels,
+  autopilotProviderRequestEstimate,
+  autopilotQueueKeyForItem,
+  autopilotTopProspectInput,
+  createAutopilotCampaign,
+  defaultAutopilotCampaignSettings,
+  runFakeAutopilotSmokeTest,
+  transitionAutopilotCampaign,
+} from "../lib/autopilot-campaign";
 import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink } from "../lib/top-prospects";
 import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 
@@ -208,6 +218,72 @@ test("missing sender settings, missing postal address, disabled env flag, and da
   assert.equal(eligibilityFor(prospect, { environment: env({ OUTREACH_POSTAL_ADDRESS: "" }) }).eligible, false);
   assert.equal(eligibilityFor(prospect, { emailsSentToday: 5 }).eligible, false);
   assert.equal(outreachEnvironment(env({ OUTREACH_DAILY_CAP: "2" })).dailyCap, 2);
+});
+
+test("Autopilot defaults to one-trade manual-safe review mode", () => {
+  assert.equal(defaultAutopilotCampaignSettings.duration, "run_once");
+  assert.equal(defaultAutopilotCampaignSettings.cadence, "manual_only");
+  assert.equal(defaultAutopilotCampaignSettings.manualDmMode, true);
+  assert.equal(defaultAutopilotCampaignSettings.excludePreviouslyReviewed, true);
+  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, true);
+  assert.equal(defaultAutopilotCampaignSettings.requireWrittenContact, true);
+  assert.notEqual(defaultAutopilotCampaignSettings.trade, "All Core Service Trades");
+  assert.ok(autopilotActionLabels.includes("Start Autopilot"));
+  assert.ok(autopilotActionLabels.includes("Run Fake Autopilot Smoke Test"));
+  assert.ok(autopilotProviderRequestEstimate(defaultAutopilotCampaignSettings) > 0);
+});
+
+test("Autopilot campaign transitions pause, resume, and stop without sending", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const paused = transitionAutopilotCampaign(campaign, "pause", new Date(1));
+  const resumed = transitionAutopilotCampaign(paused, "resume", new Date(2));
+  const stopped = transitionAutopilotCampaign(resumed, "stop", new Date(3));
+
+  assert.equal(campaign.status, "running");
+  assert.equal(paused.status, "paused");
+  assert.equal(resumed.status, "running");
+  assert.equal(stopped.status, "stopped");
+  assert.match(stopped.notifications[0].body, /No outreach was sent/);
+});
+
+test("Autopilot translates campaign settings into a safe Top Prospects run input", () => {
+  const input = autopilotTopProspectInput({
+    ...defaultAutopilotCampaignSettings,
+    customCities: "Toledo, OH; Tampa, FL",
+    state: "OH",
+    trade: "Pressure Washing",
+    maxProspectsPerRun: 100,
+    maxPreviewsPerRun: 20,
+    requireWrittenContact: true,
+  });
+
+  assert.equal(input.trade, "Pressure Washing");
+  assert.equal(input.radiusKm, 50);
+  assert.equal(input.businessesToScan, 100);
+  assert.equal(input.finalProspectsWanted, 20);
+  assert.equal(input.outreachPreference, "written_only");
+  assert.equal(input.excludePreviouslyReviewed, true);
+  assert.deepEqual(input.cityTargets.map((target) => target.label), ["Toledo, OH", "Tampa, FL"]);
+});
+
+test("fake Autopilot smoke test routes fixtures into safe queues", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const result = runFakeAutopilotSmokeTest(campaign, new Date(1));
+
+  assert.equal(result.passed, true);
+  assert.ok(result.report.fakeOnly);
+  assert.ok(result.report.safetyFindings.some((finding) => /Automatic email, social DM, contact form, phone, and Loom sending stayed disabled/.test(finding)));
+  assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Glass City Pressure Washing" && fixture.actualQueue === "emailDraftReady"));
+  assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Sylvania Lawn Care" && fixture.actualQueue === "readyForManualDm"));
+  assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Toledo HVAC Equipment Supply" && fixture.actualQueue === "blockedBadFit"));
+  assert.ok(result.fixtureResults.some((fixture) => fixture.businessName === "Maumee Concrete Repair" && fixture.actualQueue === "blockedBadFit"));
+});
+
+test("Autopilot queue classification keeps Loom and weak preview items manual", () => {
+  assert.equal(autopilotQueueKeyForItem(queueItem({ status: "Loom Needed", previewQualityScore: 92 })), "loomNeeded");
+  assert.equal(autopilotQueueKeyForItem(queueItem({ status: "Needs Review", previewQualityScore: 74 })), "needsPreviewReview");
+  assert.equal(autopilotQueueKeyForItem(queueItem({ status: "DM Draft", contactSource: "Social profile", email: "" })), "readyForManualDm");
+  assert.equal(autopilotQueueKeyForItem(queueItem({ status: "Blocked", contactSource: "Phone", email: "", blockedReason: "Phone-only lead blocked by written outreach rules." })), "blockedBadFit");
 });
 
 test("opt-out and duplicate style statuses can stay blocked in the durable queue model", () => {

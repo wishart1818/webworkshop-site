@@ -50,6 +50,18 @@ test("engine phone controls and navigation account for iPhone interaction constr
 test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export", () => {
   assert.match(prospectEngineWorkspace, /Autonomous Growth/);
   assert.match(autonomousGrowthWorkspace, /Safe autonomous prospecting/);
+  assert.match(autonomousGrowthWorkspace, /Autopilot Campaign/);
+  assert.match(autonomousGrowthWorkspace, /Start Autopilot/);
+  assert.match(autonomousGrowthWorkspace, /Pause/);
+  assert.match(autonomousGrowthWorkspace, /Resume/);
+  assert.match(autonomousGrowthWorkspace, /Stop/);
+  assert.match(autonomousGrowthWorkspace, /Run next batch now/);
+  assert.match(autonomousGrowthWorkspace, /Run Fake Autopilot Smoke Test/);
+  assert.match(autonomousGrowthWorkspace, /Ready for Manual DM/);
+  assert.match(autonomousGrowthWorkspace, /Needs Preview Review/);
+  assert.match(autonomousGrowthWorkspace, /Email Draft Ready/);
+  assert.match(autonomousGrowthWorkspace, /Blocked \/ Bad Fit/);
+  assert.match(autonomousGrowthWorkspace, /No email, form, social, phone, or Loom outreach is sent automatically/);
   assert.match(autonomousGrowthWorkspace, /You have Loom walkthroughs to record/);
   assert.match(autonomousGrowthWorkspace, /Loom Needed Queue/);
   assert.match(autonomousGrowthWorkspace, /Review-before-Loom checklist/);
@@ -80,6 +92,9 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Export CSV/);
   assert.match(autonomousGrowthWorkspace, /review score/);
   assert.match(css, /\.engine-autonomous-hero\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autopilot-form\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autopilot-actions\s*{\s*display: flex;/);
+  assert.match(css, /\.engine-autopilot-queues\s*{\s*display: grid;/);
   assert.match(css, /\.engine-safety-grid\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autonomous-table \.engine-result-actions\s*{\s*display: flex;\s*flex-wrap: wrap;/);
   assert.match(css, /\.engine-learning-summary\s*{\s*display: grid;/);
@@ -155,7 +170,7 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /defaultValue="20"/);
   assert.match(topProspectsWorkspace, /total budget across all selected cities and trades/);
   assert.match(topProspectsWorkspace, /Recommended Markets/);
-  assert.match(topProspectsWorkspace, /Click Use this market to fill the city field, or click a trade to fill the market and trade together\. You still need to click Find Top Prospects\./);
+  assert.match(topProspectsWorkspace, /Click Use this market to fill the city field, or click a trade to fill the market and trade together\. You still need to click Find Top Prospects or Start Autopilot\./);
   assert.match(topProspectsWorkspace, /engine-market-actions/);
   assert.match(topProspectsWorkspace, /Use this market/);
   assert.match(topProspectsWorkspace, /Add to current cities/);

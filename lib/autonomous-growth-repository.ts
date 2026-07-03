@@ -32,11 +32,26 @@ import type { Prospect } from "@/lib/prospect-engine";
 import { getProspectDatabase } from "@/lib/prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { evaluateOutreachEmailQuality, type OutreachPreference } from "@/lib/top-prospects";
+import {
+  attachAutopilotRunReport,
+  buildAutopilotDashboard,
+  buildAutopilotRunReport,
+  createAutopilotCampaign,
+  defaultAutopilotCampaignSettings,
+  runFakeAutopilotSmokeTest,
+  transitionAutopilotCampaign,
+  type AutopilotCampaign,
+  type AutopilotCampaignSettings,
+  type AutopilotDashboard,
+  type AutopilotSmokeTestResult,
+} from "@/lib/autopilot-campaign";
 
 const globalAutonomous = globalThis as typeof globalThis & {
   autonomousGrowthSettingsMemory?: AutonomousGrowthSettings;
   outreachQueueMemory?: OutreachQueueItem[];
   autonomousRunReviewsMemory?: AutonomousRunReview[];
+  autopilotCampaignMemory?: AutopilotCampaign;
+  autopilotSmokeTestMemory?: AutopilotSmokeTestResult;
 };
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
@@ -56,6 +71,23 @@ function memoryQueue() {
 function memoryRunReviews() {
   if (!globalAutonomous.autonomousRunReviewsMemory) globalAutonomous.autonomousRunReviewsMemory = [];
   return globalAutonomous.autonomousRunReviewsMemory;
+}
+
+function memoryAutopilotCampaign() {
+  if (!globalAutonomous.autopilotCampaignMemory) {
+    globalAutonomous.autopilotCampaignMemory = {
+      ...createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0)),
+      status: "draft",
+      notifications: [{
+        id: "autopilot-ready",
+        level: "info",
+        title: "Autopilot is ready",
+        body: "Set one trade and one market, then start Autopilot. Nothing will be sent automatically.",
+        createdAt: new Date(0).toISOString(),
+      }],
+    };
+  }
+  return globalAutonomous.autopilotCampaignMemory;
 }
 
 function jsonArray(value: Prisma.JsonValue | null | undefined): string[] {
@@ -281,11 +313,12 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
   };
 }
 
-export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard> {
+export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard & { autopilot: AutopilotDashboard }> {
   const settings = await getAutonomousGrowthSettings();
   const queue = await listOutreachQueueItems();
   const runReviews = await listAutonomousRunReviews();
   const env = outreachEnvironment();
+  const autopilot = buildAutopilotDashboard(memoryAutopilotCampaign(), queue);
   return {
     settings,
     env: {
@@ -302,6 +335,54 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
     metrics: metricsForQueue(queue, settings),
     queue,
     learning: learningSummaryForQueue(queue, runReviews),
+    autopilot,
+  };
+}
+
+export async function startAutopilotCampaign(input: Partial<AutopilotCampaignSettings>) {
+  const campaign = createAutopilotCampaign(input);
+  const queue = await listOutreachQueueItems();
+  const report = buildAutopilotRunReport(campaign, queue);
+  globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, report);
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+}
+
+export async function pauseAutopilotCampaign() {
+  const queue = await listOutreachQueueItems();
+  globalAutonomous.autopilotCampaignMemory = transitionAutopilotCampaign(memoryAutopilotCampaign(), "pause");
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+}
+
+export async function resumeAutopilotCampaign() {
+  const queue = await listOutreachQueueItems();
+  globalAutonomous.autopilotCampaignMemory = transitionAutopilotCampaign(memoryAutopilotCampaign(), "resume");
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+}
+
+export async function stopAutopilotCampaign() {
+  const queue = await listOutreachQueueItems();
+  globalAutonomous.autopilotCampaignMemory = transitionAutopilotCampaign(memoryAutopilotCampaign(), "stop");
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+}
+
+export async function runAutopilotNextBatchNow() {
+  const queue = await listOutreachQueueItems();
+  const campaign = memoryAutopilotCampaign();
+  const runningCampaign = campaign.status === "paused" ? transitionAutopilotCampaign(campaign, "resume") : campaign;
+  const report = buildAutopilotRunReport(runningCampaign, queue);
+  globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(runningCampaign, report);
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+}
+
+export async function runFakeAutopilotSmokeTestForDashboard() {
+  const queue = await listOutreachQueueItems();
+  const campaign = memoryAutopilotCampaign();
+  const smokeTest = runFakeAutopilotSmokeTest(campaign);
+  globalAutonomous.autopilotSmokeTestMemory = smokeTest;
+  globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, smokeTest.report);
+  return {
+    autopilot: buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue),
+    smokeTest,
   };
 }
 
@@ -675,6 +756,8 @@ export function resetAutonomousGrowthMemoryForTests() {
   globalAutonomous.autonomousGrowthSettingsMemory = undefined;
   globalAutonomous.outreachQueueMemory = undefined;
   globalAutonomous.autonomousRunReviewsMemory = undefined;
+  globalAutonomous.autopilotCampaignMemory = undefined;
+  globalAutonomous.autopilotSmokeTestMemory = undefined;
 }
 
 export function learningSummaryForAutonomousQueueForTests(queue: OutreachQueueItem[], runReviews: AutonomousRunReview[] = []): AutonomousLearningSummary {

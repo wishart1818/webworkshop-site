@@ -16,12 +16,32 @@ import {
   type OutreachQueueItem,
   type OutreachQueueStatus,
 } from "@/lib/autonomous-growth";
-import { tradeCategories, type TradeCategory } from "@/lib/prospect-engine";
+import { allCoreServiceTradesOption, prospectSearchTypes, tradeCategories, type TradeCategory } from "@/lib/prospect-engine";
+import {
+  autopilotCadences,
+  autopilotDurations,
+  autopilotOutreachStyles,
+  autopilotQueueCsv,
+  autopilotQueueKeys,
+  autopilotQueueLabels,
+  defaultAutopilotCampaignSettings,
+  type AutopilotCampaignSettings,
+  type AutopilotDashboard,
+  type AutopilotQueueKey,
+  type AutopilotSmokeTestResult,
+} from "@/lib/autopilot-campaign";
+import { prospectModes, recommendedMarketPresets } from "@/lib/top-prospects";
 
-type ApiPayload = Partial<AutonomousGrowthDashboard> & {
+type DashboardPayload = AutonomousGrowthDashboard & { autopilot: AutopilotDashboard };
+
+type ApiPayload = Partial<DashboardPayload> & {
   error?: string;
   item?: OutreachQueueItem;
   settings?: AutonomousGrowthSettings;
+  autopilot?: AutopilotDashboard;
+  smokeTest?: AutopilotSmokeTestResult;
+  topProspectJobId?: string;
+  topProspectJobWarning?: string;
 };
 
 function apiError(payload: ApiPayload, fallback: string) {
@@ -97,6 +117,15 @@ function downloadCsv(queue: OutreachQueueItem[]) {
   URL.revokeObjectURL(link.href);
 }
 
+function downloadAutopilotCsv(autopilot: AutopilotDashboard) {
+  const blob = new Blob([autopilotQueueCsv(autopilot.exportRows)], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `webworkshop-autopilot-queue-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 function modeDescription(mode: AutonomousGrowthMode) {
   if (mode === "off") return "Nothing runs automatically.";
   if (mode === "dry_run") return "Finds, scores, generates previews and copy, then sends nothing.";
@@ -120,7 +149,7 @@ function profileFieldName(trade: string, field: "name" | "direction" | "strength
 }
 
 export function AutonomousGrowthWorkspace() {
-  const [dashboard, setDashboard] = useState<AutonomousGrowthDashboard | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -131,10 +160,10 @@ export function AutonomousGrowthWorkspace() {
     try {
       const response = await fetch("/api/engine/autonomous-growth", { cache: "no-store" });
       const payload = await response.json() as ApiPayload;
-      if (!response.ok || !payload.settings || !payload.metrics || !payload.queue || !payload.env) {
+      if (!response.ok || !payload.settings || !payload.metrics || !payload.queue || !payload.env || !payload.autopilot) {
         throw new Error(apiError(payload, "Unable to load Autonomous Growth."));
       }
-      setDashboard(payload as AutonomousGrowthDashboard);
+      setDashboard(payload as DashboardPayload);
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load Autonomous Growth.");
@@ -289,6 +318,75 @@ export function AutonomousGrowthWorkspace() {
     }
   }
 
+  function autopilotSettingsFromForm(form: FormData): Partial<AutopilotCampaignSettings> {
+    return {
+      campaignName: String(form.get("campaignName") ?? defaultAutopilotCampaignSettings.campaignName),
+      marketPresetId: String(form.get("marketPresetId") ?? defaultAutopilotCampaignSettings.marketPresetId),
+      customCities: String(form.get("customCities") ?? ""),
+      state: String(form.get("state") ?? defaultAutopilotCampaignSettings.state),
+      trade: String(form.get("trade") ?? defaultAutopilotCampaignSettings.trade) as AutopilotCampaignSettings["trade"],
+      prospectType: String(form.get("prospectType") ?? defaultAutopilotCampaignSettings.prospectType) as AutopilotCampaignSettings["prospectType"],
+      mode: String(form.get("mode") ?? defaultAutopilotCampaignSettings.mode) as AutopilotCampaignSettings["mode"],
+      outreachStyle: String(form.get("outreachStyle") ?? defaultAutopilotCampaignSettings.outreachStyle) as AutopilotCampaignSettings["outreachStyle"],
+      duration: String(form.get("duration") ?? defaultAutopilotCampaignSettings.duration) as AutopilotCampaignSettings["duration"],
+      cadence: String(form.get("cadence") ?? defaultAutopilotCampaignSettings.cadence) as AutopilotCampaignSettings["cadence"],
+      maxProspectsPerRun: Number(form.get("maxProspectsPerRun")),
+      maxPreviewsPerRun: Number(form.get("maxPreviewsPerRun")),
+      maxProspectsTotal: Number(form.get("maxProspectsTotal")),
+      excludePreviouslyReviewed: form.get("excludePreviouslyReviewed") === "on",
+      requirePreviewQuality85: form.get("requirePreviewQuality85") === "on",
+      requireWrittenContact: form.get("requireWrittenContact") === "on",
+      manualDmMode: form.get("manualDmMode") === "on",
+      loomNotifications: form.get("loomNotifications") === "on",
+      stopRules: {
+        pauseOnProviderFailure: form.get("pauseOnProviderFailure") === "on",
+        pauseOnBadFitRatePercent: Number(form.get("pauseOnBadFitRatePercent")),
+        pauseAfterWeakPreviewCount: Number(form.get("pauseAfterWeakPreviewCount")),
+        stopWhenTotalProspectsReached: form.get("stopWhenTotalProspectsReached") === "on",
+      },
+    };
+  }
+
+  async function postAutopilot(action: string, body: Record<string, unknown> = {}, successMessage = "Autopilot updated. Nothing was sent.") {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...body }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.autopilot) throw new Error(apiError(payload, "Unable to update Autopilot."));
+      await loadDashboard();
+      if (payload.smokeTest) {
+        setNotice(payload.smokeTest.passed
+          ? "Fake Autopilot smoke test passed. Fixtures were sorted into safe queues and nothing was sent."
+          : "Fake Autopilot smoke test found an issue. Review the Autopilot report.");
+      } else if (payload.topProspectJobId) {
+        setNotice(`${successMessage} Top Prospects job ${payload.topProspectJobId} started in the background.`);
+      } else if (payload.topProspectJobWarning) {
+        setNotice(`${successMessage} ${payload.topProspectJobWarning}`);
+      } else {
+        setNotice(successMessage);
+      }
+    } catch (autopilotError) {
+      setError(autopilotError instanceof Error ? autopilotError.message : "Unable to update Autopilot.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function startAutopilot(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await postAutopilot(
+      "start_autopilot",
+      { autopilotSettings: autopilotSettingsFromForm(new FormData(event.currentTarget)) },
+      "Autopilot campaign started in manual-safe mode. It prepared a report and sent nothing.",
+    );
+  }
+
   const groupedQueue = useMemo(() => {
     const queue = dashboard?.queue ?? [];
     const loomStatuses = ["Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"] as OutreachQueueStatus[];
@@ -303,7 +401,7 @@ export function AutonomousGrowthWorkspace() {
   if (loading) return <div className="engine-content"><LoadingState title="Loading Autonomous Growth" body="Checking settings, safety gates, and saved outreach queue items." /></div>;
   if (!dashboard) return <div className="engine-content"><EmptyState title="Autonomous Growth unavailable" body={error || "Reload the engine and try again."} action={() => void loadDashboard()} actionLabel="Retry" /></div>;
 
-  const { env, metrics, queue, settings } = dashboard;
+  const { autopilot, env, metrics, queue, settings } = dashboard;
   const autoPilotBlocked = settings.mode !== "auto_email_pilot" || settings.killSwitch || !env.autoSendEnabled || !env.hasResendApiKey || !env.hasFromEmail || !env.hasReplyToEmail || !env.hasPostalAddress;
 
   return (
@@ -329,6 +427,18 @@ export function AutonomousGrowthWorkspace() {
           <span>{metrics.loomNeeded} Loom Needed</span>
         </div>
       )}
+
+      <AutopilotCampaignPanel
+        autopilot={autopilot}
+        disabled={saving}
+        onDownload={() => downloadAutopilotCsv(autopilot)}
+        onPause={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")}
+        onResume={() => void postAutopilot("resume_autopilot", {}, "Autopilot resumed. No outreach was sent.")}
+        onRunBatch={() => void postAutopilot("run_autopilot_batch", {}, "Autopilot batch report refreshed. Nothing was sent.")}
+        onSmokeTest={() => void postAutopilot("run_fake_autopilot_smoke_test")}
+        onStart={startAutopilot}
+        onStop={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")}
+      />
 
       <section className="engine-panel">
         <div className="engine-panel__head">
@@ -475,6 +585,150 @@ export function AutonomousGrowthWorkspace() {
       </section>
     </div>
   );
+}
+
+function optionLabel(value: string) {
+  return value.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function AutopilotCampaignPanel({
+  autopilot,
+  disabled,
+  onDownload,
+  onPause,
+  onResume,
+  onRunBatch,
+  onSmokeTest,
+  onStart,
+  onStop,
+}: {
+  autopilot: AutopilotDashboard;
+  disabled: boolean;
+  onDownload: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onRunBatch: () => void;
+  onSmokeTest: () => void;
+  onStart: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onStop: () => void;
+}) {
+  const { campaign } = autopilot;
+  const settings = campaign.settings;
+  return (
+    <section className="engine-panel engine-autopilot-campaign" aria-labelledby="autopilot-campaign-title">
+      <div className="engine-panel__head">
+        <div>
+          <h2 id="autopilot-campaign-title">Autopilot Campaign</h2>
+          <p>One-click campaign setup for discovery, scoring, package generation, review queues, and next-run reports. It never sends email, DMs, contact forms, phone calls, or Looms automatically.</p>
+        </div>
+        <div className={`engine-autopilot-status engine-autopilot-status--${campaign.status}`}>
+          <b>{optionLabel(campaign.status)}</b>
+          <span>{campaign.latestRunReport ? `${campaign.latestRunReport.prospectsQualified} reviewable prospects in latest report` : "No batch report yet"}</span>
+        </div>
+      </div>
+
+      <div className="engine-autopilot-summary">
+        <article><span>Markets</span><strong>{autopilot.marketTargets.length}</strong><p>{autopilot.marketTargets.slice(0, 4).join(", ") || "Preset not selected"}</p></article>
+        <article><span>Provider load</span><strong>{autopilot.providerRequestEstimate}</strong><p>{autopilot.providerRequestEstimate > 20 ? "This may take longer and use more provider requests." : "Estimated requests for the next run."}</p></article>
+        <article><span>Trade</span><strong>{settings.trade}</strong><p>One trade at a time is recommended for better review quality.</p></article>
+        <article><span>Safety</span><strong>No auto-send</strong><p>Manual/social-safe mode stays on by default.</p></article>
+      </div>
+
+      <form className="engine-autopilot-form" onSubmit={onStart}>
+        <label>Campaign name<input defaultValue={settings.campaignName} name="campaignName" /></label>
+        <label>Market preset<select defaultValue={settings.marketPresetId} name="marketPresetId">
+          {recommendedMarketPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+        </select></label>
+        <label className="engine-form-wide">Custom cities<textarea defaultValue={settings.customCities} name="customCities" placeholder="Toledo, OH; Sylvania, OH; Perrysburg, OH" /></label>
+        <label>Fallback state<input defaultValue={settings.state} maxLength={2} name="state" /></label>
+        <label>Trade<select defaultValue={settings.trade} name="trade">
+          {[...tradeCategories, allCoreServiceTradesOption].map((trade) => <option key={trade} value={trade}>{trade}</option>)}
+        </select><small>New users should start with Landscaping, Pressure Washing, Cleaning, Painting, or Concrete before All Core Service Trades.</small></label>
+        <label>Prospect type<select defaultValue={settings.prospectType} name="prospectType">
+          {prospectSearchTypes.map((type) => <option key={type} value={type}>{type === "all" ? "All Prospect Types" : optionLabel(type)}</option>)}
+        </select></label>
+        <label>Prospect mode<select defaultValue={settings.mode} name="mode">
+          {prospectModes.map((mode) => <option key={mode} value={mode}>{optionLabel(mode)}</option>)}
+        </select></label>
+        <label>Outreach style<select defaultValue={settings.outreachStyle} name="outreachStyle">
+          {autopilotOutreachStyles.map((style) => <option key={style} value={style}>{style === "manual_social_safe" ? "Manual/social-safe" : optionLabel(style)}</option>)}
+        </select></label>
+        <label>Duration<select defaultValue={settings.duration} name="duration">
+          {autopilotDurations.map((duration) => <option key={duration} value={duration}>{duration === "run_once" ? "Run once" : optionLabel(duration)}</option>)}
+        </select></label>
+        <label>Cadence<select defaultValue={settings.cadence} name="cadence">
+          {autopilotCadences.map((cadence) => <option key={cadence} value={cadence}>{cadence === "manual_only" ? "Manual only" : optionLabel(cadence)}</option>)}
+        </select></label>
+        <label>Max prospects/run<input defaultValue={settings.maxProspectsPerRun} min="5" name="maxProspectsPerRun" type="number" /></label>
+        <label>Max previews/run<input defaultValue={settings.maxPreviewsPerRun} min="0" name="maxPreviewsPerRun" type="number" /></label>
+        <label>Max prospects total<input defaultValue={settings.maxProspectsTotal} min="1" name="maxProspectsTotal" type="number" /></label>
+        <label className="engine-toggle"><input defaultChecked={settings.excludePreviouslyReviewed} name="excludePreviouslyReviewed" type="checkbox" />Exclude previously reviewed prospects</label>
+        <label className="engine-toggle"><input defaultChecked={settings.requirePreviewQuality85} name="requirePreviewQuality85" type="checkbox" />Require preview QA 85+</label>
+        <label className="engine-toggle"><input defaultChecked={settings.requireWrittenContact} name="requireWrittenContact" type="checkbox" />Require written contact</label>
+        <label className="engine-toggle"><input defaultChecked={settings.manualDmMode} name="manualDmMode" type="checkbox" />Manual DM mode</label>
+        <label className="engine-toggle"><input defaultChecked={settings.loomNotifications} name="loomNotifications" type="checkbox" />Dashboard Loom notifications</label>
+        <label className="engine-toggle"><input defaultChecked={settings.stopRules.pauseOnProviderFailure} name="pauseOnProviderFailure" type="checkbox" />Pause on provider failure</label>
+        <label>Pause if bad-fit rate exceeds %<input defaultValue={settings.stopRules.pauseOnBadFitRatePercent} max="100" min="10" name="pauseOnBadFitRatePercent" type="number" /></label>
+        <label>Pause after weak previews<input defaultValue={settings.stopRules.pauseAfterWeakPreviewCount} min="1" name="pauseAfterWeakPreviewCount" type="number" /></label>
+        <label className="engine-toggle"><input defaultChecked={settings.stopRules.stopWhenTotalProspectsReached} name="stopWhenTotalProspectsReached" type="checkbox" />Stop at total prospect cap</label>
+        <footer className="engine-autopilot-actions">
+          <button className="engine-button engine-button--primary" disabled={disabled} type="submit">Start Autopilot</button>
+          <button className="engine-button" disabled={disabled || campaign.status !== "running"} onClick={onPause} type="button">Pause</button>
+          <button className="engine-button" disabled={disabled || campaign.status !== "paused"} onClick={onResume} type="button">Resume</button>
+          <button className="engine-button" disabled={disabled || campaign.status === "stopped"} onClick={onStop} type="button">Stop</button>
+          <button className="engine-button" disabled={disabled} onClick={onRunBatch} type="button">Run next batch now</button>
+          <button className="engine-button" disabled={disabled} onClick={onSmokeTest} type="button">Run Fake Autopilot Smoke Test</button>
+          <button className="engine-button" disabled={!autopilot.exportRows.length} onClick={onDownload} type="button">Export CSV</button>
+        </footer>
+      </form>
+
+      <div className="engine-autopilot-queues" aria-label="Autopilot queue summary">
+        <p className="engine-autopilot-queue-note">Queues: Ready for Manual DM, Needs Preview Review, Loom Needed, Email Draft Ready, Blocked / Bad Fit, Needs Human Research. No email, form, social, phone, or Loom outreach is sent automatically.</p>
+        {autopilotQueueKeys.map((key) => (
+          <article key={key}>
+            <span>{autopilotQueueLabels[key]}</span>
+            <strong>{campaign.queueCounts[key]}</strong>
+            <p>{queueHelpText(key)}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="engine-autopilot-report-grid">
+        <section>
+          <h3>Run report</h3>
+          {campaign.latestRunReport ? (
+            <dl>
+              <div><dt>Latest status</dt><dd>{optionLabel(campaign.latestRunReport.status)}</dd></div>
+              <div><dt>Discovered</dt><dd>{campaign.latestRunReport.prospectsDiscovered}</dd></div>
+              <div><dt>Qualified</dt><dd>{campaign.latestRunReport.prospectsQualified}</dd></div>
+              <div><dt>Packages</dt><dd>{campaign.latestRunReport.packagesGenerated}</dd></div>
+              <div><dt>Next recommendation</dt><dd>{campaign.latestRunReport.nextRunRecommendation}</dd></div>
+            </dl>
+          ) : <p>No Autopilot batch has run yet. Start Autopilot or run the fake smoke test to create a report.</p>}
+        </section>
+        <section>
+          <h3>Dashboard notifications</h3>
+          <ul>
+            {campaign.notifications.map((notification) => (
+              <li className={`engine-autopilot-notice engine-autopilot-notice--${notification.level}`} key={notification.id}>
+                <b>{notification.title}</b>
+                <span>{notification.body}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function queueHelpText(key: AutopilotQueueKey) {
+  if (key === "readyForManualDm") return "Social/manual prospects with link-free first DM copy.";
+  if (key === "needsPreviewReview") return "Preview or copy needs polish before outreach.";
+  if (key === "loomNeeded") return "Prospects who said yes and need a manual Loom.";
+  if (key === "emailDraftReady") return "Written outreach draft exists, still needs review.";
+  if (key === "blockedBadFit") return "Hard blockers, bad fit, or written-contact rules.";
+  return "Needs a person to research a usable contact path.";
 }
 
 function Gate({ detail, label, passed }: { detail?: string; label: string; passed: boolean }) {

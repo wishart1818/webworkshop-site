@@ -507,7 +507,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-market-presets__head">
             <h3>Recommended Markets</h3>
             <p>Start with one preset and one trade first. Larger multi-city searches may take longer and use more provider requests.</p>
-            <p>Click Use this market to fill the city field, or click a trade to fill the market and trade together. You still need to click Find Top Prospects.</p>
+            <p>Click Use this market to fill the city field, or click a trade to fill the market and trade together. You still need to click Find Top Prospects or Start Autopilot.</p>
           </div>
           <div className="engine-market-grid">
             {recommendedMarketPresets.map((preset) => (

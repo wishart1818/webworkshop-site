@@ -2932,6 +2932,215 @@ body:has(.engine-shell) {
   justify-content: flex-end;
 }
 
+.engine-autopilot-campaign {
+  display: grid;
+  gap: 1rem;
+}
+
+.engine-autopilot-status {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 14rem;
+  border: 1px solid #c7d9d2;
+  background: #f6fbf8;
+  padding: 0.8rem;
+}
+
+.engine-autopilot-status b,
+.engine-autopilot-status span {
+  margin: 0;
+}
+
+.engine-autopilot-status b {
+  color: var(--engine-ink);
+  font-size: 0.95rem;
+}
+
+.engine-autopilot-status span {
+  color: var(--engine-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.engine-autopilot-status--running {
+  border-color: #92caba;
+  background: #effcf7;
+}
+
+.engine-autopilot-status--paused {
+  border-color: #d8bc74;
+  background: #fff9e8;
+}
+
+.engine-autopilot-status--stopped {
+  border-color: #d8b5a7;
+  background: #fff6f2;
+}
+
+.engine-autopilot-summary,
+.engine-autopilot-queues {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.engine-autopilot-summary article,
+.engine-autopilot-queues article,
+.engine-autopilot-report-grid section {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--engine-line);
+  background: #f8faf8;
+  padding: 0.85rem;
+}
+
+.engine-autopilot-summary span,
+.engine-autopilot-queues span,
+.engine-autopilot-report-grid h3,
+.engine-autopilot-report-grid dt {
+  color: var(--engine-accent-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.engine-autopilot-summary strong,
+.engine-autopilot-queues strong {
+  color: var(--engine-ink);
+  font-size: 1.25rem;
+}
+
+.engine-autopilot-summary p,
+.engine-autopilot-queues p,
+.engine-autopilot-report-grid p,
+.engine-autopilot-report-grid dd,
+.engine-autopilot-notice span {
+  margin: 0;
+  color: #425850;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.engine-autopilot-queue-note {
+  grid-column: 1 / -1;
+}
+
+.engine-autopilot-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+  border: 1px solid var(--engine-line);
+  background: #fbfdfb;
+  padding: 0.9rem;
+}
+
+.engine-autopilot-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--engine-muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.engine-autopilot-form input,
+.engine-autopilot-form select,
+.engine-autopilot-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--engine-line-strong);
+  background: white;
+  color: var(--engine-ink);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  font-weight: 700;
+}
+
+.engine-autopilot-form textarea {
+  min-height: 6rem;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.engine-autopilot-form small {
+  color: #526760;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.engine-autopilot-form .engine-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.75rem;
+}
+
+.engine-autopilot-form .engine-toggle input {
+  width: auto;
+}
+
+.engine-autopilot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 0.55rem;
+  justify-content: flex-end;
+}
+
+.engine-autopilot-actions .engine-button {
+  min-width: 9.5rem;
+}
+
+.engine-autopilot-report-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.engine-autopilot-report-grid h3,
+.engine-autopilot-report-grid dl,
+.engine-autopilot-report-grid ul {
+  margin: 0;
+}
+
+.engine-autopilot-report-grid dl,
+.engine-autopilot-report-grid ul {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.engine-autopilot-report-grid dl div,
+.engine-autopilot-notice {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.65rem;
+}
+
+.engine-autopilot-report-grid dd {
+  font-weight: 700;
+}
+
+.engine-autopilot-notice {
+  list-style: none;
+}
+
+.engine-autopilot-notice b {
+  color: var(--engine-ink);
+  font-size: 0.82rem;
+}
+
+.engine-autopilot-notice--warning {
+  border-color: #e2c17b;
+  background: #fffaf0;
+}
+
+.engine-autopilot-notice--success {
+  border-color: #a9d7c9;
+  background: #f3fcf8;
+}
+
 .engine-style-profile-editor {
   display: grid;
   gap: 0.85rem;
@@ -4245,6 +4454,12 @@ body:has(.engine-shell) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .engine-autopilot-form,
+  .engine-autopilot-summary,
+  .engine-autopilot-queues {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .engine-autonomous-table__head {
     display: none;
   }
@@ -4618,11 +4833,25 @@ body:has(.engine-shell) {
     grid-template-columns: 1fr;
   }
 
+  .engine-autopilot-form,
+  .engine-autopilot-summary,
+  .engine-autopilot-queues,
+  .engine-autopilot-report-grid {
+    grid-template-columns: 1fr;
+  }
+
   .engine-autonomous-settings footer,
+  .engine-autopilot-actions,
+  .engine-autopilot-actions .engine-button,
   .engine-autonomous-settings footer .engine-button,
   .engine-autonomous-table .engine-result-actions .engine-button,
   .engine-autonomous-table .engine-result-actions select {
     width: 100%;
+  }
+
+  .engine-autopilot-actions {
+    display: grid;
+    justify-content: stretch;
   }
 
   .engine-autonomous-table article {

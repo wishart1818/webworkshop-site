@@ -5,6 +5,7 @@ import { POST as discover } from "../app/api/engine/discover/route";
 import { GET as list, POST as create, PUT as update } from "../app/api/engine/prospects/route";
 import { GET as systemStatus } from "../app/api/engine/system/route";
 import { GET as latestSelfCheck, POST as runSelfCheck } from "../app/api/engine/system/self-check/route";
+import { GET as autonomousDashboard, POST as autonomousAction } from "../app/api/engine/autonomous-growth/route";
 import { POST as updateOutreachPackage } from "../app/api/engine/top-prospects/results/[resultId]/package/route";
 import {
   memoryAuditEventsForTests,
@@ -15,10 +16,12 @@ import {
 import { seedProspects } from "../lib/prospect-engine";
 import { resetProspectMemoryForTests } from "../lib/prospect-repository";
 import { resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
+import { resetAutonomousGrowthMemoryForTests } from "../lib/autonomous-growth-repository";
 
 test.beforeEach(() => {
   resetProspectMemoryForTests();
   resetOperationalMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
 });
 
 test("system API reports development health and recent audit activity", async () => {
@@ -46,10 +49,48 @@ test("system self-check route stores a safe report for the System page", async (
   assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "domain_mismatch_filter"));
   assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "directory_only_logic"));
   assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "self_review_no_send"));
+  assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "autopilot_smoke_test"));
+  assert.ok(runPayload.selfCheck.passed.some((item: { key: string }) => item.key === "autopilot_defaults_safe"));
 
   const system = await systemStatus();
   const systemPayload = await system.json();
   assert.equal(systemPayload.selfCheck.lastRunAt, runPayload.selfCheck.lastRunAt);
+});
+
+test("Autopilot dashboard actions start, report, and smoke-test without sending", async () => {
+  const initial = await autonomousDashboard();
+  const initialPayload = await initial.json();
+  assert.equal(initial.status, 200);
+  assert.equal(initialPayload.autopilot.campaign.status, "draft");
+  assert.equal(initialPayload.autopilot.campaign.settings.excludePreviouslyReviewed, true);
+
+  const started = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "start_autopilot",
+      autopilotSettings: {
+        campaignName: "API smoke campaign",
+        customCities: "Toledo, OH; Sylvania, OH",
+        state: "OH",
+        trade: "Pressure Washing",
+      },
+    }),
+  }));
+  const startedPayload = await started.json();
+  assert.equal(started.status, 200);
+  assert.equal(startedPayload.autopilot.campaign.status, "running");
+  assert.equal(startedPayload.autopilot.marketTargets.length, 2);
+  assert.match(startedPayload.autopilot.campaign.notifications[0].body, /Nothing was sent|Nothing will be contacted automatically/);
+
+  const smoke = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
+    method: "POST",
+    body: JSON.stringify({ action: "run_fake_autopilot_smoke_test" }),
+  }));
+  const smokePayload = await smoke.json();
+  assert.equal(smoke.status, 200);
+  assert.equal(smokePayload.smokeTest.passed, true);
+  assert.equal(smokePayload.smokeTest.report.fakeOnly, true);
+  assert.ok(smokePayload.smokeTest.fixtureResults.some((fixture: { actualQueue: string }) => fixture.actualQueue === "blockedBadFit"));
 });
 
 test("system audit status remains available when PostgreSQL is unreachable", async () => {
