@@ -3020,6 +3020,32 @@ body:has(.engine-shell) {
   line-height: 1.5;
 }
 
+.engine-autopilot-action-card {
+  display: grid;
+  gap: 0.8rem;
+  border: 1px solid #b7d8cd;
+  background: #f2fbf7;
+  padding: 0.95rem;
+}
+
+.engine-autopilot-action-card__copy {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.engine-autopilot-action-card__copy b {
+  color: var(--engine-ink);
+  font-size: 0.95rem;
+}
+
+.engine-autopilot-action-card__copy p,
+.engine-autopilot-ready-note {
+  margin: 0;
+  color: #30473f;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
 .engine-autopilot-queue-note {
   grid-column: 1 / -1;
 }
@@ -3084,11 +3110,78 @@ body:has(.engine-shell) {
   flex-wrap: wrap;
   grid-column: 1 / -1;
   gap: 0.55rem;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .engine-autopilot-actions .engine-button {
-  min-width: 9.5rem;
+  min-width: 10.5rem;
+  border-color: #8ebcad;
+  background: white;
+  color: var(--engine-ink);
+}
+
+.engine-autopilot-actions .engine-button--primary {
+  background: var(--engine-accent);
+  color: white;
+}
+
+.engine-autopilot-fake-button {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 12rem;
+  border-color: #c89b47 !important;
+  background: #fff8e7 !important;
+  color: #4d2d00 !important;
+  text-align: left;
+}
+
+.engine-autopilot-fake-button span {
+  font-weight: 900;
+}
+
+.engine-autopilot-fake-button small {
+  color: #725421;
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.engine-autopilot-disabled-reasons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-autopilot-disabled-reasons li {
+  display: grid;
+  gap: 0.15rem;
+  border: 1px solid #e2c17b;
+  background: #fffaf0;
+  padding: 0.55rem;
+}
+
+.engine-autopilot-disabled-reasons b {
+  color: #4d2d00;
+  font-size: 0.72rem;
+}
+
+.engine-autopilot-disabled-reasons span {
+  color: #725421;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.engine-autopilot-form-footer {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.7rem;
+}
+
+.engine-autopilot-form-footer > .engine-button {
+  justify-self: end;
 }
 
 .engine-autopilot-report-grid {
@@ -4456,7 +4549,8 @@ body:has(.engine-shell) {
 
   .engine-autopilot-form,
   .engine-autopilot-summary,
-  .engine-autopilot-queues {
+  .engine-autopilot-queues,
+  .engine-autopilot-disabled-reasons {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -4836,6 +4930,7 @@ body:has(.engine-shell) {
   .engine-autopilot-form,
   .engine-autopilot-summary,
   .engine-autopilot-queues,
+  .engine-autopilot-disabled-reasons,
   .engine-autopilot-report-grid {
     grid-template-columns: 1fr;
   }
@@ -4843,6 +4938,7 @@ body:has(.engine-shell) {
   .engine-autonomous-settings footer,
   .engine-autopilot-actions,
   .engine-autopilot-actions .engine-button,
+  .engine-autopilot-form-footer > .engine-button,
   .engine-autonomous-settings footer .engine-button,
   .engine-autonomous-table .engine-result-actions .engine-button,
   .engine-autonomous-table .engine-result-actions select {
@@ -4852,6 +4948,10 @@ body:has(.engine-shell) {
   .engine-autopilot-actions {
     display: grid;
     justify-content: stretch;
+  }
+
+  .engine-autopilot-form-footer > .engine-button {
+    justify-self: stretch;
   }
 
   .engine-autonomous-table article {

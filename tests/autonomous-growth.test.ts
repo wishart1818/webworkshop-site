@@ -229,7 +229,7 @@ test("Autopilot defaults to one-trade manual-safe review mode", () => {
   assert.equal(defaultAutopilotCampaignSettings.requireWrittenContact, true);
   assert.notEqual(defaultAutopilotCampaignSettings.trade, "All Core Service Trades");
   assert.ok(autopilotActionLabels.includes("Start Autopilot"));
-  assert.ok(autopilotActionLabels.includes("Run Fake Autopilot Smoke Test"));
+  assert.ok(autopilotActionLabels.includes("Run Fake Smoke Test"));
   assert.ok(autopilotProviderRequestEstimate(defaultAutopilotCampaignSettings) > 0);
 });
 

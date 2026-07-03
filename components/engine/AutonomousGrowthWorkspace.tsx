@@ -591,6 +591,92 @@ function optionLabel(value: string) {
   return value.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
+type AutopilotActionReasons = Record<"start" | "smoke" | "batch" | "pause" | "resume" | "stop", string[]>;
+
+function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean): AutopilotActionReasons {
+  const { campaign, marketTargets } = autopilot;
+  const { settings } = campaign;
+  const reasons: AutopilotActionReasons = {
+    start: [],
+    smoke: [],
+    batch: [],
+    pause: [],
+    resume: [],
+    stop: [],
+  };
+  if (saving) {
+    for (const key of Object.keys(reasons) as Array<keyof AutopilotActionReasons>) reasons[key].push("saving in progress");
+  }
+  if (!autopilot.databaseConfigured) reasons.start.push("no database connection");
+  if (!settings.marketPresetId && !settings.customCities.trim()) reasons.start.push("missing market");
+  if (!marketTargets.length) reasons.start.push(settings.customCities.trim() ? "invalid city" : "missing market");
+  if (!settings.trade) reasons.start.push("missing trade");
+  if (!settings.excludePreviouslyReviewed || !settings.requirePreviewQuality85 || !settings.requireWrittenContact || !settings.manualDmMode) {
+    reasons.start.push("safety setting required");
+  }
+  if (campaign.status === "running") reasons.start.push("campaign already running");
+  if (campaign.status !== "running") reasons.pause.push("campaign is not running");
+  if (campaign.status !== "paused") reasons.resume.push("campaign is not paused");
+  if (campaign.status === "stopped") reasons.stop.push("campaign already stopped");
+  return reasons;
+}
+
+function AutopilotActionRow({
+  autopilot,
+  disabled,
+  formId,
+  insideForm = false,
+  onPause,
+  onResume,
+  onRunBatch,
+  onSmokeTest,
+  onStop,
+}: {
+  autopilot: AutopilotDashboard;
+  disabled: boolean;
+  formId: string;
+  insideForm?: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  onRunBatch: () => void;
+  onSmokeTest: () => void;
+  onStop: () => void;
+}) {
+  const reasons = autopilotActionReasons(autopilot, disabled);
+  const disabledSummary = [
+    ["Start Autopilot", reasons.start],
+    ["Run Fake Smoke Test", reasons.smoke],
+    ["Run next batch now", reasons.batch],
+    ["Pause", reasons.pause],
+    ["Resume", reasons.resume],
+    ["Stop", reasons.stop],
+  ].filter(([, values]) => (values as string[]).length) as Array<[string, string[]]>;
+  return (
+    <div className="engine-autopilot-action-card">
+      <div className="engine-autopilot-action-card__copy">
+        <b>Campaign actions</b>
+        <p>Start Autopilot prepares prospects, previews, scripts, and queues. It does not send emails, DMs, forms, phone calls, or Looms automatically.</p>
+      </div>
+      <div className="engine-autopilot-actions" aria-label="Autopilot Campaign actions">
+        <button className="engine-button engine-button--primary" disabled={Boolean(reasons.start.length)} form={insideForm ? undefined : formId} title={reasons.start.join(", ")} type="submit">Start Autopilot</button>
+        <button className="engine-button engine-autopilot-fake-button" disabled={Boolean(reasons.smoke.length)} onClick={onSmokeTest} title={reasons.smoke.join(", ")} type="button">
+          <span>Run Fake Smoke Test</span>
+          <small>Uses fake leads only. No provider calls. No outreach.</small>
+        </button>
+        <button className="engine-button" disabled={Boolean(reasons.batch.length)} onClick={onRunBatch} title={reasons.batch.join(", ")} type="button">Run next batch now</button>
+        <button className="engine-button" disabled={Boolean(reasons.pause.length)} onClick={onPause} title={reasons.pause.join(", ")} type="button">Pause</button>
+        <button className="engine-button" disabled={Boolean(reasons.resume.length)} onClick={onResume} title={reasons.resume.join(", ")} type="button">Resume</button>
+        <button className="engine-button" disabled={Boolean(reasons.stop.length)} onClick={onStop} title={reasons.stop.join(", ")} type="button">Stop</button>
+      </div>
+      {disabledSummary.length ? (
+        <ul className="engine-autopilot-disabled-reasons">
+          {disabledSummary.map(([label, values]) => <li key={label}><b>{label}</b><span>{values.join(", ")}</span></li>)}
+        </ul>
+      ) : <p className="engine-autopilot-ready-note">All required safety settings are on. Start Autopilot will prepare work only.</p>}
+    </div>
+  );
+}
+
 function AutopilotCampaignPanel({
   autopilot,
   disabled,
@@ -614,6 +700,7 @@ function AutopilotCampaignPanel({
 }) {
   const { campaign } = autopilot;
   const settings = campaign.settings;
+  const formId = "engine-autopilot-campaign-form";
   return (
     <section className="engine-panel engine-autopilot-campaign" aria-labelledby="autopilot-campaign-title">
       <div className="engine-panel__head">
@@ -627,6 +714,17 @@ function AutopilotCampaignPanel({
         </div>
       </div>
 
+      <AutopilotActionRow
+        autopilot={autopilot}
+        disabled={disabled}
+        formId={formId}
+        onPause={onPause}
+        onResume={onResume}
+        onRunBatch={onRunBatch}
+        onSmokeTest={onSmokeTest}
+        onStop={onStop}
+      />
+
       <div className="engine-autopilot-summary">
         <article><span>Markets</span><strong>{autopilot.marketTargets.length}</strong><p>{autopilot.marketTargets.slice(0, 4).join(", ") || "Preset not selected"}</p></article>
         <article><span>Provider load</span><strong>{autopilot.providerRequestEstimate}</strong><p>{autopilot.providerRequestEstimate > 20 ? "This may take longer and use more provider requests." : "Estimated requests for the next run."}</p></article>
@@ -634,7 +732,7 @@ function AutopilotCampaignPanel({
         <article><span>Safety</span><strong>No auto-send</strong><p>Manual/social-safe mode stays on by default.</p></article>
       </div>
 
-      <form className="engine-autopilot-form" onSubmit={onStart}>
+      <form className="engine-autopilot-form" id={formId} onSubmit={onStart}>
         <label>Campaign name<input defaultValue={settings.campaignName} name="campaignName" /></label>
         <label>Market preset<select defaultValue={settings.marketPresetId} name="marketPresetId">
           {recommendedMarketPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
@@ -671,13 +769,18 @@ function AutopilotCampaignPanel({
         <label>Pause if bad-fit rate exceeds %<input defaultValue={settings.stopRules.pauseOnBadFitRatePercent} max="100" min="10" name="pauseOnBadFitRatePercent" type="number" /></label>
         <label>Pause after weak previews<input defaultValue={settings.stopRules.pauseAfterWeakPreviewCount} min="1" name="pauseAfterWeakPreviewCount" type="number" /></label>
         <label className="engine-toggle"><input defaultChecked={settings.stopRules.stopWhenTotalProspectsReached} name="stopWhenTotalProspectsReached" type="checkbox" />Stop at total prospect cap</label>
-        <footer className="engine-autopilot-actions">
-          <button className="engine-button engine-button--primary" disabled={disabled} type="submit">Start Autopilot</button>
-          <button className="engine-button" disabled={disabled || campaign.status !== "running"} onClick={onPause} type="button">Pause</button>
-          <button className="engine-button" disabled={disabled || campaign.status !== "paused"} onClick={onResume} type="button">Resume</button>
-          <button className="engine-button" disabled={disabled || campaign.status === "stopped"} onClick={onStop} type="button">Stop</button>
-          <button className="engine-button" disabled={disabled} onClick={onRunBatch} type="button">Run next batch now</button>
-          <button className="engine-button" disabled={disabled} onClick={onSmokeTest} type="button">Run Fake Autopilot Smoke Test</button>
+        <footer className="engine-autopilot-form-footer">
+          <AutopilotActionRow
+            autopilot={autopilot}
+            disabled={disabled}
+            formId={formId}
+            insideForm
+            onPause={onPause}
+            onResume={onResume}
+            onRunBatch={onRunBatch}
+            onSmokeTest={onSmokeTest}
+            onStop={onStop}
+          />
           <button className="engine-button" disabled={!autopilot.exportRows.length} onClick={onDownload} type="button">Export CSV</button>
         </footer>
       </form>

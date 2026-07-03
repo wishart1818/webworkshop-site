@@ -63,7 +63,7 @@ export const autopilotActionLabels = [
   "Resume Autopilot",
   "Stop Autopilot",
   "Run next batch now",
-  "Run Fake Autopilot Smoke Test",
+  "Run Fake Smoke Test",
 ] as const;
 
 export type AutopilotStopRules = {
@@ -141,6 +141,7 @@ export type AutopilotDashboard = {
   queues: Record<AutopilotQueueKey, OutreachQueueItem[]>;
   providerRequestEstimate: number;
   marketTargets: string[];
+  databaseConfigured: boolean;
   safeModeSummary: string[];
   exportRows: Array<Record<string, string | number>>;
 };
@@ -566,7 +567,7 @@ export function runFakeAutopilotSmokeTest(campaign: AutopilotCampaign, now = new
   };
 }
 
-export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]): AutopilotDashboard {
+export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false): AutopilotDashboard {
   const queues = autopilotQueuesForItems(queue);
   const marketTargets = autopilotMarketTargets(campaign.settings).map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`);
   return {
@@ -574,6 +575,7 @@ export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
     queues,
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     marketTargets,
+    databaseConfigured,
     safeModeSummary: [
       "Manual/social-safe mode is the default.",
       "The first Facebook DM never includes a preview link.",
