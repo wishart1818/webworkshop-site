@@ -146,6 +146,7 @@ model AutonomousGrowthSettings {
   maxEmailsSentPerDay        Int      @default(5)
   emailCooldownMinutes       Int      @default(7)
   followUpsEnabled           Boolean  @default(false)
+  styleProfiles              Json     @default("{}")
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 }
@@ -169,6 +170,14 @@ model OutreachQueueItem {
   loomTalkingPoints   String
   eligibilityReason   String
   blockedReason       String?
+  reviewScore         Int      @default(0)
+  reviewSummary       String   @default("")
+  improvementSuggestions Json  @default("[]")
+  detectedIssues      Json     @default("[]")
+  recommendedNextAction String @default("Needs Human Review")
+  regenerationPlan    Json     @default("[]")
+  rewritePlan         Json     @default("[]")
+  feedbackLabels      Json     @default("[]")
   status              String   @default("Draft")
   sourceProvider      String?
   queuedDate          DateTime?
@@ -183,6 +192,68 @@ model OutreachQueueItem {
   @@index([status, createdAt])
   @@index([trade, city])
   @@index([prospectId])
+}
+
+model AutonomousFeedbackEvent {
+  id                  String   @id @default(cuid())
+  queueItemId         String
+  topProspectResultId String?
+  businessName        String
+  trade               String
+  city                String
+  feedbackLabel       String
+  feedbackCategory    String
+  note                String?
+  createdAt           DateTime @default(now())
+
+  @@index([queueItemId, createdAt])
+  @@index([trade, city])
+  @@index([feedbackLabel, createdAt])
+}
+
+model AutonomousLearningEvent {
+  id                  String   @id @default(cuid())
+  queueItemId         String
+  topProspectResultId String?
+  trade               String
+  city                String
+  leadSource          String
+  previewStyle        String
+  subjectLineAngle    String
+  outreachAngle       String
+  contactMethod       String
+  previewQualityScore Int
+  reviewScore         Int      @default(0)
+  replyStatus         String?
+  positiveReplyStatus String?
+  lostReason          String?
+  manualNote          String?
+  feedbackLabels      Json     @default("[]")
+  createdAt           DateTime @default(now())
+
+  @@index([trade, city])
+  @@index([leadSource, createdAt])
+  @@index([previewStyle, createdAt])
+  @@index([createdAt])
+}
+
+model AutonomousRunReview {
+  id                         String   @id @default(cuid())
+  mode                       String
+  prospectsScanned           Int      @default(0)
+  prospectsKept              Int      @default(0)
+  prospectsBlocked           Int      @default(0)
+  previewsGenerated          Int      @default(0)
+  previewsPassed             Int      @default(0)
+  previewsFailed             Int      @default(0)
+  commonPreviewIssues        Json     @default("[]")
+  commonLeadIssues           Json     @default("[]")
+  outreachQualityNotes       Json     @default("[]")
+  recommendedFixes           Json     @default("[]")
+  summary                    String
+  createdAt                  DateTime @default(now())
+
+  @@index([mode, createdAt])
 }
 
 model Analysis {

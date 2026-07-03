@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import {
   getAutonomousGrowthDashboard,
+  recordAutonomousFeedback,
+  rewriteOutreachQueueItem,
   updateAutonomousGrowthSettings,
   updateOutreachQueueStatus,
 } from "@/lib/autonomous-growth-repository";
-import { outreachQueueStatuses, type AutonomousGrowthSettings, type OutreachQueueStatus } from "@/lib/autonomous-growth";
+import {
+  autonomousFeedbackLabels,
+  outreachQueueStatuses,
+  type AutonomousFeedbackLabel,
+  type AutonomousGrowthSettings,
+  type OutreachQueueStatus,
+} from "@/lib/autonomous-growth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +33,8 @@ export async function POST(request: Request) {
       settings?: Partial<AutonomousGrowthSettings>;
       queueItemId?: string;
       status?: OutreachQueueStatus;
+      feedbackLabel?: AutonomousFeedbackLabel;
+      note?: string;
     };
     if (payload.action === "update_settings") {
       return NextResponse.json({ settings: await updateAutonomousGrowthSettings(payload.settings ?? {}) });
@@ -35,6 +45,21 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Select a supported queue status." }, { status: 400 });
       }
       const item = await updateOutreachQueueStatus(payload.queueItemId, payload.status);
+      if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+      return NextResponse.json({ item });
+    }
+    if (payload.action === "record_feedback") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      if (!payload.feedbackLabel || !autonomousFeedbackLabels.includes(payload.feedbackLabel)) {
+        return NextResponse.json({ error: "Select a supported feedback label." }, { status: 400 });
+      }
+      const item = await recordAutonomousFeedback(payload.queueItemId, payload.feedbackLabel, payload.note);
+      if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+      return NextResponse.json({ item });
+    }
+    if (payload.action === "rewrite_outreach") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      const item = await rewriteOutreachQueueItem(payload.queueItemId);
       if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item });
     }

@@ -57,12 +57,23 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Auto Email Pilot/);
   assert.match(autonomousGrowthWorkspace, /Export CSV/);
   assert.match(autonomousGrowthWorkspace, /Auto Email Pilot gates/);
-  assert.match(autonomousGrowthWorkspace, /Regenerate preview/);
+  assert.match(autonomousGrowthWorkspace, /Learning &amp; Review/);
+  assert.match(autonomousGrowthWorkspace, /Latest self-review summary/);
+  assert.match(autonomousGrowthWorkspace, /Recommendations for next run/);
+  assert.match(autonomousGrowthWorkspace, /Regenerate with Fixes/);
+  assert.match(autonomousGrowthWorkspace, /Rewrite Outreach/);
+  assert.match(autonomousGrowthWorkspace, /autonomousFeedbackLabels/);
+  assert.match(autonomousGrowthWorkspace, /Editable trade style profiles/);
   assert.match(autonomousGrowthWorkspace, /Mark reviewed/);
   assert.match(autonomousGrowthWorkspace, /Dry-run and review queue/);
+  assert.match(autonomousGrowthWorkspace, /Export CSV/);
+  assert.match(autonomousGrowthWorkspace, /review score/);
   assert.match(css, /\.engine-autonomous-hero\s*{\s*display: grid;/);
   assert.match(css, /\.engine-safety-grid\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autonomous-table \.engine-result-actions\s*{\s*display: flex;\s*flex-wrap: wrap;/);
+  assert.match(css, /\.engine-learning-summary\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-feedback-controls\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-reply-table\s*{\s*display: grid;/);
 });
 
 test("protected prospect previews remain readable and business-themed on phones", () => {

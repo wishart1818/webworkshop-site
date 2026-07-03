@@ -1,17 +1,28 @@
 import type { Prisma } from "@prisma/client";
 import {
+  autonomousFeedbackLabels,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
   evaluatePreviewQualityGate,
+  evaluateSelfReview,
+  generateAutonomousRunReview,
+  learningSummaryForQueue,
   loomTalkingPoints,
   manualDmScript,
   normalizeAutonomousGrowthSettings,
   outreachQueueStatuses,
   outreachEnvironment,
+  outreachRewritePlan,
+  previewRegenerationPlan,
   queueStatusForPackage,
+  rewriteOutreachWithFixes,
+  type AutonomousFeedbackLabel,
   type AutonomousGrowthDashboard,
   type AutonomousGrowthMetrics,
   type AutonomousGrowthSettings,
+  type AutonomousLearningSummary,
+  type AutonomousNextAction,
+  type AutonomousRunReview,
   type OutreachQueueItem,
   type OutreachQueueStatus,
 } from "@/lib/autonomous-growth";
@@ -23,6 +34,7 @@ import { evaluateOutreachEmailQuality, type OutreachPreference } from "@/lib/top
 const globalAutonomous = globalThis as typeof globalThis & {
   autonomousGrowthSettingsMemory?: AutonomousGrowthSettings;
   outreachQueueMemory?: OutreachQueueItem[];
+  autonomousRunReviewsMemory?: AutonomousRunReview[];
 };
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
@@ -39,12 +51,22 @@ function memoryQueue() {
   return globalAutonomous.outreachQueueMemory;
 }
 
-function jsonArray(value: Prisma.JsonValue): string[] {
+function memoryRunReviews() {
+  if (!globalAutonomous.autonomousRunReviewsMemory) globalAutonomous.autonomousRunReviewsMemory = [];
+  return globalAutonomous.autonomousRunReviewsMemory;
+}
+
+function jsonArray(value: Prisma.JsonValue | null | undefined): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function jsonObject<T>(value: Prisma.JsonValue | null | undefined, fallback: T): T {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as T : fallback;
 }
 
 type SettingsRow = Prisma.AutonomousGrowthSettingsGetPayload<Record<string, never>>;
 type QueueRow = Prisma.OutreachQueueItemGetPayload<Record<string, never>>;
+type ReviewRow = Prisma.AutonomousRunReviewGetPayload<Record<string, never>>;
 
 function settingsToDomain(row: SettingsRow): AutonomousGrowthSettings {
   return normalizeAutonomousGrowthSettings({
@@ -60,8 +82,16 @@ function settingsToDomain(row: SettingsRow): AutonomousGrowthSettings {
     maxEmailsSentPerDay: row.maxEmailsSentPerDay,
     emailCooldownMinutes: row.emailCooldownMinutes,
     followUpsEnabled: row.followUpsEnabled,
+    styleProfiles: jsonObject(row.styleProfiles, defaultAutonomousGrowthSettings.styleProfiles),
     updatedAt: row.updatedAt.toISOString(),
   });
+}
+
+function normalizeNextAction(value: string): AutonomousNextAction {
+  if (["Keep", "Regenerate Preview", "Rewrite Outreach", "Needs Human Review", "Skip", "Bad Fit", "Never Contact"].includes(value)) {
+    return value as AutonomousNextAction;
+  }
+  return "Needs Human Review";
 }
 
 function queueToDomain(row: QueueRow): OutreachQueueItem {
@@ -84,6 +114,14 @@ function queueToDomain(row: QueueRow): OutreachQueueItem {
     loomTalkingPoints: row.loomTalkingPoints,
     eligibilityReason: row.eligibilityReason,
     blockedReason: row.blockedReason ?? "",
+    reviewScore: row.reviewScore,
+    reviewSummary: row.reviewSummary,
+    improvementSuggestions: jsonArray(row.improvementSuggestions),
+    detectedIssues: jsonArray(row.detectedIssues),
+    recommendedNextAction: normalizeNextAction(row.recommendedNextAction),
+    regenerationPlan: jsonArray(row.regenerationPlan),
+    rewritePlan: jsonArray(row.rewritePlan),
+    feedbackLabels: jsonArray(row.feedbackLabels).filter((label): label is AutonomousFeedbackLabel => autonomousFeedbackLabels.includes(label as AutonomousFeedbackLabel)),
     status: row.status as OutreachQueueStatus,
     sourceProvider: row.sourceProvider ?? "",
     queuedDate: row.queuedDate?.toISOString() ?? "",
@@ -93,6 +131,25 @@ function queueToDomain(row: QueueRow): OutreachQueueItem {
     notes: row.notes ?? "",
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function reviewToDomain(row: ReviewRow): AutonomousRunReview {
+  return {
+    id: row.id,
+    mode: row.mode as AutonomousGrowthSettings["mode"],
+    prospectsScanned: row.prospectsScanned,
+    prospectsKept: row.prospectsKept,
+    prospectsBlocked: row.prospectsBlocked,
+    previewsGenerated: row.previewsGenerated,
+    previewsPassed: row.previewsPassed,
+    previewsFailed: row.previewsFailed,
+    commonPreviewIssues: jsonArray(row.commonPreviewIssues),
+    commonLeadIssues: jsonArray(row.commonLeadIssues),
+    outreachQualityNotes: jsonArray(row.outreachQualityNotes),
+    recommendedFixes: jsonArray(row.recommendedFixes),
+    summary: row.summary,
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -116,6 +173,7 @@ export async function getAutonomousGrowthSettings() {
       maxEmailsSentPerDay: defaultAutonomousGrowthSettings.maxEmailsSentPerDay,
       emailCooldownMinutes: defaultAutonomousGrowthSettings.emailCooldownMinutes,
       followUpsEnabled: defaultAutonomousGrowthSettings.followUpsEnabled,
+      styleProfiles: defaultAutonomousGrowthSettings.styleProfiles,
     },
     update: {},
   });
@@ -142,6 +200,7 @@ export async function updateAutonomousGrowthSettings(input: Partial<AutonomousGr
     maxEmailsSentPerDay: settings.maxEmailsSentPerDay,
     emailCooldownMinutes: settings.emailCooldownMinutes,
     followUpsEnabled: settings.followUpsEnabled,
+    styleProfiles: settings.styleProfiles,
   };
   const row = await getProspectDatabase().autonomousGrowthSettings.upsert({
     where: { id: "default" },
@@ -159,6 +218,16 @@ async function listOutreachQueueItems() {
     take: 100,
   });
   return rows.map(queueToDomain);
+}
+
+async function listAutonomousRunReviews() {
+  if (!hasDatabase) return structuredClone(memoryRunReviews());
+  await ensureTopProspectSchema();
+  const rows = await getProspectDatabase().autonomousRunReview.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 12,
+  });
+  return rows.map(reviewToDomain);
 }
 
 function todayStart() {
@@ -179,6 +248,7 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
   const subjectCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
   const bestSubjectLine = Object.entries(subjectCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
   const ready = queue.filter((item) => ["Eligible", "Queued"].includes(item.status));
+  const scored = queue.filter((item) => item.reviewScore || item.previewQualityScore);
   return {
     prospectsFoundToday: todayItems.length,
     previewsGeneratedToday: todayItems.filter((item) => item.previewLink).length,
@@ -196,12 +266,15 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
     bestSubjectLine,
     bestOutreachAngle: ready[0]?.eligibilityReason ?? "Not enough data",
     wonLostProspects: `${positiveReplies} positive / ${queue.filter((item) => ["Not Interested", "Bad Fit"].includes(item.status)).length} lost`,
+    averagePreviewQualityScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + item.previewQualityScore, 0) / scored.length) : 0,
+    averageLeadScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + (item.reviewScore || item.previewQualityScore), 0) / scored.length) : 0,
   };
 }
 
 export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard> {
   const settings = await getAutonomousGrowthSettings();
   const queue = await listOutreachQueueItems();
+  const runReviews = await listAutonomousRunReviews();
   const env = outreachEnvironment();
   return {
     settings,
@@ -215,6 +288,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
     },
     metrics: metricsForQueue(queue, settings),
     queue,
+    learning: learningSummaryForQueue(queue, runReviews),
   };
 }
 
@@ -228,6 +302,102 @@ function sourceForProspect(prospect: Prospect) {
 
 function blockedReasonText(reasons: string[], previewReasons: string[]) {
   return [...previewReasons, ...reasons].filter(Boolean).join(" ");
+}
+
+function feedbackCategory(label: AutonomousFeedbackLabel) {
+  if (/preview/i.test(label)) return "preview";
+  if (/outreach/i.test(label)) return "outreach";
+  if (/replied|reply|no response/i.test(label)) return "reply";
+  if (/too expensive|provider|not interested/i.test(label)) return "lost_reason";
+  if (/contact/i.test(label)) return "contact";
+  return "lead";
+}
+
+function feedbackReview(item: OutreachQueueItem, feedbackLabels = item.feedbackLabels) {
+  const previewGate = {
+    status: item.previewQualityScore >= 85 ? "Eligible" as const : item.previewQualityScore < 70 ? "Blocked" as const : "Needs Review" as const,
+    score: item.previewQualityScore,
+    checks: [],
+    reasons: item.detectedIssues,
+  };
+  const regenerationPlan = previewRegenerationPlan(previewGate, feedbackLabels);
+  const rewritePlan = outreachRewritePlan(item.emailBody, feedbackLabels);
+  const detectedIssues = new Set(item.detectedIssues);
+  if (feedbackLabels.includes("Bad lead")) detectedIssues.add("Manual feedback marked this as a bad lead.");
+  if (feedbackLabels.includes("Wrong contact")) detectedIssues.add("Manual feedback marked the contact as wrong.");
+  if (feedbackLabels.includes("Never contact")) detectedIssues.add("Manual feedback marked this as never contact.");
+  let recommendedNextAction: AutonomousNextAction = item.recommendedNextAction;
+  if (feedbackLabels.includes("Never contact")) recommendedNextAction = "Never Contact";
+  else if (feedbackLabels.includes("Bad fit")) recommendedNextAction = "Bad Fit";
+  else if (feedbackLabels.includes("Preview looked bad") || regenerationPlan.length) recommendedNextAction = "Regenerate Preview";
+  else if (feedbackLabels.includes("Outreach sounded too AI-ish") || rewritePlan.length) recommendedNextAction = "Rewrite Outreach";
+  else if (feedbackLabels.includes("Bad lead")) recommendedNextAction = "Skip";
+  else if (feedbackLabels.includes("Good lead") || feedbackLabels.includes("Preview looked good") || feedbackLabels.includes("Outreach sounded good")) recommendedNextAction = "Keep";
+  const reviewScore = Math.max(0, Math.min(100, item.reviewScore
+    + (feedbackLabels.includes("Good lead") ? 8 : 0)
+    + (feedbackLabels.includes("Positive reply") ? 12 : 0)
+    - (feedbackLabels.includes("Bad lead") ? 18 : 0)
+    - (feedbackLabels.includes("Preview looked bad") ? 10 : 0)
+    - (feedbackLabels.includes("Outreach sounded too AI-ish") ? 8 : 0)));
+  return {
+    reviewScore,
+    reviewSummary: `${item.businessName} review: ${recommendedNextAction}. Feedback has been recorded for future recommendations.`,
+    improvementSuggestions: [...new Set([...item.improvementSuggestions, ...regenerationPlan, ...rewritePlan])],
+    detectedIssues: [...detectedIssues],
+    recommendedNextAction,
+    regenerationPlan,
+    rewritePlan,
+  };
+}
+
+async function recordRunReview(settings: AutonomousGrowthSettings, queue: OutreachQueueItem[]) {
+  const review = generateAutonomousRunReview(settings, queue);
+  if (!hasDatabase) {
+    memoryRunReviews().unshift(review);
+    globalAutonomous.autonomousRunReviewsMemory = memoryRunReviews().slice(0, 12);
+    return review;
+  }
+  await getProspectDatabase().autonomousRunReview.create({
+    data: {
+      mode: review.mode,
+      prospectsScanned: review.prospectsScanned,
+      prospectsKept: review.prospectsKept,
+      prospectsBlocked: review.prospectsBlocked,
+      previewsGenerated: review.previewsGenerated,
+      previewsPassed: review.previewsPassed,
+      previewsFailed: review.previewsFailed,
+      commonPreviewIssues: review.commonPreviewIssues,
+      commonLeadIssues: review.commonLeadIssues,
+      outreachQualityNotes: review.outreachQualityNotes,
+      recommendedFixes: review.recommendedFixes,
+      summary: review.summary,
+    },
+  });
+  return review;
+}
+
+async function recordLearningEvent(item: OutreachQueueItem) {
+  if (!hasDatabase) return;
+  await getProspectDatabase().autonomousLearningEvent.create({
+    data: {
+      queueItemId: item.id,
+      topProspectResultId: item.topProspectResultId || null,
+      trade: item.trade,
+      city: item.city,
+      leadSource: item.sourceProvider || "Top Prospects",
+      previewStyle: item.regenerationPlan[0] ?? "Current style profile",
+      subjectLineAngle: item.subjectLine,
+      outreachAngle: item.eligibilityReason,
+      contactMethod: item.contactSource,
+      previewQualityScore: item.previewQualityScore,
+      reviewScore: item.reviewScore,
+      replyStatus: item.replyStatus || null,
+      positiveReplyStatus: item.status === "Positive Reply" ? "positive" : null,
+      lostReason: ["Not Interested", "Bad Fit", "Skipped"].includes(item.status) ? item.status : null,
+      manualNote: item.notes || null,
+      feedbackLabels: item.feedbackLabels,
+    },
+  });
 }
 
 export async function upsertAutonomousQueueItemFromPackage({
@@ -256,6 +426,7 @@ export async function upsertAutonomousQueueItemFromPackage({
     prospect,
     settings,
   });
+  const selfReview = evaluateSelfReview({ emailQuality, previewGate, prospect });
   const status = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
   const now = new Date();
   const outreach = prospect.outreach;
@@ -279,6 +450,14 @@ export async function upsertAutonomousQueueItemFromPackage({
       ? `${prospect.trade} prospect has a public preview, send-safe copy, and a usable written contact path.`
       : "Package generated, but review is required before any outreach.",
     blockedReason: blockedReasonText(autoEligibility.blockedReasons, previewGate.reasons) || null,
+    reviewScore: selfReview.reviewScore,
+    reviewSummary: selfReview.reviewSummary,
+    improvementSuggestions: selfReview.improvementSuggestions,
+    detectedIssues: selfReview.detectedIssues,
+    recommendedNextAction: selfReview.recommendedNextAction,
+    regenerationPlan: selfReview.regenerationPlan,
+    rewritePlan: selfReview.rewritePlan,
+    feedbackLabels: [],
     status,
     sourceProvider,
     queuedDate: status === "Queued" ? now : null,
@@ -305,6 +484,7 @@ export async function upsertAutonomousQueueItemFromPackage({
     };
     if (existingIndex >= 0) memoryQueue()[existingIndex] = domain;
     else memoryQueue().unshift(domain);
+    await recordRunReview(settings, memoryQueue());
     return domain;
   }
   await ensureTopProspectSchema();
@@ -313,32 +493,139 @@ export async function upsertAutonomousQueueItemFromPackage({
     create: itemData,
     update: itemData,
   });
-  return queueToDomain(row);
+  const domain = queueToDomain(row);
+  await recordLearningEvent(domain);
+  await recordRunReview(settings, await listOutreachQueueItems());
+  return domain;
 }
 
 export async function updateOutreachQueueStatus(id: string, status: OutreachQueueStatus) {
   if (!outreachQueueStatuses.includes(status)) throw new Error("Select a supported queue status.");
+  const nowIso = new Date().toISOString();
   if (!hasDatabase) {
     const item = memoryQueue().find((entry) => entry.id === id);
     if (!item) return null;
     item.status = status;
-    item.updatedAt = new Date().toISOString();
+    item.sentDate = status === "Sent" ? nowIso : item.sentDate;
+    item.followUpDate = status === "Follow-up Needed" ? nowIso : item.followUpDate;
+    if (status === "Bad Fit") item.recommendedNextAction = "Bad Fit";
+    if (status === "Never Contact" || status === "Opted Out") item.recommendedNextAction = "Never Contact";
+    item.updatedAt = nowIso;
+    await recordRunReview(memorySettings(), memoryQueue());
     return structuredClone(item);
   }
   await ensureTopProspectSchema();
   const now = new Date();
+  const extraReviewData =
+    status === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
+      : status === "Never Contact" || status === "Opted Out" ? { recommendedNextAction: "Never Contact" }
+        : {};
   const row = await getProspectDatabase().outreachQueueItem.update({
     where: { id },
     data: {
       status,
       sentDate: status === "Sent" ? now : undefined,
       followUpDate: status === "Follow-up Needed" ? now : undefined,
+      ...extraReviewData,
     },
   });
-  return queueToDomain(row);
+  const domain = queueToDomain(row);
+  await recordLearningEvent(domain);
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  return domain;
+}
+
+export async function recordAutonomousFeedback(id: string, feedbackLabel: AutonomousFeedbackLabel, note = "") {
+  if (!autonomousFeedbackLabels.includes(feedbackLabel)) throw new Error("Select a supported feedback label.");
+  const nowIso = new Date().toISOString();
+  if (!hasDatabase) {
+    const item = memoryQueue().find((entry) => entry.id === id);
+    if (!item) return null;
+    item.feedbackLabels = [...new Set([...item.feedbackLabels, feedbackLabel])];
+    Object.assign(item, feedbackReview(item));
+    item.notes = [item.notes, note].filter(Boolean).join("\n");
+    item.updatedAt = nowIso;
+    await recordRunReview(memorySettings(), memoryQueue());
+    return structuredClone(item);
+  }
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const existing = await database.outreachQueueItem.findUnique({ where: { id } });
+  if (!existing) return null;
+  const current = queueToDomain(existing);
+  const feedbackLabels = [...new Set([...current.feedbackLabels, feedbackLabel])];
+  const review = feedbackReview(current, feedbackLabels);
+  const row = await database.outreachQueueItem.update({
+    where: { id },
+    data: {
+      feedbackLabels,
+      notes: [current.notes, note].filter(Boolean).join("\n") || null,
+      reviewScore: review.reviewScore,
+      reviewSummary: review.reviewSummary,
+      improvementSuggestions: review.improvementSuggestions,
+      detectedIssues: review.detectedIssues,
+      recommendedNextAction: review.recommendedNextAction,
+      regenerationPlan: review.regenerationPlan,
+      rewritePlan: review.rewritePlan,
+    },
+  });
+  await database.autonomousFeedbackEvent.create({
+    data: {
+      queueItemId: id,
+      topProspectResultId: current.topProspectResultId || null,
+      businessName: current.businessName,
+      trade: current.trade,
+      city: current.city,
+      feedbackLabel,
+      feedbackCategory: feedbackCategory(feedbackLabel),
+      note: note || null,
+    },
+  });
+  const domain = queueToDomain(row);
+  await recordLearningEvent(domain);
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  return domain;
+}
+
+export async function rewriteOutreachQueueItem(id: string) {
+  const nowIso = new Date().toISOString();
+  if (!hasDatabase) {
+    const item = memoryQueue().find((entry) => entry.id === id);
+    if (!item) return null;
+    item.emailBody = rewriteOutreachWithFixes(item.emailBody);
+    item.rewritePlan = [];
+    item.recommendedNextAction = "Needs Human Review";
+    item.reviewSummary = `${item.businessName} outreach was rewritten for review. Nothing was sent.`;
+    item.updatedAt = nowIso;
+    await recordRunReview(memorySettings(), memoryQueue());
+    return structuredClone(item);
+  }
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const existing = await database.outreachQueueItem.findUnique({ where: { id } });
+  if (!existing) return null;
+  const current = queueToDomain(existing);
+  const row = await database.outreachQueueItem.update({
+    where: { id },
+    data: {
+      emailBody: rewriteOutreachWithFixes(current.emailBody),
+      rewritePlan: [],
+      recommendedNextAction: "Needs Human Review",
+      reviewSummary: `${current.businessName} outreach was rewritten for review. Nothing was sent.`,
+    },
+  });
+  const domain = queueToDomain(row);
+  await recordLearningEvent(domain);
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  return domain;
 }
 
 export function resetAutonomousGrowthMemoryForTests() {
   globalAutonomous.autonomousGrowthSettingsMemory = undefined;
   globalAutonomous.outreachQueueMemory = undefined;
+  globalAutonomous.autonomousRunReviewsMemory = undefined;
+}
+
+export function learningSummaryForAutonomousQueueForTests(queue: OutreachQueueItem[], runReviews: AutonomousRunReview[] = []): AutonomousLearningSummary {
+  return learningSummaryForQueue(queue, runReviews);
 }

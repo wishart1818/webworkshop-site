@@ -19,6 +19,8 @@ export const OUTREACH_PREFERENCE_MIGRATION_ID = "20260619_outreach_preference";
 export const OUTREACH_PREFERENCE_MIGRATION_CHECKSUM = "171b83b3229e6bae9328cd5448b08b7ac4c7d5d3fd7af591e6b990f0fa7569a6";
 export const AUTONOMOUS_GROWTH_MIGRATION_ID = "20260620_autonomous_growth";
 export const AUTONOMOUS_GROWTH_MIGRATION_CHECKSUM = "f5ed776c260e24514be1b14dc2d92f3a966a1ba8c647497bc83ba73a8ae0c7d8";
+export const AUTONOMOUS_LEARNING_MIGRATION_ID = "20260621_autonomous_learning";
+export const AUTONOMOUS_LEARNING_MIGRATION_CHECKSUM = "6b436396a015ec47e43ae39c2ae8a6e6c98f31ae050e0cd25a00191a7cf864b3";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -70,6 +72,21 @@ export const AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "OutreachQueueItem_status_createdAt_idx" ON "OutreachQueueItem"("status", "createdAt")`,
   `CREATE INDEX IF NOT EXISTS "OutreachQueueItem_trade_city_idx" ON "OutreachQueueItem"("trade", "city")`,
   `CREATE INDEX IF NOT EXISTS "OutreachQueueItem_prospectId_idx" ON "OutreachQueueItem"("prospectId")`,
+] as const;
+export const AUTONOMOUS_LEARNING_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "AutonomousGrowthSettings" ADD COLUMN IF NOT EXISTS "styleProfiles" JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE "OutreachQueueItem" ADD COLUMN IF NOT EXISTS "reviewScore" INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS "reviewSummary" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "improvementSuggestions" JSONB NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS "detectedIssues" JSONB NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS "recommendedNextAction" TEXT NOT NULL DEFAULT 'Needs Human Review', ADD COLUMN IF NOT EXISTS "regenerationPlan" JSONB NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS "rewritePlan" JSONB NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS "feedbackLabels" JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `CREATE TABLE IF NOT EXISTS "AutonomousFeedbackEvent" ("id" TEXT NOT NULL, "queueItemId" TEXT NOT NULL, "topProspectResultId" TEXT, "businessName" TEXT NOT NULL, "trade" TEXT NOT NULL, "city" TEXT NOT NULL, "feedbackLabel" TEXT NOT NULL, "feedbackCategory" TEXT NOT NULL, "note" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AutonomousFeedbackEvent_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "AutonomousLearningEvent" ("id" TEXT NOT NULL, "queueItemId" TEXT NOT NULL, "topProspectResultId" TEXT, "trade" TEXT NOT NULL, "city" TEXT NOT NULL, "leadSource" TEXT NOT NULL, "previewStyle" TEXT NOT NULL, "subjectLineAngle" TEXT NOT NULL, "outreachAngle" TEXT NOT NULL, "contactMethod" TEXT NOT NULL, "previewQualityScore" INTEGER NOT NULL, "reviewScore" INTEGER NOT NULL DEFAULT 0, "replyStatus" TEXT, "positiveReplyStatus" TEXT, "lostReason" TEXT, "manualNote" TEXT, "feedbackLabels" JSONB NOT NULL DEFAULT '[]'::jsonb, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AutonomousLearningEvent_pkey" PRIMARY KEY ("id"))`,
+  `CREATE TABLE IF NOT EXISTS "AutonomousRunReview" ("id" TEXT NOT NULL, "mode" TEXT NOT NULL, "prospectsScanned" INTEGER NOT NULL DEFAULT 0, "prospectsKept" INTEGER NOT NULL DEFAULT 0, "prospectsBlocked" INTEGER NOT NULL DEFAULT 0, "previewsGenerated" INTEGER NOT NULL DEFAULT 0, "previewsPassed" INTEGER NOT NULL DEFAULT 0, "previewsFailed" INTEGER NOT NULL DEFAULT 0, "commonPreviewIssues" JSONB NOT NULL DEFAULT '[]'::jsonb, "commonLeadIssues" JSONB NOT NULL DEFAULT '[]'::jsonb, "outreachQualityNotes" JSONB NOT NULL DEFAULT '[]'::jsonb, "recommendedFixes" JSONB NOT NULL DEFAULT '[]'::jsonb, "summary" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AutonomousRunReview_pkey" PRIMARY KEY ("id"))`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousFeedbackEvent_queueItemId_createdAt_idx" ON "AutonomousFeedbackEvent"("queueItemId", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousFeedbackEvent_trade_city_idx" ON "AutonomousFeedbackEvent"("trade", "city")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousFeedbackEvent_feedbackLabel_createdAt_idx" ON "AutonomousFeedbackEvent"("feedbackLabel", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousLearningEvent_trade_city_idx" ON "AutonomousLearningEvent"("trade", "city")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousLearningEvent_leadSource_createdAt_idx" ON "AutonomousLearningEvent"("leadSource", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousLearningEvent_previewStyle_createdAt_idx" ON "AutonomousLearningEvent"("previewStyle", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousLearningEvent_createdAt_idx" ON "AutonomousLearningEvent"("createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "AutonomousRunReview_mode_createdAt_idx" ON "AutonomousRunReview"("mode", "createdAt")`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -160,6 +177,13 @@ async function applyAutonomousGrowthUpgrade(transaction: SchemaTransaction) {
   await recordMigration(transaction, AUTONOMOUS_GROWTH_MIGRATION_ID, AUTONOMOUS_GROWTH_MIGRATION_CHECKSUM, "000000000012");
 }
 
+async function applyAutonomousLearningUpgrade(transaction: SchemaTransaction) {
+  for (const statement of AUTONOMOUS_LEARNING_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, AUTONOMOUS_LEARNING_MIGRATION_ID, AUTONOMOUS_LEARNING_MIGRATION_CHECKSUM, "000000000013");
+}
+
 export class TopProspectSchemaLockUnavailableError extends Error {
   constructor() {
     super("Another Top Prospects schema initialization currently holds the transaction lock.");
@@ -202,6 +226,7 @@ export async function initializeTopProspectSchema(
         await applyWebsiteAvailabilityUpgrade(transaction);
         await applyOutreachPreferenceUpgrade(transaction);
         await applyAutonomousGrowthUpgrade(transaction);
+        await applyAutonomousLearningUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -218,6 +243,7 @@ export async function initializeTopProspectSchema(
       await applyWebsiteAvailabilityUpgrade(transaction);
       await applyOutreachPreferenceUpgrade(transaction);
       await applyAutonomousGrowthUpgrade(transaction);
+      await applyAutonomousLearningUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

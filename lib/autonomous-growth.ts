@@ -54,8 +54,47 @@ export type AutonomousGrowthSettings = {
   maxEmailsSentPerDay: number;
   emailCooldownMinutes: number;
   followUpsEnabled: boolean;
+  styleProfiles: Record<string, AutonomousStyleProfile>;
   updatedAt?: string;
 };
+
+export type AutonomousStyleProfile = {
+  name: string;
+  direction: string;
+  strengths: string[];
+  cautions: string[];
+};
+
+export const autonomousFeedbackLabels = [
+  "Good lead",
+  "Bad lead",
+  "Preview looked good",
+  "Preview looked bad",
+  "Outreach sounded good",
+  "Outreach sounded too AI-ish",
+  "Replied",
+  "Positive reply",
+  "Not interested",
+  "Too expensive",
+  "Already has provider",
+  "Wants website later",
+  "No response",
+  "Wrong contact",
+  "Bad fit",
+  "Never contact",
+] as const;
+export type AutonomousFeedbackLabel = (typeof autonomousFeedbackLabels)[number];
+
+export const autonomousNextActions = [
+  "Keep",
+  "Regenerate Preview",
+  "Rewrite Outreach",
+  "Needs Human Review",
+  "Skip",
+  "Bad Fit",
+  "Never Contact",
+] as const;
+export type AutonomousNextAction = (typeof autonomousNextActions)[number];
 
 export type PreviewQualityGate = {
   status: "Eligible" | "Needs Review" | "Blocked";
@@ -91,6 +130,14 @@ export type OutreachQueueItem = {
   loomTalkingPoints: string;
   eligibilityReason: string;
   blockedReason: string;
+  reviewScore: number;
+  reviewSummary: string;
+  improvementSuggestions: string[];
+  detectedIssues: string[];
+  recommendedNextAction: AutonomousNextAction;
+  regenerationPlan: string[];
+  rewritePlan: string[];
+  feedbackLabels: AutonomousFeedbackLabel[];
   status: OutreachQueueStatus;
   sourceProvider: string;
   queuedDate: string;
@@ -119,6 +166,46 @@ export type AutonomousGrowthMetrics = {
   bestSubjectLine: string;
   bestOutreachAngle: string;
   wonLostProspects: string;
+  averagePreviewQualityScore: number;
+  averageLeadScore: number;
+};
+
+export type AutonomousRunReview = {
+  id: string;
+  mode: AutonomousGrowthMode;
+  prospectsScanned: number;
+  prospectsKept: number;
+  prospectsBlocked: number;
+  previewsGenerated: number;
+  previewsPassed: number;
+  previewsFailed: number;
+  commonPreviewIssues: string[];
+  commonLeadIssues: string[];
+  outreachQualityNotes: string[];
+  recommendedFixes: string[];
+  summary: string;
+  createdAt: string;
+};
+
+export type LearningRecommendation = {
+  label: string;
+  detail: string;
+};
+
+export type AutonomousLearningSummary = {
+  latestReview: AutonomousRunReview | null;
+  commonFailureReasons: string[];
+  bestPerformingTrades: string[];
+  worstPerformingTrades: string[];
+  bestPerformingCities: string[];
+  bestOutreachAngles: string[];
+  weakestOutreachAngles: string[];
+  replyRateByTrade: Array<{ trade: string; replyRate: number; positiveReplyRate: number }>;
+  recommendationsForNextRun: string[];
+  recommendedTradesToPrioritize: string[];
+  recommendedTradesToPause: string[];
+  recommendedPreviewImprovements: string[];
+  recommendedWordingImprovements: string[];
 };
 
 export type AutonomousGrowthDashboard = {
@@ -133,6 +220,46 @@ export type AutonomousGrowthDashboard = {
   };
   metrics: AutonomousGrowthMetrics;
   queue: OutreachQueueItem[];
+  learning: AutonomousLearningSummary;
+};
+
+export const defaultAutonomousStyleProfiles: Record<string, AutonomousStyleProfile> = {
+  Landscaping: {
+    name: "Clean outdoor proof",
+    direction: "Clean outdoor, before/after, family-homeowner trust.",
+    strengths: ["lush service visuals", "clear curb appeal", "simple quote path"],
+    cautions: ["avoid generic nature imagery", "label sample proof clearly"],
+  },
+  "Power Washing": {
+    name: "Bold curb appeal",
+    direction: "Bold before/after, fast quote, curb appeal.",
+    strengths: ["visible surface improvement", "fast quote CTA", "driveway and siding proof"],
+    cautions: ["avoid exaggerated results", "do not imply actual project photos"],
+  },
+  Cleaning: {
+    name: "Bright trustworthy booking",
+    direction: "Bright, trustworthy, simple booking.",
+    strengths: ["clean interiors", "scope clarity", "booking confidence"],
+    cautions: ["avoid fake reviews", "keep claims modest"],
+  },
+  HVAC: {
+    name: "Reliable service trust",
+    direction: "Reliable, emergency/service trust, clean technical professionalism.",
+    strengths: ["equipment visuals", "service-call clarity", "comfort-focused CTA"],
+    cautions: ["avoid fake emergency guarantees", "keep technical language human"],
+  },
+  Roofing: {
+    name: "Storm-ready local proof",
+    direction: "Strong proof, storm readiness, local credibility.",
+    strengths: ["roofline imagery", "inspection CTA", "proof-first sections"],
+    cautions: ["avoid unverified warranty or insurance claims", "label sample project proof"],
+  },
+  Painting: {
+    name: "Finish-quality residential",
+    direction: "Polished visuals, color and finish quality, residential trust.",
+    strengths: ["detail photos", "room refresh flow", "clear estimate CTA"],
+    cautions: ["avoid overused transformation copy", "do not invent project history"],
+  },
 };
 
 export const defaultAutonomousGrowthSettings: AutonomousGrowthSettings = {
@@ -162,6 +289,7 @@ export const defaultAutonomousGrowthSettings: AutonomousGrowthSettings = {
   maxEmailsSentPerDay: 5,
   emailCooldownMinutes: 7,
   followUpsEnabled: false,
+  styleProfiles: defaultAutonomousStyleProfiles,
 };
 
 function clampCap(value: unknown, fallback: number, min: number, max: number) {
@@ -198,6 +326,9 @@ export function normalizeAutonomousGrowthSettings(value: Partial<AutonomousGrowt
     maxEmailsSentPerDay: clampCap(value.maxEmailsSentPerDay, 5, 0, 25),
     emailCooldownMinutes: clampCap(value.emailCooldownMinutes, 7, 5, 120),
     followUpsEnabled: value.followUpsEnabled ?? false,
+    styleProfiles: value.styleProfiles && typeof value.styleProfiles === "object" && !Array.isArray(value.styleProfiles)
+      ? value.styleProfiles as Record<string, AutonomousStyleProfile>
+      : defaultAutonomousStyleProfiles,
   };
 }
 
@@ -393,6 +524,117 @@ export function queueStatusForPackage({
   return "Eligible";
 }
 
+function hasFeedback(feedbackLabels: readonly string[], value: AutonomousFeedbackLabel) {
+  return feedbackLabels.includes(value);
+}
+
+function outreachSoundsTooAiish(value: string) {
+  return /\b(elevate|unlock|bespoke|seamless|tailored solutions|transform your|game[- ]changer|world[- ]class|next[- ]generation|free audit)\b/i.test(value);
+}
+
+export function previewRegenerationPlan(previewGate: PreviewQualityGate, feedbackLabels: readonly string[] = []) {
+  const plan = new Set<string>();
+  for (const reason of previewGate.reasons) {
+    if (/visual polish|premium|layout/i.test(reason)) plan.add("make design more premium");
+    if (/visuals|trade-specific/i.test(reason)) plan.add("fix image relevance");
+    if (/copy|placeholder|generic/i.test(reason)) plan.add("reduce AI-sounding copy");
+    if (/mobile/i.test(reason)) plan.add("improve mobile layout");
+    if (/capitalization|typo/i.test(reason)) plan.add("fix typo/capitalization");
+    if (/contact|CTA|estimate/i.test(reason)) plan.add("improve CTA section");
+    if (/unsupported|claims|reviews|awards/i.test(reason)) plan.add("remove fake-sounding claims");
+  }
+  if (hasFeedback(feedbackLabels, "Preview looked bad")) {
+    plan.add("make sections flow better");
+    plan.add("make it more specific to the trade/city");
+  }
+  return [...plan];
+}
+
+export function outreachRewritePlan(outreachText: string, feedbackLabels: readonly string[] = []) {
+  const plan = new Set<string>();
+  if (outreachSoundsTooAiish(outreachText) || hasFeedback(feedbackLabels, "Outreach sounded too AI-ish")) {
+    plan.add("make the email shorter");
+    plan.add("make it more human");
+    plan.add("remove hype and agency-sounding phrases");
+  }
+  if (!/would you be open|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
+  if (!/would rather not receive another note/i.test(outreachText)) plan.add("preserve opt-out language");
+  if (/\bfree audit\b/i.test(outreachText)) plan.add("remove free audit language");
+  if (!/One thing that already works well:/i.test(outreachText)) plan.add("replace generic compliment with one specific strength");
+  return [...plan];
+}
+
+export function rewriteOutreachWithFixes(emailBody: string) {
+  const optOut = emailBody.match(/WebWorkshop[\s\S]*?would rather not receive another note, reply and I will close the loop\./i)?.[0]
+    ?? "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+  const greeting = emailBody.split("\n").find((line) => /^Hi\b/i.test(line.trim()))?.trim() ?? "Hi there,";
+  const previewLink = emailBody.match(/https?:\/\/[^\s)]+\/p\/[A-Za-z0-9_-]{32}/)?.[0] ?? "";
+  return [
+    greeting,
+    "",
+    "I came across your business while looking at local service companies.",
+    "",
+    "One thing that already works well: customers can find enough public information to know you are active locally.",
+    "",
+    "One missed opportunity: the next step could be clearer for someone ready to ask about service or an estimate.",
+    "",
+    previewLink ? `I put together a short concept showing one possible direction: ${previewLink}` : "I put together a short concept showing one possible direction.",
+    "",
+    "Would you be open to a quick 10-minute call next week?",
+    "",
+    optOut,
+  ].join("\n");
+}
+
+export function evaluateSelfReview({
+  emailQuality,
+  feedbackLabels = [],
+  previewGate,
+  prospect,
+}: {
+  emailQuality: OutreachEmailQuality;
+  feedbackLabels?: readonly AutonomousFeedbackLabel[];
+  previewGate: PreviewQualityGate;
+  prospect: Prospect;
+}) {
+  const detectedIssues = new Set<string>([...previewGate.reasons, ...emailQuality.issues]);
+  const regenerationPlan = previewRegenerationPlan(previewGate, feedbackLabels);
+  const rewritePlan = outreachRewritePlan(prospect.outreach?.concise ?? "", feedbackLabels);
+  if (!prospectWrittenContactMethodIsUsable(prospect)) detectedIssues.add("Written contact method is weak or missing.");
+  if (hasFeedback(feedbackLabels, "Bad lead")) detectedIssues.add("Manual feedback marked this as a bad lead.");
+  if (hasFeedback(feedbackLabels, "Wrong contact")) detectedIssues.add("Manual feedback marked the contact as wrong.");
+  let recommendedNextAction: AutonomousNextAction = "Needs Human Review";
+  if (hasFeedback(feedbackLabels, "Never contact") || prospect.recommendedContactMethod === "do_not_contact") recommendedNextAction = "Never Contact";
+  else if (hasFeedback(feedbackLabels, "Bad fit") || prospect.classification === "national_large_brand" || prospect.classification === "duplicate_bad_fit" || prospect.inactive) recommendedNextAction = "Bad Fit";
+  else if (previewGate.status !== "Eligible" || hasFeedback(feedbackLabels, "Preview looked bad")) recommendedNextAction = "Regenerate Preview";
+  else if (!emailQuality.ready || rewritePlan.length || hasFeedback(feedbackLabels, "Outreach sounded too AI-ish")) recommendedNextAction = "Rewrite Outreach";
+  else if (hasFeedback(feedbackLabels, "Bad lead")) recommendedNextAction = "Skip";
+  else if (hasFeedback(feedbackLabels, "Good lead") || emailQuality.ready) recommendedNextAction = "Keep";
+  const reviewScore = Math.max(0, Math.min(100, Math.round(
+    previewGate.score * 0.38
+    + (emailQuality.ready ? 24 : 8)
+    + (prospectWrittenContactMethodIsUsable(prospect) ? 18 : 4)
+    + (hasFeedback(feedbackLabels, "Good lead") ? 10 : 0)
+    + (hasFeedback(feedbackLabels, "Preview looked good") ? 5 : 0)
+    + (hasFeedback(feedbackLabels, "Outreach sounded good") ? 5 : 0)
+    - (detectedIssues.size * 4),
+  )));
+  const improvementSuggestions = [
+    ...regenerationPlan,
+    ...rewritePlan,
+    !prospectWrittenContactMethodIsUsable(prospect) ? "verify a usable written contact path before outreach" : "",
+  ].filter(Boolean);
+  return {
+    reviewScore,
+    reviewSummary: `${prospect.businessName} review: ${recommendedNextAction}. Preview ${previewGate.score}/100; email ${emailQuality.readinessLabel}.`,
+    improvementSuggestions,
+    detectedIssues: [...detectedIssues],
+    recommendedNextAction,
+    regenerationPlan,
+    rewritePlan,
+  };
+}
+
 export function manualDmScript(prospect: Prospect, previewLink: string) {
   return `Hi ${prospect.businessName}, I put together a short concept for a clearer ${prospect.trade} website direction. No pressure, but you can preview it here: ${previewLink}`;
 }
@@ -421,4 +663,113 @@ export function evaluatePackageEmailQuality(
   outreachPreference: OutreachPreference,
 ) {
   return evaluateOutreachEmailQuality(prospect, previewLink, outreachPreference);
+}
+
+function topCounts(values: string[], limit = 5) {
+  const counts = values.reduce<Record<string, number>>((accumulator, value) => {
+    const key = value.trim();
+    if (!key) return accumulator;
+    accumulator[key] = (accumulator[key] ?? 0) + 1;
+    return accumulator;
+  }, {});
+  return Object.entries(counts).sort(([, left], [, right]) => right - left).slice(0, limit).map(([value]) => value);
+}
+
+function average(values: number[]) {
+  const valid = values.filter((value) => Number.isFinite(value));
+  return valid.length ? Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length) : 0;
+}
+
+function tradePerformance(queue: OutreachQueueItem[]) {
+  const grouped = queue.reduce<Record<string, OutreachQueueItem[]>>((accumulator, item) => {
+    const trade = item.trade || "Unknown";
+    accumulator[trade] = [...(accumulator[trade] ?? []), item];
+    return accumulator;
+  }, {});
+  return Object.entries(grouped)
+    .map(([trade, items]) => ({
+      trade,
+      averageScore: average(items.map((item) => item.reviewScore || item.previewQualityScore)),
+      replies: items.filter((item) => ["Replied", "Positive Reply"].includes(item.status) || item.replyStatus).length,
+      positiveReplies: items.filter((item) => item.status === "Positive Reply" || /positive/i.test(item.replyStatus)).length,
+      sent: items.filter((item) => item.status === "Sent" || item.sentDate || ["Replied", "Positive Reply", "Not Interested"].includes(item.status)).length,
+    }))
+    .sort((left, right) => right.averageScore - left.averageScore);
+}
+
+export function generateAutonomousRunReview(
+  settings: AutonomousGrowthSettings,
+  queue: OutreachQueueItem[],
+  id = `review-${Date.now()}`,
+  createdAt = new Date().toISOString(),
+): AutonomousRunReview {
+  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply"];
+  const blockedStatuses: OutreachQueueStatus[] = ["Blocked", "Bad Fit", "Never Contact", "Opted Out", "Skipped"];
+  const commonPreviewIssues = topCounts(queue.flatMap((item) => item.regenerationPlan.length ? item.regenerationPlan : item.detectedIssues));
+  const commonLeadIssues = topCounts(queue.flatMap((item) => [
+    item.blockedReason,
+    ...item.detectedIssues.filter((issue) => /contact|bad fit|opt-out|solicitation|phone|social|form|missing/i.test(issue)),
+  ]));
+  const outreachQualityNotes = topCounts(queue.flatMap((item) => item.rewritePlan));
+  const recommendedFixes = topCounts(queue.flatMap((item) => item.improvementSuggestions));
+  const previewsGenerated = queue.filter((item) => item.previewLink).length;
+  const previewsPassed = queue.filter((item) => item.previewQualityScore >= 85 && item.regenerationPlan.length === 0).length;
+  const prospectsKept = queue.filter((item) => keptStatuses.includes(item.status)).length;
+  const prospectsBlocked = queue.filter((item) => blockedStatuses.includes(item.status) || item.blockedReason).length;
+  return {
+    id,
+    mode: settings.mode,
+    prospectsScanned: queue.length,
+    prospectsKept,
+    prospectsBlocked,
+    previewsGenerated,
+    previewsPassed,
+    previewsFailed: Math.max(0, previewsGenerated - previewsPassed),
+    commonPreviewIssues,
+    commonLeadIssues,
+    outreachQualityNotes,
+    recommendedFixes,
+    summary: queue.length
+      ? `${prospectsKept} of ${queue.length} reviewed prospects are worth keeping. ${prospectsBlocked} remain blocked or need cleanup before outreach.`
+      : "No autonomous review data has been generated yet.",
+    createdAt,
+  };
+}
+
+export function learningSummaryForQueue(
+  queue: OutreachQueueItem[],
+  runReviews: AutonomousRunReview[] = [],
+): AutonomousLearningSummary {
+  const performance = tradePerformance(queue);
+  const bestPerformingTrades = performance.slice(0, 3).map((entry) => entry.trade);
+  const worstPerformingTrades = [...performance].reverse().slice(0, 3).filter((entry) => entry.averageScore < 70).map((entry) => entry.trade);
+  const replyRateByTrade = performance.map((entry) => ({
+    trade: entry.trade,
+    replyRate: entry.sent ? Math.round((entry.replies / entry.sent) * 100) : 0,
+    positiveReplyRate: entry.sent ? Math.round((entry.positiveReplies / entry.sent) * 100) : 0,
+  }));
+  const previewFixes = topCounts(queue.flatMap((item) => item.regenerationPlan));
+  const wordingFixes = topCounts(queue.flatMap((item) => item.rewritePlan));
+  const commonFailureReasons = topCounts(queue.flatMap((item) => [...item.detectedIssues, item.blockedReason]));
+  const recommendationsForNextRun = [
+    bestPerformingTrades[0] ? `Prioritize ${bestPerformingTrades[0]} while quality and reply signals remain strong.` : "",
+    previewFixes[0] ? `Review preview generation for: ${previewFixes[0]}.` : "",
+    wordingFixes[0] ? `Tighten outreach wording around: ${wordingFixes[0]}.` : "",
+    commonFailureReasons[0] ? `Watch for repeated blocker: ${commonFailureReasons[0]}.` : "",
+  ].filter(Boolean);
+  return {
+    latestReview: runReviews[0] ?? (queue.length ? generateAutonomousRunReview(defaultAutonomousGrowthSettings, queue) : null),
+    commonFailureReasons,
+    bestPerformingTrades,
+    worstPerformingTrades,
+    bestPerformingCities: topCounts(queue.filter((item) => item.reviewScore >= 70).map((item) => item.city)),
+    bestOutreachAngles: topCounts(queue.filter((item) => ["Replied", "Positive Reply"].includes(item.status)).map((item) => item.subjectLine)),
+    weakestOutreachAngles: topCounts(queue.filter((item) => item.rewritePlan.length || item.status === "Not Interested").map((item) => item.subjectLine)),
+    replyRateByTrade,
+    recommendationsForNextRun,
+    recommendedTradesToPrioritize: bestPerformingTrades,
+    recommendedTradesToPause: worstPerformingTrades,
+    recommendedPreviewImprovements: previewFixes,
+    recommendedWordingImprovements: wordingFixes,
+  };
 }
