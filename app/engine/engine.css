@@ -2134,24 +2134,11 @@ body:has(.engine-shell) {
   box-shadow: inset 0 0 0 1px #e1f1eb;
 }
 
-.engine-market-grid header,
-.engine-market-grid footer {
+.engine-market-grid header {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-}
-
-.engine-market-grid header {
   justify-content: space-between;
-}
-
-.engine-market-grid footer {
-  flex-wrap: wrap;
-  justify-content: flex-start;
-}
-
-.engine-market-grid footer .engine-button {
-  min-height: 2.35rem;
 }
 
 .engine-market-grid strong {
@@ -2167,6 +2154,26 @@ body:has(.engine-shell) {
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.engine-market-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.45rem;
+  border: 1px solid #bfd8ce;
+  background: #f4fbf7;
+  padding: 0.55rem;
+}
+
+.engine-market-actions .engine-button {
+  min-height: 2.55rem;
+  border-color: #94b6a8;
+  background: white;
+}
+
+.engine-market-actions .engine-button--primary {
+  border-color: var(--engine-accent);
+  background: var(--engine-accent);
 }
 
 .engine-market-trades {
@@ -4591,13 +4598,13 @@ body:has(.engine-shell) {
     grid-column: auto;
   }
 
-  .engine-market-grid header,
-  .engine-market-grid footer {
+  .engine-market-grid header {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .engine-market-grid footer .engine-button,
+  .engine-market-actions,
+  .engine-market-actions .engine-button,
   .engine-chip-button {
     width: 100%;
   }

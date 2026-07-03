@@ -7,9 +7,11 @@ import { EmptyState, LoadingState } from "../components/engine/EngineStates";
 import { DiscoveryFunnel } from "../components/engine/DiscoveryFunnel";
 import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePreview";
 import { SystemWorkspace } from "../components/engine/SystemWorkspace";
+import { RecommendedMarketPresetCard } from "../components/engine/TopProspectsWorkspace";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
+import { recommendedMarketPresets } from "../lib/top-prospects";
 
 const coreTradePhotoSlugs: Record<(typeof coreServiceTrades)[number], string> = {
   Roofing: "roofing",
@@ -345,6 +347,27 @@ test("shared loading and empty states provide useful operator guidance", () => {
 
   assert.match(loading, /role="status"/);
   assert.match(empty, /Clear a filter to continue/);
+});
+
+test("recommended market cards render visible actions above the city list", () => {
+  const florida = recommendedMarketPresets.find((preset) => preset.name === "Florida");
+  assert.ok(florida);
+  const html = renderToStaticMarkup(createElement(RecommendedMarketPresetCard, {
+    preset: florida,
+    onUseMarket: () => undefined,
+    onAddCities: () => undefined,
+    onUseRecommendedTrades: () => undefined,
+    onUseTrade: () => undefined,
+  }));
+
+  assert.match(html, /aria-label="Florida market actions"/);
+  assert.match(html, /engine-market-actions/);
+  assert.equal((html.match(/Use this market/g) ?? []).length, 1);
+  assert.equal((html.match(/Add to current cities/g) ?? []).length, 1);
+  assert.equal((html.match(/Use recommended trades/g) ?? []).length, 1);
+  assert.ok(html.indexOf("Use this market") < html.indexOf("Tampa, FL"));
+  assert.match(html, /aria-label="Use Florida with Pressure Washing"/);
+  assert.match(html, /type="button"/);
 });
 
 test("discovery funnel identifies each provider and the final merged count", () => {

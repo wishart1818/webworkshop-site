@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
@@ -248,6 +248,35 @@ function partialDiscoverySummary(diagnostics: DiscoveryDiagnostics | null) {
   return issues.length ? `Partial results: ${issues.join(" / ")}` : "";
 }
 
+export function RecommendedMarketPresetCard({
+  onAddCities,
+  onUseMarket,
+  onUseRecommendedTrades,
+  onUseTrade,
+  preset,
+}: {
+  onAddCities: (preset: RecommendedMarketPreset) => void;
+  onUseMarket: (preset: RecommendedMarketPreset) => void;
+  onUseRecommendedTrades: (preset: RecommendedMarketPreset) => void;
+  onUseTrade: (preset: RecommendedMarketPreset, trade: TopProspectJob["input"]["trade"]) => void;
+  preset: RecommendedMarketPreset;
+}) {
+  return (
+    <article className={preset.starter ? "is-starter" : ""}>
+      <header><strong>{preset.name}</strong>{preset.starter ? <span>Best starter</span> : null}</header>
+      <div className="engine-market-actions" aria-label={`${preset.name} market actions`}>
+        <button className="engine-button engine-button--primary" onClick={() => onUseMarket(preset)} type="button">Use this market</button>
+        <button className="engine-button" onClick={() => onAddCities(preset)} type="button">Add to current cities</button>
+        <button className="engine-button" onClick={() => onUseRecommendedTrades(preset)} type="button">Use recommended trades</button>
+      </div>
+      <p>{preset.cities.map((city) => city.label).join("; ")}</p>
+      <div className="engine-market-trades" aria-label={`${preset.name} recommended trades`}>
+        {preset.trades.map((trade) => <button aria-label={`Use ${preset.name} with ${displayTradeCategory(trade)}`} className="engine-chip-button" key={trade} onClick={() => onUseTrade(preset, trade)} type="button">{displayTradeCategory(trade)}</button>)}
+      </div>
+    </article>
+  );
+}
+
 function StageProgress({ job, preparedArtifacts }: { job: TopProspectJob; preparedArtifacts: number }) {
   const discovered = job.discoveredCount;
   const scanTarget = Math.max(1, Math.min(discovered || job.input.businessesToScan, job.input.businessesToScan));
@@ -478,22 +507,18 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-market-presets__head">
             <h3>Recommended Markets</h3>
             <p>Start with one preset and one trade first. Larger multi-city searches may take longer and use more provider requests.</p>
-            <p>Selecting a market only fills the search fields. You still need to click Find Top Prospects.</p>
+            <p>Click Use this market to fill the city field, or click a trade to fill the market and trade together. You still need to click Find Top Prospects.</p>
           </div>
           <div className="engine-market-grid">
             {recommendedMarketPresets.map((preset) => (
-              <article className={preset.starter ? "is-starter" : ""} key={preset.id}>
-                <header><strong>{preset.name}</strong>{preset.starter ? <span>Best starter</span> : null}</header>
-                <p>{preset.cities.map((city) => city.label).join("; ")}</p>
-                <div className="engine-market-trades">
-                  {preset.trades.map((trade) => <button aria-label={`Use ${preset.name} with ${displayTradeCategory(trade)}`} className="engine-chip-button" key={trade} onClick={() => applyPreset(preset, "replace", trade)} type="button">{displayTradeCategory(trade)}</button>)}
-                </div>
-                <footer>
-                  <button className="engine-button engine-button--primary" onClick={() => applyPreset(preset, "replace")} type="button">Use this market</button>
-                  <button className="engine-button" onClick={() => applyPreset(preset, "append")} type="button">Add to current cities</button>
-                  <button className="engine-button" onClick={() => applyRecommendedTrades(preset)} type="button">Use recommended trades</button>
-                </footer>
-              </article>
+              <RecommendedMarketPresetCard
+                key={preset.id}
+                onAddCities={(marketPreset) => applyPreset(marketPreset, "append")}
+                onUseMarket={(marketPreset) => applyPreset(marketPreset, "replace")}
+                onUseRecommendedTrades={applyRecommendedTrades}
+                onUseTrade={(marketPreset, trade) => applyPreset(marketPreset, "replace", trade)}
+                preset={preset}
+              />
             ))}
           </div>
         </div>

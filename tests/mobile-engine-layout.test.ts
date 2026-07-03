@@ -155,7 +155,8 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /defaultValue="20"/);
   assert.match(topProspectsWorkspace, /total budget across all selected cities and trades/);
   assert.match(topProspectsWorkspace, /Recommended Markets/);
-  assert.match(topProspectsWorkspace, /Selecting a market only fills the search fields\. You still need to click Find Top Prospects\./);
+  assert.match(topProspectsWorkspace, /Click Use this market to fill the city field, or click a trade to fill the market and trade together\. You still need to click Find Top Prospects\./);
+  assert.match(topProspectsWorkspace, /engine-market-actions/);
   assert.match(topProspectsWorkspace, /Use this market/);
   assert.match(topProspectsWorkspace, /Add to current cities/);
   assert.match(topProspectsWorkspace, /Use recommended trades/);
@@ -164,6 +165,7 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /type="button">Add to current cities/);
   assert.match(topProspectsWorkspace, /type="button">Use recommended trades/);
   assert.doesNotMatch(topProspectsWorkspace, /applyPreset\([^)]*\);\s*void startJob/s);
+  assert.match(mobileCss, /\.engine-market-actions,\s*\.engine-market-actions \.engine-button,\s*\.engine-chip-button\s*{\s*width: 100%;/);
   assert.match(topProspectsWorkspace, /Exclude previously reviewed prospects/);
   assert.match(topProspectsWorkspace, /Discovery complete\. Analyze/);
   assert.match(topProspectsWorkspace, /Analyze saved prospects/);
