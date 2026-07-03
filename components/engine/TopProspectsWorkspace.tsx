@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
@@ -21,8 +21,8 @@ import {
   estimatedProviderRequestLoad,
   formatCityTargetsForHeader,
   parseTopProspectCityTargets,
+  applyRecommendedMarketPresetFields,
   recommendedMarketPresets,
-  type CitySearchTarget,
   type RecommendedMarketPreset,
 } from "@/lib/top-prospects";
 import type {
@@ -227,13 +227,6 @@ function prospectLocationLine(prospect: Pick<TopProspectResult["prospect"], "tra
   return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
 }
 
-function cityTargetsToInput(targets: CitySearchTarget[], defaultState: string) {
-  const normalizedDefault = displayStateCode(defaultState);
-  return targets.every((target) => target.state === normalizedDefault)
-    ? targets.map((target) => target.city).join(", ")
-    : targets.map((target) => target.label).join("; ");
-}
-
 function safeWebsite(value: string) {
   try {
     const url = new URL(value);
@@ -289,6 +282,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [stateInput, setStateInput] = useState("OH");
   const [excludePreviouslyReviewed, setExcludePreviouslyReviewed] = useState(true);
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
+  const [marketApplied, setMarketApplied] = useState("");
+  const searchFormRef = useRef<HTMLFormElement | null>(null);
+  const cityInputRef = useRef<HTMLInputElement | null>(null);
   const activeJob = jobs.find((job) => jobIsActive(job.status));
   const latestJob = activeJob ?? jobs[0];
   const best = latestJob && latestJob.scannedCount > 0 ? latestJob.results[0] : null;
@@ -407,14 +403,34 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     if (result.packageStatus === "PACKAGE_GENERATED") void runPackageAction(result, "ready_for_review");
   }
 
-  function applyPresetCities(preset: RecommendedMarketPreset, mode: "replace" | "append") {
-    const nextTargets = mode === "append"
-      ? [...parsedCityTargets, ...preset.cities]
-      : preset.cities;
-    setCityInput(cityTargetsToInput(nextTargets, stateInput));
-    if (mode === "replace" && preset.cities.length && preset.cities.every((target) => target.state === preset.cities[0].state)) {
-      setStateInput(preset.cities[0].state);
-    }
+  function focusSearchFields() {
+    window.requestAnimationFrame(() => {
+      searchFormRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      cityInputRef.current?.focus({ preventScroll: true });
+    });
+  }
+
+  function applyPreset(preset: RecommendedMarketPreset, mode: "replace" | "append", trade?: TopProspectJob["input"]["trade"]) {
+    const fields = applyRecommendedMarketPresetFields({
+      currentCityInput: cityInput,
+      currentStateInput: stateInput,
+      mode,
+      preset,
+      trade,
+    });
+    setCityInput(fields.cityInput);
+    setStateInput(fields.stateInput);
+    if (fields.trade) setSelectedTrade(fields.trade);
+    setMarketApplied(`${preset.name} filled the search fields. Click Find Top Prospects when you are ready.`);
+    focusSearchFields();
+  }
+
+  function applyRecommendedTrades(preset: RecommendedMarketPreset) {
+    const firstTrade = preset.trades[0];
+    if (!firstTrade) return;
+    setSelectedTrade(firstTrade);
+    setMarketApplied(`${preset.name} recommended trade set to ${displayTradeCategory(firstTrade)}. Click Find Top Prospects when you are ready.`);
+    focusSearchFields();
   }
 
   const skipText = useMemo(
@@ -431,13 +447,13 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div><h2>Find Top Prospects</h2><p>Analyze local businesses, score sales fit, and save ready-to-review previews, outreach drafts, and Lovable prompts.</p></div>
           <div className="engine-build-label"><span>Runs safely in saved batches</span><code>Build {buildVersion}</code></div>
         </div>
-        <form onSubmit={startJob}>
+        <form onSubmit={startJob} ref={searchFormRef}>
           <label>Run as<select name="workflowType" onChange={(event) => setSelectedWorkflow(event.target.value as TopProspectWorkflowType)} value={selectedWorkflow}><option value="search">Top Prospects Search</option><option value="morning_batch">Morning Prospect Batch</option></select></label>
           <label>Outreach preference<select name="outreachPreference" onChange={(event) => setSelectedOutreachPreference(event.target.value as OutreachPreference)} value={selectedOutreachPreference}><option value="written_only">Written outreach only</option><option value="phone_allowed">Phone allowed</option></select></label>
           <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectSearchType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option><option value="all">All Prospect Types</option></select></label>
           <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
           <label>Trade<select name="trade" onChange={(event) => setSelectedTrade(event.target.value as TopProspectJob["input"]["trade"])} value={selectedTrade}><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="engine-form-wide">City<span>Enter one city, city-only list, or city/state pairs. Examples: Toledo, Sylvania, Perrysburg with State OH, or Toledo, OH; Tampa, FL.</span><input name="city" onChange={(event) => setCityInput(event.target.value)} required value={cityInput} /></label>
+          <label className="engine-form-wide">City<span>Enter one city, city-only list, or city/state pairs. Examples: Toledo, Sylvania, Perrysburg with State OH, or Toledo, OH; Tampa, FL.</span><input name="city" onChange={(event) => setCityInput(event.target.value)} ref={cityInputRef} required value={cityInput} /></label>
           <label>State<input maxLength={2} name="state" onChange={(event) => setStateInput(event.target.value.toUpperCase())} required value={stateInput} /></label>
           <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
           <label>Businesses to scan<input defaultValue="100" max="250" min="5" name="businessesToScan" type="number" /></label>
@@ -448,6 +464,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               {parsedCityTargets.map((target) => <span key={target.label}>{target.label}</span>)}
             </div>
           ) : null}
+          {marketApplied ? <p className="engine-market-applied" role="status">{marketApplied}</p> : null}
           <div className={`engine-provider-load ${largeSearch ? "engine-provider-load--warning" : ""}`}>
             <b>Estimated provider request load: about {providerRequestEstimate} provider queries.</b>
             <span>{largeSearch ? "This may take longer and use more provider requests." : "Small, focused searches are fastest to review."}</span>
@@ -461,6 +478,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-market-presets__head">
             <h3>Recommended Markets</h3>
             <p>Start with one preset and one trade first. Larger multi-city searches may take longer and use more provider requests.</p>
+            <p>Selecting a market only fills the search fields. You still need to click Find Top Prospects.</p>
           </div>
           <div className="engine-market-grid">
             {recommendedMarketPresets.map((preset) => (
@@ -468,11 +486,12 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <header><strong>{preset.name}</strong>{preset.starter ? <span>Best starter</span> : null}</header>
                 <p>{preset.cities.map((city) => city.label).join("; ")}</p>
                 <div className="engine-market-trades">
-                  {preset.trades.map((trade) => <button className="engine-chip-button" key={trade} onClick={() => setSelectedTrade(trade)} type="button">{displayTradeCategory(trade)}</button>)}
+                  {preset.trades.map((trade) => <button aria-label={`Use ${preset.name} with ${displayTradeCategory(trade)}`} className="engine-chip-button" key={trade} onClick={() => applyPreset(preset, "replace", trade)} type="button">{displayTradeCategory(trade)}</button>)}
                 </div>
                 <footer>
-                  <button className="engine-button" onClick={() => applyPresetCities(preset, "replace")} type="button">Replace cities</button>
-                  <button className="engine-button" onClick={() => applyPresetCities(preset, "append")} type="button">Append cities</button>
+                  <button className="engine-button engine-button--primary" onClick={() => applyPreset(preset, "replace")} type="button">Use this market</button>
+                  <button className="engine-button" onClick={() => applyPreset(preset, "append")} type="button">Add to current cities</button>
+                  <button className="engine-button" onClick={() => applyRecommendedTrades(preset)} type="button">Use recommended trades</button>
                 </footer>
               </article>
             ))}

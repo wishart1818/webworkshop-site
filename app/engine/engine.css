@@ -2138,8 +2138,20 @@ body:has(.engine-shell) {
 .engine-market-grid footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.6rem;
+}
+
+.engine-market-grid header {
+  justify-content: space-between;
+}
+
+.engine-market-grid footer {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.engine-market-grid footer .engine-button {
+  min-height: 2.35rem;
 }
 
 .engine-market-grid strong {
@@ -2161,6 +2173,18 @@ body:has(.engine-shell) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.engine-market-applied {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 1px solid #bfd8ce;
+  background: #f4fbf7;
+  color: #126247;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.45;
 }
 
 .engine-next-run-recommendations {

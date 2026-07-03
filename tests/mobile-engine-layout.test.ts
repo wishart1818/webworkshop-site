@@ -155,6 +155,15 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /defaultValue="20"/);
   assert.match(topProspectsWorkspace, /total budget across all selected cities and trades/);
   assert.match(topProspectsWorkspace, /Recommended Markets/);
+  assert.match(topProspectsWorkspace, /Selecting a market only fills the search fields\. You still need to click Find Top Prospects\./);
+  assert.match(topProspectsWorkspace, /Use this market/);
+  assert.match(topProspectsWorkspace, /Add to current cities/);
+  assert.match(topProspectsWorkspace, /Use recommended trades/);
+  assert.match(topProspectsWorkspace, /Use \$\{preset\.name\} with \$\{displayTradeCategory\(trade\)\}/);
+  assert.match(topProspectsWorkspace, /type="button">Use this market/);
+  assert.match(topProspectsWorkspace, /type="button">Add to current cities/);
+  assert.match(topProspectsWorkspace, /type="button">Use recommended trades/);
+  assert.doesNotMatch(topProspectsWorkspace, /applyPreset\([^)]*\);\s*void startJob/s);
   assert.match(topProspectsWorkspace, /Exclude previously reviewed prospects/);
   assert.match(topProspectsWorkspace, /Discovery complete\. Analyze/);
   assert.match(topProspectsWorkspace, /Analyze saved prospects/);

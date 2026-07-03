@@ -5,6 +5,7 @@ import {
   assessOpportunity,
   assessNoWebsiteOpportunity,
   assertOutreachEmailReady,
+  applyRecommendedMarketPresetFields,
   calculateNoWebsitePresenceScores,
   calculateProspectSalesScores,
   evaluateOutreachEmailQuality,
@@ -265,6 +266,43 @@ test("recommended market presets and multi-city budget splitting are determinist
   assert.ok(recommendedMarketPresets.some((preset) => preset.name === "Northwest Ohio" && preset.starter));
   assert.ok(recommendedMarketPresets.some((preset) => preset.name === "Florida" && preset.trades.includes("Pressure Washing")));
   assert.deepEqual(citySearchBudgets(100, 3), [34, 33, 33]);
+});
+
+test("recommended market preset actions fill fields without starting a search", () => {
+  const florida = recommendedMarketPresets.find((preset) => preset.name === "Florida");
+  assert.ok(florida);
+
+  const replaced = applyRecommendedMarketPresetFields({
+    currentCityInput: "Toledo",
+    currentStateInput: "OH",
+    mode: "replace",
+    preset: florida,
+  });
+  assert.equal(replaced.stateInput, "FL");
+  assert.match(replaced.cityInput, /^Tampa, St\. Petersburg, Clearwater/);
+  assert.equal(parseTopProspectCityTargets(replaced.cityInput, replaced.stateInput).length, florida.cities.length);
+
+  const appended = applyRecommendedMarketPresetFields({
+    currentCityInput: "Toledo, OH; Tampa, FL",
+    currentStateInput: "OH",
+    mode: "append",
+    preset: florida,
+  });
+  const appendedTargets = parseTopProspectCityTargets(appended.cityInput, appended.stateInput);
+  assert.equal(appended.stateInput, "OH");
+  assert.equal(appendedTargets.filter((target) => target.label === "Tampa, FL").length, 1);
+  assert.ok(appendedTargets.some((target) => target.label === "Toledo, OH"));
+  assert.ok(appendedTargets.some((target) => target.label === "Fort Myers, FL"));
+
+  const withTrade = applyRecommendedMarketPresetFields({
+    currentCityInput: "",
+    currentStateInput: "OH",
+    mode: "replace",
+    preset: florida,
+    trade: "Pressure Washing",
+  });
+  assert.equal(withTrade.trade, "Pressure Washing");
+  assert.equal(withTrade.stateInput, "FL");
 });
 
 test("public discovery rejects records explicitly marked inactive", () => {

@@ -1108,6 +1108,53 @@ export function estimatedProviderRequestLoad(targetCount: number, trade: TopPros
   return Math.max(1, targetCount) * tradeCount * 4;
 }
 
+export function cityTargetsToSearchInput(targets: CitySearchTarget[], defaultState: string) {
+  const normalizedDefault = displayStateCode(defaultState);
+  return targets.every((target) => target.state === normalizedDefault)
+    ? targets.map((target) => target.city).join(", ")
+    : targets.map((target) => target.label).join("; ");
+}
+
+export function dedupeCitySearchTargets(targets: CitySearchTarget[]) {
+  const seen = new Set<string>();
+  const deduped: CitySearchTarget[] = [];
+  for (const target of targets) {
+    const key = `${target.city.toLowerCase()}|${target.state}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(target);
+  }
+  return deduped;
+}
+
+export function applyRecommendedMarketPresetFields({
+  currentCityInput,
+  currentStateInput,
+  mode,
+  preset,
+  trade,
+}: {
+  currentCityInput: string;
+  currentStateInput: string;
+  mode: "replace" | "append";
+  preset: RecommendedMarketPreset;
+  trade?: TopProspectTradeSelection;
+}) {
+  const currentTargets = parseTopProspectCityTargets(currentCityInput, currentStateInput);
+  const nextTargets = mode === "append"
+    ? dedupeCitySearchTargets([...currentTargets, ...preset.cities])
+    : preset.cities;
+  const singlePresetState = preset.cities.length
+    ? preset.cities.every((target) => target.state === preset.cities[0].state) ? preset.cities[0].state : ""
+    : "";
+  const nextStateInput = mode === "replace" && singlePresetState ? singlePresetState : displayStateCode(currentStateInput);
+  return {
+    cityInput: cityTargetsToSearchInput(nextTargets, nextStateInput),
+    stateInput: nextStateInput,
+    ...(trade ? { trade } : {}),
+  };
+}
+
 export const recommendedMarketPresets: RecommendedMarketPreset[] = [
   {
     id: "northwest-ohio",
