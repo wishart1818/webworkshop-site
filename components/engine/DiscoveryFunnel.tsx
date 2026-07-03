@@ -82,6 +82,25 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
           </div>
         </div>
       ) : null}
+      {diagnostics.cityDiagnostics?.length ? (
+        <div className="engine-city-diagnostics" aria-label="City discovery diagnostics">
+          <h3>City Breakdown</h3>
+          <div role="table" aria-label="Discovery diagnostics by city">
+            <div role="row"><span>City</span><span>Status</span><span>Requested</span><span>Raw</span><span>Within radius</span><span>Returned</span></div>
+            {diagnostics.cityDiagnostics.map((city) => (
+              <div key={city.label} role="row">
+                <strong>{city.label}</strong>
+                <span>{city.status}</span>
+                <span>{city.requestedCount}</span>
+                <span>{city.rawProviderCount}</span>
+                <span>{city.withinRadiusCount}</span>
+                <span>{city.returnedCount}</span>
+                {city.safeReason ? <small>{city.safeReason}</small> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

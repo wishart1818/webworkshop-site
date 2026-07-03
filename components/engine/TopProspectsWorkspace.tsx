@@ -17,6 +17,14 @@ import {
   type ProspectSearchType,
   type RecommendedContactMethod,
 } from "@/lib/prospect-engine";
+import {
+  estimatedProviderRequestLoad,
+  formatCityTargetsForHeader,
+  parseTopProspectCityTargets,
+  recommendedMarketPresets,
+  type CitySearchTarget,
+  type RecommendedMarketPreset,
+} from "@/lib/top-prospects";
 import type {
   OutreachPackageAction,
   OutreachPreference,
@@ -215,6 +223,13 @@ function prospectLocationLine(prospect: Pick<TopProspectResult["prospect"], "tra
   return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
 }
 
+function cityTargetsToInput(targets: CitySearchTarget[], defaultState: string) {
+  const normalizedDefault = displayStateCode(defaultState);
+  return targets.every((target) => target.state === normalizedDefault)
+    ? targets.map((target) => target.city).join(", ")
+    : targets.map((target) => target.label).join("; ");
+}
+
 function safeWebsite(value: string) {
   try {
     const url = new URL(value);
@@ -265,6 +280,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [selectedProspectType, setSelectedProspectType] = useState<ProspectSearchType>("all");
   const [selectedWorkflow, setSelectedWorkflow] = useState<TopProspectWorkflowType>("search");
   const [selectedOutreachPreference, setSelectedOutreachPreference] = useState<OutreachPreference>("written_only");
+  const [selectedTrade, setSelectedTrade] = useState<TopProspectJob["input"]["trade"]>("Landscaping");
+  const [cityInput, setCityInput] = useState("");
+  const [stateInput, setStateInput] = useState("OH");
+  const [excludePreviouslyReviewed, setExcludePreviouslyReviewed] = useState(true);
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const activeJob = jobs.find((job) => jobIsActive(job.status));
   const latestJob = activeJob ?? jobs[0];
@@ -274,6 +293,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const filteredReviewedNotRecommended = latestJob ? latestJob.reviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const preparedArtifacts = queuedResults.filter((result) => result.prospect.preview && result.prospect.outreach && result.buildPrompt).length;
+  const parsedCityTargets = useMemo(() => parseTopProspectCityTargets(cityInput, stateInput), [cityInput, stateInput]);
+  const providerRequestEstimate = estimatedProviderRequestLoad(parsedCityTargets.length || 1, selectedTrade);
+  const largeSearch = parsedCityTargets.length > 3 || selectedTrade === allCoreServiceTradesOption || providerRequestEstimate > 24;
 
   const loadJobs = useCallback(async () => {
     try {
@@ -321,6 +343,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           mode: selectedMode,
           workflowType: selectedWorkflow,
           outreachPreference: selectedOutreachPreference,
+          excludePreviouslyReviewed,
         }),
       });
       const payload = (await response.json()) as TopProspectApiPayload;
@@ -380,6 +403,16 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     if (result.packageStatus === "PACKAGE_GENERATED") void runPackageAction(result, "ready_for_review");
   }
 
+  function applyPresetCities(preset: RecommendedMarketPreset, mode: "replace" | "append") {
+    const nextTargets = mode === "append"
+      ? [...parsedCityTargets, ...preset.cities]
+      : preset.cities;
+    setCityInput(cityTargetsToInput(nextTargets, stateInput));
+    if (mode === "replace" && preset.cities.length && preset.cities.every((target) => target.state === preset.cities[0].state)) {
+      setStateInput(preset.cities[0].state);
+    }
+  }
+
   const skipText = useMemo(
     () => latestJob ? Object.entries(latestJob.skipSummary).map(([reason, count]) => `${count} ${skipReasonLabel(reason)}`).join(" / ") : "",
     [latestJob],
@@ -399,17 +432,48 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Outreach preference<select name="outreachPreference" onChange={(event) => setSelectedOutreachPreference(event.target.value as OutreachPreference)} value={selectedOutreachPreference}><option value="written_only">Written outreach only</option><option value="phone_allowed">Phone allowed</option></select></label>
           <label>Prospect type<select name="prospectType" onChange={(event) => setSelectedProspectType(event.target.value as ProspectSearchType)} value={selectedProspectType}><option value="redesign">Redesign Prospects</option><option value="no_website_social_only">No Website / Social Only</option><option value="all">All Prospect Types</option></select></label>
           <label>Prospect mode<select disabled={selectedProspectType === "no_website_social_only"} name="mode" onChange={(event) => setSelectedMode(event.target.value as ProspectMode)} value={selectedMode}><option value="strict">Strict Mode</option><option value="growth">Growth Mode</option><option value="volume">Volume Mode</option></select></label>
-          <label>Trade<select defaultValue={allCoreServiceTradesOption} name="trade"><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>City<span>Enter one city at a time.</span><input name="city" required /></label>
-          <label>State<input maxLength={2} name="state" required /></label>
+          <label>Trade<select name="trade" onChange={(event) => setSelectedTrade(event.target.value as TopProspectJob["input"]["trade"])} value={selectedTrade}><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label className="engine-form-wide">City<span>Enter one city, city-only list, or city/state pairs. Examples: Toledo, Sylvania, Perrysburg with State OH, or Toledo, OH; Tampa, FL.</span><input name="city" onChange={(event) => setCityInput(event.target.value)} required value={cityInput} /></label>
+          <label>State<input maxLength={2} name="state" onChange={(event) => setStateInput(event.target.value.toUpperCase())} required value={stateInput} /></label>
           <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
-          <label>Businesses to scan<input defaultValue="100" max="100" min="5" name="businessesToScan" type="number" /></label>
+          <label>Businesses to scan<input defaultValue="100" max="250" min="5" name="businessesToScan" type="number" /></label>
           <label>Final prospects wanted<input defaultValue="20" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
-          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} <b>Businesses to scan is the total all-trades budget.</b> {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
+          <label className="engine-checkbox-label"><input checked={excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => setExcludePreviouslyReviewed(event.target.checked)} type="checkbox" /> Exclude previously reviewed prospects</label>
+          {parsedCityTargets.length ? (
+            <div className="engine-city-chip-row" aria-label="Parsed city targets">
+              {parsedCityTargets.map((target) => <span key={target.label}>{target.label}</span>)}
+            </div>
+          ) : null}
+          <div className={`engine-provider-load ${largeSearch ? "engine-provider-load--warning" : ""}`}>
+            <b>Estimated provider request load: about {providerRequestEstimate} provider queries.</b>
+            <span>{largeSearch ? "This may take longer and use more provider requests." : "Small, focused searches are fastest to review."}</span>
+          </div>
+          <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} <b>Starter tip:</b> Start with one preset and one trade first. Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete for first tests. <b>Businesses to scan is the total budget across all selected cities and trades.</b> {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
             {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}
           </button>
         </form>
+        <div className="engine-market-presets" aria-label="Recommended Markets">
+          <div className="engine-market-presets__head">
+            <h3>Recommended Markets</h3>
+            <p>Start with one preset and one trade first. Larger multi-city searches may take longer and use more provider requests.</p>
+          </div>
+          <div className="engine-market-grid">
+            {recommendedMarketPresets.map((preset) => (
+              <article className={preset.starter ? "is-starter" : ""} key={preset.id}>
+                <header><strong>{preset.name}</strong>{preset.starter ? <span>Best starter</span> : null}</header>
+                <p>{preset.cities.map((city) => city.label).join("; ")}</p>
+                <div className="engine-market-trades">
+                  {preset.trades.map((trade) => <button className="engine-chip-button" key={trade} onClick={() => setSelectedTrade(trade)} type="button">{displayTradeCategory(trade)}</button>)}
+                </div>
+                <footer>
+                  <button className="engine-button" onClick={() => applyPresetCities(preset, "replace")} type="button">Replace cities</button>
+                  <button className="engine-button" onClick={() => applyPresetCities(preset, "append")} type="button">Append cities</button>
+                </footer>
+              </article>
+            ))}
+          </div>
+        </div>
       </section>
 
       {error && <div className="engine-error-banner" role="alert"><div><b>Top Prospects needs attention</b><p>{error}</p></div></div>}
@@ -417,7 +481,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       {latestJob && (
         <section className="engine-panel engine-job-progress" aria-live="polite">
           <div className="engine-panel__head">
-            <div><h2>{displayTradeCategory(latestJob.input.trade)} near {titleCaseLocation(latestJob.input.city)}, {displayStateCode(latestJob.input.state)}</h2><p>{jobStatusDescription(latestJob)}</p></div>
+            <div><h2>{displayTradeCategory(latestJob.input.trade)} near {formatCityTargetsForHeader(latestJob.input.cityTargets, latestJob.input.city, latestJob.input.state)}</h2><p>{jobStatusDescription(latestJob)}</p></div>
             <span className={`engine-job-state engine-job-state--${latestJob.status.toLowerCase().replaceAll("_", "-")}`}>{jobStatusLabel(latestJob)}</span>
           </div>
           <div className="engine-job-meta">
@@ -428,6 +492,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span>Type <b>{prospectTypeLabels[latestJob.input.prospectType]}</b></span>
             <span>Workflow <b>{workflowLabels[latestJob.input.workflowType]}</b></span>
             <span>Outreach <b>{outreachPreferenceLabels[latestJob.input.outreachPreference]}</b></span>
+            <span>Reviewed filter <b>{latestJob.input.excludePreviouslyReviewed ? "Excluding previous" : "Including previous"}</b></span>
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
           <StageProgress job={latestJob} preparedArtifacts={preparedArtifacts} />
@@ -449,6 +514,12 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} qualificationLabel={latestJob.input.prospectType === "no_website_social_only" ? "eligible no-website leads" : latestJob.input.prospectType === "all" ? "eligible prospects" : "usable websites"} />
           {partialDiscoverySummary(latestJob.discoveryDiagnostics) ? <p className="engine-skip-summary">{partialDiscoverySummary(latestJob.discoveryDiagnostics)}</p> : null}
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
+          {latestJob.nextRunRecommendations.length ? (
+            <div className="engine-next-run-recommendations">
+              <h3>Best next run recommendation</h3>
+              <ul>{latestJob.nextRunRecommendations.map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          ) : null}
         </section>
       )}
 
@@ -736,10 +807,12 @@ function SalesScoreBreakdown({ result }: { result: TopProspectResult }) {
 function ProspectPresenceLink({ result }: { result: TopProspectResult }) {
   const url = result.prospect.website || result.prospect.profileUrl;
   const presenceLabels = prospectPresenceLabels(result.prospect);
+  const lastFound = result.prospect.activities.find((activity) => activity.label.startsWith("Found in Top Prospects run"));
   return (
     <div className="engine-presence-summary">
       <span>{classificationLabels[result.prospect.classification]}</span>
       <span>{contactMethodLabels[result.prospect.recommendedContactMethod]}</span>
+      {lastFound ? <span>{lastFound.label}</span> : null}
       {presenceLabels.map((label) => <i key={label}>{label}</i>)}
       {url ? <a href={safeWebsite(url)} rel="noreferrer" target="_blank">{result.prospect.website ? result.prospect.website : "Open public profile"}</a> : <span>No public profile link</span>}
     </div>

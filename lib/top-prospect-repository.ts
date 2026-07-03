@@ -20,9 +20,11 @@ import {
   normalizeOutreachPackageStatus,
   normalizeProspectMode,
   normalizeTopProspectWorkflowType,
+  parseTopProspectCityTargets,
   outreachPackageActionAllowed,
   prepareTopProspectArtifacts,
   publicProspectPreviewLink,
+  topProspectNextRunRecommendations,
   topProspectResultDisposition,
   validPublicPreviewToken,
 } from "@/lib/top-prospects";
@@ -41,6 +43,7 @@ function discoveryHasPartialIssues(value: Prisma.JsonValue | null) {
   const diagnostics = discoveryDiagnosticsFromJson(value);
   return Boolean(
     diagnostics?.tradeDiagnostics?.some((trade) => trade.status === "partial" || trade.status === "skipped" || trade.rateLimitedProviders?.length)
+    || diagnostics?.cityDiagnostics?.some((city) => city.status === "partial" || city.status === "failed")
     || Object.values(diagnostics?.providerDiagnostics ?? {}).some((provider) => ["rate_limited", "failed", "timed_out"].includes(provider.status)),
   );
 }
@@ -136,12 +139,16 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     .sort((left, right) => right.salesScores.weightedSalesScore - left.salesScores.weightedSalesScore);
   const inferredScannedCount = Math.max(row.scannedCount, row.nextLeadIndex, allResults.length);
   const inferredSkippedCount = Math.max(row.skippedCount, inferredScannedCount - recommended.length);
-  return {
+  const diagnostics = discoveryDiagnosticsFromJson(row.discoveredLeads);
+  const cityTargets = diagnostics?.cityTargets?.length ? diagnostics.cityTargets : parseTopProspectCityTargets(row.city, row.state);
+  const job: TopProspectJob = {
     id: row.id,
     input: {
       trade: row.tradeCategory === "All Core Service Trades" ? row.tradeCategory : normalizeTradeCategory(row.tradeCategory) ?? "General Contractor",
       city: titleCaseLocation(row.city),
       state: displayStateCode(row.state),
+      rawCityInput: row.city,
+      cityTargets,
       radiusKm: row.radiusKm,
       businessesToScan: row.businessesToScan,
       finalProspectsWanted: row.finalProspectsWanted,
@@ -149,11 +156,12 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
       mode,
       workflowType,
       outreachPreference,
+      excludePreviouslyReviewed: diagnostics?.excludePreviouslyReviewed !== false,
     },
     status: row.status as TopProspectJob["status"],
     stage: row.stage,
     discoveredCount: discoveryLeadsFromJson(row.discoveredLeads).length,
-    discoveryDiagnostics: discoveryDiagnosticsFromJson(row.discoveredLeads),
+    discoveryDiagnostics: diagnostics,
     scannedCount: inferredScannedCount,
     qualifiedCount: recommended.length,
     skippedCount: inferredSkippedCount,
@@ -162,10 +170,12 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     reviewedNotRecommended,
     failureClassification: failure.classification,
     errorMessage: failure.reason,
+    nextRunRecommendations: [],
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+  return { ...job, nextRunRecommendations: diagnostics?.nextRunRecommendations?.length ? diagnostics.nextRunRecommendations : topProspectNextRunRecommendations({ job }) };
 }
 
 export async function createTopProspectJob(input: TopProspectInput) {
@@ -186,6 +196,28 @@ export async function createTopProspectJob(input: TopProspectInput) {
       prospectType: input.prospectType,
       workflowType: input.workflowType,
       outreachPreference: input.outreachPreference,
+      discoveredLeads: {
+        leads: [],
+        diagnostics: {
+          rawProviderCount: 0,
+          afterDistanceFilteringCount: 0,
+          afterDuplicateFilteringCount: 0,
+          afterQualificationFilteringCount: 0,
+          returnedCount: 0,
+          radiusKm: input.radiusKm,
+          categorySignals: [],
+          sourceCounts: { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+          providerDiagnostics: {
+            osm: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            azureMaps: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            googlePlaces: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+            yelp: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          },
+          finalMergedCount: 0,
+          cityTargets: input.cityTargets ?? parseTopProspectCityTargets(input.city, input.state),
+          excludePreviouslyReviewed: input.excludePreviouslyReviewed,
+        },
+      },
     },
   });
   console.info("[top-prospects] Job created.", {

@@ -18,8 +18,11 @@ import {
   normalizeOutreachPackageStatus,
   outreachPackageActionAllowed,
   outreachPackageStatusLabel,
+  parseTopProspectCityTargets,
   prepareTopProspectArtifacts,
   repairUnsupportedOutreachClaims,
+  recommendedMarketPresets,
+  citySearchBudgets,
   prospectPreviewLink,
   publicProspectPreviewLink,
   topProspectJobStatuses,
@@ -40,7 +43,7 @@ import {
 } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { createPublicPreviewToken } from "../lib/public-preview-token";
-import { combineTradeDiscoveryResults, recoverableTopProspect, tradeFailureDiscoveryResult } from "../lib/top-prospect-worker";
+import { combineCityDiscoveryResults, combineTradeDiscoveryResults, recoverableTopProspect, tradeFailureDiscoveryResult } from "../lib/top-prospect-worker";
 
 function manualAssessment(opportunityScore: number): OpportunityAssessment {
   return {
@@ -127,7 +130,7 @@ test("Top Prospects input applies bounded production-safe limits", () => {
   if (allCoreTrades.ok) assert.deepEqual([allCoreTrades.value.trade, allCoreTrades.value.prospectType, allCoreTrades.value.mode], ["All Core Service Trades", "all", "growth"]);
   assert.equal(validateTopProspectInput({ trade: "Painting", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5 }).ok, true);
 
-  assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 101, finalProspectsWanted: 10 }).ok, false);
+  assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 251, finalProspectsWanted: 10 }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 11 }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, mode: "unknown" }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, workflowType: "unknown" }).ok, false);
@@ -204,13 +207,28 @@ test("display normalization keeps HVAC, Toledo, OH, and Pressure Washing labels 
 
   const multiCity = validateTopProspectInput({
     trade: "Roofing",
-    city: "Toledo, Sylvania",
+    city: "Toledo, Sylvania, Perrysburg",
     state: "OH",
     radiusKm: 25,
     businessesToScan: 10,
     finalProspectsWanted: 5,
   });
-  assert.deepEqual(multiCity, { ok: false, error: "Enter one city at a time." });
+  assert.equal(multiCity.ok, true);
+  if (multiCity.ok) {
+    assert.deepEqual(multiCity.value.cityTargets?.map((target) => target.label), ["Toledo, OH", "Sylvania, OH", "Perrysburg, OH"]);
+    assert.equal(multiCity.value.excludePreviouslyReviewed, true);
+  }
+  assert.deepEqual(parseTopProspectCityTargets("Toledo, OH; Tampa, FL; Charlotte, NC", "OH").map((target) => target.label), [
+    "Toledo, OH",
+    "Tampa, FL",
+    "Charlotte, NC",
+  ]);
+});
+
+test("recommended market presets and multi-city budget splitting are deterministic", () => {
+  assert.ok(recommendedMarketPresets.some((preset) => preset.name === "Northwest Ohio" && preset.starter));
+  assert.ok(recommendedMarketPresets.some((preset) => preset.name === "Florida" && preset.trades.includes("Pressure Washing")));
+  assert.deepEqual(citySearchBudgets(100, 3), [34, 33, 33]);
 });
 
 test("public discovery rejects records explicitly marked inactive", () => {
@@ -454,6 +472,60 @@ test("all-core discovery keeps partial results when one trade is rate limited", 
   assert.equal(combined.leads[0].businessName, "Partial Roofing");
   assert.equal(combined.diagnostics.tradeDiagnostics?.find((item) => item.trade === "HVAC")?.status, "skipped");
   assert.deepEqual(combined.diagnostics.tradeDiagnostics?.find((item) => item.trade === "HVAC")?.rateLimitedProviders, ["osm"]);
+});
+
+test("multi-city discovery merges duplicates and keeps city diagnostics", () => {
+  const baseLead = {
+    businessName: "Same Market Roofing",
+    website: "https://same-market-roofing.example",
+    profileUrl: "",
+    prospectType: "redesign" as const,
+    classification: "website_redesign" as const,
+    phone: "(419) 555-0199",
+    email: "hello@same-market-roofing.example",
+    contactFormUrl: "",
+    address: "",
+    city: "Toledo",
+    state: "OH",
+    trade: "Roofing" as const,
+    serviceArea: "Toledo and nearby communities",
+    sources: ["osm" as const],
+    sourceConfidence: 55,
+    recommendedContactMethod: "send_email" as const,
+    inactive: false,
+  };
+  const diagnostics = {
+    rawProviderCount: 1,
+    afterDistanceFilteringCount: 1,
+    afterDuplicateFilteringCount: 1,
+    afterQualificationFilteringCount: 1,
+    returnedCount: 1,
+    radiusKm: 25,
+    categorySignals: ["craft=roofer"],
+    sourceCounts: { osm: 1, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+    providerDiagnostics: {
+      osm: { configured: true, queryExecuted: true, status: "succeeded" as const, returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 1 },
+      azureMaps: { configured: false, queryExecuted: false, status: "not_configured" as const, returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      googlePlaces: { configured: false, queryExecuted: false, status: "not_configured" as const, returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      yelp: { configured: false, queryExecuted: false, status: "not_configured" as const, returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    },
+    finalMergedCount: 1,
+  };
+  const combined = combineCityDiscoveryResults({
+    radiusKm: 25,
+    limit: 10,
+    excludePreviouslyReviewed: true,
+    cityTargets: [{ city: "Toledo", state: "OH", label: "Toledo, OH" }, { city: "Sylvania", state: "OH", label: "Sylvania, OH" }],
+    results: [
+      { target: { city: "Toledo", state: "OH", label: "Toledo, OH" }, requestedCount: 5, result: { leads: [{ ...baseLead, matchedCities: ["Toledo, OH"] }], diagnostics } },
+      { target: { city: "Sylvania", state: "OH", label: "Sylvania, OH" }, requestedCount: 5, result: { leads: [{ ...baseLead, city: "Sylvania", matchedCities: ["Sylvania, OH"] }], diagnostics } },
+    ],
+  });
+
+  assert.equal(combined.leads.length, 1);
+  assert.deepEqual(combined.leads[0].matchedCities?.sort(), ["Sylvania, OH", "Toledo, OH"]);
+  assert.equal(combined.diagnostics.cityDiagnostics?.length, 2);
+  assert.equal(combined.diagnostics.excludePreviouslyReviewed, true);
 });
 
 test("Top Prospects build version safely identifies the deployed commit", () => {

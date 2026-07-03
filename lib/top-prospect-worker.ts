@@ -6,6 +6,7 @@ import {
   discoveryLeadsFromJson,
   type DiscoveredLead,
   type DiscoveryDiagnostics,
+  type CityDiscoveryDiagnostic,
   type DiscoveryProviderDiagnostic,
   type DiscoveryProviderDiagnostics,
   type DiscoveryProviderStatus,
@@ -33,8 +34,11 @@ import {
   normalizeProspectMode,
   normalizeOutreachPreference,
   normalizeWebsite,
+  parseTopProspectCityTargets,
+  citySearchBudgets,
   prepareTopProspectArtifacts,
   publicProspectPreviewLink,
+  type CitySearchTarget,
   type OutreachPreference,
   type ProspectMode,
   topProspectRejectionReason,
@@ -112,6 +116,26 @@ function combineProviderDiagnosticsFromTradeDiagnostics(tradeDiagnostics: TradeD
   return combined;
 }
 
+function combineProviderDiagnosticsFromCityDiagnostics(cityDiagnostics: CityDiscoveryDiagnostic[]): DiscoveryProviderDiagnostics {
+  const combined = emptyProviderDiagnostics();
+  for (const provider of discoveryProviders) {
+    const items = cityDiagnostics.map((city) => city.providerDiagnostics[provider]).filter(Boolean);
+    combined[provider] = items.length
+      ? {
+          configured: combineBooleanState(items.map((item) => item.configured)),
+          queryExecuted: combineBooleanState(items.map((item) => item.queryExecuted)),
+          status: combineProviderStatus(items),
+          returnedCount: items.reduce((total, item) => total + item.returnedCount, 0),
+          withinRadiusCount: items.reduce((total, item) => total + item.withinRadiusCount, 0),
+          afterDeduplicationCount: items.reduce((total, item) => total + item.afterDeduplicationCount, 0),
+          usableWebsiteCount: items.reduce((total, item) => total + item.usableWebsiteCount, 0),
+          retryCount: items.reduce((total, item) => total + (item.retryCount ?? 0), 0),
+        }
+      : combined[provider];
+  }
+  return combined;
+}
+
 function combineSourceCounts(results: DiscoveryResult[]): DiscoverySourceCounts {
   return results.reduce((combined, result) => {
     for (const [source, count] of Object.entries(result.diagnostics.sourceCounts) as Array<[keyof DiscoverySourceCounts, number]>) {
@@ -144,7 +168,11 @@ function leadDedupeKey(lead: DiscoveredLead) {
   if (profileDomain) return `profile:${profileDomain}:${lead.profileUrl.toLowerCase()}`;
   const phone = leadPhoneKey(lead.phone);
   if (phone) return `phone:${phone}`;
-  return `name:${leadNameKey(lead.businessName)}:${lead.city.toLowerCase()}:${lead.state.toLowerCase()}`;
+  return `name:${leadNameKey(lead.businessName)}:${lead.state.toLowerCase()}`;
+}
+
+function leadMatchedCities(...leads: DiscoveredLead[]) {
+  return [...new Set(leads.flatMap((lead) => lead.matchedCities?.length ? lead.matchedCities : [`${lead.city}, ${lead.state}`]))];
 }
 
 function mergeLeadForAllTrades(existing: DiscoveredLead, incoming: DiscoveredLead): DiscoveredLead {
@@ -159,6 +187,8 @@ function mergeLeadForAllTrades(existing: DiscoveredLead, incoming: DiscoveredLea
     contactFormUrl: primary.contactFormUrl || secondary.contactFormUrl,
     profileUrl: primary.profileUrl || secondary.profileUrl,
     activitySignals: [...new Set([...(primary.activitySignals ?? []), ...(secondary.activitySignals ?? [])])],
+    originCity: primary.originCity || secondary.originCity,
+    matchedCities: leadMatchedCities(primary, secondary),
     rating: Math.max(primary.rating ?? 0, secondary.rating ?? 0) || undefined,
     reviewCount: Math.max(primary.reviewCount ?? 0, secondary.reviewCount ?? 0) || undefined,
     recentReviewCount: Math.max(primary.recentReviewCount ?? 0, secondary.recentReviewCount ?? 0) || undefined,
@@ -232,6 +262,71 @@ export function combineTradeDiscoveryResults(input: {
   return { leads, diagnostics };
 }
 
+export function combineCityDiscoveryResults(input: {
+  radiusKm: number;
+  limit: number;
+  cityTargets: CitySearchTarget[];
+  excludePreviouslyReviewed: boolean;
+  results: Array<{ target: CitySearchTarget; requestedCount: number; result: DiscoveryResult }>;
+}): DiscoveryResult {
+  const merged = new Map<string, DiscoveredLead>();
+  for (const { target, result } of input.results) {
+    for (const lead of result.leads) {
+      const taggedLead: DiscoveredLead = {
+        ...lead,
+        originCity: lead.originCity ?? target.label,
+        matchedCities: lead.matchedCities?.length ? lead.matchedCities : [target.label],
+      };
+      const key = leadDedupeKey(taggedLead);
+      const existing = merged.get(key);
+      merged.set(key, existing ? mergeLeadForAllTrades(existing, taggedLead) : taggedLead);
+    }
+  }
+  const allLeads = [...merged.values()].sort((left, right) =>
+    (right.sourceConfidence ?? 0) - (left.sourceConfidence ?? 0)
+    || Number(Boolean(right.email)) - Number(Boolean(left.email))
+    || Number(Boolean(right.contactFormUrl)) - Number(Boolean(left.contactFormUrl))
+    || Number(Boolean(right.phone)) - Number(Boolean(left.phone))
+    || (right.recentReviewCount ?? 0) - (left.recentReviewCount ?? 0)
+    || (right.reviewCount ?? 0) - (left.reviewCount ?? 0));
+  const leads = allLeads.slice(0, input.limit);
+  const cityDiagnostics: CityDiscoveryDiagnostic[] = input.results.map(({ target, requestedCount, result }) => {
+    const providerItems = Object.entries(result.diagnostics.providerDiagnostics);
+    const hasProviderProblem = providerItems.some(([, diagnostic]) => ["rate_limited", "failed", "timed_out"].includes(diagnostic.status));
+    return {
+      city: target.city,
+      state: target.state,
+      label: target.label,
+      status: result.leads.length ? hasProviderProblem ? "partial" : "completed" : hasProviderProblem ? "failed" : "completed",
+      requestedCount,
+      rawProviderCount: result.diagnostics.rawProviderCount,
+      withinRadiusCount: result.diagnostics.afterDistanceFilteringCount,
+      afterDeduplicationCount: result.diagnostics.afterDuplicateFilteringCount,
+      usableWebsiteCount: result.diagnostics.afterQualificationFilteringCount,
+      returnedCount: result.diagnostics.returnedCount,
+      providerDiagnostics: result.diagnostics.providerDiagnostics,
+      ...(result.leads.length === 0 && hasProviderProblem ? { safeReason: "Provider unavailable, timed out, or returned no eligible records for this city." } : {}),
+    };
+  });
+  const diagnostics: DiscoveryDiagnostics = {
+    rawProviderCount: cityDiagnostics.reduce((total, item) => total + item.rawProviderCount, 0),
+    afterDistanceFilteringCount: cityDiagnostics.reduce((total, item) => total + item.withinRadiusCount, 0),
+    afterDuplicateFilteringCount: allLeads.length,
+    afterQualificationFilteringCount: allLeads.length,
+    returnedCount: leads.length,
+    radiusKm: input.radiusKm,
+    categorySignals: input.results.flatMap((item) => item.result.diagnostics.categorySignals),
+    sourceCounts: combineSourceCounts(input.results.map((item) => item.result)),
+    providerDiagnostics: combineProviderDiagnosticsFromCityDiagnostics(cityDiagnostics),
+    finalMergedCount: allLeads.length,
+    tradeDiagnostics: input.results.flatMap((item) => item.result.diagnostics.tradeDiagnostics ?? []),
+    cityDiagnostics,
+    cityTargets: input.cityTargets,
+    excludePreviouslyReviewed: input.excludePreviouslyReviewed,
+  };
+  return { leads, diagnostics };
+}
+
 function savedDiscoveryLeadCount(value: Prisma.JsonValue | null) {
   return discoveryLeadsFromJson(value).length;
 }
@@ -239,6 +334,7 @@ function savedDiscoveryLeadCount(value: Prisma.JsonValue | null) {
 function discoveryHasPartialIssues(diagnostics: DiscoveryDiagnostics | null | undefined) {
   return Boolean(
     diagnostics?.tradeDiagnostics?.some((trade) => trade.status === "partial" || trade.status === "skipped" || trade.rateLimitedProviders?.length)
+    || diagnostics?.cityDiagnostics?.some((city) => city.status === "partial" || city.status === "failed")
     || Object.values(diagnostics?.providerDiagnostics ?? {}).some((provider) => ["rate_limited", "failed", "timed_out"].includes(provider.status)),
   );
 }
@@ -295,6 +391,51 @@ export function tradeFailureDiscoveryResult(input: {
   };
 }
 
+function cityFailureDiscoveryResult(input: {
+  target: CitySearchTarget;
+  radiusKm: number;
+  safeReason: string;
+  classification?: string;
+}): DiscoveryResult {
+  const providerDiagnostics = emptyProviderDiagnostics();
+  for (const provider of discoveryProviders) {
+    providerDiagnostics[provider] = {
+      ...emptyProviderDiagnostic(input.classification === "discovery_provider_error" ? "failed" : "not_recorded"),
+      configured: null,
+      queryExecuted: null,
+    };
+  }
+  return {
+    leads: [],
+    diagnostics: {
+      rawProviderCount: 0,
+      afterDistanceFilteringCount: 0,
+      afterDuplicateFilteringCount: 0,
+      afterQualificationFilteringCount: 0,
+      returnedCount: 0,
+      radiusKm: input.radiusKm,
+      categorySignals: [],
+      sourceCounts: emptySourceCounts(),
+      providerDiagnostics,
+      finalMergedCount: 0,
+      cityDiagnostics: [{
+        city: input.target.city,
+        state: input.target.state,
+        label: input.target.label,
+        status: "failed",
+        requestedCount: 0,
+        rawProviderCount: 0,
+        withinRadiusCount: 0,
+        afterDeduplicationCount: 0,
+        usableWebsiteCount: 0,
+        returnedCount: 0,
+        providerDiagnostics,
+        safeReason: input.safeReason,
+      }],
+    },
+  };
+}
+
 async function discoverTopProspectLeads(input: {
   jobId: string;
   city: string;
@@ -303,94 +444,104 @@ async function discoverTopProspectLeads(input: {
   radiusKm: number;
   limit: number;
   prospectType: ProspectSearchType;
-  existingDiscovery: Prisma.JsonValue | null;
+  excludePreviouslyReviewed: boolean;
   savePartial?: (result: DiscoveryResult) => Promise<void>;
 }) {
-  if (input.tradeCategory !== allCoreServiceTradesOption) {
-    return discoverContractorsWithDiagnostics({
-      city: input.city,
-      state: input.state,
-      trade: input.tradeCategory as DiscoveredLead["trade"],
-      radiusKm: input.radiusKm,
-      limit: input.limit,
-      prospectType: input.prospectType,
-      logger(event, metadata) {
-        console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, trade: input.tradeCategory, ...metadata });
-      },
-    });
-  }
+  const cityTargets = parseTopProspectCityTargets(input.city, input.state);
+  const targets = cityTargets.length ? cityTargets : [{ city: input.city, state: input.state, label: `${input.city}, ${input.state}` }];
+  const budgets = citySearchBudgets(input.limit, targets.length);
+  const cityResults: Array<{ target: CitySearchTarget; requestedCount: number; result: DiscoveryResult }> = [];
 
-  const existingLeads = discoveryLeadsFromJson(input.existingDiscovery);
-  const existingDiagnostics = discoveryDiagnosticsFromJson(input.existingDiscovery);
-  const completedTrades = new Set(
-    existingDiagnostics?.tradeDiagnostics
-      ?.filter((item) => item.status === "completed" || item.status === "partial")
-      .map((item) => item.trade) ?? [],
-  );
-  const tradeBudgets = coreServiceTrades.map((trade, index) => ({
-    trade,
-    limit: Math.floor(input.limit / coreServiceTrades.length) + (index < input.limit % coreServiceTrades.length ? 1 : 0),
-  })).filter((item) => item.limit > 0);
-  const results: Array<{ trade: TradeCategory; result: DiscoveryResult }> = [];
-  for (const { trade, limit } of tradeBudgets) {
-    if (completedTrades.has(trade)) {
-      console.info("[top-prospects] Trade discovery skipped because it was already saved.", { jobId: input.jobId, trade });
-      continue;
-    }
-    console.info("[top-prospects] Trade discovery started.", { jobId: input.jobId, trade, perTradeLimit: limit });
-    let result: DiscoveryResult;
-    try {
-      result = await discoverContractorsWithDiagnostics({
-        city: input.city,
-        state: input.state,
-        trade,
+  async function discoverOneCity(target: CitySearchTarget, cityLimit: number) {
+    if (input.tradeCategory !== allCoreServiceTradesOption) {
+      return discoverContractorsWithDiagnostics({
+        city: target.city,
+        state: target.state,
+        trade: input.tradeCategory as DiscoveredLead["trade"],
         radiusKm: input.radiusKm,
-        limit,
+        limit: cityLimit,
         prospectType: input.prospectType,
-        skipThrottle: true,
+        skipThrottle: targets.length > 1,
         logger(event, metadata) {
-          console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, trade, ...metadata });
+          console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, trade: input.tradeCategory, city: target.label, ...metadata });
         },
       });
+    }
+
+    const tradeBudgets = coreServiceTrades.map((trade, index) => ({
+      trade,
+      limit: Math.floor(cityLimit / coreServiceTrades.length) + (index < cityLimit % coreServiceTrades.length ? 1 : 0),
+    })).filter((item) => item.limit > 0);
+    const results: Array<{ trade: TradeCategory; result: DiscoveryResult }> = [];
+    for (const { trade, limit } of tradeBudgets) {
+      console.info("[top-prospects] Trade discovery started.", { jobId: input.jobId, city: target.label, trade, perTradeLimit: limit });
+      let result: DiscoveryResult;
+      try {
+        result = await discoverContractorsWithDiagnostics({
+          city: target.city,
+          state: target.state,
+          trade,
+          radiusKm: input.radiusKm,
+          limit,
+          prospectType: input.prospectType,
+          skipThrottle: true,
+          logger(event, metadata) {
+            console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, city: target.label, trade, ...metadata });
+          },
+        });
+      } catch (error) {
+        const providerError = safeTopProspectJobFailure(error);
+        if (!(error instanceof TopProspectStageError) || providerError.classification !== "discovery_provider_error") throw error;
+        const rateLimited = /HTTP 429|rate.?limit/i.test(providerError.reason);
+        result = tradeFailureDiscoveryResult({
+          trade,
+          radiusKm: input.radiusKm,
+          rateLimited,
+          safeReason: providerError.reason,
+        });
+      }
+      results.push({ trade, result });
+    }
+    return combineTradeDiscoveryResults({ radiusKm: input.radiusKm, limit: cityLimit, results });
+  }
+
+  for (const [index, target] of targets.entries()) {
+    const requestedCount = budgets[index];
+    console.info("[top-prospects] City discovery started.", { jobId: input.jobId, city: target.label, requestedCount });
+    let result: DiscoveryResult;
+    try {
+      result = await discoverOneCity(target, requestedCount);
     } catch (error) {
-      const providerError = safeTopProspectJobFailure(error);
-      if (!(error instanceof TopProspectStageError) || providerError.classification !== "discovery_provider_error") throw error;
-      const rateLimited = /HTTP 429|rate.?limit/i.test(providerError.reason);
-      result = tradeFailureDiscoveryResult({
-        trade,
+      const failure = safeTopProspectJobFailure(error);
+      result = cityFailureDiscoveryResult({
+        target,
         radiusKm: input.radiusKm,
-        rateLimited,
-        safeReason: providerError.reason,
+        safeReason: failure.reason,
+        classification: failure.classification,
       });
-      console.warn("[top-prospects] Trade discovery skipped with safe provider failure.", {
+      console.warn("[top-prospects] City discovery failed safely; continuing remaining cities.", {
         jobId: input.jobId,
-        trade,
-        classification: providerError.classification,
-        reason: providerError.reason,
+        city: target.label,
+        classification: failure.classification,
+        reason: failure.reason,
       });
     }
-    console.info("[top-prospects] Trade discovery completed.", {
-      jobId: input.jobId,
-      trade,
-      rawProviderCount: result.diagnostics.rawProviderCount,
-      returnedCount: result.diagnostics.returnedCount,
-    });
-    results.push({ trade, result });
-    const partial = combineTradeDiscoveryResults({
+    cityResults.push({ target, requestedCount, result });
+    const partial = combineCityDiscoveryResults({
       radiusKm: input.radiusKm,
       limit: input.limit,
-      initialLeads: existingLeads,
-      previousTradeDiagnostics: existingDiagnostics?.tradeDiagnostics,
-      results,
+      cityTargets: targets,
+      excludePreviouslyReviewed: input.excludePreviouslyReviewed,
+      results: cityResults,
     });
     await input.savePartial?.(partial);
   }
-  return combineTradeDiscoveryResults({
+  return combineCityDiscoveryResults({
     radiusKm: input.radiusKm,
     limit: input.limit,
-    initialLeads: existingLeads,
-    previousTradeDiagnostics: existingDiagnostics?.tradeDiagnostics,
-    results,
+    cityTargets: targets,
+    excludePreviouslyReviewed: input.excludePreviouslyReviewed,
+    results: cityResults,
   });
 }
 
@@ -530,6 +681,7 @@ async function processLead(
   summary: Record<string, number>,
   mode: ProspectMode,
   outreachPreference: OutreachPreference,
+  excludePreviouslyReviewed: boolean,
 ) {
   if (likelyNationalOrLargeBrand(lead)) {
     addSkip(summary, "national_large_brand");
@@ -564,6 +716,15 @@ async function processLead(
     if (existingResult) return existingResult.selected;
     if (contactedStatuses.has(existing.status)) {
       addSkip(summary, "already_contacted");
+      return false;
+    }
+    const previouslyReviewed = existing.status !== "New"
+      || Boolean(existing.analysis)
+      || Boolean(existing.outreach)
+      || Boolean(existing.preview)
+      || existing.activities.some((item) => item.label.startsWith("Automated Top Prospects") || item.label.startsWith("Automated online presence"));
+    if (excludePreviouslyReviewed && previouslyReviewed) {
+      addSkip(summary, "previously_reviewed");
       return false;
     }
     if (
@@ -608,6 +769,7 @@ async function processLead(
   prospect = {
     ...prospect,
     activities: [
+      activity("note", `Found in Top Prospects run ${jobId}${lead.matchedCities?.length ? ` for ${lead.matchedCities.join(", ")}` : ""}.`),
       activity("preview", "Website preview and build prompt added to the Auto Prospect Queue."),
       activity("outreach", "Personalized outreach draft added to the Auto Prospect Queue for human approval."),
       ...prospect.activities,
@@ -651,7 +813,7 @@ export async function processTopProspectJob(jobId: string) {
         radiusKm: job.radiusKm,
         limit: job.businessesToScan,
         prospectType: job.prospectType as ProspectSearchType,
-        existingDiscovery: job.discoveredLeads,
+        excludePreviouslyReviewed: discoveryDiagnosticsFromJson(job.discoveredLeads)?.excludePreviouslyReviewed !== false,
         async savePartial(partial) {
           const partialStatus = waitingStatusForDiscovery(partial);
           await getProspectDatabase().topProspectJob.updateMany({
@@ -700,6 +862,8 @@ export async function processTopProspectJob(jobId: string) {
     }
     const mode = normalizeProspectMode(job.prospectMode);
     const outreachPreference = normalizeOutreachPreference(job.outreachPreference);
+    const discoveryDiagnostics = discoveryDiagnosticsFromJson(job.discoveredLeads);
+    const excludePreviouslyReviewed = discoveryDiagnostics?.excludePreviouslyReviewed !== false;
     const batch = leads.slice(job.nextLeadIndex, job.nextLeadIndex + BATCH_SIZE);
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;
@@ -713,11 +877,11 @@ export async function processTopProspectJob(jobId: string) {
           recommendedContactMethod: lead.recommendedContactMethod,
         });
       }
-      if (await processLead(job.id, job.createdAt, lead, summary, mode, outreachPreference)) qualified += 1;
+      if (await processLead(job.id, job.createdAt, lead, summary, mode, outreachPreference, excludePreviouslyReviewed)) qualified += 1;
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
     const done = nextLeadIndex >= leads.length || nextLeadIndex >= job.businessesToScan;
-    const waitingStatus = discoveryHasPartialIssues(discoveryDiagnosticsFromJson(job.discoveredLeads))
+    const waitingStatus = discoveryHasPartialIssues(discoveryDiagnostics)
       ? "PARTIAL_RESULTS_READY"
       : "NEEDS_NEXT_BATCH";
     await getProspectDatabase().topProspectJob.update({

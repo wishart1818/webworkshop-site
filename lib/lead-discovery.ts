@@ -38,6 +38,10 @@ export type DiscoveredLead = {
   reviewCount?: number;
   recentReviewCount?: number;
   activitySignals?: string[];
+  originCity?: string;
+  matchedCities?: string[];
+  lastFoundAt?: string;
+  lastFoundRunId?: string;
   recommendedContactMethod: RecommendedContactMethod;
   inactive: boolean;
 };
@@ -75,6 +79,21 @@ export type TradeDiscoveryDiagnostic = {
   skippedReason?: string;
 };
 
+export type CityDiscoveryDiagnostic = {
+  city: string;
+  state: string;
+  label: string;
+  status: "completed" | "partial" | "failed";
+  requestedCount: number;
+  rawProviderCount: number;
+  withinRadiusCount: number;
+  afterDeduplicationCount: number;
+  usableWebsiteCount: number;
+  returnedCount: number;
+  providerDiagnostics: DiscoveryProviderDiagnostics;
+  safeReason?: string;
+};
+
 export type DiscoveryDiagnostics = {
   rawProviderCount: number;
   afterDistanceFilteringCount: number;
@@ -87,6 +106,10 @@ export type DiscoveryDiagnostics = {
   providerDiagnostics: DiscoveryProviderDiagnostics;
   finalMergedCount: number;
   tradeDiagnostics?: TradeDiscoveryDiagnostic[];
+  cityDiagnostics?: CityDiscoveryDiagnostic[];
+  cityTargets?: Array<{ city: string; state: string; label: string }>;
+  excludePreviouslyReviewed?: boolean;
+  nextRunRecommendations?: string[];
 };
 
 export type DiscoveryResult = {
@@ -352,6 +375,33 @@ function normalizeTradeDiagnostics(value: unknown): TradeDiscoveryDiagnostic[] {
   });
 }
 
+function normalizeCityDiagnostics(value: unknown): CityDiscoveryDiagnostic[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): CityDiscoveryDiagnostic[] => {
+    if (!item || Array.isArray(item) || typeof item !== "object") return [];
+    const candidate = item as Partial<CityDiscoveryDiagnostic>;
+    const city = typeof candidate.city === "string" ? titleCaseLocation(candidate.city) : "";
+    const state = typeof candidate.state === "string" ? displayStateCode(candidate.state) : "";
+    if (!city || !/^[A-Z]{2}$/.test(state)) return [];
+    const status = candidate.status && ["completed", "partial", "failed"].includes(candidate.status) ? candidate.status : "completed";
+    const sourceCounts = emptySourceCounts();
+    return [{
+      city,
+      state,
+      label: typeof candidate.label === "string" ? candidate.label : `${city}, ${state}`,
+      status,
+      requestedCount: finiteNumber(candidate.requestedCount) ?? 0,
+      rawProviderCount: finiteNumber(candidate.rawProviderCount) ?? 0,
+      withinRadiusCount: finiteNumber(candidate.withinRadiusCount) ?? 0,
+      afterDeduplicationCount: finiteNumber(candidate.afterDeduplicationCount) ?? 0,
+      usableWebsiteCount: finiteNumber(candidate.usableWebsiteCount) ?? 0,
+      returnedCount: finiteNumber(candidate.returnedCount) ?? 0,
+      providerDiagnostics: normalizeProviderDiagnostics(candidate.providerDiagnostics, sourceCounts),
+      ...(typeof candidate.safeReason === "string" ? { safeReason: candidate.safeReason } : {}),
+    }];
+  });
+}
+
 const providerSources: Record<DiscoveryProvider, DiscoverySource> = {
   osm: "osm",
   azureMaps: "bing",
@@ -613,6 +663,8 @@ export function mergeDiscoveryCandidates(input: {
         reviewCount: candidate.reviewCount,
         recentReviewCount: candidate.recentReviewCount,
         activitySignals: [...new Set(activitySignals)],
+        originCity: `${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`,
+        matchedCities: [`${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`],
         recommendedContactMethod,
         inactive: candidate.inactive || badFit,
       }];
@@ -710,12 +762,27 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
     && Array.isArray(candidate.categorySignals)
     ? (() => {
         const tradeDiagnostics = normalizeTradeDiagnostics(candidate.tradeDiagnostics);
+        const cityDiagnostics = normalizeCityDiagnostics(candidate.cityDiagnostics);
+        const cityTargets = Array.isArray(candidate.cityTargets)
+          ? candidate.cityTargets.flatMap((target): Array<{ city: string; state: string; label: string }> => {
+              if (!target || Array.isArray(target) || typeof target !== "object") return [];
+              const city = "city" in target && typeof target.city === "string" ? titleCaseLocation(target.city) : "";
+              const state = "state" in target && typeof target.state === "string" ? displayStateCode(target.state) : "";
+              return city && /^[A-Z]{2}$/.test(state) ? [{ city, state, label: `${city}, ${state}` }] : [];
+            })
+          : [];
         return {
         ...candidate,
         sourceCounts: normalizeSourceCounts(candidate.sourceCounts),
         providerDiagnostics: normalizeProviderDiagnostics(candidate.providerDiagnostics, normalizeSourceCounts(candidate.sourceCounts)),
         finalMergedCount: candidate.finalMergedCount ?? candidate.afterDuplicateFilteringCount,
         ...(tradeDiagnostics.length ? { tradeDiagnostics } : {}),
+        ...(cityDiagnostics.length ? { cityDiagnostics } : {}),
+        ...(cityTargets.length ? { cityTargets } : {}),
+        ...(typeof candidate.excludePreviouslyReviewed === "boolean" ? { excludePreviouslyReviewed: candidate.excludePreviouslyReviewed } : {}),
+        ...(Array.isArray(candidate.nextRunRecommendations)
+          ? { nextRunRecommendations: candidate.nextRunRecommendations.filter((item): item is string => typeof item === "string").slice(0, 4) }
+          : {}),
       } as DiscoveryDiagnostics;
       })()
     : null;

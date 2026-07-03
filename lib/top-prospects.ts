@@ -5,6 +5,7 @@ import {
   generateOutreach,
   generatePreview,
   allCoreServiceTradesOption,
+  coreServiceTrades,
   displayStateCode,
   displayTradeCategory,
   prospectContactMethodIsUsable,
@@ -60,6 +61,8 @@ export type TopProspectInput = {
   trade: TopProspectTradeSelection;
   city: string;
   state: string;
+  rawCityInput?: string;
+  cityTargets?: CitySearchTarget[];
   radiusKm: number;
   businessesToScan: number;
   finalProspectsWanted: number;
@@ -67,6 +70,21 @@ export type TopProspectInput = {
   mode: ProspectMode;
   workflowType: TopProspectWorkflowType;
   outreachPreference: OutreachPreference;
+  excludePreviouslyReviewed: boolean;
+};
+
+export type CitySearchTarget = {
+  city: string;
+  state: string;
+  label: string;
+};
+
+export type RecommendedMarketPreset = {
+  id: string;
+  name: string;
+  cities: CitySearchTarget[];
+  trades: TradeCategory[];
+  starter: boolean;
 };
 
 export type ProspectSalesScores = {
@@ -173,6 +191,7 @@ export type TopProspectJob = {
   reviewedNotRecommended: TopProspectResult[];
   failureClassification: TopProspectJobFailureClassification | null;
   errorMessage: string;
+  nextRunRecommendations: string[];
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -979,11 +998,173 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
   };
 }
 
+const stateCodePattern = /^[A-Za-z]{2}$/;
+
+function normalizeCityToken(value: string) {
+  return titleCaseLocation(value.trim().replace(/\s+/g, " "));
+}
+
+export function parseTopProspectCityTargets(cityInput: unknown, fallbackStateInput: unknown): CitySearchTarget[] {
+  const fallbackState = typeof fallbackStateInput === "string" ? displayStateCode(fallbackStateInput) : "";
+  if (!/^[A-Z]{2}$/.test(fallbackState)) return [];
+  const raw = typeof cityInput === "string" ? cityInput.trim() : "";
+  if (!raw) return [];
+  const targets: CitySearchTarget[] = [];
+  const addTarget = (cityValue: string, stateValue: string) => {
+    const city = normalizeCityToken(cityValue);
+    const state = displayStateCode(stateValue);
+    if (!/^[A-Za-z .'-]{2,100}$/.test(city) || !/^[A-Z]{2}$/.test(state)) return;
+    if (targets.some((target) => target.city.toLowerCase() === city.toLowerCase() && target.state === state)) return;
+    targets.push({ city, state, label: `${city}, ${state}` });
+  };
+
+  for (const segment of raw.split(/[;\n]+/).map((item) => item.trim()).filter(Boolean)) {
+    const parts = segment.split(",").map((item) => item.trim()).filter(Boolean);
+    if (parts.length === 1) {
+      addTarget(parts[0], fallbackState);
+      continue;
+    }
+    if (parts.length > 1 && parts.every((part, index) => index % 2 === 0 || stateCodePattern.test(part))) {
+      for (let index = 0; index < parts.length; index += 2) addTarget(parts[index], parts[index + 1] ?? fallbackState);
+      continue;
+    }
+    const finalPart = parts.at(-1);
+    if (finalPart && stateCodePattern.test(finalPart)) {
+      addTarget(parts.slice(0, -1).join(", "), finalPart);
+      continue;
+    }
+    for (const city of parts) addTarget(city, fallbackState);
+  }
+  return targets;
+}
+
+export function formatCityTargetsForHeader(targets: CitySearchTarget[] | undefined, fallbackCity = "", fallbackState = "") {
+  const normalizedTargets = targets?.length ? targets : parseTopProspectCityTargets(fallbackCity, fallbackState);
+  if (!normalizedTargets.length) return `${titleCaseLocation(fallbackCity)}, ${displayStateCode(fallbackState)}`;
+  const states = [...new Set(normalizedTargets.map((target) => target.state))];
+  if (states.length === 1) return `${normalizedTargets.map((target) => target.city).join(", ")}, ${states[0]}`;
+  return normalizedTargets.map((target) => target.label).join("; ");
+}
+
+export function citySearchBudgets(total: number, targetCount: number) {
+  const count = Math.max(1, targetCount);
+  return Array.from({ length: count }, (_, index) => Math.floor(total / count) + (index < total % count ? 1 : 0));
+}
+
+export function estimatedProviderRequestLoad(targetCount: number, trade: TopProspectTradeSelection) {
+  const tradeCount = trade === allCoreServiceTradesOption ? coreServiceTrades.length : 1;
+  return Math.max(1, targetCount) * tradeCount * 4;
+}
+
+export const recommendedMarketPresets: RecommendedMarketPreset[] = [
+  {
+    id: "northwest-ohio",
+    name: "Northwest Ohio",
+    starter: true,
+    cities: ["Toledo", "Sylvania", "Perrysburg", "Maumee", "Bowling Green"].map((city) => ({ city, state: "OH", label: `${city}, OH` })),
+    trades: ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "Concrete", "Roofing", "HVAC", "Plumbing"],
+  },
+  {
+    id: "ohio-midwest",
+    name: "Ohio / Midwest",
+    starter: false,
+    cities: [
+      ["Columbus", "OH"],
+      ["Cincinnati", "OH"],
+      ["Dayton", "OH"],
+      ["Cleveland", "OH"],
+      ["Akron", "OH"],
+      ["Indianapolis", "IN"],
+      ["Fort Wayne", "IN"],
+      ["Grand Rapids", "MI"],
+    ].map(([city, state]) => ({ city, state, label: `${city}, ${state}` })),
+    trades: ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "Concrete", "Tree Service", "Roofing", "HVAC"],
+  },
+  {
+    id: "texas-suburbs",
+    name: "Texas Suburbs",
+    starter: true,
+    cities: ["Dallas", "Fort Worth", "Plano", "Frisco", "McKinney", "Denton", "Austin", "Round Rock", "San Antonio", "New Braunfels", "Houston", "Katy", "Cypress", "Conroe"].map((city) => ({ city, state: "TX", label: `${city}, TX` })),
+    trades: ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "Roofing", "HVAC", "Plumbing", "Fencing", "Remodeling"],
+  },
+  {
+    id: "florida",
+    name: "Florida",
+    starter: true,
+    cities: ["Tampa", "St. Petersburg", "Clearwater", "Lakeland", "Orlando", "Kissimmee", "Jacksonville", "St. Augustine", "Sarasota", "Fort Myers"].map((city) => ({ city, state: "FL", label: `${city}, FL` })),
+    trades: ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "Roofing", "HVAC", "Plumbing", "Tree Service", "Remodeling"],
+  },
+  {
+    id: "carolinas-tennessee-georgia",
+    name: "Carolinas / Tennessee / Georgia",
+    starter: true,
+    cities: [
+      ["Charlotte", "NC"],
+      ["Concord", "NC"],
+      ["Raleigh", "NC"],
+      ["Durham", "NC"],
+      ["Cary", "NC"],
+      ["Greenville", "SC"],
+      ["Spartanburg", "SC"],
+      ["Charleston", "SC"],
+      ["Nashville", "TN"],
+      ["Franklin", "TN"],
+      ["Murfreesboro", "TN"],
+      ["Knoxville", "TN"],
+      ["Chattanooga", "TN"],
+      ["Atlanta", "GA"],
+      ["Marietta", "GA"],
+      ["Alpharetta", "GA"],
+    ].map(([city, state]) => ({ city, state, label: `${city}, ${state}` })),
+    trades: ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "Concrete", "Roofing", "Tree Service", "Fencing", "Remodeling"],
+  },
+  {
+    id: "arizona-nevada",
+    name: "Arizona / Nevada",
+    starter: false,
+    cities: [
+      ["Phoenix", "AZ"],
+      ["Mesa", "AZ"],
+      ["Chandler", "AZ"],
+      ["Gilbert", "AZ"],
+      ["Scottsdale", "AZ"],
+      ["Peoria", "AZ"],
+      ["Las Vegas", "NV"],
+      ["Henderson", "NV"],
+    ].map(([city, state]) => ({ city, state, label: `${city}, ${state}` })),
+    trades: ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "HVAC", "Roofing", "Concrete", "Remodeling"],
+  },
+];
+
+export function topProspectNextRunRecommendations(input: {
+  job: Pick<TopProspectJob, "input" | "results" | "reviewedNotRecommended" | "skipSummary" | "discoveryDiagnostics">;
+}) {
+  const { job } = input;
+  const recommendations: string[] = [];
+  const targetCount = job.input.cityTargets?.length ?? parseTopProspectCityTargets(job.input.city, job.input.state).length;
+  const cityLabel = formatCityTargetsForHeader(job.input.cityTargets, job.input.city, job.input.state);
+  const phoneBlocked = job.skipSummary.phone_only_written_outreach_blocked ?? job.skipSummary.phone_only_written_outreach ?? 0;
+  const badFit = (job.skipSummary.institutional_non_business_page ?? 0)
+    + (job.skipSummary.supplier_distributor ?? 0)
+    + (job.skipSummary.website_business_mismatch ?? 0)
+    + (job.skipSummary.no_clear_local_service_intent ?? 0);
+  if (targetCount > 1 && job.input.businessesToScan < targetCount * 20) {
+    recommendations.push(`Increase scan count to ${Math.min(250, Math.max(150, targetCount * 20))} because you searched ${targetCount} cities.`);
+  }
+  if (phoneBlocked > Math.max(2, job.results.length)) recommendations.push("Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete next because this run had too many phone-only leads.");
+  if (badFit > Math.max(2, job.results.length)) recommendations.push(`Avoid ${displayTradeCategory(job.input.trade)} in ${cityLabel} for now because too many leads were bad fit or mismatched.`);
+  if ((job.results.length + job.reviewedNotRecommended.length) < Math.max(3, job.input.finalProspectsWanted / 2)) recommendations.push("Try Florida or Texas Suburbs next with Growth Mode for a broader written-outreach pool.");
+  if (!recommendations.length) recommendations.push(`Best next run: keep ${displayTradeCategory(job.input.trade)} focused, then test one starter trade in the strongest city from ${cityLabel}.`);
+  return recommendations.slice(0, 4);
+}
+
 export function validateTopProspectInput(value: unknown): { ok: true; value: TopProspectInput } | { ok: false; error: string } {
   const input = value as Partial<TopProspectInput>;
   const normalizedTrade = input.trade === allCoreServiceTradesOption ? allCoreServiceTradesOption : normalizeTradeCategory(input.trade);
-  const city = typeof input.city === "string" ? titleCaseLocation(input.city) : "";
+  const rawCityInput = typeof input.city === "string" ? input.city.trim() : "";
   const state = typeof input.state === "string" ? displayStateCode(input.state) : "";
+  const cityTargets = parseTopProspectCityTargets(rawCityInput, state);
+  const city = cityTargets.length === 1 ? cityTargets[0].city : rawCityInput;
   const radiusKm = Number(input.radiusKm);
   const businessesToScan = Number(input.businessesToScan);
   const finalProspectsWanted = Number(input.finalProspectsWanted);
@@ -1004,13 +1185,29 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   const workflowType = normalizeTopProspectWorkflowType(input.workflowType);
   const outreachPreference = normalizeOutreachPreference(input.outreachPreference);
   if (!normalizedTrade) return { ok: false, error: "Select a supported trade." };
-  if (city.includes(",")) return { ok: false, error: "Enter one city at a time." };
-  if (!/^[A-Za-z .'-]{2,100}$/.test(city)) return { ok: false, error: "Enter one city at a time." };
+  if (!cityTargets.length) return { ok: false, error: "Enter one city or supported city/state pairs." };
   if (!/^[A-Z]{2}$/.test(state)) return { ok: false, error: "Enter a two-letter state code." };
   if (![10, 25, 50].includes(radiusKm)) return { ok: false, error: "Select a supported radius." };
-  if (!Number.isInteger(businessesToScan) || businessesToScan < 5 || businessesToScan > 100) return { ok: false, error: "Businesses to scan must be between 5 and 100." };
+  if (!Number.isInteger(businessesToScan) || businessesToScan < 5 || businessesToScan > 250) return { ok: false, error: "Businesses to scan must be between 5 and 250." };
   if (!Number.isInteger(finalProspectsWanted) || finalProspectsWanted < 1 || finalProspectsWanted > 25 || finalProspectsWanted > businessesToScan) {
     return { ok: false, error: "Final prospects wanted must be between 1 and 25 and no greater than businesses to scan." };
   }
-  return { ok: true, value: { trade: normalizedTrade, city, state, radiusKm, businessesToScan, finalProspectsWanted, prospectType, mode, workflowType, outreachPreference } };
+  return {
+    ok: true,
+    value: {
+      trade: normalizedTrade,
+      city,
+      state,
+      rawCityInput,
+      cityTargets,
+      radiusKm,
+      businessesToScan,
+      finalProspectsWanted,
+      prospectType,
+      mode,
+      workflowType,
+      outreachPreference,
+      excludePreviouslyReviewed: input.excludePreviouslyReviewed !== false,
+    },
+  };
 }

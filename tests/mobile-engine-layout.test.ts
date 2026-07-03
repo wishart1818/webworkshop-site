@@ -149,10 +149,13 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(prospectEngine, /All Core Service Trades/);
   assert.match(topProspectsWorkspace, /useState<ProspectMode>\("growth"\)/);
   assert.match(topProspectsWorkspace, /useState<ProspectSearchType>\("all"\)/);
+  assert.match(topProspectsWorkspace, /useState<TopProspectJob\["input"\]\["trade"\]>\("Landscaping"\)/);
   assert.match(topProspectsWorkspace, /defaultValue="50"/);
   assert.match(topProspectsWorkspace, /defaultValue="100"/);
   assert.match(topProspectsWorkspace, /defaultValue="20"/);
-  assert.match(topProspectsWorkspace, /total all-trades budget/);
+  assert.match(topProspectsWorkspace, /total budget across all selected cities and trades/);
+  assert.match(topProspectsWorkspace, /Recommended Markets/);
+  assert.match(topProspectsWorkspace, /Exclude previously reviewed prospects/);
   assert.match(topProspectsWorkspace, /Discovery complete\. Analyze/);
   assert.match(topProspectsWorkspace, /Analyze saved prospects/);
   assert.match(topProspectsWorkspace, /discovery complete, waiting to analyze/);
