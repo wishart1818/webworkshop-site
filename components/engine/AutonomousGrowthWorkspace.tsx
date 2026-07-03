@@ -7,6 +7,7 @@ import {
   autonomousGrowthModeLabels,
   autonomousGrowthModes,
   csvEscape,
+  loomNeededTaskForQueueItem,
   outreachQueueStatuses,
   type AutonomousFeedbackLabel,
   type AutonomousGrowthDashboard,
@@ -124,6 +125,7 @@ export function AutonomousGrowthWorkspace() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [copied, setCopied] = useState("");
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -206,11 +208,19 @@ export function AutonomousGrowthWorkspace() {
       const payload = await response.json() as ApiPayload;
       if (!response.ok || !payload.item) throw new Error(apiError(payload, "Unable to update queue item."));
       await loadDashboard();
+      setNotice(status === "Prospect Said Yes" ? "Prospect said yes. A Loom Needed task was created and nothing was sent." : `${status} recorded. Nothing was sent automatically.`);
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : "Unable to update queue item.");
     } finally {
       setSaving(false);
     }
+  }
+
+  async function copyText(key: string, value: string) {
+    if (!value.trim()) return;
+    await navigator.clipboard.writeText(value);
+    setCopied(key);
+    setNotice("Copied. This is still manual outreach only.");
   }
 
   async function regeneratePackage(item: OutreachQueueItem) {
@@ -281,10 +291,12 @@ export function AutonomousGrowthWorkspace() {
 
   const groupedQueue = useMemo(() => {
     const queue = dashboard?.queue ?? [];
+    const loomStatuses = ["Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"] as OutreachQueueStatus[];
     return {
-      dryRun: queue.filter((item) => ["Draft", "Eligible", "Needs Review"].includes(item.status)),
+      loom: queue.filter((item) => loomStatuses.includes(item.status)),
+      dryRun: queue.filter((item) => ["Draft", "Eligible", "Needs Review", "DM Draft", "First DM Sent"].includes(item.status)),
       blocked: queue.filter((item) => ["Blocked", "Bad Fit", "Never Contact", "Opted Out", "Skipped"].includes(item.status)),
-      sent: queue.filter((item) => ["Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Not Interested"].includes(item.status)),
+      sent: queue.filter((item) => ["Queued", "Sent", "Loom Sent", "Pricing Requested", "Pricing Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"].includes(item.status)),
     };
   }, [dashboard?.queue]);
 
@@ -310,7 +322,13 @@ export function AutonomousGrowthWorkspace() {
       </section>
 
       {error && <div className="engine-error-banner" role="alert"><div><b>Autonomous Growth needs attention</b><p>{error}</p></div></div>}
-      {notice && <div className="engine-success-banner" role="status"><div><b>Settings updated</b><p>{notice}</p></div></div>}
+      {notice && <div className="engine-success-banner" role="status"><div><b>Autonomous Growth updated</b><p>{notice}</p></div></div>}
+      {metrics.loomNeeded > 0 && (
+        <div className="engine-loom-banner" role="status">
+          <div><b>You have Loom walkthroughs to record.</b><p>{metrics.loomNeeded} prospect{metrics.loomNeeded === 1 ? "" : "s"} said yes and now need a manual video before the preview is sent.</p></div>
+          <span>{metrics.loomNeeded} Loom Needed</span>
+        </div>
+      )}
 
       <section className="engine-panel">
         <div className="engine-panel__head">
@@ -358,6 +376,10 @@ export function AutonomousGrowthWorkspace() {
           ["Blocked phone-only", metrics.blockedPhoneOnlyLeads, "Written outreach protection"],
           ["Average preview QA", `${metrics.averagePreviewQualityScore}/100`, "Self-review signal"],
           ["Average lead score", `${metrics.averageLeadScore}/100`, "Learning score"],
+          ["Loom needed", metrics.loomNeeded, "Manual walkthroughs to record"],
+          ["Loom recorded", metrics.loomRecorded, "Waiting to send manually"],
+          ["Loom sent", metrics.loomSent, "Manual Loom messages marked sent"],
+          ["Follow-ups due", metrics.followUpsDue, "Manual follow-up queue"],
           ["Replies", metrics.replies, `${metrics.replyRate}% reply rate`],
         ].map(([label, value, detail]) => <article key={label}><span>{label}</span><strong>{value}</strong><p>{detail}</p></article>)}
       </section>
@@ -371,12 +393,21 @@ export function AutonomousGrowthWorkspace() {
           <Gate label="Provider is configured" passed={env.sendProvider === "resend" && env.hasResendApiKey} detail={env.sendProvider} />
           <Gate label="Sender and reply-to are configured" passed={env.hasFromEmail && env.hasReplyToEmail} />
           <Gate label="Postal address is configured" passed={env.hasPostalAddress} />
+          <Gate label="Optional Loom notification configured" passed={env.notifyOnLoomNeeded && env.hasNotifyEmail && env.hasNotifyFromEmail} detail="Internal only" />
         </div>
       </section>
 
+      <LoomQueueSection
+        copied={copied}
+        items={groupedQueue.loom}
+        onCopy={copyText}
+        onStatus={updateStatus}
+      />
       <QueueSection
+        copied={copied}
         description="Generated packages waiting for review, copy, edit, or manual approval."
         items={groupedQueue.dryRun}
+        onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
@@ -384,8 +415,10 @@ export function AutonomousGrowthWorkspace() {
         title="Dry-run and review queue"
       />
       <QueueSection
+        copied={copied}
         description="Leads blocked by contact rules, preview quality, unsupported claims, opt-out, or bad fit logic."
         items={groupedQueue.blocked}
+        onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
@@ -393,8 +426,10 @@ export function AutonomousGrowthWorkspace() {
         title="Blocked queue"
       />
       <QueueSection
+        copied={copied}
         description="Items queued or manually marked through outreach follow-up states."
         items={groupedQueue.sent}
+        onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
@@ -446,17 +481,112 @@ function Gate({ detail, label, passed }: { detail?: string; label: string; passe
   return <div className={passed ? "is-passed" : "is-failed"}><b>{passed ? "Pass" : "Blocked"}</b><span>{label}</span>{detail ? <small>{detail}</small> : null}</div>;
 }
 
+function CopyScriptButton({
+  copied,
+  copyKey,
+  label,
+  onCopy,
+  value,
+}: {
+  copied: string;
+  copyKey: string;
+  label: string;
+  onCopy: (key: string, value: string) => Promise<void>;
+  value: string;
+}) {
+  return <button className="engine-button" disabled={!value.trim()} onClick={() => void onCopy(copyKey, value)} type="button">{copied === copyKey ? "Copied" : label}</button>;
+}
+
+function LoomQueueSection({
+  copied,
+  items,
+  onCopy,
+  onStatus,
+}: {
+  copied: string;
+  items: OutreachQueueItem[];
+  onCopy: (key: string, value: string) => Promise<void>;
+  onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
+}) {
+  return (
+    <section className="engine-panel engine-loom-queue">
+      <div className="engine-panel__head">
+        <div><h2>Loom Needed Queue</h2><p>Prospects who said yes. Polish the preview if needed, record a manual Loom, then send the Loom and preview manually.</p></div>
+        <span>{items.length} Loom task{items.length === 1 ? "" : "s"}</span>
+      </div>
+      {items.length === 0 ? <EmptyState title="No Loom walkthroughs waiting" body="Mark a prospect as Prospect Said Yes to create a Loom Needed task." /> : (
+        <div className="engine-loom-task-grid">
+          {items.map((item) => {
+            const task = loomNeededTaskForQueueItem(item);
+            return (
+              <article className="engine-loom-task" key={item.id}>
+                <header>
+                  <div><span>{task.trade} in {task.city}</span><h3>{task.businessName}</h3></div>
+                  <i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{item.status}</i>
+                </header>
+                <div className="engine-loom-task__facts">
+                  <div><b>Public preview</b>{task.previewLink ? <a href={task.previewLink} rel="noreferrer" target="_blank">{task.previewLink}</a> : <span>Missing public preview link</span>}</div>
+                  <div><b>Preview quality</b><span>{task.previewQuality}</span></div>
+                  <div><b>Send rule</b><span>Manual DM, manual Loom, no automatic sending.</span></div>
+                </div>
+                <section className="engine-loom-checklist">
+                  <h4>Review-before-Loom checklist</h4>
+                  <ul>
+                    {task.checklist.map((check) => (
+                      <li className={check.passed ? "is-passed" : "is-failed"} key={check.key}>
+                        <b>{check.passed ? "Pass" : "Fix"}</b>
+                        <span>{check.label}</span>
+                        {!check.passed && <small>{check.fix}</small>}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+                <section className="engine-loom-fixes">
+                  <h4>Preview fix notes</h4>
+                  {task.fixNotes.length ? <ul>{task.fixNotes.map((note) => <li key={note}>{note}</li>)}</ul> : <p>No preview polish notes recorded.</p>}
+                </section>
+                <section className="engine-script-grid" aria-label={`${task.businessName} copyable Loom scripts`}>
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:yes`} label="Copy yes reply" onCopy={onCopy} value={task.scripts.yesReply} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:loom-script`} label="Copy Loom script" onCopy={onCopy} value={task.scripts.loomScript} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:loom-send`} label="Copy Loom send message" onCopy={onCopy} value={task.scripts.sendAfterLoom} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:pricing`} label="Copy $49/month pricing" onCopy={onCopy} value={task.scripts.pricingReply} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:higher-support`} label="Copy $79 option" onCopy={onCopy} value={task.scripts.higherSupportReply} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:starter`} label="Copy $500 starter" onCopy={onCopy} value={task.scripts.starterPageReply} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:follow-up`} label="Copy follow-up" onCopy={onCopy} value={task.scripts.followUpAfterLoom} />
+                  <CopyScriptButton copied={copied} copyKey={`${item.id}:not-interested`} label="Copy not interested reply" onCopy={onCopy} value={task.scripts.notInterestedReply} />
+                </section>
+                <footer className="engine-loom-actions">
+                  <button className="engine-button" onClick={() => void onStatus(item, "Preview Needs Polish")} type="button">Preview Needs Polish</button>
+                  <button className="engine-button engine-button--primary" disabled={!task.canMarkReadyForLoom} onClick={() => void onStatus(item, "Ready for Loom")} type="button">Ready for Loom</button>
+                  <button className="engine-button" onClick={() => void onStatus(item, "Loom Recorded")} type="button">Loom Recorded</button>
+                  <button className="engine-button" onClick={() => void onStatus(item, "Loom Sent")} type="button">Loom Sent</button>
+                  <button className="engine-button" onClick={() => void onStatus(item, "Follow-up Needed")} type="button">Follow-up Needed</button>
+                  <button className="engine-button" onClick={() => void onStatus(item, "Pricing Requested")} type="button">Pricing Requested</button>
+                </footer>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function QueueSection({
+  copied,
   description,
   items,
+  onCopy,
   onRegenerate,
   onFeedback,
   onRewrite,
   onStatus,
   title,
 }: {
+  copied: string;
   description: string;
   items: OutreachQueueItem[];
+  onCopy: (key: string, value: string) => Promise<void>;
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
@@ -470,50 +600,89 @@ function QueueSection({
         <div className="engine-autonomous-table" role="table" aria-label={title}>
           <div className="engine-autonomous-table__head" role="row"><span>Business</span><span>Self-review</span><span>Contact</span><span>Status</span><span>Actions</span></div>
           {items.map((item) => (
-            <article key={item.id} role="row">
-              <div><b>{item.businessName}</b><span>{item.trade} in {item.city}</span><small>{item.sourceProvider}</small></div>
-              <div>
-                <strong>{item.reviewScore || item.previewQualityScore}/100</strong>
-                <span>{item.recommendedNextAction}</span>
-                <small>{item.reviewSummary || readinessLabel(item)}</small>
-                {item.detectedIssues.length ? <small>Issues: {item.detectedIssues.slice(0, 3).join("; ")}</small> : null}
-                {item.improvementSuggestions.length ? <small>Suggestions: {item.improvementSuggestions.slice(0, 3).join("; ")}</small> : null}
-                {item.blockedReason ? <small>{item.blockedReason}</small> : null}
-              </div>
-              <div><span>{item.email || "No public email"}</span><span>{item.contactSource}</span></div>
-              <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{item.status}</i><span>{item.subjectLine}</span></div>
-              <div className="engine-result-actions">
-                {item.previewLink ? <a className="engine-button" href={item.previewLink} rel="noreferrer" target="_blank">Open preview</a> : null}
-                <button className="engine-button" disabled={!item.topProspectResultId} onClick={() => void onRegenerate(item)} type="button">Regenerate with Fixes</button>
-                <button className="engine-button" onClick={() => void onRewrite(item)} type="button">Rewrite Outreach</button>
-                <button className="engine-button" onClick={() => void onStatus(item, "Eligible")} type="button">Mark reviewed</button>
-                <button className="engine-button" onClick={() => void onStatus(item, "Skipped")} type="button">Skip</button>
-                <div className="engine-feedback-controls">
-                  <span>Feedback</span>
-                  <select
-                    aria-label={`Record feedback for ${item.businessName}`}
-                    defaultValue=""
-                    onChange={(event) => {
-                      const value = event.target.value as AutonomousFeedbackLabel;
-                      event.currentTarget.value = "";
-                      if (value) void onFeedback(item, value);
-                    }}
-                  >
-                    <option value="">Mark feedback</option>
-                    {autonomousFeedbackLabels.map((label) => <option key={label} value={label}>{label}</option>)}
-                  </select>
-                  {item.feedbackLabels.length ? <small>{item.feedbackLabels.join(", ")}</small> : null}
-                </div>
-                {item.regenerationPlan.length ? <small>Regeneration plan: {item.regenerationPlan.join("; ")}</small> : null}
-                {item.rewritePlan.length ? <small>Rewrite plan: {item.rewritePlan.join("; ")}</small> : null}
-                <select aria-label={`Change status for ${item.businessName}`} onChange={(event) => void onStatus(item, event.target.value as OutreachQueueStatus)} value={item.status}>
-                  {outreachQueueStatuses.map((status) => <option key={status}>{status}</option>)}
-                </select>
-              </div>
-            </article>
+            <QueueItemRow
+              copied={copied}
+              item={item}
+              key={item.id}
+              onCopy={onCopy}
+              onFeedback={onFeedback}
+              onRegenerate={onRegenerate}
+              onRewrite={onRewrite}
+              onStatus={onStatus}
+            />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function QueueItemRow({
+  copied,
+  item,
+  onCopy,
+  onFeedback,
+  onRegenerate,
+  onRewrite,
+  onStatus,
+}: {
+  copied: string;
+  item: OutreachQueueItem;
+  onCopy: (key: string, value: string) => Promise<void>;
+  onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
+  onRegenerate: (item: OutreachQueueItem) => Promise<void>;
+  onRewrite: (item: OutreachQueueItem) => Promise<void>;
+  onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
+}) {
+  const scripts = loomNeededTaskForQueueItem(item).scripts;
+  return (
+    <article key={item.id} role="row">
+      <div><b>{item.businessName}</b><span>{item.trade} in {item.city}</span><small>{item.sourceProvider}</small></div>
+      <div>
+        <strong>{item.reviewScore || item.previewQualityScore}/100</strong>
+        <span>{item.recommendedNextAction}</span>
+        <small>{item.reviewSummary || readinessLabel(item)}</small>
+        {item.detectedIssues.length ? <small>Issues: {item.detectedIssues.slice(0, 3).join("; ")}</small> : null}
+        {item.improvementSuggestions.length ? <small>Suggestions: {item.improvementSuggestions.slice(0, 3).join("; ")}</small> : null}
+        {item.blockedReason ? <small>{item.blockedReason}</small> : null}
+      </div>
+      <div><span>{item.email || "No public email"}</span><span>{item.contactSource}</span></div>
+      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{item.status}</i><span>{item.subjectLine}</span></div>
+      <div className="engine-result-actions">
+        {item.previewLink ? <a className="engine-button" href={item.previewLink} rel="noreferrer" target="_blank">Open preview</a> : null}
+        <CopyScriptButton copied={copied} copyKey={`${item.id}:first-dm`} label="Copy first DM" onCopy={onCopy} value={item.dmScript || scripts.firstDm} />
+        <CopyScriptButton copied={copied} copyKey={`${item.id}:soft-dm`} label="Copy softer DM" onCopy={onCopy} value={scripts.softerFirstDm} />
+        <CopyScriptButton copied={copied} copyKey={`${item.id}:yes-reply`} label="Copy yes reply" onCopy={onCopy} value={scripts.yesReply} />
+        <CopyScriptButton copied={copied} copyKey={`${item.id}:pricing-reply`} label="Copy pricing reply" onCopy={onCopy} value={scripts.pricingReply} />
+        <button className="engine-button" disabled={!item.topProspectResultId} onClick={() => void onRegenerate(item)} type="button">Regenerate with Fixes</button>
+        <button className="engine-button" onClick={() => void onRewrite(item)} type="button">Rewrite Outreach</button>
+        <button className="engine-button" onClick={() => void onStatus(item, "DM Draft")} type="button">DM Draft</button>
+        <button className="engine-button" onClick={() => void onStatus(item, "First DM Sent")} type="button">First DM Sent</button>
+        <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button>
+        <button className="engine-button" onClick={() => void onStatus(item, "Eligible")} type="button">Mark reviewed</button>
+        <button className="engine-button" onClick={() => void onStatus(item, "Skipped")} type="button">Skip</button>
+        <div className="engine-feedback-controls">
+          <span>Feedback</span>
+          <select
+            aria-label={`Record feedback for ${item.businessName}`}
+            defaultValue=""
+            onChange={(event) => {
+              const value = event.target.value as AutonomousFeedbackLabel;
+              event.currentTarget.value = "";
+              if (value) void onFeedback(item, value);
+            }}
+          >
+            <option value="">Mark feedback</option>
+            {autonomousFeedbackLabels.map((label) => <option key={label} value={label}>{label}</option>)}
+          </select>
+          {item.feedbackLabels.length ? <small>{item.feedbackLabels.join(", ")}</small> : null}
+        </div>
+        {item.regenerationPlan.length ? <small>Regeneration plan: {item.regenerationPlan.join("; ")}</small> : null}
+        {item.rewritePlan.length ? <small>Rewrite plan: {item.rewritePlan.join("; ")}</small> : null}
+        <select aria-label={`Change status for ${item.businessName}`} onChange={(event) => void onStatus(item, event.target.value as OutreachQueueStatus)} value={item.status}>
+          {outreachQueueStatuses.map((status) => <option key={status}>{status}</option>)}
+        </select>
+      </div>
+    </article>
   );
 }

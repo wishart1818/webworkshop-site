@@ -2,7 +2,6 @@ import {
   displayTradeCategory,
   normalizeTradeCategory,
   prospectWrittenContactMethodIsUsable,
-  titleCaseLocation,
   type PreviewConcept,
   type Prospect,
   type TradeCategory,
@@ -29,12 +28,25 @@ export const outreachQueueStatuses = [
   "Draft",
   "Eligible",
   "Needs Review",
+  "DM Draft",
+  "First DM Sent",
+  "Prospect Said Yes",
+  "Loom Needed",
+  "Preview Needs Polish",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
   "Queued",
   "Sent",
   "Follow-up Needed",
   "Follow-up Sent",
   "Replied",
   "Positive Reply",
+  "Won",
+  "Lost",
+  "No Response",
   "Not Interested",
   "Opted Out",
   "Skipped",
@@ -163,6 +175,10 @@ export type AutonomousGrowthMetrics = {
   dailyCapRemaining: number;
   replies: number;
   positiveReplies: number;
+  loomNeeded: number;
+  loomRecorded: number;
+  loomSent: number;
+  followUpsDue: number;
   replyRate: number;
   positiveReplyRate: number;
   bestTrade: string;
@@ -220,10 +236,56 @@ export type AutonomousGrowthDashboard = {
     hasFromEmail: boolean;
     hasReplyToEmail: boolean;
     hasPostalAddress: boolean;
+    hasNotifyEmail: boolean;
+    hasNotifyFromEmail: boolean;
+    notifyOnLoomNeeded: boolean;
   };
   metrics: AutonomousGrowthMetrics;
   queue: OutreachQueueItem[];
   learning: AutonomousLearningSummary;
+};
+
+export type CasualDmPlaybook = {
+  firstDm: string;
+  softerFirstDm: string;
+  yesReply: string;
+  loomScript: string;
+  sendAfterLoom: string;
+  websiteExplanation: string;
+  nextStepsReply: string;
+  pricingReply: string;
+  higherSupportReply: string;
+  starterPageReply: string;
+  followUpAfterLoom: string;
+  notInterestedReply: string;
+};
+
+export type LoomReadinessCheck = {
+  key: string;
+  label: string;
+  passed: boolean;
+  fix: string;
+};
+
+export type LoomNeededTask = {
+  businessName: string;
+  trade: string;
+  city: string;
+  previewLink: string;
+  previewQuality: string;
+  fixNotes: string[];
+  checklist: LoomReadinessCheck[];
+  scripts: CasualDmPlaybook;
+  canMarkReadyForLoom: boolean;
+};
+
+type CasualDmProspect = {
+  businessName: string;
+  city: string;
+  trade: string;
+  classification?: string;
+  prospectType?: string;
+  website?: string;
 };
 
 export const defaultAutonomousStyleProfiles: Record<string, AutonomousStyleProfile> = {
@@ -443,6 +505,7 @@ export function evaluatePreviewQualityGate(prospect: Prospect): PreviewQualityGa
 
 export function outreachEnvironment(environment: NodeJS.ProcessEnv = process.env) {
   const sendProvider = environment.OUTREACH_SEND_PROVIDER?.trim().toLowerCase() ?? "";
+  const notifyOnLoomNeeded = environment.OUTREACH_NOTIFY_ON_LOOM_NEEDED === "true";
   return {
     autoSendEnabled: environment.OUTREACH_AUTO_SEND_ENABLED === "true",
     sendProvider,
@@ -450,6 +513,9 @@ export function outreachEnvironment(environment: NodeJS.ProcessEnv = process.env
     hasFromEmail: Boolean(environment.OUTREACH_FROM_EMAIL?.trim()),
     hasReplyToEmail: Boolean(environment.OUTREACH_REPLY_TO_EMAIL?.trim()),
     hasPostalAddress: Boolean(environment.OUTREACH_POSTAL_ADDRESS?.trim()),
+    hasNotifyEmail: Boolean(environment.OUTREACH_NOTIFY_EMAIL?.trim()),
+    hasNotifyFromEmail: Boolean(environment.OUTREACH_NOTIFY_FROM_EMAIL?.trim()),
+    notifyOnLoomNeeded,
     dailyCap: clampCap(environment.OUTREACH_DAILY_CAP, 5, 0, 25),
   };
 }
@@ -536,6 +602,10 @@ export function queueStatusForPackage({
   if (settings.mode === "auto_email_pilot" && autoEligibility.eligible) return "Queued";
   if (settings.mode === "auto_email_pilot") return "Blocked";
   return "Eligible";
+}
+
+export function queueStatusAfterManualAction(status: OutreachQueueStatus): OutreachQueueStatus {
+  return status === "Prospect Said Yes" ? "Loom Needed" : status;
 }
 
 function hasFeedback(feedbackLabels: readonly string[], value: AutonomousFeedbackLabel) {
@@ -649,17 +719,181 @@ export function evaluateSelfReview({
   };
 }
 
-export function manualDmScript(prospect: Prospect, previewLink: string) {
-  return `Hi ${prospect.businessName}, I put together a short concept for a clearer ${displayTradeCategory(prospect.trade)} website direction. No pressure, but you can preview it here: ${previewLink}`;
+function casualDmBusinessContext(prospect: CasualDmProspect) {
+  const noWebsite = prospect.prospectType === "no_website_social_only"
+    || prospect.classification === "social_only"
+    || prospect.classification === "listing_only"
+    || prospect.classification === "no_website"
+    || !prospect.website;
+  return noWebsite
+    ? "I noticed you did not have a dedicated website"
+    : "I came across your site";
+}
+
+export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string): CasualDmPlaybook {
+  const context = casualDmBusinessContext(prospect);
+  const noWebsite = prospect.prospectType === "no_website_social_only"
+    || prospect.classification === "social_only"
+    || prospect.classification === "listing_only"
+    || prospect.classification === "no_website"
+    || !prospect.website;
+  const previewReference = previewLink || "[PUBLIC PREVIEW LINK]";
+  return {
+    firstDm: noWebsite
+      ? [
+          "Hey, how's it going? I noticed you didn't have a website, so I made you a quick preview showing how you could get more calls.",
+          "",
+          "Would you like to see it?",
+        ].join("\n")
+      : [
+          "Hey, how's it going? I came across your site and made you a quick preview showing a cleaner way customers could view services and reach out.",
+          "",
+          "Would you like to see it?",
+        ].join("\n"),
+    softerFirstDm: [
+      "Hey, how's it going? I came across your page and made you a quick preview showing how a simple page could help people see your services and reach out.",
+      "",
+      "Would you like to see it?",
+    ].join("\n"),
+    yesReply: "Awesome, I'll send it over. I'm going to make a quick video walking through it too so it makes more sense.",
+    loomScript: [
+      "Hey, I just wanted to walk you through this quick.",
+      "",
+      `${context} and put together a simple preview of what your site could look like.`,
+      "",
+      `The main idea is giving people one clean place to see what you do, look at photos, and request a quote instead of having everything scattered through posts or messages.`,
+      "",
+      "This isn't live or anything, just a concept. But if you like the direction, I can finish it out and get it set up for you.",
+    ].join("\n"),
+    sendAfterLoom: [
+      "Awesome, here it is:",
+      "",
+      "Loom walkthrough:",
+      "[LOOM LINK]",
+      "",
+      "Preview:",
+      previewReference,
+      "",
+      "It's just a concept, not live or anything. I just wanted to show you what it could look like.",
+    ].join("\n"),
+    websiteExplanation: "It's basically a simple website, but focused on giving people one clean place to see your services, photos, and request a quote.",
+    nextStepsReply: "Yeah, if you like the direction, I can finish it out and get it ready to go live for you.",
+    pricingReply: [
+      "For this kind of site, it would be $1,000 total.",
+      "",
+      "$500 to start, then $500 once it's finished and ready to go live.",
+      "",
+      "After that, hosting and small updates are $49/month.",
+    ].join("\n"),
+    higherSupportReply: "If you want a little more ongoing help with changes and support, I can also do $79/month.",
+    starterPageReply: "If you want to start smaller, I can also do a simple starter page for $500.",
+    followUpAfterLoom: [
+      "Hey, just wanted to follow up on that preview I sent over.",
+      "",
+      "No worries either way. Just figured I'd check.",
+    ].join("\n"),
+    notInterestedReply: "No worries at all, appreciate you checking it out.",
+  };
+}
+
+export function manualDmScript(prospect: Prospect, previewLink = "") {
+  return casualDmPlaybook(prospect, previewLink).firstDm;
 }
 
 export function loomTalkingPoints(prospect: Prospect, previewLink: string) {
+  return casualDmPlaybook(prospect, previewLink).loomScript;
+}
+
+export function loomReadinessChecklist(item: OutreachQueueItem): LoomReadinessCheck[] {
+  const previewReady = publicPreviewReady(item.previewLink);
   return [
-    `Open with how homeowners in ${titleCaseLocation(prospect.city)} would find and trust ${prospect.businessName}.`,
-    `Point out one clear service path and one estimate action, without mentioning internal scores.`,
-    `Show the public concept preview: ${previewLink}`,
-    "Close by asking whether this direction would be worth a short call.",
-  ].join("\n");
+    {
+      key: "public_preview_link",
+      label: "Public preview link exists",
+      passed: previewReady,
+      fix: "Generate the Outreach Package again so the prospect gets a safe /p/ link.",
+    },
+    {
+      key: "preview_quality",
+      label: "Preview quality is high enough for a walkthrough",
+      passed: item.previewQualityScore >= 85 && !item.regenerationPlan.length,
+      fix: "Mark Preview Needs Polish and fix layout, copy, imagery, or truthfulness issues before recording.",
+    },
+    {
+      key: "business_context",
+      label: "Business, trade, and city are clear",
+      passed: Boolean(item.businessName && item.trade && item.city),
+      fix: "Add the missing business context before recording a personal Loom.",
+    },
+    {
+      key: "manual_only",
+      label: "Manual social outreach only",
+      passed: true,
+      fix: "Do not automate Facebook, Instagram, contact forms, Loom recording, or Loom sending.",
+    },
+  ];
+}
+
+export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededTask {
+  const prospect = {
+    id: item.prospectId,
+    businessName: item.businessName,
+    trade: item.trade,
+    city: item.city.replace(/,\s*[A-Z]{2}$/i, ""),
+    state: item.city.match(/,\s*([A-Z]{2})$/i)?.[1] ?? "",
+    website: item.website,
+    email: item.email,
+    phone: "",
+    profileUrl: "",
+    contactFormUrl: item.contactSource === "Contact form" ? item.website : "",
+    status: "New",
+    classification: item.contactSource === "Social profile" ? "social_only" : "website_redesign",
+    prospectType: item.website ? "redesign" : "no_website_social_only",
+    recommendedContactMethod: item.contactSource === "Social profile" ? "message_on_social" : "needs_manual_contact_research",
+    sourceConfidence: item.contactConfidence,
+    activitySignals: [],
+    inactive: false,
+  };
+  const checklist = loomReadinessChecklist(item);
+  const fixNotes = [
+    ...item.regenerationPlan,
+    ...item.improvementSuggestions,
+    ...item.detectedIssues.filter((issue) => /preview|layout|copy|visual|truth|capitalization|contact/i.test(issue)),
+  ].filter(Boolean);
+  return {
+    businessName: item.businessName,
+    trade: item.trade,
+    city: item.city,
+    previewLink: item.previewLink,
+    previewQuality: `${item.previewQualityScore || item.reviewScore || 0}/100`,
+    fixNotes: [...new Set(fixNotes)].slice(0, 6),
+    checklist,
+    scripts: casualDmPlaybook(prospect, item.previewLink),
+    canMarkReadyForLoom: checklist.every((check) => check.passed),
+  };
+}
+
+export function loomNotificationConfigured(environment: NodeJS.ProcessEnv = process.env) {
+  const env = outreachEnvironment(environment);
+  return env.notifyOnLoomNeeded && env.hasNotifyEmail && env.hasNotifyFromEmail;
+}
+
+export function loomNeededNotificationDraft(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
+  const configured = loomNotificationConfigured(environment);
+  return {
+    configured,
+    toConfigured: Boolean(environment.OUTREACH_NOTIFY_EMAIL?.trim()),
+    fromConfigured: Boolean(environment.OUTREACH_NOTIFY_FROM_EMAIL?.trim()),
+    subject: `Loom needed: ${item.businessName}`,
+    body: [
+      `${item.businessName} is ready for a manual Loom walkthrough.`,
+      `Trade/city: ${item.trade} in ${item.city}`,
+      `Preview: ${item.previewLink || "Missing public preview link"}`,
+      `Preview quality: ${item.previewQualityScore || item.reviewScore || 0}/100`,
+      "",
+      "Record the walkthrough manually. Do not auto-send social DMs or Loom links.",
+    ].join("\n"),
+  };
 }
 
 export function csvEscape(value: string | number) {
@@ -704,9 +938,9 @@ function tradePerformance(queue: OutreachQueueItem[]) {
     .map(([trade, items]) => ({
       trade,
       averageScore: average(items.map((item) => item.reviewScore || item.previewQualityScore)),
-      replies: items.filter((item) => ["Replied", "Positive Reply"].includes(item.status) || item.replyStatus).length,
-      positiveReplies: items.filter((item) => item.status === "Positive Reply" || /positive/i.test(item.replyStatus)).length,
-      sent: items.filter((item) => item.status === "Sent" || item.sentDate || ["Replied", "Positive Reply", "Not Interested"].includes(item.status)).length,
+      replies: items.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested"].includes(item.status) || item.replyStatus).length,
+      positiveReplies: items.filter((item) => ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length,
+      sent: items.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate || ["Replied", "Positive Reply", "Not Interested", "Pricing Requested", "Won", "Lost"].includes(item.status)).length,
     }))
     .sort((left, right) => right.averageScore - left.averageScore);
 }
@@ -717,8 +951,8 @@ export function generateAutonomousRunReview(
   id = `review-${Date.now()}`,
   createdAt = new Date().toISOString(),
 ): AutonomousRunReview {
-  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply"];
-  const blockedStatuses: OutreachQueueStatus[] = ["Blocked", "Bad Fit", "Never Contact", "Opted Out", "Skipped"];
+  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "DM Draft", "First DM Sent", "Prospect Said Yes", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won"];
+  const blockedStatuses: OutreachQueueStatus[] = ["Blocked", "Preview Needs Polish", "Bad Fit", "Never Contact", "Opted Out", "Skipped", "Lost", "No Response", "Not Interested"];
   const commonPreviewIssues = topCounts(queue.flatMap((item) => item.regenerationPlan.length ? item.regenerationPlan : item.detectedIssues));
   const commonLeadIssues = topCounts(queue.flatMap((item) => [
     item.blockedReason,
@@ -777,8 +1011,8 @@ export function learningSummaryForQueue(
     bestPerformingTrades,
     worstPerformingTrades,
     bestPerformingCities: topCounts(queue.filter((item) => item.reviewScore >= 70).map((item) => item.city)),
-    bestOutreachAngles: topCounts(queue.filter((item) => ["Replied", "Positive Reply"].includes(item.status)).map((item) => item.subjectLine)),
-    weakestOutreachAngles: topCounts(queue.filter((item) => item.rewritePlan.length || item.status === "Not Interested").map((item) => item.subjectLine)),
+    bestOutreachAngles: topCounts(queue.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status)).map((item) => item.subjectLine)),
+    weakestOutreachAngles: topCounts(queue.filter((item) => item.rewritePlan.length || ["Not Interested", "Lost", "No Response"].includes(item.status)).map((item) => item.subjectLine)),
     replyRateByTrade,
     recommendationsForNextRun,
     recommendedTradesToPrioritize: bestPerformingTrades,

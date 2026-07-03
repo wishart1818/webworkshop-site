@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  casualDmPlaybook,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
   evaluatePreviewQualityGate,
   evaluateSelfReview,
   learningSummaryForQueue,
+  loomNeededNotificationDraft,
+  loomNeededTaskForQueueItem,
   normalizeAutonomousGrowthMode,
   normalizeAutonomousGrowthSettings,
   outreachEnvironment,
+  outreachQueueStatuses,
   outreachRewritePlan,
   previewRegenerationPlan,
+  queueStatusAfterManualAction,
   queueStatusForPackage,
   rewriteOutreachWithFixes,
   type OutreachQueueItem,
@@ -342,4 +347,78 @@ test("feedback updates learning summary and dashboard empty states can be repres
   assert.ok(summary.commonFailureReasons.includes("Preview copy is generic."));
   assert.ok(summary.recommendedPreviewImprovements.includes("reduce AI-sounding copy"));
   assert.ok(summary.recommendedWordingImprovements.includes("make the email shorter"));
+});
+
+test("casual DM playbook keeps the first DM link-free and creates Loom-safe scripts", () => {
+  const prospect = {
+    ...eligibleProspect(),
+    website: "",
+    profileUrl: "https://facebook.com/sample-roofing",
+    prospectType: "no_website_social_only",
+    classification: "social_only",
+    recommendedContactMethod: "message_on_facebook",
+  } as Prospect;
+  const playbook = casualDmPlaybook(prospect, publicLink);
+
+  assert.match(playbook.firstDm, /Would you like to see it\?/);
+  assert.doesNotMatch(playbook.firstDm, /https?:\/\/|\/p\//);
+  assert.doesNotMatch(playbook.firstDm, /AI website|free audit/i);
+  assert.match(playbook.sendAfterLoom, /Loom walkthrough/);
+  assert.match(playbook.sendAfterLoom, /Preview:/);
+  assert.match(playbook.sendAfterLoom, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
+  assert.match(playbook.pricingReply, /\$1,000 total/);
+  assert.match(playbook.pricingReply, /\$49\/month/);
+  assert.match(playbook.higherSupportReply, /\$79\/month/);
+  assert.match(playbook.starterPageReply, /\$500/);
+});
+
+test("Prospect Said Yes creates a Loom Needed task status instead of sending", () => {
+  assert.ok(outreachQueueStatuses.includes("Prospect Said Yes"));
+  assert.ok(outreachQueueStatuses.includes("Loom Needed"));
+  assert.equal(queueStatusAfterManualAction("Prospect Said Yes"), "Loom Needed");
+  assert.equal(queueStatusAfterManualAction("First DM Sent"), "First DM Sent");
+});
+
+test("Loom Needed task exposes checklist, fix notes, scripts, and no auto-send path", () => {
+  const task = loomNeededTaskForQueueItem(queueItem({
+    status: "Loom Needed",
+    regenerationPlan: ["make layout more believable"],
+    improvementSuggestions: ["fix image relevance"],
+    detectedIssues: ["Preview copy is generic."],
+  }));
+
+  assert.equal(task.businessName, "Sample Roofing");
+  assert.equal(task.canMarkReadyForLoom, false);
+  assert.ok(task.checklist.some((check) => check.key === "preview_quality" && !check.passed));
+  assert.ok(task.fixNotes.includes("make layout more believable"));
+  assert.match(task.scripts.loomScript, /This isn't live or anything/);
+  assert.match(task.scripts.sendAfterLoom, /Preview:/);
+});
+
+test("strong Loom preview can be marked ready only after public preview and quality checks pass", () => {
+  const task = loomNeededTaskForQueueItem(queueItem({
+    status: "Loom Needed",
+    previewQualityScore: 92,
+    regenerationPlan: [],
+    improvementSuggestions: [],
+    detectedIssues: [],
+  }));
+
+  assert.equal(task.canMarkReadyForLoom, true);
+});
+
+test("Loom notification draft is internal-only and secret-safe", () => {
+  const item = queueItem({ status: "Loom Needed" });
+  const notification = loomNeededNotificationDraft(item, {
+    OUTREACH_NOTIFY_EMAIL: "operator@example.com",
+    OUTREACH_NOTIFY_FROM_EMAIL: "alerts@webworkshop.dev",
+    OUTREACH_NOTIFY_ON_LOOM_NEEDED: "true",
+    RESEND_API_KEY: "secret-resend-key",
+  });
+
+  assert.equal(notification.configured, true);
+  assert.match(notification.subject, /Loom needed: Sample Roofing/);
+  assert.match(notification.body, /manual/i);
+  assert.match(notification.body, /webworkshop\.dev\/p\//);
+  assert.doesNotMatch(JSON.stringify(notification), /secret-resend-key|operator@example.com|alerts@webworkshop\.dev/);
 });

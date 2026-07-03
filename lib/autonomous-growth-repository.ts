@@ -7,11 +7,13 @@ import {
   evaluateSelfReview,
   generateAutonomousRunReview,
   learningSummaryForQueue,
+  loomNeededNotificationDraft,
   loomTalkingPoints,
   manualDmScript,
   normalizeAutonomousGrowthSettings,
   outreachQueueStatuses,
   outreachEnvironment,
+  queueStatusAfterManualAction,
   outreachRewritePlan,
   previewRegenerationPlan,
   queueStatusForPackage,
@@ -240,14 +242,18 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
   const today = todayStart().getTime();
   const todayItems = queue.filter((item) => new Date(item.createdAt).getTime() >= today);
   const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate).getTime() >= today).length;
-  const sent = queue.filter((item) => item.status === "Sent" || item.sentDate);
-  const replies = queue.filter((item) => ["Replied", "Positive Reply"].includes(item.status) || item.replyStatus).length;
-  const positiveReplies = queue.filter((item) => item.status === "Positive Reply" || /positive/i.test(item.replyStatus)).length;
+  const sent = queue.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate);
+  const replies = queue.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested"].includes(item.status) || item.replyStatus).length;
+  const positiveReplies = queue.filter((item) => ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length;
   const tradeCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.trade]: (counts[item.trade] ?? 0) + 1 }), {});
   const bestTrade = Object.entries(tradeCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
   const subjectCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
   const bestSubjectLine = Object.entries(subjectCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
-  const ready = queue.filter((item) => ["Eligible", "Queued"].includes(item.status));
+  const ready = queue.filter((item) => ["Eligible", "Queued", "DM Draft", "Ready for Loom"].includes(item.status));
+  const loomNeeded = queue.filter((item) => item.status === "Loom Needed").length;
+  const loomRecorded = queue.filter((item) => item.status === "Loom Recorded").length;
+  const loomSent = queue.filter((item) => item.status === "Loom Sent").length;
+  const followUpsDue = queue.filter((item) => item.status === "Follow-up Needed").length;
   const scored = queue.filter((item) => item.reviewScore || item.previewQualityScore);
   return {
     prospectsFoundToday: todayItems.length,
@@ -260,12 +266,16 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
     dailyCapRemaining: Math.max(0, settings.maxEmailsSentPerDay - sentToday),
     replies,
     positiveReplies,
+    loomNeeded,
+    loomRecorded,
+    loomSent,
+    followUpsDue,
     replyRate: sent.length ? Math.round((replies / sent.length) * 100) : 0,
     positiveReplyRate: sent.length ? Math.round((positiveReplies / sent.length) * 100) : 0,
     bestTrade,
     bestSubjectLine,
     bestOutreachAngle: ready[0]?.eligibilityReason ?? "Not enough data",
-    wonLostProspects: `${positiveReplies} positive / ${queue.filter((item) => ["Not Interested", "Bad Fit"].includes(item.status)).length} lost`,
+    wonLostProspects: `${queue.filter((item) => item.status === "Won").length} won / ${queue.filter((item) => ["Lost", "Not Interested", "Bad Fit"].includes(item.status)).length} lost`,
     averagePreviewQualityScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + item.previewQualityScore, 0) / scored.length) : 0,
     averageLeadScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + (item.reviewScore || item.previewQualityScore), 0) / scored.length) : 0,
   };
@@ -285,6 +295,9 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
       hasFromEmail: env.hasFromEmail,
       hasReplyToEmail: env.hasReplyToEmail,
       hasPostalAddress: env.hasPostalAddress,
+      hasNotifyEmail: env.hasNotifyEmail,
+      hasNotifyFromEmail: env.hasNotifyFromEmail,
+      notifyOnLoomNeeded: env.notifyOnLoomNeeded,
     },
     metrics: metricsForQueue(queue, settings),
     queue,
@@ -302,6 +315,35 @@ function sourceForProspect(prospect: Prospect) {
 
 function blockedReasonText(reasons: string[], previewReasons: string[]) {
   return [...previewReasons, ...reasons].filter(Boolean).join(" ");
+}
+
+async function sendLoomNeededNotificationIfConfigured(item: OutreachQueueItem, requestedStatus: OutreachQueueStatus) {
+  if (requestedStatus !== "Prospect Said Yes") return;
+  const notification = loomNeededNotificationDraft(item);
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const to = process.env.OUTREACH_NOTIFY_EMAIL?.trim();
+  const from = process.env.OUTREACH_NOTIFY_FROM_EMAIL?.trim();
+  if (!notification.configured || !apiKey || !to || !from) return;
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject: notification.subject,
+        text: notification.body,
+      }),
+    });
+    if (!response.ok) {
+      console.warn("[autonomous-growth] Loom notification was not accepted by provider.", { status: response.status });
+    }
+  } catch (error) {
+    console.warn("[autonomous-growth] Loom notification failed safely.", { error: error instanceof Error ? error.name : "unknown" });
+  }
 }
 
 function feedbackCategory(label: AutonomousFeedbackLabel) {
@@ -392,8 +434,8 @@ async function recordLearningEvent(item: OutreachQueueItem) {
       previewQualityScore: item.previewQualityScore,
       reviewScore: item.reviewScore,
       replyStatus: item.replyStatus || null,
-      positiveReplyStatus: item.status === "Positive Reply" ? "positive" : null,
-      lostReason: ["Not Interested", "Bad Fit", "Skipped"].includes(item.status) ? item.status : null,
+      positiveReplyStatus: ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) ? "positive" : null,
+      lostReason: ["Lost", "No Response", "Not Interested", "Bad Fit", "Skipped", "Never Contact"].includes(item.status) ? item.status : null,
       manualNote: item.notes || null,
       feedbackLabels: item.feedbackLabels,
     },
@@ -501,35 +543,44 @@ export async function upsertAutonomousQueueItemFromPackage({
 
 export async function updateOutreachQueueStatus(id: string, status: OutreachQueueStatus) {
   if (!outreachQueueStatuses.includes(status)) throw new Error("Select a supported queue status.");
+  const nextStatus = queueStatusAfterManualAction(status);
   const nowIso = new Date().toISOString();
   if (!hasDatabase) {
     const item = memoryQueue().find((entry) => entry.id === id);
     if (!item) return null;
-    item.status = status;
-    item.sentDate = status === "Sent" ? nowIso : item.sentDate;
-    item.followUpDate = status === "Follow-up Needed" ? nowIso : item.followUpDate;
-    if (status === "Bad Fit") item.recommendedNextAction = "Bad Fit";
-    if (status === "Never Contact" || status === "Opted Out") item.recommendedNextAction = "Never Contact";
+    item.status = nextStatus;
+    item.sentDate = ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(nextStatus) ? nowIso : item.sentDate;
+    item.followUpDate = nextStatus === "Follow-up Needed" ? nowIso : item.followUpDate;
+    item.replyStatus = status === "Prospect Said Yes" ? "prospect_said_yes" : item.replyStatus;
+    if (nextStatus === "Bad Fit") item.recommendedNextAction = "Bad Fit";
+    if (nextStatus === "Never Contact" || nextStatus === "Opted Out") item.recommendedNextAction = "Never Contact";
+    if (nextStatus === "Preview Needs Polish") item.recommendedNextAction = "Regenerate Preview";
+    if (nextStatus === "Loom Needed" || nextStatus === "Ready for Loom") item.recommendedNextAction = "Needs Human Review";
     item.updatedAt = nowIso;
     await recordRunReview(memorySettings(), memoryQueue());
+    await sendLoomNeededNotificationIfConfigured(item, status);
     return structuredClone(item);
   }
   await ensureTopProspectSchema();
   const now = new Date();
   const extraReviewData =
-    status === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
-      : status === "Never Contact" || status === "Opted Out" ? { recommendedNextAction: "Never Contact" }
-        : {};
+    nextStatus === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
+      : nextStatus === "Never Contact" || nextStatus === "Opted Out" ? { recommendedNextAction: "Never Contact" }
+        : nextStatus === "Preview Needs Polish" ? { recommendedNextAction: "Regenerate Preview" }
+          : nextStatus === "Loom Needed" || nextStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
+            : {};
   const row = await getProspectDatabase().outreachQueueItem.update({
     where: { id },
     data: {
-      status,
-      sentDate: status === "Sent" ? now : undefined,
-      followUpDate: status === "Follow-up Needed" ? now : undefined,
+      status: nextStatus,
+      sentDate: ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(nextStatus) ? now : undefined,
+      followUpDate: nextStatus === "Follow-up Needed" ? now : undefined,
+      replyStatus: status === "Prospect Said Yes" ? "prospect_said_yes" : undefined,
       ...extraReviewData,
     },
   });
   const domain = queueToDomain(row);
+  await sendLoomNeededNotificationIfConfigured(domain, status);
   await recordLearningEvent(domain);
   await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
   return domain;

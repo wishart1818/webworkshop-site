@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type For
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
+import { casualDmPlaybook } from "@/lib/autonomous-growth";
 import {
   allCoreServiceTradesOption,
   displayStateCode,
@@ -269,6 +270,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const latestJob = activeJob ?? jobs[0];
   const best = latestJob && latestJob.scannedCount > 0 ? latestJob.results[0] : null;
   const queuedResults = latestJob ? [...latestJob.results, ...latestJob.reviewedNotRecommended] : [];
+  const outreachPlaybook = outreachResult?.prospect ? casualDmPlaybook(outreachResult.prospect, outreachResult.previewLink) : null;
   const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const filteredReviewedNotRecommended = latestJob ? latestJob.reviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const preparedArtifacts = queuedResults.filter((result) => result.prospect.preview && result.prospect.outreach && result.buildPrompt).length;
@@ -572,6 +574,24 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 </ul>
                 {!outreachResult.emailQuality.ready && <p className="engine-copy-warning">Email copy is blocked until this package is send-ready. Current blocker: {outreachResult.emailQuality.readinessLabel}.</p>}
               </section>
+              {outreachPlaybook && (
+                <section className="engine-manual-playbook" aria-label="Manual Facebook and Loom playbook">
+                  <div className="engine-copy-head"><h3>Casual DM + Loom playbook</h3><b>Manual only</b></div>
+                  <p>First Facebook or Instagram DM does not include the preview link. If they say yes, mark the queue item Prospect Said Yes, record a Loom, then send the Loom and public preview manually.</p>
+                  <div className="engine-script-grid">
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:first-dm`, outreachPlaybook.firstDm)} type="button">{copied === `${outreachResult.id}:first-dm` ? "Copied" : "Copy first DM"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:soft-dm`, outreachPlaybook.softerFirstDm)} type="button">{copied === `${outreachResult.id}:soft-dm` ? "Copied" : "Copy softer first DM"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:yes-reply`, outreachPlaybook.yesReply)} type="button">{copied === `${outreachResult.id}:yes-reply` ? "Copied" : "Copy yes reply"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:loom-script`, outreachPlaybook.loomScript)} type="button">{copied === `${outreachResult.id}:loom-script` ? "Copied" : "Copy Loom script"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:loom-send`, outreachPlaybook.sendAfterLoom)} type="button">{copied === `${outreachResult.id}:loom-send` ? "Copied" : "Copy Loom send message"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:pricing`, outreachPlaybook.pricingReply)} type="button">{copied === `${outreachResult.id}:pricing` ? "Copied" : "Copy pricing reply"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:higher`, outreachPlaybook.higherSupportReply)} type="button">{copied === `${outreachResult.id}:higher` ? "Copied" : "Copy $79 support option"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:starter`, outreachPlaybook.starterPageReply)} type="button">{copied === `${outreachResult.id}:starter` ? "Copied" : "Copy $500 starter page"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:follow-up`, outreachPlaybook.followUpAfterLoom)} type="button">{copied === `${outreachResult.id}:follow-up` ? "Copied" : "Copy follow-up after Loom"}</button>
+                    <button className="engine-button" onClick={() => void copyText(`${outreachResult.id}:not-interested`, outreachPlaybook.notInterestedReply)} type="button">{copied === `${outreachResult.id}:not-interested` ? "Copied" : "Copy not interested reply"}</button>
+                  </div>
+                </section>
+              )}
               <section><h3>Subject lines</h3><ul>{outreachResult.prospect.outreach.subjects.map((subject) => <li key={subject}>{subject}</li>)}</ul></section>
               <section><div className="engine-copy-head"><h3>Short email with preview</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short email"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
               <section><div className="engine-copy-head"><h3>Detailed email with preview</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed email"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>

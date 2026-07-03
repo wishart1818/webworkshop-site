@@ -41,10 +41,15 @@ In **Vercel project settings > Environment Variables**, add:
 | `YELP_API_KEY` | No | Enables Yelp business identity, phone, rating, and review-count enrichment |
 | `YELLOW_PAGES_API_URL` | No | Approved/licensed directory endpoint returning `businesses`, `results`, or `records` |
 | `YELLOW_PAGES_API_KEY` | No | Optional bearer token for the approved directory endpoint |
+| `OUTREACH_NOTIFY_EMAIL` | No | Internal operator email for Loom Needed notifications only |
+| `OUTREACH_NOTIFY_FROM_EMAIL` | No | Verified sender address for internal Loom Needed notifications |
+| `OUTREACH_NOTIFY_ON_LOOM_NEEDED` | No | Set to `true` to notify internally when a prospect says yes and a Loom task is created |
 
 Apply production secrets to the **Production** environment. Use separate credentials and a separate database for Preview if preview deployments need engine access.
 
 Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-side code, public documentation, screenshots, or variables prefixed with `NEXT_PUBLIC_`.
+
+The optional Loom notification variables are internal only. They never send anything to prospects, and the workflow still requires you to manually record and send the Loom. If the notification variables or `RESEND_API_KEY` are missing, the Loom Needed task still works and no runtime error is raised.
 
 The names are exact and case-sensitive: `ENGINE_USERNAME` and `ENGINE_PASSWORD`. After adding or changing either value, create a new Production deployment. Vercel does not apply environment-variable changes to deployments that already exist.
 

@@ -2641,9 +2641,166 @@ body:has(.engine-shell) {
 
 .engine-autonomous-safety,
 .engine-autonomous-insights,
-.engine-autonomous-queue {
+.engine-autonomous-queue,
+.engine-loom-queue {
   display: grid;
   gap: 1rem;
+}
+
+.engine-loom-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #c89b47;
+  background: #fff8e7;
+  padding: 1rem;
+}
+
+.engine-loom-banner b,
+.engine-loom-banner p {
+  margin: 0;
+}
+
+.engine-loom-banner b {
+  color: #4d2d00;
+  font-size: 1rem;
+}
+
+.engine-loom-banner p {
+  margin-top: 0.25rem;
+  color: #725421;
+  line-height: 1.45;
+}
+
+.engine-loom-banner > span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #0d6956;
+  color: white;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.engine-loom-task-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.engine-loom-task {
+  display: grid;
+  gap: 0.85rem;
+  border: 1px solid var(--engine-line);
+  background: #fffdfa;
+  padding: 1rem;
+}
+
+.engine-loom-task header,
+.engine-loom-task__facts,
+.engine-script-grid,
+.engine-loom-actions {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.engine-loom-task header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.engine-loom-task h3,
+.engine-loom-task h4,
+.engine-loom-task p {
+  margin: 0;
+}
+
+.engine-loom-task header span,
+.engine-loom-task__facts b,
+.engine-loom-checklist h4,
+.engine-loom-fixes h4 {
+  color: var(--engine-accent-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.engine-loom-task h3 {
+  margin-top: 0.25rem;
+  color: var(--engine-ink);
+  font-size: 1.15rem;
+}
+
+.engine-loom-task__facts {
+  grid-template-columns: minmax(0, 1.3fr) minmax(9rem, 0.4fr) minmax(12rem, 0.7fr);
+}
+
+.engine-loom-task__facts > div,
+.engine-loom-checklist,
+.engine-loom-fixes {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 0.75rem;
+}
+
+.engine-loom-task__facts a,
+.engine-loom-task__facts span,
+.engine-loom-checklist span,
+.engine-loom-checklist small,
+.engine-loom-fixes p,
+.engine-loom-fixes li {
+  color: var(--engine-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.engine-loom-checklist ul,
+.engine-loom-fixes ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-loom-checklist li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.35rem 0.55rem;
+}
+
+.engine-loom-checklist li small {
+  grid-column: 2;
+}
+
+.engine-loom-checklist li > b {
+  border-radius: 999px;
+  background: #dff7ed;
+  color: #07513e;
+  padding: 0.16rem 0.5rem;
+  font-size: 0.66rem;
+}
+
+.engine-loom-checklist .is-failed > b {
+  background: #fff0e8;
+  color: #7a2d1d;
+}
+
+.engine-script-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.engine-script-grid .engine-button,
+.engine-loom-actions .engine-button {
+  width: 100%;
+}
+
+.engine-loom-actions {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .engine-safety-grid {
@@ -3839,6 +3996,12 @@ body:has(.engine-shell) {
   .engine-autonomous-table article {
     grid-template-columns: 1fr;
   }
+
+  .engine-loom-task__facts,
+  .engine-script-grid,
+  .engine-loom-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 767px) {
@@ -4090,6 +4253,26 @@ body:has(.engine-shell) {
 
   .engine-autonomous-table .engine-result-actions {
     display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .engine-loom-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .engine-loom-banner > span {
+    width: max-content;
+  }
+
+  .engine-loom-task,
+  .engine-loom-task header {
+    grid-template-columns: 1fr;
+  }
+
+  .engine-loom-task__facts,
+  .engine-script-grid,
+  .engine-loom-actions {
     grid-template-columns: 1fr;
   }
 

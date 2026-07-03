@@ -50,6 +50,17 @@ test("engine phone controls and navigation account for iPhone interaction constr
 test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export", () => {
   assert.match(prospectEngineWorkspace, /Autonomous Growth/);
   assert.match(autonomousGrowthWorkspace, /Safe autonomous prospecting/);
+  assert.match(autonomousGrowthWorkspace, /You have Loom walkthroughs to record/);
+  assert.match(autonomousGrowthWorkspace, /Loom Needed Queue/);
+  assert.match(autonomousGrowthWorkspace, /Review-before-Loom checklist/);
+  assert.match(autonomousGrowthWorkspace, /Copy first DM/);
+  assert.match(autonomousGrowthWorkspace, /Copy Loom script/);
+  assert.match(autonomousGrowthWorkspace, /Copy \$49\/month pricing/);
+  assert.match(autonomousGrowthWorkspace, /Prospect Said Yes/);
+  assert.match(autonomousGrowthWorkspace, /Preview Needs Polish/);
+  assert.match(autonomousGrowthWorkspace, /Ready for Loom/);
+  assert.match(autonomousGrowthWorkspace, /Loom Recorded/);
+  assert.match(autonomousGrowthWorkspace, /Loom Sent/);
   assert.match(autonomousGrowthWorkspace, /Outreach mode/);
   assert.match(autonomousGrowthWorkspace, /Global kill switch/);
   assert.match(autonomousGrowthWorkspace, /Dry Run/);
@@ -74,6 +85,10 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(css, /\.engine-learning-summary\s*{\s*display: grid;/);
   assert.match(css, /\.engine-feedback-controls\s*{\s*display: grid;/);
   assert.match(css, /\.engine-reply-table\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-loom-banner\s*{\s*display: flex;/);
+  assert.match(css, /\.engine-loom-task__facts\s*{\s*grid-template-columns:/);
+  assert.match(css, /\.engine-script-grid\s*{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(css, /\.engine-loom-actions\s*{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
 });
 
 test("protected prospect previews remain readable and business-themed on phones", () => {
@@ -117,9 +132,15 @@ test("Outreach Package bulk review exposes the complete human approval workflow 
   assert.match(topProspectsWorkspace, /Open Lovable/);
   assert.match(topProspectsWorkspace, /Open Bolt/);
   assert.match(topProspectsWorkspace, /Open v0/);
+  assert.match(topProspectsWorkspace, /Casual DM \+ Loom playbook/);
+  assert.match(topProspectsWorkspace, /First Facebook or Instagram DM does not include the preview link/);
+  assert.match(topProspectsWorkspace, /Copy first DM/);
+  assert.match(topProspectsWorkspace, /Copy Loom send message/);
+  assert.match(topProspectsWorkspace, /Copy \$500 starter page/);
   assert.match(mobileCss, /\.engine-package-review-grid,\s*\.engine-package-dialog__summary,\s*\.engine-email-quality ul\s*{\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.engine-package-card__actions\s*{\s*grid-template-columns: 1fr;/);
   assert.match(mobileCss, /\.engine-email-quality li > b\s*{\s*font-size: 0\.875rem;/);
+  assert.match(mobileCss, /\.engine-loom-task__facts,\s*\.engine-script-grid,\s*\.engine-loom-actions\s*{\s*grid-template-columns: 1fr;/);
 });
 
 test("Top Prospects exposes modes, background batch workflow, queue, and requested score labels", () => {
