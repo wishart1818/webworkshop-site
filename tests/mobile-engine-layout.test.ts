@@ -51,6 +51,19 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(prospectEngineWorkspace, /Autonomous Growth/);
   assert.match(autonomousGrowthWorkspace, /Safe autonomous prospecting/);
   assert.match(autonomousGrowthWorkspace, /Autopilot Campaign/);
+  assert.match(autonomousGrowthWorkspace, /Choose Autopilot Market/);
+  assert.match(autonomousGrowthWorkspace, /Recommended first real run: Florida \+ Pressure Washing/);
+  assert.match(autonomousGrowthWorkspace, /autopilotMarketPickerPresetIds/);
+  assert.match(autonomousGrowthWorkspace, /northwest-ohio/);
+  assert.match(autonomousGrowthWorkspace, /florida/);
+  assert.match(autonomousGrowthWorkspace, /texas-suburbs/);
+  assert.match(autonomousGrowthWorkspace, /carolinas-tennessee-georgia/);
+  assert.match(autonomousGrowthWorkspace, /ohio-midwest/);
+  assert.match(autonomousGrowthWorkspace, /arizona-nevada/);
+  assert.match(autonomousGrowthWorkspace, /autopilotQuickTrades/);
+  assert.match(autonomousGrowthWorkspace, /Pressure Washing/);
+  assert.match(autonomousGrowthWorkspace, /updateMarketTrade/);
+  assert.match(autonomousGrowthWorkspace, /recommendedFirstAutopilotRunSettings/);
   assert.match(autonomousGrowthWorkspace, /Start Autopilot with:/);
   assert.match(autonomousGrowthWorkspace, /startConfirmation\.safety/);
   assert.match(autonomousGrowthWorkspace, /marketMismatchWarning/);
@@ -127,6 +140,9 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /review score/);
   assert.match(css, /\.engine-autonomous-hero\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autopilot-action-card\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autopilot-market-picker\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autopilot-market-picker__grid\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-autopilot-market-picker__trades\s*{\s*display: flex;/);
   assert.match(css, /\.engine-autopilot-start-confirmation,/);
   assert.match(css, /\.engine-autopilot-market-warning\s*{\s*border-color: #e2c17b;/);
   assert.match(css, /\.engine-autopilot-activity\s*{\s*display: grid;/);
@@ -141,6 +157,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(css, /\.engine-autopilot-disabled-reasons\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autopilot-queues\s*{\s*display: grid;/);
   assert.match(mobileCss, /\.engine-autopilot-activity-grid,/);
+  assert.match(mobileCss, /\.engine-autopilot-market-picker__head,/);
+  assert.match(mobileCss, /\.engine-autopilot-market-picker__trades \.engine-chip-button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /\.engine-autopilot-activity__head\s*{\s*align-items: stretch;\s*flex-direction: column;/);
   assert.match(mobileCss, /\.engine-autopilot-timeline__item\s*{\s*grid-template-columns: 1fr;/);
   assert.match(css, /\.engine-safety-grid\s*{\s*display: grid;/);

@@ -32,6 +32,7 @@ import {
   autopilotStartConfirmation,
   defaultAutopilotCampaignSettings,
   normalizeAutopilotCampaignSettings,
+  recommendedFirstAutopilotRunSettings,
   type AutopilotActivityStatus,
   type AutopilotCampaignSettings,
   type AutopilotDashboard,
@@ -618,6 +619,17 @@ const autopilotActivityStatusLabels: Record<AutopilotActivityStatus, string> = {
   failed: "Failed",
 };
 
+const autopilotMarketPickerPresetIds = [
+  "northwest-ohio",
+  "florida",
+  "texas-suburbs",
+  "carolinas-tennessee-georgia",
+  "ohio-midwest",
+  "arizona-nevada",
+] as const;
+
+const autopilotQuickTrades = ["Landscaping", "Pressure Washing", "Cleaning", "Painting", "Concrete", "Roofing", "HVAC", "Plumbing"] as const;
+
 function formatActivityTime(value: string) {
   if (!value) return "Not recorded";
   const date = new Date(value);
@@ -864,6 +876,61 @@ function AutopilotLiveActivitySection({
   );
 }
 
+function AutopilotMarketPicker({
+  settings,
+  onRecommendedFirstRun,
+  onSelectMarket,
+  onSelectTrade,
+}: {
+  settings: AutopilotCampaignSettings;
+  onRecommendedFirstRun: () => void;
+  onSelectMarket: (presetId: string) => void;
+  onSelectTrade: (presetId: string, trade: AutopilotCampaignSettings["trade"]) => void;
+}) {
+  const presets = autopilotMarketPickerPresetIds.flatMap((id) => {
+    const preset = recommendedMarketPresets.find((item) => item.id === id);
+    return preset ? [preset] : [];
+  });
+  return (
+    <section className="engine-autopilot-market-picker" aria-labelledby="autopilot-market-picker-title">
+      <div className="engine-autopilot-market-picker__head">
+        <div>
+          <h3 id="autopilot-market-picker-title">Choose Autopilot Market</h3>
+          <p>Pick a market and optional trade here before starting. This only fills the campaign fields. You still need to click Start Autopilot.</p>
+        </div>
+        <button className="engine-button engine-button--primary" onClick={onRecommendedFirstRun} type="button">Recommended first real run: Florida + Pressure Washing</button>
+      </div>
+      <div className="engine-autopilot-market-picker__grid">
+        {presets.map((preset) => {
+          const quickTrades = autopilotQuickTrades.filter((trade) => preset.trades.includes(trade));
+          const selected = settings.marketPresetId === preset.id;
+          return (
+            <article className={selected ? "is-selected" : ""} key={preset.id}>
+              <header>
+                <button className="engine-button" onClick={() => onSelectMarket(preset.id)} type="button">{preset.name}</button>
+                {selected ? <span>Selected</span> : null}
+              </header>
+              <p>{preset.cities.slice(0, 4).map((city) => city.label).join("; ")}{preset.cities.length > 4 ? `, +${preset.cities.length - 4} more` : ""}</p>
+              <div className="engine-autopilot-market-picker__trades" aria-label={`${preset.name} quick trades`}>
+                {quickTrades.map((trade) => (
+                  <button
+                    className={selected && settings.trade === trade ? "engine-chip-button is-selected" : "engine-chip-button"}
+                    key={`${preset.id}-${trade}`}
+                    onClick={() => onSelectTrade(preset.id, trade)}
+                    type="button"
+                  >
+                    {trade}
+                  </button>
+                ))}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function AutopilotCampaignPanel({
   autopilot,
   disabled,
@@ -935,6 +1002,19 @@ function AutopilotCampaignPanel({
     }));
   }
 
+  function updateMarketTrade(presetId: string, trade: AutopilotCampaignSettings["trade"]) {
+    const presetFields = autopilotPresetFields(presetId);
+    setFormSettings((current) => normalizeAutopilotCampaignSettings({
+      ...current,
+      ...(presetFields ?? { marketPresetId: presetId }),
+      trade,
+    }));
+  }
+
+  function applyRecommendedFirstRun() {
+    setFormSettings(recommendedFirstAutopilotRunSettings());
+  }
+
   return (
     <section className="engine-panel engine-autopilot-campaign" aria-labelledby="autopilot-campaign-title">
       <div className="engine-panel__head">
@@ -947,6 +1027,13 @@ function AutopilotCampaignPanel({
           <span>{campaign.latestRunReport ? `${campaign.latestRunReport.prospectsQualified} reviewable prospects in latest report` : "No batch report yet"}</span>
         </div>
       </div>
+
+      <AutopilotMarketPicker
+        settings={settings}
+        onRecommendedFirstRun={applyRecommendedFirstRun}
+        onSelectMarket={updateMarketPreset}
+        onSelectTrade={updateMarketTrade}
+      />
 
       <div className="engine-autopilot-start-confirmation" role="status">
         <b>Start Autopilot with:</b>

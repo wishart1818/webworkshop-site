@@ -360,6 +360,17 @@ export function autopilotDraftFromRecommendedMarket(preset: RecommendedMarketPre
   };
 }
 
+function closestRecommendedPresetName(targetLabels: string[], excludedPresetId: string) {
+  let best: { name: string; overlap: number } | null = null;
+  const targetSet = new Set(targetLabels);
+  for (const preset of recommendedMarketPresets) {
+    if (preset.id === excludedPresetId) continue;
+    const overlap = preset.cities.filter((city) => targetSet.has(`${titleCaseLocation(city.city)}, ${displayStateCode(city.state)}`)).length;
+    if (!best || overlap > best.overlap) best = { name: preset.name, overlap };
+  }
+  return best && best.overlap >= Math.max(1, Math.ceil(targetLabels.length / 2)) ? best.name : "";
+}
+
 export function autopilotMarketMismatchWarning(settings: Pick<AutopilotCampaignSettings, "marketPresetId" | "customCities" | "state">) {
   const preset = recommendedMarketPresets.find((item) => item.id === settings.marketPresetId);
   if (!preset || !settings.customCities.trim()) return "";
@@ -369,6 +380,10 @@ export function autopilotMarketMismatchWarning(settings: Pick<AutopilotCampaignS
   const targetLabels = targets.map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`);
   const exactMatch = targetLabels.length === presetLabels.size && targetLabels.every((label) => presetLabels.has(label));
   if (exactMatch) return "";
+  const likelyPreset = closestRecommendedPresetName(targetLabels, preset.id);
+  if (likelyPreset) {
+    return `Market preset is ${preset.name}, but Custom cities look like ${likelyPreset}. Update cities before starting.`;
+  }
   const presetStates = new Set(preset.cities.map((city) => displayStateCode(city.state)));
   const targetStateCounts = targets.reduce<Record<string, number>>((counts, target) => {
     const state = displayStateCode(target.state);
@@ -380,6 +395,30 @@ export function autopilotMarketMismatchWarning(settings: Pick<AutopilotCampaignS
     return `Market preset is ${preset.name}, but Custom cities appear to be ${stateName(dominantState)}. Update cities before starting.`;
   }
   return `Market preset is ${preset.name}, but Custom cities do not match that preset. Update cities before starting.`;
+}
+
+export function recommendedFirstAutopilotRunSettings(): AutopilotCampaignSettings {
+  const floridaFields = autopilotPresetFields("florida") ?? {};
+  return normalizeAutopilotCampaignSettings({
+    ...defaultAutopilotCampaignSettings,
+    ...floridaFields,
+    trade: "Pressure Washing",
+    duration: "run_once",
+    cadence: "manual_only",
+    maxProspectsPerRun: 100,
+    maxPreviewsPerRun: 20,
+    maxProspectsTotal: 20,
+    outreachStyle: "manual_social_safe",
+    excludePreviouslyReviewed: true,
+    requirePreviewQuality85: true,
+    requireWrittenContact: true,
+    manualDmMode: true,
+    loomNotifications: true,
+    stopRules: {
+      ...defaultAutopilotCampaignSettings.stopRules,
+      pauseOnProviderFailure: false,
+    },
+  });
 }
 
 export function autopilotStartConfirmation(settings: AutopilotCampaignSettings) {

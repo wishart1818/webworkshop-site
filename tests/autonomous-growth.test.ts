@@ -33,6 +33,7 @@ import {
   buildAutopilotDashboard,
   createAutopilotCampaign,
   defaultAutopilotCampaignSettings,
+  recommendedFirstAutopilotRunSettings,
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
@@ -312,13 +313,34 @@ test("Autopilot warns when preset and custom cities do not match", () => {
     state: "OH",
   });
 
-  assert.equal(warning, "Market preset is Florida, but Custom cities appear to be Ohio. Update cities before starting.");
+  assert.equal(warning, "Market preset is Florida, but Custom cities look like Northwest Ohio. Update cities before starting.");
   assert.equal(autopilotMarketMismatchWarning({
     ...defaultAutopilotCampaignSettings,
     marketPresetId: "florida",
     customCities: "Tampa, FL; St. Petersburg, FL; Clearwater, FL; Lakeland, FL; Orlando, FL; Kissimmee, FL; Jacksonville, FL; St. Augustine, FL; Sarasota, FL; Fort Myers, FL",
     state: "FL",
   }), "");
+});
+
+test("recommended first real Autopilot run selects Florida Pressure Washing with safe defaults", () => {
+  const settings = recommendedFirstAutopilotRunSettings();
+
+  assert.equal(settings.marketPresetId, "florida");
+  assert.match(settings.customCities, /Tampa, FL; St\. Petersburg, FL/);
+  assert.equal(settings.state, "FL");
+  assert.equal(settings.trade, "Pressure Washing");
+  assert.equal(settings.duration, "run_once");
+  assert.equal(settings.cadence, "manual_only");
+  assert.equal(settings.maxProspectsPerRun, 100);
+  assert.equal(settings.maxPreviewsPerRun, 20);
+  assert.equal(settings.maxProspectsTotal, 20);
+  assert.equal(settings.outreachStyle, "manual_social_safe");
+  assert.equal(settings.excludePreviouslyReviewed, true);
+  assert.equal(settings.requirePreviewQuality85, true);
+  assert.equal(settings.requireWrittenContact, true);
+  assert.equal(settings.manualDmMode, true);
+  assert.equal(settings.loomNotifications, true);
+  assert.equal(settings.stopRules.pauseOnProviderFailure, false);
 });
 
 test("Autopilot start confirmation uses the selected market, trade, duration, and no-send safety", () => {
