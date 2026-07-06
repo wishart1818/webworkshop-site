@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { continueTopProspectJobAfterResponse } from "@/lib/top-prospect-continuation";
-import { createTopProspectJob } from "@/lib/top-prospect-repository";
+import { createTopProspectJob, getActiveTopProspectJobSummary, getTopProspectJob } from "@/lib/top-prospect-repository";
+import { safeTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import { validateTopProspectInput } from "@/lib/top-prospects";
 import {
+  failAutopilotCampaignHandoff,
   getAutonomousGrowthDashboard,
   pauseAutopilotCampaign,
   recordAutonomousFeedback,
@@ -22,10 +24,71 @@ import {
   type AutonomousGrowthSettings,
   type OutreachQueueStatus,
 } from "@/lib/autonomous-growth";
-import { autopilotTopProspectInput, normalizeAutopilotCampaignSettings, type AutopilotCampaignSettings } from "@/lib/autopilot-campaign";
+import { autopilotStartConfirmation, autopilotTopProspectInput, normalizeAutopilotCampaignSettings, type AutopilotCampaignSettings, type AutopilotHandoffFailure } from "@/lib/autopilot-campaign";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+function handoffFailure(settings: AutopilotCampaignSettings, overrides: Partial<AutopilotHandoffFailure> & Pick<AutopilotHandoffFailure, "phase" | "message">): AutopilotHandoffFailure {
+  const confirmation = autopilotStartConfirmation(settings);
+  const input = autopilotTopProspectInput(settings);
+  return {
+    databaseConnected: Boolean(process.env.DATABASE_URL?.trim()),
+    attemptedMarket: confirmation.market,
+    attemptedCities: input.city,
+    attemptedTrade: confirmation.trade,
+    attemptedProspectMode: input.mode,
+    attemptedProspectType: input.prospectType,
+    ...overrides,
+  };
+}
+
+async function startAutopilotTopProspectsHandoff(request: Request, settings: AutopilotCampaignSettings) {
+  const validation = validateTopProspectInput(autopilotTopProspectInput(settings));
+  if (!validation.ok) {
+    const autopilot = await failAutopilotCampaignHandoff(settings, handoffFailure(settings, { phase: "validation", message: validation.error }));
+    return NextResponse.json({ autopilot, topProspectJobWarning: validation.error });
+  }
+  try {
+    const created = await createTopProspectJob(validation.value);
+    const job = await getTopProspectJob(created.id);
+    if (!job) {
+      const autopilot = await failAutopilotCampaignHandoff(settings, handoffFailure(settings, {
+        phase: "job_creation",
+        message: "Top Prospects job creation returned an ID, but the job could not be read back.",
+      }));
+      return NextResponse.json({ autopilot, topProspectJobWarning: "Top Prospects job was created but could not be loaded for Autopilot tracking." });
+    }
+    const autopilot = await startAutopilotCampaign(settings, job);
+    continueTopProspectJobAfterResponse(request, job.id);
+    return NextResponse.json({ autopilot, topProspectJobId: job.id });
+  } catch (error) {
+    const safe = safeTopProspectJobFailure(error);
+    let active: Awaited<ReturnType<typeof getActiveTopProspectJobSummary>> = null;
+    try {
+      active = await getActiveTopProspectJobSummary();
+    } catch {
+      active = null;
+    }
+    const errorWithActive = error as { activeJobId?: string; activeJobStatus?: string };
+    const activeJobId = errorWithActive.activeJobId ?? active?.id;
+    const activeJobStatus = errorWithActive.activeJobStatus ?? active?.status;
+    const activeMessage = activeJobId ? "Another Top Prospects job is running." : "";
+    const message = activeMessage || safe.reason || "Top Prospects job could not start.";
+    const autopilot = await failAutopilotCampaignHandoff(settings, handoffFailure(settings, {
+      phase: activeJobId ? "active_job" : safe.classification === "database_error" ? "database" : "job_creation",
+      message,
+      ...(activeJobId ? { activeJobId } : {}),
+      ...(activeJobStatus ? { activeJobStatus } : {}),
+    }));
+    console.warn("[autonomous-growth] Autopilot Top Prospects handoff failed safely.", {
+      error: error instanceof Error ? error.name : "unknown",
+      classification: safe.classification,
+      activeJobId,
+    });
+    return NextResponse.json({ autopilot, topProspectJobWarning: message });
+  }
+}
 
 export async function GET() {
   try {
@@ -74,25 +137,9 @@ export async function POST(request: Request) {
       if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item });
     }
-    if (payload.action === "start_autopilot") {
+    if (payload.action === "start_autopilot" || payload.action === "retry_autopilot_handoff") {
       const settings = normalizeAutopilotCampaignSettings(payload.autopilotSettings ?? {});
-      const autopilot = await startAutopilotCampaign(settings);
-      let topProspectJobId = "";
-      let topProspectJobWarning = "";
-      try {
-        const validation = validateTopProspectInput(autopilotTopProspectInput(settings));
-        if (!validation.ok) {
-          topProspectJobWarning = validation.error;
-        } else {
-          const job = await createTopProspectJob(validation.value);
-          topProspectJobId = job.id;
-          continueTopProspectJobAfterResponse(request, job.id);
-        }
-      } catch (error) {
-        topProspectJobWarning = "Autopilot campaign was saved, but the Top Prospects background run could not start. Check PostgreSQL and active job status.";
-        console.warn("[autonomous-growth] Autopilot Top Prospects handoff failed safely.", { error: error instanceof Error ? error.name : "unknown" });
-      }
-      return NextResponse.json({ autopilot, topProspectJobId, topProspectJobWarning });
+      return startAutopilotTopProspectsHandoff(request, settings);
     }
     if (payload.action === "pause_autopilot") {
       return NextResponse.json({ autopilot: await pauseAutopilotCampaign() });

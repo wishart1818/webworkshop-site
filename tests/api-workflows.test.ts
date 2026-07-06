@@ -80,12 +80,16 @@ test("Autopilot dashboard actions start, report, and smoke-test without sending"
   }));
   const startedPayload = await started.json();
   assert.equal(started.status, 200);
-  assert.equal(startedPayload.autopilot.campaign.status, "finished");
+  assert.equal(startedPayload.autopilot.campaign.status, "paused");
   assert.equal(startedPayload.autopilot.marketTargets.length, 2);
-  assert.ok(["completed", "completed_with_warnings"].includes(startedPayload.autopilot.activity.status));
-  assert.ok(startedPayload.autopilot.activity.entries.some((entry: { label: string }) => /Starting Autopilot campaign/.test(entry.label)));
+  assert.equal(startedPayload.autopilot.activity.status, "failed_to_start");
+  assert.equal(startedPayload.autopilot.activity.topProspectJobId, "");
+  assert.match(startedPayload.topProspectJobWarning, /Top Prospects|database|job/i);
+  assert.ok(startedPayload.autopilot.activity.errors.length > 0);
+  assert.ok(startedPayload.autopilot.activity.entries.some((entry: { label: string }) => /could not start Top Prospects job/.test(entry.label)));
+  assert.ok(startedPayload.autopilot.activity.handoffDetails.some((detail: { label: string; value: string }) => detail.label === "Attempted trade" && detail.value === "Pressure Washing"));
   assert.ok(startedPayload.autopilot.activity.queueRouting.some((entry: { label: string }) => entry.label === "Email Draft Ready"));
-  assert.match(startedPayload.autopilot.campaign.notifications[0].body, /Nothing was sent|Nothing will be contacted automatically/);
+  assert.match(startedPayload.autopilot.campaign.notifications[0].title, /could not start Top Prospects job/);
 
   const smoke = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
     method: "POST",

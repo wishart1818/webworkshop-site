@@ -121,6 +121,15 @@ export function ProspectEngine() {
     if (workspaceTab === "System") void loadSystem();
   }, [workspaceTab]);
 
+  useEffect(() => {
+    function openEngineTab(event: Event) {
+      const detail = (event as CustomEvent<{ tab?: string }>).detail;
+      if (detail?.tab === "top-prospects") setWorkspaceTab("Top Prospects");
+    }
+    window.addEventListener("webworkshop:open-engine-tab", openEngineTab);
+    return () => window.removeEventListener("webworkshop:open-engine-tab", openEngineTab);
+  }, []);
+
   const selected = prospects.find((prospect) => prospect.id === selectedId) ?? prospects[0];
   const prospectStateBlocked = prospects.length === 0 && (syncState === "loading" || syncState === "error");
   const filtered = useMemo(

@@ -3501,6 +3501,40 @@ body:has(.engine-shell) {
   background: #fff6f2;
 }
 
+.engine-autopilot-handoff-actions {
+  display: grid;
+  gap: 0.85rem;
+  border: 1px solid #d7b36f;
+  background: #fffaf0;
+  padding: 0.9rem;
+}
+
+.engine-autopilot-handoff-actions > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.engine-autopilot-handoff-actions b {
+  color: var(--engine-ink);
+}
+
+.engine-autopilot-handoff-actions p {
+  margin: 0;
+  color: #425850;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.engine-autopilot-handoff-actions > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.engine-autopilot-handoff-actions .engine-button {
+  min-height: 42px;
+}
+
 .engine-autopilot-timeline {
   display: grid;
   gap: 0.55rem;

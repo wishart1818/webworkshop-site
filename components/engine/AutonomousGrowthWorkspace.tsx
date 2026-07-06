@@ -33,6 +33,7 @@ import {
   defaultAutopilotCampaignSettings,
   normalizeAutopilotCampaignSettings,
   recommendedFirstAutopilotRunSettings,
+  topProspectsAutopilotPrefillStorageKey,
   type AutopilotActivityStatus,
   type AutopilotCampaignSettings,
   type AutopilotDashboard,
@@ -187,7 +188,7 @@ export function AutonomousGrowthWorkspace() {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (dashboard?.autopilot.activity.status !== "running") return;
+    if (!["running", "starting_top_prospects", "top_prospects_running"].includes(dashboard?.autopilot.activity.status ?? "")) return;
     const activityTimer = window.setInterval(() => {
       void loadDashboard();
     }, 4000);
@@ -452,6 +453,7 @@ export function AutonomousGrowthWorkspace() {
         onDownload={() => downloadAutopilotCsv(autopilot)}
         onPause={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")}
         onRefreshActivity={() => void loadDashboard()}
+        onRetryHandoff={(settings) => void postAutopilot("retry_autopilot_handoff", { autopilotSettings: settings }, "Autopilot handoff retried. Nothing was sent.")}
         onResume={() => void postAutopilot("resume_autopilot", {}, "Autopilot resumed. No outreach was sent.")}
         onRunBatch={() => void postAutopilot("run_autopilot_batch", {}, "Autopilot batch report refreshed. Nothing was sent.")}
         onSmokeTest={() => void postAutopilot("run_fake_autopilot_smoke_test")}
@@ -613,10 +615,15 @@ function optionLabel(value: string) {
 const autopilotActivityStatusLabels: Record<AutopilotActivityStatus, string> = {
   not_started: "Not started",
   running: "Running",
+  starting_top_prospects: "Starting Top Prospects job",
+  top_prospects_running: "Top Prospects job running",
   completed: "Completed",
   completed_with_warnings: "Completed with warnings",
   paused: "Paused",
   failed: "Failed",
+  failed_to_start: "Failed to start",
+  failed_during_discovery: "Failed during discovery",
+  cancelled: "Cancelled / stopped",
 };
 
 const autopilotMarketPickerPresetIds = [
@@ -642,7 +649,7 @@ type AutopilotActionReasons = Record<"start" | "smoke" | "batch" | "pause" | "re
 function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean): AutopilotActionReasons {
   const { campaign, marketTargets } = autopilot;
   const { settings } = campaign;
-  const effectivelyRunning = campaign.status === "running" && autopilot.activity.status === "running";
+  const effectivelyRunning = campaign.status === "running" && ["running", "starting_top_prospects", "top_prospects_running"].includes(autopilot.activity.status);
   const reasons: AutopilotActionReasons = {
     start: [],
     smoke: [],
@@ -727,13 +734,20 @@ function AutopilotActionRow({
 function AutopilotLiveActivitySection({
   autopilot,
   disabled,
+  onCopyRunSettings,
+  onOpenTopProspects,
   onRefresh,
+  onRetryHandoff,
 }: {
   autopilot: AutopilotDashboard;
   disabled: boolean;
+  onCopyRunSettings: () => void;
+  onOpenTopProspects: () => void;
   onRefresh: () => void;
+  onRetryHandoff: () => void;
 }) {
   const { activity } = autopilot;
+  const showHandoffActions = activity.status === "failed_to_start" || activity.status === "failed_during_discovery";
   const metricCards = [
     ["Raw records", activity.rawRecordsFound],
     ["Duplicates removed", activity.duplicatesRemoved],
@@ -810,6 +824,20 @@ function AutopilotLiveActivitySection({
         </div>
       ) : null}
 
+      {showHandoffActions ? (
+        <div className="engine-autopilot-handoff-actions" aria-label="Autopilot handoff recovery actions">
+          <div>
+            <b>Top Prospects handoff did not complete</b>
+            <p>Retry the protected job handoff, open Top Prospects with these exact settings, or copy the settings for manual troubleshooting.</p>
+          </div>
+          <div>
+            <button className="engine-button engine-button--primary" disabled={disabled} onClick={onRetryHandoff} type="button">Retry Autopilot handoff</button>
+            <button className="engine-button" disabled={disabled} onClick={onOpenTopProspects} type="button">Open Top Prospects with same market/trade</button>
+            <button className="engine-button" disabled={disabled} onClick={onCopyRunSettings} type="button">Copy run settings</button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="engine-autopilot-timeline" aria-label="Autopilot run log">
         <h4>Run log</h4>
         <ol>
@@ -828,6 +856,15 @@ function AutopilotLiveActivitySection({
       <details className="engine-autopilot-details">
         <summary>View details</summary>
         <div className="engine-autopilot-details__grid">
+          <section>
+            <h4>Top Prospects handoff</h4>
+            {activity.topProspectJobId ? <p>Job ID: <code>{activity.topProspectJobId}</code></p> : <p>No Top Prospects job ID has been recorded for this activity.</p>}
+            {activity.handoffDetails.length ? (
+              <dl>
+                {activity.handoffDetails.map((detail) => <div key={detail.label}><dt>{detail.label}</dt><dd>{detail.value}</dd></div>)}
+              </dl>
+            ) : null}
+          </section>
           <section>
             <h4>Provider diagnostics</h4>
             {activity.providerDiagnostics.length ? activity.providerDiagnostics.map((provider) => (
@@ -937,6 +974,7 @@ function AutopilotCampaignPanel({
   onDownload,
   onPause,
   onRefreshActivity,
+  onRetryHandoff,
   onResume,
   onRunBatch,
   onSmokeTest,
@@ -948,6 +986,7 @@ function AutopilotCampaignPanel({
   onDownload: () => void;
   onPause: () => void;
   onRefreshActivity: () => void;
+  onRetryHandoff: (settings: AutopilotCampaignSettings) => void;
   onResume: () => void;
   onRunBatch: () => void;
   onSmokeTest: () => void;
@@ -1015,6 +1054,32 @@ function AutopilotCampaignPanel({
     setFormSettings(recommendedFirstAutopilotRunSettings());
   }
 
+  function openTopProspectsWithSameSettings() {
+    try {
+      window.localStorage.setItem(topProspectsAutopilotPrefillStorageKey, JSON.stringify(autopilot.activity.topProspectsPrefill));
+    } catch {
+      // The user can still copy settings if browser storage is unavailable.
+    }
+    window.dispatchEvent(new CustomEvent("webworkshop:open-engine-tab", { detail: { tab: "top-prospects" } }));
+    window.location.hash = "top-prospects";
+  }
+
+  async function copyRunSettings() {
+    const prefill = autopilot.activity.topProspectsPrefill;
+    const text = [
+      `City: ${prefill.city}`,
+      `State: ${prefill.state}`,
+      `Trade: ${prefill.trade}`,
+      `Businesses to scan: ${prefill.businessesToScan}`,
+      `Final prospects wanted: ${prefill.finalProspectsWanted}`,
+      `Prospect type: ${prefill.prospectType}`,
+      `Prospect mode: ${prefill.mode}`,
+      `Outreach preference: ${prefill.outreachPreference}`,
+      `Exclude previously reviewed: ${prefill.excludePreviouslyReviewed ? "on" : "off"}`,
+    ].join("\n");
+    await navigator.clipboard.writeText(text);
+  }
+
   return (
     <section className="engine-panel engine-autopilot-campaign" aria-labelledby="autopilot-campaign-title">
       <div className="engine-panel__head">
@@ -1062,7 +1127,10 @@ function AutopilotCampaignPanel({
       <AutopilotLiveActivitySection
         autopilot={autopilot}
         disabled={disabled}
+        onCopyRunSettings={() => void copyRunSettings()}
+        onOpenTopProspects={openTopProspectsWithSameSettings}
         onRefresh={onRefreshActivity}
+        onRetryHandoff={() => onRetryHandoff(settings)}
       />
 
       <div className="engine-autopilot-summary">

@@ -231,9 +231,11 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /useState<ProspectMode>\("growth"\)/);
   assert.match(topProspectsWorkspace, /useState<ProspectSearchType>\("all"\)/);
   assert.match(topProspectsWorkspace, /useState<TopProspectJob\["input"\]\["trade"\]>\("Landscaping"\)/);
+  assert.match(topProspectsWorkspace, /useState\(100\)/);
+  assert.match(topProspectsWorkspace, /useState\(20\)/);
   assert.match(topProspectsWorkspace, /defaultValue="50"/);
-  assert.match(topProspectsWorkspace, /defaultValue="100"/);
-  assert.match(topProspectsWorkspace, /defaultValue="20"/);
+  assert.match(topProspectsWorkspace, /value=\{businessesToScan\}/);
+  assert.match(topProspectsWorkspace, /value=\{finalProspectsWanted\}/);
   assert.match(topProspectsWorkspace, /total budget across all selected cities and trades/);
   assert.match(topProspectsWorkspace, /Recommended Markets/);
   assert.match(topProspectsWorkspace, /Click Use this market to fill the city field, or click a trade to fill the market and trade together\. You still need to click Find Top Prospects or Start Autopilot\./);

@@ -31,13 +31,14 @@ import {
   autopilotTopProspectInput,
   attachAutopilotRunReport,
   buildAutopilotDashboard,
+  buildAutopilotTopProspectJobReport,
   createAutopilotCampaign,
   defaultAutopilotCampaignSettings,
   recommendedFirstAutopilotRunSettings,
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
-import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets } from "../lib/top-prospects";
+import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob } from "../lib/top-prospects";
 import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 
 const publicLink = publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF");
@@ -395,6 +396,81 @@ test("Autopilot Live Activity shows a clear empty state before the first run", (
   assert.equal(dashboard.activity.currentStep, "No Autopilot run has started");
   assert.match(dashboard.activity.entries[0].label, /No Autopilot activity yet/);
   assert.equal(dashboard.activity.queueRouting.length, 6);
+});
+
+test("Autopilot Live Activity tracks a real Top Prospects job instead of fake-completing", () => {
+  const campaign = createAutopilotCampaign({
+    ...defaultAutopilotCampaignSettings,
+    customCities: "Tampa, FL",
+    state: "FL",
+    trade: "Pressure Washing",
+  }, new Date(0));
+  const job = {
+    id: "top-job-123",
+    input: autopilotTopProspectInput(campaign.settings),
+    status: "RUNNING",
+    stage: "DISCOVER",
+    discoveredCount: 25,
+    scannedCount: 8,
+    qualifiedCount: 3,
+    skippedCount: 4,
+    skipSummary: { supplier_distributor: 2, phone_only_written_outreach_blocked: 2 },
+    results: [],
+    reviewedNotRecommended: [],
+    failureClassification: null,
+    errorMessage: "",
+    completedAt: null,
+    createdAt: new Date(1).toISOString(),
+    updatedAt: new Date(2).toISOString(),
+    nextRunRecommendations: ["Wait for this Top Prospects job to finish."],
+    discoveryDiagnostics: {
+      rawProviderCount: 25,
+      afterDistanceFilteringCount: 21,
+      afterDuplicateFilteringCount: 18,
+      afterQualificationFilteringCount: 9,
+      returnedCount: 9,
+      radiusKm: 50,
+      categorySignals: [],
+      sourceCounts: { osm: 0, google: 0, bing: 25, yelp: 0, yellowPages: 0 },
+      finalMergedCount: 18,
+      providerDiagnostics: {
+        osm: { configured: null, queryExecuted: false, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 25, withinRadiusCount: 21, afterDeduplicationCount: 18, usableWebsiteCount: 9 },
+        googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      },
+      cityDiagnostics: [{
+        city: "Tampa",
+        state: "FL",
+        label: "Tampa, FL",
+        status: "completed",
+        requestedCount: 100,
+        rawProviderCount: 25,
+        withinRadiusCount: 21,
+        afterDeduplicationCount: 18,
+        usableWebsiteCount: 9,
+        returnedCount: 9,
+        qualifiedCount: 3,
+        skippedCount: 4,
+        providerDiagnostics: {
+          osm: { configured: null, queryExecuted: false, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 25, withinRadiusCount: 21, afterDeduplicationCount: 18, usableWebsiteCount: 9 },
+          googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+      }],
+    },
+  } as TopProspectJob;
+  const report = buildAutopilotTopProspectJobReport(campaign, job, new Date(3));
+  const dashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, report, new Date(4)), [], true);
+
+  assert.equal(dashboard.activity.status, "top_prospects_running");
+  assert.equal(dashboard.activity.topProspectJobId, "top-job-123");
+  assert.equal(dashboard.activity.rawRecordsFound, 25);
+  assert.equal(dashboard.activity.currentStep, "Top Prospects job running");
+  assert.ok(dashboard.activity.providerDiagnostics.some((provider) => provider.provider === "Azure Maps" && provider.rawRecords === 25));
+  assert.ok(dashboard.activity.cityBreakdown.some((city) => city.city === "Tampa, FL" && city.qualified === 3));
+  assert.ok(dashboard.activity.entries.some((entry) => /still running/.test(entry.label)));
 });
 
 test("fake Autopilot smoke activity records fake provider, blocked reasons, and queue routing without sending", () => {

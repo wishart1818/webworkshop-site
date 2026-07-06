@@ -182,8 +182,12 @@ export async function createTopProspectJob(input: TopProspectInput) {
   await ensureTopProspectSchema();
   const database = getProspectDatabase();
   await reconcileStaleTopProspectJobs();
-  const active = await database.topProspectJob.findFirst({ where: { status: { in: activeTopProspectStatuses } }, select: { id: true } });
-  if (active) throw new Error("A Top Prospects search is already running.");
+  const active = await database.topProspectJob.findFirst({ where: { status: { in: activeTopProspectStatuses } }, select: { id: true, status: true } });
+  if (active) {
+    const error = new Error("A Top Prospects search is already running.");
+    Object.assign(error, { activeJobId: active.id, activeJobStatus: active.status });
+    throw error;
+  }
   const job = await database.topProspectJob.create({
     data: {
       tradeCategory: input.trade === "All Core Service Trades" ? input.trade : normalizeTradeCategory(input.trade) ?? "General Contractor",
@@ -234,6 +238,18 @@ export async function createTopProspectJob(input: TopProspectInput) {
     outreachPreference: job.outreachPreference,
   });
   return job;
+}
+
+export async function getActiveTopProspectJobSummary() {
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  await reconcileStaleTopProspectJobs();
+  const active = await database.topProspectJob.findFirst({
+    where: { status: { in: activeTopProspectStatuses } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, status: true },
+  });
+  return active ? { id: active.id, status: active.status } : null;
 }
 
 export async function getTopProspectJob(id: string) {

@@ -5,7 +5,7 @@ import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import { casualDmPlaybook } from "@/lib/autonomous-growth";
-import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket } from "@/lib/autopilot-campaign";
+import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket, topProspectsAutopilotPrefillStorageKey, type AutopilotTopProspectsPrefill } from "@/lib/autopilot-campaign";
 import {
   allCoreServiceTradesOption,
   displayStateCode,
@@ -310,6 +310,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [selectedTrade, setSelectedTrade] = useState<TopProspectJob["input"]["trade"]>("Landscaping");
   const [cityInput, setCityInput] = useState("");
   const [stateInput, setStateInput] = useState("OH");
+  const [businessesToScan, setBusinessesToScan] = useState(100);
+  const [finalProspectsWanted, setFinalProspectsWanted] = useState(20);
   const [excludePreviouslyReviewed, setExcludePreviouslyReviewed] = useState(true);
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const [marketApplied, setMarketApplied] = useState("");
@@ -326,6 +328,24 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const parsedCityTargets = useMemo(() => parseTopProspectCityTargets(cityInput, stateInput), [cityInput, stateInput]);
   const providerRequestEstimate = estimatedProviderRequestLoad(parsedCityTargets.length || 1, selectedTrade);
   const largeSearch = parsedCityTargets.length > 3 || selectedTrade === allCoreServiceTradesOption || providerRequestEstimate > 24;
+
+  const applyAutopilotPrefill = useCallback((prefill: Partial<AutopilotTopProspectsPrefill>) => {
+    if (typeof prefill.city === "string") setCityInput(prefill.city);
+    if (typeof prefill.state === "string") setStateInput(prefill.state.toUpperCase());
+    if (typeof prefill.trade === "string") setSelectedTrade(prefill.trade as TopProspectJob["input"]["trade"]);
+    if (typeof prefill.businessesToScan === "number") setBusinessesToScan(prefill.businessesToScan);
+    if (typeof prefill.finalProspectsWanted === "number") setFinalProspectsWanted(prefill.finalProspectsWanted);
+    if (typeof prefill.prospectType === "string") setSelectedProspectType(prefill.prospectType as ProspectSearchType);
+    if (typeof prefill.mode === "string") setSelectedMode(prefill.mode as ProspectMode);
+    if (typeof prefill.workflowType === "string") setSelectedWorkflow(prefill.workflowType as TopProspectWorkflowType);
+    if (typeof prefill.outreachPreference === "string") setSelectedOutreachPreference(prefill.outreachPreference as OutreachPreference);
+    if (typeof prefill.excludePreviouslyReviewed === "boolean") setExcludePreviouslyReviewed(prefill.excludePreviouslyReviewed);
+    setMarketApplied("Autopilot settings filled the Top Prospects form. Click Find Top Prospects when you are ready.");
+    window.requestAnimationFrame(() => {
+      searchFormRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      cityInputRef.current?.focus({ preventScroll: true });
+    });
+  }, []);
 
   const loadJobs = useCallback(async () => {
     try {
@@ -346,6 +366,17 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   useEffect(() => {
     void loadJobs();
   }, [loadJobs]);
+
+  useEffect(() => {
+    try {
+      const rawPrefill = window.localStorage.getItem(topProspectsAutopilotPrefillStorageKey);
+      if (!rawPrefill) return;
+      applyAutopilotPrefill(JSON.parse(rawPrefill) as Partial<AutopilotTopProspectsPrefill>);
+      window.localStorage.removeItem(topProspectsAutopilotPrefillStorageKey);
+    } catch {
+      // Ignore stale local handoff drafts.
+    }
+  }, [applyAutopilotPrefill]);
 
   useEffect(() => {
     if (!activeJob) return;
@@ -493,8 +524,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label className="engine-form-wide">City<span>Enter one city, city-only list, or city/state pairs. Examples: Toledo, Sylvania, Perrysburg with State OH, or Toledo, OH; Tampa, FL.</span><input name="city" onChange={(event) => setCityInput(event.target.value)} ref={cityInputRef} required value={cityInput} /></label>
           <label>State<input maxLength={2} name="state" onChange={(event) => setStateInput(event.target.value.toUpperCase())} required value={stateInput} /></label>
           <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
-          <label>Businesses to scan<input defaultValue="100" max="250" min="5" name="businessesToScan" type="number" /></label>
-          <label>Final prospects wanted<input defaultValue="20" max="25" min="1" name="finalProspectsWanted" type="number" /></label>
+          <label>Businesses to scan<input max="250" min="5" name="businessesToScan" onChange={(event) => setBusinessesToScan(Number(event.target.value))} type="number" value={businessesToScan} /></label>
+          <label>Final prospects wanted<input max="25" min="1" name="finalProspectsWanted" onChange={(event) => setFinalProspectsWanted(Number(event.target.value))} type="number" value={finalProspectsWanted} /></label>
           <label className="engine-checkbox-label"><input checked={excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => setExcludePreviouslyReviewed(event.target.checked)} type="checkbox" /> Exclude previously reviewed prospects</label>
           {parsedCityTargets.length ? (
             <div className="engine-city-chip-row" aria-label="Parsed city targets">

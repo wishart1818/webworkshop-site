@@ -30,12 +30,15 @@ import {
 } from "@/lib/autonomous-growth";
 import type { Prospect } from "@/lib/prospect-engine";
 import { getProspectDatabase } from "@/lib/prospect-repository";
+import { getTopProspectJob } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { evaluateOutreachEmailQuality, type OutreachPreference } from "@/lib/top-prospects";
 import {
   attachAutopilotRunReport,
   buildAutopilotDashboard,
+  buildAutopilotHandoffFailureReport,
   buildAutopilotRunReport,
+  buildAutopilotTopProspectJobReport,
   createAutopilotCampaign,
   defaultAutopilotCampaignSettings,
   runFakeAutopilotSmokeTest,
@@ -43,8 +46,10 @@ import {
   type AutopilotCampaign,
   type AutopilotCampaignSettings,
   type AutopilotDashboard,
+  type AutopilotHandoffFailure,
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
+import type { TopProspectJob } from "@/lib/top-prospects";
 
 const globalAutonomous = globalThis as typeof globalThis & {
   autonomousGrowthSettingsMemory?: AutonomousGrowthSettings;
@@ -88,6 +93,31 @@ function memoryAutopilotCampaign() {
     };
   }
   return globalAutonomous.autopilotCampaignMemory;
+}
+
+function autopilotCampaignWithReport(campaign: AutopilotCampaign, report: AutopilotCampaign["latestRunReport"], now = new Date()): AutopilotCampaign {
+  const runningHandoff = report?.handoffStatus === "starting_top_prospects" || report?.handoffStatus === "top_prospects_running";
+  return {
+    ...campaign,
+    status: runningHandoff ? "running" : report?.status === "blocked" ? "paused" : "finished",
+    queueCounts: report?.queueCounts ?? campaign.queueCounts,
+    latestRunReport: report,
+    lastRunAt: report?.completedAt ?? campaign.lastRunAt,
+    updatedAt: now.toISOString(),
+  };
+}
+
+async function refreshAutopilotCampaignFromTopProspects(campaign: AutopilotCampaign) {
+  const jobId = campaign.latestRunReport?.topProspectJobId;
+  if (!jobId || campaign.latestRunReport?.fakeOnly || campaign.latestRunReport?.handoffStatus === "failed_to_start") return campaign;
+  try {
+    const job = await getTopProspectJob(jobId);
+    if (!job) return campaign;
+    return autopilotCampaignWithReport(campaign, buildAutopilotTopProspectJobReport(campaign, job));
+  } catch (error) {
+    console.warn("[autonomous-growth] Autopilot could not refresh Top Prospects job.", { error: error instanceof Error ? error.name : "unknown", jobId });
+    return campaign;
+  }
 }
 
 function jsonArray(value: Prisma.JsonValue | null | undefined): string[] {
@@ -318,7 +348,8 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
   const queue = await listOutreachQueueItems();
   const runReviews = await listAutonomousRunReviews();
   const env = outreachEnvironment();
-  const autopilot = buildAutopilotDashboard(memoryAutopilotCampaign(), queue, hasDatabase);
+  globalAutonomous.autopilotCampaignMemory = await refreshAutopilotCampaignFromTopProspects(memoryAutopilotCampaign());
+  const autopilot = buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
   return {
     settings,
     env: {
@@ -339,11 +370,27 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
   };
 }
 
-export async function startAutopilotCampaign(input: Partial<AutopilotCampaignSettings>) {
+export async function startAutopilotCampaign(input: Partial<AutopilotCampaignSettings>, topProspectJob: TopProspectJob) {
   const campaign = createAutopilotCampaign(input);
   const queue = await listOutreachQueueItems();
-  const report = buildAutopilotRunReport(campaign, queue);
+  const report = buildAutopilotTopProspectJobReport(campaign, topProspectJob);
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, report);
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+}
+
+export async function failAutopilotCampaignHandoff(input: Partial<AutopilotCampaignSettings>, failure: AutopilotHandoffFailure) {
+  const campaign = createAutopilotCampaign(input);
+  const queue = await listOutreachQueueItems();
+  const report = buildAutopilotHandoffFailureReport(campaign, failure);
+  globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, report);
+  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+}
+
+export async function retryAutopilotCampaignHandoff(topProspectJob: TopProspectJob) {
+  const campaign = memoryAutopilotCampaign();
+  const queue = await listOutreachQueueItems();
+  const report = buildAutopilotTopProspectJobReport(campaign, topProspectJob);
+  globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport({ ...campaign, status: "running" }, report);
   return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
 }
 
