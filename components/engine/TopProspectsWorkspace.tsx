@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
-import type { DiscoveryDiagnostics } from "@/lib/lead-discovery";
+import type { DiscoveryDiagnostics, DiscoveryProviderCoverageStatus } from "@/lib/lead-discovery";
 import { casualDmPlaybook } from "@/lib/autonomous-growth";
 import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket, topProspectsAutopilotPrefillStorageKey, type AutopilotTopProspectsPrefill } from "@/lib/autopilot-campaign";
 import {
@@ -298,6 +298,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [buildVersion, setBuildVersion] = useState("unknown");
+  const [providerCoverage, setProviderCoverage] = useState<DiscoveryProviderCoverageStatus | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [packageActioning, setPackageActioning] = useState("");
@@ -366,6 +367,23 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   useEffect(() => {
     void loadJobs();
   }, [loadJobs]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadProviderCoverage() {
+      try {
+        const response = await fetch("/api/engine/system", { cache: "no-store" });
+        const payload = (await response.json()) as { providerCoverage?: DiscoveryProviderCoverageStatus };
+        if (!ignore && response.ok && payload.providerCoverage) setProviderCoverage(payload.providerCoverage);
+      } catch {
+        if (!ignore) setProviderCoverage(null);
+      }
+    }
+    void loadProviderCoverage();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -537,6 +555,12 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <b>Estimated provider request load: about {providerRequestEstimate} provider queries.</b>
             <span>{largeSearch ? "This may take longer and use more provider requests." : "Small, focused searches are fastest to review."}</span>
           </div>
+          {providerCoverage && ["limited", "broken"].includes(providerCoverage.level) ? (
+            <div className={`engine-provider-coverage-warning engine-provider-coverage-warning--${providerCoverage.level}`} role="status">
+              <b>Provider coverage is limited. This run may return very few prospects until Google Places or Yelp is configured.</b>
+              <span>{providerCoverage.recommendation}</span>
+            </div>
+          ) : null}
           <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} <b>Starter tip:</b> Start with one preset and one trade first. Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete for first tests. <b>Businesses to scan is the total budget across all selected cities and trades.</b> {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
           <button className="engine-button engine-button--primary" disabled={starting || Boolean(activeJob)} type="submit">
             {starting ? "Starting" : activeJob ? "Search in progress" : selectedWorkflow === "morning_batch" ? "Start Morning Batch" : "Find Top Prospects"}

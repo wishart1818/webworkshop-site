@@ -1889,6 +1889,72 @@ body:has(.engine-shell) {
   gap: 0.75rem;
 }
 
+.engine-provider-coverage,
+.engine-provider-coverage-warning {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid #f0d48a;
+  background: #fff8df;
+  color: #463604;
+  padding: 0.9rem 1rem;
+}
+
+.engine-provider-coverage--strong {
+  border-color: #b7ddc8;
+  background: #eefaf2;
+  color: #113d23;
+}
+
+.engine-provider-coverage--good {
+  border-color: #b7d5dd;
+  background: #eef8fa;
+  color: #123640;
+}
+
+.engine-provider-coverage--broken,
+.engine-provider-coverage-warning--broken {
+  border-color: #f1b8ad;
+  background: #fff1ee;
+  color: #5f1e12;
+}
+
+.engine-provider-coverage p,
+.engine-provider-coverage-warning span {
+  margin: 0;
+}
+
+.engine-provider-coverage dl {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  margin: 0;
+}
+
+.engine-provider-coverage dl div {
+  border: 1px solid rgb(0 0 0 / 0.1);
+  background: rgb(255 255 255 / 0.55);
+  padding: 0.5rem;
+}
+
+.engine-provider-coverage dt,
+.engine-provider-coverage dd {
+  margin: 0;
+}
+
+.engine-provider-coverage dt {
+  font-size: 0.74rem;
+  opacity: 0.75;
+}
+
+.engine-provider-coverage dd {
+  font-weight: 800;
+}
+
+.engine-provider-coverage ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
 .engine-trade-diagnostics {
   border-top: 1px solid var(--engine-line);
   background: white;

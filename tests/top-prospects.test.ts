@@ -662,6 +662,56 @@ test("zero-qualified runs explain provider, supplier, directory, and contact-pat
   assert.match(recommendations.join(" "), /written contact path|Manual DM/i);
 });
 
+test("thin Azure-only discovery recommends Google Places before larger runs", () => {
+  const recommendations = topProspectNextRunRecommendations({
+    job: {
+      input: {
+        trade: "Pressure Washing",
+        city: "Tampa, St. Petersburg, Clearwater",
+        state: "FL",
+        radiusKm: 50,
+        businessesToScan: 100,
+        finalProspectsWanted: 20,
+        prospectType: "all",
+        mode: "growth",
+        workflowType: "search",
+        outreachPreference: "written_only",
+        excludePreviouslyReviewed: true,
+        cityTargets: [
+          { city: "Tampa", state: "FL", label: "Tampa, FL" },
+          { city: "St. Petersburg", state: "FL", label: "St. Petersburg, FL" },
+          { city: "Clearwater", state: "FL", label: "Clearwater, FL" },
+        ],
+      },
+      results: [],
+      reviewedNotRecommended: [],
+      skipSummary: {},
+      discoveryDiagnostics: {
+        rawProviderCount: 1,
+        afterDistanceFilteringCount: 1,
+        afterDuplicateFilteringCount: 1,
+        afterQualificationFilteringCount: 0,
+        returnedCount: 0,
+        radiusKm: 50,
+        categorySignals: [],
+        sourceCounts: { osm: 0, google: 0, bing: 1, yelp: 0, yellowPages: 0 },
+        providerDiagnostics: {
+          osm: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 0 },
+          googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+        finalMergedCount: 1,
+      },
+    },
+  });
+  const joined = recommendations.join(" ");
+
+  assert.match(joined, /Configure Google Places before increasing scan count/);
+  assert.doesNotMatch(joined, /Increase scan count/i);
+  assert.doesNotMatch(joined, /Florida or Texas Suburbs/i);
+});
+
 test("Top Prospects build version safely identifies the deployed commit", () => {
   assert.equal(topProspectBuildVersion({ VERCEL_GIT_COMMIT_SHA: "abcdef1234567890" }), "outreach-package-v1-abcdef1");
   assert.equal(topProspectBuildVersion({ VERCEL_DEPLOYMENT_ID: "deployment-1234567890" }), "outreach-package-v1-deployment-1");

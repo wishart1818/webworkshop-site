@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { engineAuthState } from "@/lib/engine-auth";
-import { discoveryProviderHealth } from "@/lib/lead-discovery";
+import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
 import { databaseHealth, operationalMode, safeListAuditEvents } from "@/lib/operational-controls";
 import { latestSystemSelfCheckReport } from "@/lib/system-self-check";
 
@@ -45,6 +45,7 @@ export async function GET() {
     },
     auditEvents,
     selfCheck: latestSystemSelfCheckReport(),
+    providerCoverage: discoveryProviderCoverageStatus(),
     providerHealth: discoveryProviderHealth(),
   });
 }

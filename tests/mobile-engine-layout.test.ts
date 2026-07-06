@@ -239,6 +239,8 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /total budget across all selected cities and trades/);
   assert.match(topProspectsWorkspace, /Recommended Markets/);
   assert.match(topProspectsWorkspace, /Click Use this market to fill the city field, or click a trade to fill the market and trade together\. You still need to click Find Top Prospects or Start Autopilot\./);
+  assert.match(topProspectsWorkspace, /Provider coverage is limited\. This run may return very few prospects until Google Places or Yelp is configured\./);
+  assert.match(topProspectsWorkspace, /providerCoverage\.recommendation/);
   assert.match(topProspectsWorkspace, /engine-market-actions/);
   assert.match(topProspectsWorkspace, /Use this market/);
   assert.match(topProspectsWorkspace, /Add to current cities/);

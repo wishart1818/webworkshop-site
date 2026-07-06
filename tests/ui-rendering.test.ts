@@ -470,6 +470,15 @@ test("system workspace renders the protected self-check report and action", () =
         authentication: { configured: true, message: "Engine access credentials are configured." },
       },
       auditEvents: [],
+      providerCoverage: {
+        level: "limited",
+        label: "Limited provider setup",
+        summary: "Only Azure Maps/Bing and OpenStreetMap-style coverage are available.",
+        recommendation: "Provider coverage is limited. For better local business discovery, configure Google Places and/or Yelp.",
+        googleConfigured: false,
+        yelpConfigured: false,
+        azureOrBingConfigured: true,
+      },
       providerHealth: [
         { provider: "osm", label: "OpenStreetMap", enabled: true, requiredEnvVarName: "Not required", envVarPresent: null, canRunWithoutApiKey: true, lastAttemptedQuery: "Not run", lastStatus: "not_run", lastHttpStatus: "None", lastSafeErrorMessage: "No provider attempt recorded yet.", failureType: "none" },
         { provider: "azureMaps", label: "Azure Maps", enabled: false, requiredEnvVarName: "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY", envVarPresent: false, canRunWithoutApiKey: false, lastAttemptedQuery: "Not run", lastStatus: "not_run", lastHttpStatus: "None", lastSafeErrorMessage: "No provider attempt recorded yet.", failureType: "none" },
@@ -496,6 +505,19 @@ test("system workspace renders the protected self-check report and action", () =
   assert.match(html, /Run System Self-Check/);
   assert.match(html, /Run Provider Smoke Test/);
   assert.match(html, /Provider Health/);
+  assert.match(html, /Provider coverage is limited\. For better local business discovery, configure Google Places and\/or Yelp\./);
+  assert.match(html, /Best first/);
+  assert.match(html, /Google Places/);
+  assert.match(html, /Optional second/);
+  assert.match(html, /Yelp/);
+  assert.match(html, /Already active/);
+  assert.match(html, /Azure Maps\/Bing/);
+  assert.match(html, /Backup only/);
+  assert.match(html, /OpenStreetMap/);
+  assert.match(html, /GOOGLE_PLACES_API_KEY/);
+  assert.match(html, /YELP_API_KEY/);
+  assert.match(html, /Redeploy after adding env vars/);
+  assert.match(html, /Run Provider Smoke Test again/);
   assert.match(html, /AZURE_MAPS_API_KEY or BING_MAPS_API_KEY/);
   assert.match(html, /Safe internal audit/);
   assert.match(html, /never contacts prospects or changes outreach statuses/i);

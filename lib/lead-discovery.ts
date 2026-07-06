@@ -89,6 +89,15 @@ export type DiscoveryProviderHealth = {
   lastSafeErrorMessage: string;
   failureType: DiscoveryProviderFailureType | "none";
 };
+export type DiscoveryProviderCoverageStatus = {
+  level: "strong" | "good" | "limited" | "broken";
+  label: string;
+  summary: string;
+  recommendation: string;
+  googleConfigured: boolean;
+  yelpConfigured: boolean;
+  azureOrBingConfigured: boolean;
+};
 export type TradeDiscoveryDiagnostic = {
   trade: TradeCategory;
   status?: "completed" | "partial" | "skipped";
@@ -272,6 +281,94 @@ export function discoveryProviderHealth(
       failureType: diagnostic?.failureType ?? "none",
     };
   });
+}
+
+export function discoveryProviderCoverageStatus(
+  diagnostics?: Partial<DiscoveryProviderDiagnostics> | null,
+  env: NodeJS.ProcessEnv = process.env,
+): DiscoveryProviderCoverageStatus {
+  const health = discoveryProviderHealth(diagnostics, env);
+  const byProvider = Object.fromEntries(health.map((provider) => [provider.provider, provider])) as Record<DiscoveryProvider, DiscoveryProviderHealth>;
+  const googleDiagnostic = diagnostics?.googlePlaces;
+  const yelpDiagnostic = diagnostics?.yelp;
+  const googleConfigured = Boolean(byProvider.googlePlaces.enabled);
+  const yelpConfigured = Boolean(byProvider.yelp.enabled);
+  const azureOrBingConfigured = Boolean(byProvider.azureMaps.enabled);
+  const googleSucceeded = googleConfigured && googleDiagnostic?.status === "succeeded";
+  const googleRecords = googleDiagnostic?.returnedCount ?? 0;
+  const yelpRecords = yelpDiagnostic?.returnedCount ?? 0;
+  const anyWorking = Object.values(diagnostics ?? {}).some((provider) => provider?.status === "succeeded" && (provider.returnedCount ?? 0) > 0);
+  const attemptedDiagnostics = Object.values(diagnostics ?? {}).filter((provider) => provider?.queryExecuted);
+  const allAttemptedFailed = attemptedDiagnostics.length > 0
+    && attemptedDiagnostics.every((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status));
+
+  if (allAttemptedFailed) {
+    return {
+      level: "broken",
+      label: "Broken provider setup",
+      summary: "Provider requests were attempted, but no provider completed successfully.",
+      recommendation: "Check provider configuration, environment variables, HTTP status, and rate limits before running more searches.",
+      googleConfigured,
+      yelpConfigured,
+      azureOrBingConfigured,
+    };
+  }
+
+  if (googleSucceeded) {
+    return {
+      level: "strong",
+      label: "Strong provider setup",
+      summary: "Google Places is configured and the latest provider check succeeded.",
+      recommendation: "Run normal focused Top Prospects searches.",
+      googleConfigured,
+      yelpConfigured,
+      azureOrBingConfigured,
+    };
+  }
+  if ((googleConfigured && googleRecords >= 3) || (yelpConfigured && yelpRecords >= 3)) {
+    return {
+      level: "good",
+      label: "Good provider setup",
+      summary: "Google Places or Yelp is configured and returning at least 3 records.",
+      recommendation: "Run focused searches, then add the other provider when you want broader coverage.",
+      googleConfigured,
+      yelpConfigured,
+      azureOrBingConfigured,
+    };
+  }
+  if (googleConfigured || yelpConfigured) {
+    return {
+      level: anyWorking ? "good" : "limited",
+      label: anyWorking ? "Good provider setup" : "Limited provider setup",
+      summary: anyWorking
+        ? "At least one premium local provider is configured, but recent results were thin."
+        : "Google Places or Yelp is configured, but the latest provider check did not return usable records.",
+      recommendation: "Run Provider Smoke Test again and review HTTP status, rate limits, and query results before increasing scan count.",
+      googleConfigured,
+      yelpConfigured,
+      azureOrBingConfigured,
+    };
+  }
+  if (azureOrBingConfigured || byProvider.osm.enabled) {
+    return {
+      level: "limited",
+      label: "Limited provider setup",
+      summary: "Only Azure Maps/Bing and OpenStreetMap-style coverage are available.",
+      recommendation: "Provider coverage is limited. For better local business discovery, configure Google Places and/or Yelp.",
+      googleConfigured,
+      yelpConfigured,
+      azureOrBingConfigured,
+    };
+  }
+  return {
+    level: "broken",
+    label: "Broken provider setup",
+    summary: "No discovery provider appears to be working.",
+    recommendation: "Check provider configuration, environment variables, and provider health before running more searches.",
+    googleConfigured,
+    yelpConfigured,
+    azureOrBingConfigured,
+  };
 }
 
 function providerDelayMs() {

@@ -1,5 +1,5 @@
 import React from "react";
-import type { DiscoveryDiagnostics, DiscoveryProviderHealth } from "@/lib/lead-discovery";
+import type { DiscoveryDiagnostics, DiscoveryProviderCoverageStatus, DiscoveryProviderHealth } from "@/lib/lead-discovery";
 import type { AuditEventView } from "@/lib/operational-controls";
 import type { SystemSelfCheckReport } from "@/lib/system-self-check";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
@@ -9,6 +9,7 @@ export type SystemPayload = {
   checks: Record<string, { configured: boolean; reachable?: boolean; message: string }>;
   auditEvents: AuditEventView[];
   selfCheck?: SystemSelfCheckReport | null;
+  providerCoverage?: DiscoveryProviderCoverageStatus;
   providerHealth?: DiscoveryProviderHealth[];
 };
 export type ProviderSmokeTestPayload = {
@@ -97,7 +98,7 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
               );
             })}
           </section>
-          <ProviderHealthPanel providerHealth={system.providerHealth ?? []} smokeTest={providerSmokeTest} />
+          <ProviderHealthPanel providerCoverage={system.providerCoverage} providerHealth={system.providerHealth ?? []} smokeTest={providerSmokeTest} />
           <SystemSelfCheckPanel report={system.selfCheck ?? null} running={selfCheckRunning} />
           <section className="engine-panel engine-audit-panel">
             <div className="engine-panel__head">
@@ -184,7 +185,30 @@ function providerHealthValue(value: boolean | null) {
   return value ? "Yes" : "No";
 }
 
-function ProviderHealthPanel({ providerHealth, smokeTest }: { providerHealth: DiscoveryProviderHealth[]; smokeTest: ProviderSmokeTestPayload | null }) {
+function providerCoverageDefaults(fallback?: DiscoveryProviderCoverageStatus) {
+  return {
+    googleConfigured: fallback?.googleConfigured ?? false,
+    yelpConfigured: fallback?.yelpConfigured ?? false,
+    azureOrBingConfigured: fallback?.azureOrBingConfigured ?? false,
+  };
+}
+
+function providerCoverageFromSmokeTest(smokeTest: ProviderSmokeTestPayload | null, fallback?: DiscoveryProviderCoverageStatus) {
+  if (!smokeTest?.diagnostics) return fallback;
+  const defaults = providerCoverageDefaults(fallback);
+  const google = smokeTest.diagnostics.providerDiagnostics.googlePlaces;
+  const yelp = smokeTest.diagnostics.providerDiagnostics.yelp;
+  const azure = smokeTest.diagnostics.providerDiagnostics.azureMaps;
+  const attempted = Object.values(smokeTest.diagnostics.providerDiagnostics).filter((provider) => provider.queryExecuted);
+  const allFailed = attempted.length > 0 && attempted.every((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status));
+  if (allFailed) return { ...defaults, level: "broken" as const, label: "Broken provider setup", summary: "Provider requests were attempted, but no provider completed successfully.", recommendation: "Check provider configuration, environment variables, HTTP status, and rate limits before running more searches." };
+  if (google.configured && google.status === "succeeded") return { ...defaults, googleConfigured: true, level: "strong" as const, label: "Strong provider setup", summary: "Google Places is configured and the latest provider check succeeded.", recommendation: "Run normal focused Top Prospects searches." };
+  if ((google.configured && google.returnedCount >= 3) || (yelp.configured && yelp.returnedCount >= 3)) return { ...defaults, googleConfigured: google.configured, yelpConfigured: yelp.configured, level: "good" as const, label: "Good provider setup", summary: "Google Places or Yelp is configured and returning at least 3 records.", recommendation: "Run focused searches, then add the other provider when you want broader coverage." };
+  return { ...defaults, googleConfigured: google.configured, yelpConfigured: yelp.configured, azureOrBingConfigured: azure.configured, level: "limited" as const, label: "Limited provider setup", summary: azure.configured ? "Azure Maps/Bing is active, but Google Places and Yelp are not configured." : "Only backup provider coverage is available.", recommendation: "Provider coverage is limited. For better local business discovery, configure Google Places and/or Yelp." };
+}
+
+function ProviderHealthPanel({ providerCoverage, providerHealth, smokeTest }: { providerCoverage?: DiscoveryProviderCoverageStatus; providerHealth: DiscoveryProviderHealth[]; smokeTest: ProviderSmokeTestPayload | null }) {
+  const coverage = providerCoverageFromSmokeTest(smokeTest, providerCoverage);
   return (
     <section className="engine-panel engine-provider-health" aria-label="Provider health">
       <div className="engine-panel__head">
@@ -192,8 +216,28 @@ function ProviderHealthPanel({ providerHealth, smokeTest }: { providerHealth: Di
           <h2>Provider Health</h2>
           <p>Secret-safe configuration and latest provider smoke-test diagnostics. No outreach packages are created and nothing is sent.</p>
         </div>
-        <span>{providerHealth.filter((provider) => provider.enabled).length} enabled</span>
+        <span>{coverage?.label ?? `${providerHealth.filter((provider) => provider.enabled).length} enabled`}</span>
       </div>
+      {coverage ? (
+        <div className={`engine-provider-coverage engine-provider-coverage--${coverage.level}`} role="status">
+          <div>
+            <b>{coverage.recommendation}</b>
+            <p>{coverage.summary}</p>
+          </div>
+          <dl>
+            <div><dt>Best first</dt><dd>Google Places</dd></div>
+            <div><dt>Optional second</dt><dd>Yelp</dd></div>
+            <div><dt>Already active</dt><dd>{coverage.azureOrBingConfigured ? "Azure Maps/Bing" : "Azure Maps/Bing if configured"}</dd></div>
+            <div><dt>Backup only</dt><dd>OpenStreetMap</dd></div>
+          </dl>
+          <ol>
+            <li>Add <code>GOOGLE_PLACES_API_KEY</code> in Vercel Environment Variables.</li>
+            <li>Add <code>YELP_API_KEY</code> in Vercel Environment Variables if using Yelp.</li>
+            <li>Redeploy after adding env vars.</li>
+            <li>Run Provider Smoke Test again.</li>
+          </ol>
+        </div>
+      ) : null}
       <div className="engine-provider-health-grid">
         {providerHealth.map((provider) => (
           <article key={provider.provider}>

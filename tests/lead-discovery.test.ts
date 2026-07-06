@@ -5,6 +5,7 @@ import {
   discoverContractorsWithDiagnostics,
   discoveryDiagnosticsFromJson,
   discoveryLeadsFromJson,
+  discoveryProviderCoverageStatus,
   mergeDiscoveryCandidates,
   processDiscoveryElements,
   resetDiscoveryThrottleForTests,
@@ -472,6 +473,31 @@ test("provider diagnostics distinguish zero results, failures, timeouts, and mis
     }
     resetDiscoveryThrottleForTests();
   }
+});
+
+test("provider coverage status classifies strong, good, limited, and broken setups", () => {
+  const base = {
+    osm: { configured: true, queryExecuted: true, status: "zero_results", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, canRunWithoutApiKey: true },
+    azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 0 },
+    googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+  } as const;
+
+  assert.equal(discoveryProviderCoverageStatus(base, {}).level, "limited");
+  assert.equal(discoveryProviderCoverageStatus({
+    ...base,
+    googlePlaces: { ...base.googlePlaces, configured: true, queryExecuted: true, status: "succeeded", returnedCount: 2 },
+  }, {}).level, "strong");
+  assert.equal(discoveryProviderCoverageStatus({
+    ...base,
+    googlePlaces: { ...base.googlePlaces, configured: true, status: "zero_results" },
+    yelp: { ...base.yelp, configured: true, queryExecuted: true, status: "succeeded", returnedCount: 3 },
+  }, {}).level, "good");
+  assert.equal(discoveryProviderCoverageStatus({
+    ...base,
+    osm: { ...base.osm, queryExecuted: true, status: "timed_out" },
+    azureMaps: { ...base.azureMaps, queryExecuted: true, status: "failed", returnedCount: 0 },
+  }, {}).level, "broken");
 });
 
 test("new core service trades produce discovery category signals", () => {

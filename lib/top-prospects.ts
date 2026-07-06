@@ -1257,19 +1257,25 @@ export function topProspectNextRunRecommendations(input: {
   const allAttemptedProvidersFailed = attemptedProviders.length > 0
     && successfulProviders.length === 0
     && attemptedProviders.every((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status));
+  const googleMissing = job.discoveryDiagnostics?.providerDiagnostics.googlePlaces?.configured === false;
+  const yelpMissing = job.discoveryDiagnostics?.providerDiagnostics.yelp?.configured === false;
+  const azureThin = job.discoveryDiagnostics?.providerDiagnostics.azureMaps?.status === "succeeded"
+    && (job.discoveryDiagnostics.providerDiagnostics.azureMaps.usableWebsiteCount ?? 0) === 0;
+  const weakProviderCoverage = allAttemptedProvidersFailed || (azureThin && googleMissing && yelpMissing);
   const weakContact = (job.skipSummary.no_usable_contact_path ?? 0) + (job.skipSummary.third_party_listing_only ?? 0);
   if (allAttemptedProvidersFailed) {
     recommendations.push("All attempted discovery providers failed. Check provider health, environment variables, HTTP status, and rate limits before increasing scan count.");
   }
-  if (!allAttemptedProvidersFailed && targetCount > 1 && job.input.businessesToScan < targetCount * 20) {
+  if (azureThin && googleMissing && yelpMissing) recommendations.push("Configure Google Places before increasing scan count.");
+  if (!weakProviderCoverage && targetCount > 1 && job.input.businessesToScan < targetCount * 20) {
     recommendations.push(`Increase scan count to ${Math.min(250, Math.max(150, targetCount * 20))} because you searched ${targetCount} cities.`);
   }
-  if (!allAttemptedProvidersFailed && configuredProviders.length > 1 && successfulProviders.length === 1) recommendations.push("Only one configured provider returned records. Configure or repair the other providers before broadening scan count.");
+  if (!weakProviderCoverage && configuredProviders.length > 1 && successfulProviders.length === 1) recommendations.push("Only one configured provider returned records. Configure or repair the other providers before broadening scan count.");
   if (phoneBlocked > Math.max(2, job.results.length)) recommendations.push("Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete next because this run had too many phone-only leads.");
   if (badFit > Math.max(2, job.results.length)) recommendations.push(`This market returned mostly suppliers, directories, or mismatched websites. Try Cleaning or Painting instead.`);
-  if (!allAttemptedProvidersFailed && providerFailures > 0 && job.results.length === 0) recommendations.push(`Provider coverage was weak for ${cityLabel}. Check provider diagnostics, then try a larger preset, reduce cities, or lower scan count before retrying.`);
+  if (!weakProviderCoverage && providerFailures > 0 && job.results.length === 0) recommendations.push(`Provider coverage was weak for ${cityLabel}. Check provider diagnostics, then try a larger preset, reduce cities, or lower scan count before retrying.`);
   if (weakContact > Math.max(2, job.results.length)) recommendations.push("Too few leads had a written contact path. Use the Facebook Manual DM workflow or try a broader market before email outreach.");
-  if (!allAttemptedProvidersFailed && (job.results.length + job.reviewedNotRecommended.length) < Math.max(3, job.input.finalProspectsWanted / 2)) recommendations.push("Try Florida or Texas Suburbs next with Growth Mode for a broader written-outreach pool.");
+  if (!weakProviderCoverage && (job.results.length + job.reviewedNotRecommended.length) < Math.max(3, job.input.finalProspectsWanted / 2)) recommendations.push("Try Florida or Texas Suburbs next with Growth Mode for a broader written-outreach pool.");
   if (!recommendations.length) recommendations.push(`Best next run: keep ${displayTradeCategory(job.input.trade)} focused, then test one starter trade in the strongest city from ${cityLabel}.`);
   return recommendations.slice(0, 4);
 }
