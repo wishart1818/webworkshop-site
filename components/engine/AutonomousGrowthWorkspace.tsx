@@ -24,6 +24,7 @@ import {
   autopilotMarketMismatchWarning,
   autopilotMarketTargets,
   autopilotOutreachStyles,
+  autopilotProviderGuardrailWarnings,
   autopilotPresetFields,
   autopilotProviderRequestEstimate,
   autopilotQueueCsv,
@@ -1049,6 +1050,12 @@ function AutopilotCampaignPanel({
     marketTargets: formMarketLabels,
     providerRequestEstimate: formProviderRequestEstimate,
   }), [autopilot, formMarketLabels, formProviderRequestEstimate, settings]);
+  const providerGuardrailWarnings = useMemo(() => autopilotProviderGuardrailWarnings(
+    settings,
+    autopilot.providerCoverage,
+    autopilot.activity,
+    campaign.latestRunReport,
+  ), [autopilot.activity, autopilot.providerCoverage, campaign.latestRunReport, settings]);
 
   useEffect(() => {
     setFormSettings(campaign.settings);
@@ -1147,10 +1154,21 @@ function AutopilotCampaignPanel({
         <span>Trade: {startConfirmation.trade}</span>
         <span>Duration: {startConfirmation.duration}</span>
         <strong>{startConfirmation.safety}</strong>
+        <span>Emails: manual/review only</span>
+        <span>Social DMs: manual only</span>
+        <span>Contact forms: never automated</span>
+        <span>Phone calls: never automated</span>
+        <span>Looms: manual only</span>
       </div>
       {marketMismatchWarning ? (
         <div className="engine-autopilot-market-warning" role="alert">
           {marketMismatchWarning}
+        </div>
+      ) : null}
+      {providerGuardrailWarnings.length ? (
+        <div className="engine-autopilot-provider-warning" role="alert">
+          <b>Provider coverage is limited. Run Provider Smoke Test or a small Top Prospects test before starting Autopilot.</b>
+          <ul>{providerGuardrailWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
         </div>
       ) : null}
 

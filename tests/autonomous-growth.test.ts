@@ -25,6 +25,7 @@ import {
   autopilotDraftFromRecommendedMarket,
   autopilotMarketMismatchWarning,
   autopilotPresetFields,
+  autopilotProviderGuardrailWarnings,
   autopilotProviderRequestEstimate,
   autopilotQueueKeyForItem,
   autopilotStartConfirmation,
@@ -404,6 +405,36 @@ test("recommended first real Autopilot run selects Florida Pressure Washing with
   assert.equal(settings.manualDmMode, true);
   assert.equal(settings.loomNotifications, true);
   assert.equal(settings.stopRules.pauseOnProviderFailure, false);
+});
+
+test("Autopilot provider guardrail warns for limited live runs without blocking fake smoke tests", () => {
+  const settings = recommendedFirstAutopilotRunSettings();
+  const warnings = autopilotProviderGuardrailWarnings(
+    settings,
+    {
+      level: "limited",
+      label: "Limited provider setup",
+      summary: "Only Azure Maps/Bing and OpenStreetMap-style coverage are available.",
+      recommendation: "Configure Google Places before increasing scan count.",
+      googleConfigured: false,
+      yelpConfigured: false,
+      azureOrBingConfigured: true,
+    },
+    {
+      providerDiagnostics: [
+        { provider: "OpenStreetMap", status: "timed_out", rawRecords: 0, withinRadius: 0, afterDeduplication: 0, usableWebsites: 0, detail: "Timed out" },
+        { provider: "Azure Maps", status: "zero_results", rawRecords: 0, withinRadius: 0, afterDeduplication: 0, usableWebsites: 0, detail: "No usable records" },
+      ],
+    },
+    { prospectsDiscovered: 0, fakeOnly: false },
+  );
+
+  assert.match(warnings.join(" "), /Google Places is missing/);
+  assert.match(warnings.join(" "), /Provider Smoke Test has not passed/);
+  assert.match(warnings.join(" "), /10\+ cities/);
+  assert.match(warnings.join(" "), /0 discovered/);
+  assert.match(warnings.join(" "), /no working discovery source/);
+  assert.ok(runFakeAutopilotSmokeTest(createAutopilotCampaign(settings, new Date(0)), new Date(1)).report.fakeOnly);
 });
 
 test("Autopilot start confirmation uses the selected market, trade, duration, and no-send safety", () => {

@@ -66,7 +66,14 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /recommendedFirstAutopilotRunSettings/);
   assert.match(autonomousGrowthWorkspace, /Start Autopilot with:/);
   assert.match(autonomousGrowthWorkspace, /startConfirmation\.safety/);
+  assert.match(autonomousGrowthWorkspace, /Emails: manual\/review only/);
+  assert.match(autonomousGrowthWorkspace, /Social DMs: manual only/);
+  assert.match(autonomousGrowthWorkspace, /Contact forms: never automated/);
+  assert.match(autonomousGrowthWorkspace, /Phone calls: never automated/);
+  assert.match(autonomousGrowthWorkspace, /Looms: manual only/);
   assert.match(autonomousGrowthWorkspace, /marketMismatchWarning/);
+  assert.match(autonomousGrowthWorkspace, /providerGuardrailWarnings/);
+  assert.match(autonomousGrowthWorkspace, /Provider coverage is limited\. Run Provider Smoke Test or a small Top Prospects test before starting Autopilot\./);
   assert.match(autonomousGrowthWorkspace, /updateMarketPreset/);
   assert.match(autonomousGrowthWorkspace, /autopilotPresetFields/);
   assert.match(autonomousGrowthWorkspace, /value=\{formSettings\.marketPresetId\}/);
@@ -145,6 +152,7 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(css, /\.engine-autopilot-market-picker__trades\s*{\s*display: flex;/);
   assert.match(css, /\.engine-autopilot-start-confirmation,/);
   assert.match(css, /\.engine-autopilot-market-warning\s*{\s*border-color: #e2c17b;/);
+  assert.match(css, /\.engine-autopilot-provider-warning\s*{\s*border-color: #e2c17b;/);
   assert.match(css, /\.engine-autopilot-activity\s*{\s*display: grid;/);
   assert.match(css, /\.engine-autopilot-activity__head\s*{\s*display: flex;/);
   assert.match(css, /\.engine-autopilot-activity-grid\s*{\s*display: grid;/);

@@ -49,6 +49,7 @@ import {
   type AutopilotHandoffFailure,
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
+import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
 import type { TopProspectJob } from "@/lib/top-prospects";
 
 const globalAutonomous = globalThis as typeof globalThis & {
@@ -344,13 +345,17 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
   };
 }
 
+function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
+  return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus());
+}
+
 export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard & { autopilot: AutopilotDashboard }> {
   const settings = await getAutonomousGrowthSettings();
   const queue = await listOutreachQueueItems();
   const runReviews = await listAutonomousRunReviews();
   const env = outreachEnvironment();
   globalAutonomous.autopilotCampaignMemory = await refreshAutopilotCampaignFromTopProspects(memoryAutopilotCampaign());
-  const autopilot = buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  const autopilot = buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
   return {
     settings,
     env: {
@@ -376,7 +381,7 @@ export async function startAutopilotCampaign(input: Partial<AutopilotCampaignSet
   const queue = await listOutreachQueueItems();
   const report = buildAutopilotTopProspectJobReport(campaign, topProspectJob);
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, report);
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function failAutopilotCampaignHandoff(input: Partial<AutopilotCampaignSettings>, failure: AutopilotHandoffFailure) {
@@ -384,7 +389,7 @@ export async function failAutopilotCampaignHandoff(input: Partial<AutopilotCampa
   const queue = await listOutreachQueueItems();
   const report = buildAutopilotHandoffFailureReport(campaign, failure);
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, report);
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function retryAutopilotCampaignHandoff(topProspectJob: TopProspectJob) {
@@ -392,25 +397,25 @@ export async function retryAutopilotCampaignHandoff(topProspectJob: TopProspectJ
   const queue = await listOutreachQueueItems();
   const report = buildAutopilotTopProspectJobReport(campaign, topProspectJob);
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport({ ...campaign, status: "running" }, report);
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function pauseAutopilotCampaign() {
   const queue = await listOutreachQueueItems();
   globalAutonomous.autopilotCampaignMemory = transitionAutopilotCampaign(memoryAutopilotCampaign(), "pause");
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function resumeAutopilotCampaign() {
   const queue = await listOutreachQueueItems();
   globalAutonomous.autopilotCampaignMemory = transitionAutopilotCampaign(memoryAutopilotCampaign(), "resume");
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function stopAutopilotCampaign() {
   const queue = await listOutreachQueueItems();
   globalAutonomous.autopilotCampaignMemory = transitionAutopilotCampaign(memoryAutopilotCampaign(), "stop");
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function runAutopilotNextBatchNow() {
@@ -419,7 +424,7 @@ export async function runAutopilotNextBatchNow() {
   const runningCampaign = campaign.status === "paused" ? transitionAutopilotCampaign(campaign, "resume") : campaign;
   const report = buildAutopilotRunReport(runningCampaign, queue);
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(runningCampaign, report);
-  return buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase);
+  return buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
 }
 
 export async function runFakeAutopilotSmokeTestForDashboard() {
@@ -429,7 +434,7 @@ export async function runFakeAutopilotSmokeTestForDashboard() {
   globalAutonomous.autopilotSmokeTestMemory = smokeTest;
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, smokeTest.report);
   return {
-    autopilot: buildAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue, hasDatabase),
+    autopilot: buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue),
     smokeTest,
   };
 }

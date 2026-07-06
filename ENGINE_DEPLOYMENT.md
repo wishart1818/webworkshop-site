@@ -51,6 +51,26 @@ Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-sid
 
 The optional Loom notification variables are internal only. They never send anything to prospects, and the workflow still requires you to manually record and send the Loom. If the notification variables or `RESEND_API_KEY` are missing, the Loom Needed task still works and no runtime error is raised.
 
+### Provider Coverage for Real Lead Discovery
+
+For real Top Prospects and Autopilot discovery, configure provider coverage before increasing scan count:
+
+- `GOOGLE_PLACES_API_KEY` is recommended for real local business discovery and should be configured first.
+- `YELP_API_KEY` is optional and can improve business identity, phone, rating, and review-count enrichment.
+- `AZURE_MAPS_API_KEY` or `BING_MAPS_API_KEY` is useful, but may not return enough usable websites alone.
+- OpenStreetMap and Overpass are backup-only public sources and may timeout or return sparse records.
+- Provider Smoke Test creates no Outreach Packages and sends nothing.
+- Autopilot sends nothing automatically. Emails, social DMs, contact forms, phone calls, and Looms remain manual or review-only.
+
+Recommended launch sequence:
+
+1. Add `GOOGLE_PLACES_API_KEY` in Vercel Production.
+2. Redeploy the latest production deployment.
+3. Run Provider Smoke Test in `/engine` > System.
+4. Confirm Google Places succeeds and returns records.
+5. Run a small Top Prospects test: Pressure Washing, Tampa, FL, scan 25, final 5, written outreach only, exclude previously reviewed on.
+6. Start Autopilot only after the small test produces reviewable prospects.
+
 The names are exact and case-sensitive: `ENGINE_USERNAME` and `ENGINE_PASSWORD`. After adding or changing either value, create a new Production deployment. Vercel does not apply environment-variable changes to deployments that already exist.
 
 Engine authentication runs in Node.js middleware so it reads the same runtime environment as the engine API routes. If configuration is missing, the 503 response includes an `X-Engine-Auth-Configuration` header that reports only whether each required variable is present; it never contains either secret value.

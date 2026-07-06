@@ -3,6 +3,7 @@ import { engineAuthState } from "@/lib/engine-auth";
 import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
 import { databaseHealth, operationalMode, safeListAuditEvents } from "@/lib/operational-controls";
 import { latestSystemSelfCheckReport } from "@/lib/system-self-check";
+import { topProspectBuildVersion } from "@/lib/top-prospect-list-route";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -45,6 +46,7 @@ export async function GET() {
     },
     auditEvents,
     selfCheck: latestSystemSelfCheckReport(),
+    buildVersion: topProspectBuildVersion(),
     providerCoverage: discoveryProviderCoverageStatus(),
     providerHealth: discoveryProviderHealth(),
   });

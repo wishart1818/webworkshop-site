@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -466,7 +466,7 @@ test("system workspace renders the protected self-check report and action", () =
     system: {
       status: "development",
       checks: {
-        database: { configured: false, reachable: false, message: "PostgreSQL is not configured." },
+        database: { configured: true, reachable: true, message: "PostgreSQL is reachable." },
         authentication: { configured: true, message: "Engine access credentials are configured." },
       },
       auditEvents: [],
@@ -491,6 +491,7 @@ test("system workspace renders the protected self-check report and action", () =
         failed: [],
         suggestedFixes: ["Try a larger preset."],
       },
+      buildVersion: "outreach-package-v1-test",
     },
     loading: false,
     error: "",
@@ -504,6 +505,24 @@ test("system workspace renders the protected self-check report and action", () =
 
   assert.match(html, /Run System Self-Check/);
   assert.match(html, /Run Provider Smoke Test/);
+  assert.match(html, /Launch Readiness/);
+  assert.match(html, /Waiting on Google Places/);
+  assert.match(html, /Database/);
+  assert.match(html, /Auth/);
+  assert.match(html, /Provider coverage/);
+  assert.match(html, /Smoke test/);
+  assert.match(html, /Autopilot safety/);
+  assert.match(html, /Build version/);
+  assert.match(html, /outreach-package-v1-test/);
+  assert.match(html, /Next Step/);
+  assert.match(html, /Add GOOGLE_PLACES_API_KEY in Vercel, redeploy, then run Provider Smoke Test\./);
+  assert.match(html, /Recommended First Live Test/);
+  assert.match(html, /Pressure Washing/);
+  assert.match(html, /Tampa, FL/);
+  assert.match(html, /Businesses to scan: 25/);
+  assert.match(html, /Final prospects wanted: 5/);
+  assert.match(html, /Written outreach only/);
+  assert.match(html, /Only run Autopilot after this small test succeeds/);
   assert.match(html, /Provider Health/);
   assert.match(html, /Provider coverage is limited\. For better local business discovery, configure Google Places and\/or Yelp\./);
   assert.match(html, /Best first/);
@@ -518,6 +537,11 @@ test("system workspace renders the protected self-check report and action", () =
   assert.match(html, /YELP_API_KEY/);
   assert.match(html, /Redeploy after adding env vars/);
   assert.match(html, /Run Provider Smoke Test again/);
+  assert.match(html, /Copy Setup Instructions/);
+  assert.match(html, /Add GOOGLE_PLACES_API_KEY in Vercel Production\./);
+  assert.match(html, /Redeploy latest production deployment\./);
+  assert.match(html, /Confirm Google Places succeeds\./);
+  assert.match(html, /Then run Autopilot\./);
   assert.match(html, /AZURE_MAPS_API_KEY or BING_MAPS_API_KEY/);
   assert.match(html, /Safe internal audit/);
   assert.match(html, /never contacts prospects or changes outreach statuses/i);
@@ -527,6 +551,84 @@ test("system workspace renders the protected self-check report and action", () =
   assert.match(html, /Failed checks/);
   assert.match(html, /Suggested fixes/);
   assert.match(html, /Supplier\/supply bad-fit filter works/);
+});
+
+test("system launch readiness advances after Google Places smoke test succeeds", () => {
+  const html = renderToStaticMarkup(createElement(SystemWorkspace, {
+    system: {
+      status: "ready",
+      checks: {
+        database: { configured: true, reachable: true, message: "PostgreSQL is reachable." },
+        authentication: { configured: true, message: "Engine access credentials are configured." },
+      },
+      auditEvents: [],
+      providerCoverage: {
+        level: "strong",
+        label: "Strong provider setup",
+        summary: "Google Places is available and smoke test returned local businesses.",
+        recommendation: "Run a small Top Prospects test before Autopilot.",
+        googleConfigured: true,
+        yelpConfigured: false,
+        azureOrBingConfigured: true,
+      },
+      providerHealth: [
+        { provider: "googlePlaces", label: "Google Places", enabled: true, requiredEnvVarName: "GOOGLE_PLACES_API_KEY", envVarPresent: true, canRunWithoutApiKey: false, lastAttemptedQuery: "Tampa pressure washing", lastStatus: "succeeded", lastHttpStatus: "200", lastSafeErrorMessage: "", failureType: "none" },
+        { provider: "yelp", label: "Yelp", enabled: false, requiredEnvVarName: "YELP_API_KEY", envVarPresent: false, canRunWithoutApiKey: false, lastAttemptedQuery: "Not run", lastStatus: "not_run", lastHttpStatus: "None", lastSafeErrorMessage: "No provider attempt recorded yet.", failureType: "none" },
+      ],
+      selfCheck: { overallStatus: "Healthy", lastRunAt: "2026-07-03T12:00:00.000Z", passed: [], warnings: [], failed: [], suggestedFixes: [] },
+      buildVersion: "outreach-package-v1-test",
+    },
+    loading: false,
+    error: "",
+    onRefresh: () => undefined,
+    onRunProviderSmokeTest: () => undefined,
+    onRunSelfCheck: () => undefined,
+    providerSmokeTest: {
+      query: "Pressure Washing near Tampa, FL",
+      createdOutreachPackages: false,
+      sentOutreach: false,
+      sampleCount: 5,
+      diagnostics: {
+        rawProviderCount: 12,
+        afterDistanceFilteringCount: 11,
+        afterDuplicateFilteringCount: 10,
+        afterQualificationFilteringCount: 6,
+        returnedCount: 5,
+        radiusKm: 50,
+        categorySignals: ["pressure washing"],
+        sourceCounts: { osm: 0, google: 12, bing: 0, yelp: 0, yellowPages: 0 },
+        providerDiagnostics: {
+          osm: { configured: true, queryExecuted: false, status: "not_attempted", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: true, queryExecuted: false, status: "not_attempted", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 12, withinRadiusCount: 11, afterDeduplicationCount: 10, usableWebsiteCount: 6 },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+        finalMergedCount: 10,
+      },
+    },
+    providerSmokeTestRunning: false,
+    selfCheckRunning: false,
+  }));
+
+  assert.match(html, /Ready for small Top Prospects test/);
+  assert.match(html, /Google Places/);
+  assert.match(html, /Configured/);
+  assert.match(html, /Smoke test/);
+  assert.match(html, /Passed/);
+  assert.match(html, /Run a small Top Prospects test before Autopilot\./);
+  assert.match(html, /Outreach packages created: No/);
+  assert.match(html, /Outreach sent: No/);
+});
+
+test("deployment docs explain provider setup and no-send safety", () => {
+  const docs = readFileSync(new URL("../ENGINE_DEPLOYMENT.md", import.meta.url), "utf8");
+
+  assert.match(docs, /GOOGLE_PLACES_API_KEY.*recommended/i);
+  assert.match(docs, /YELP_API_KEY.*optional/i);
+  assert.match(docs, /AZURE_MAPS_API_KEY.*BING_MAPS_API_KEY.*not return enough usable websites alone/is);
+  assert.match(docs, /OpenStreetMap.*backup-only.*may timeout/is);
+  assert.match(docs, /Provider Smoke Test creates no Outreach Packages and sends nothing/);
+  assert.match(docs, /Autopilot sends nothing automatically/);
 });
 
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {

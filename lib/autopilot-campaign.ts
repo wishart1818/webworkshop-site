@@ -27,6 +27,7 @@ import {
   type TopProspectInput,
   type ProspectMode,
 } from "@/lib/top-prospects";
+import type { DiscoveryProviderCoverageStatus } from "@/lib/lead-discovery";
 
 export const autopilotCampaignStatuses = ["draft", "running", "paused", "stopped", "finished"] as const;
 export type AutopilotCampaignStatus = (typeof autopilotCampaignStatuses)[number];
@@ -286,6 +287,7 @@ export type AutopilotDashboard = {
   campaign: AutopilotCampaign;
   queues: Record<AutopilotQueueKey, OutreachQueueItem[]>;
   activity: AutopilotActivitySnapshot;
+  providerCoverage?: DiscoveryProviderCoverageStatus;
   providerRequestEstimate: number;
   marketTargets: string[];
   databaseConfigured: boolean;
@@ -525,6 +527,28 @@ export function autopilotMarketTargets(settings: AutopilotCampaignSettings) {
 export function autopilotProviderRequestEstimate(settings: AutopilotCampaignSettings) {
   const targets = autopilotMarketTargets(settings);
   return estimatedProviderRequestLoad(targets.length, settings.trade);
+}
+
+export function autopilotProviderGuardrailWarnings(
+  settings: AutopilotCampaignSettings,
+  providerCoverage?: DiscoveryProviderCoverageStatus | null,
+  activity?: Pick<AutopilotActivitySnapshot, "providerDiagnostics">,
+  latestRunReport?: Pick<AutopilotRunReport, "prospectsDiscovered" | "fakeOnly"> | null,
+) {
+  const targets = autopilotMarketTargets(settings);
+  const weakCoverage = !providerCoverage || providerCoverage.level === "limited" || providerCoverage.level === "broken";
+  const warnings: string[] = [];
+  if (!providerCoverage?.googleConfigured) warnings.push("Google Places is missing.");
+  if (weakCoverage) warnings.push("Provider Smoke Test has not passed with strong coverage.");
+  if (providerCoverage?.level === "broken") warnings.push("All providers failed recently or provider setup is broken.");
+  if (latestRunReport && !latestRunReport.fakeOnly && latestRunReport.prospectsDiscovered === 0) warnings.push("Last Top Prospects run returned 0 discovered records.");
+  if (targets.length >= 10 && weakCoverage) warnings.push("You are searching 10+ cities with weak provider coverage.");
+  if (!warnings.length) return [];
+  const allRecordedProvidersFailed = activity?.providerDiagnostics?.length
+    ? activity.providerDiagnostics.every((provider) => ["failed", "timed_out", "not_configured", "no_records", "zero_results"].includes(provider.status))
+    : false;
+  if (allRecordedProvidersFailed) warnings.push("Recent provider diagnostics show no working discovery source.");
+  return [...new Set(warnings)];
 }
 
 export function autopilotTopProspectInput(settings: AutopilotCampaignSettings): TopProspectInput {
@@ -1480,7 +1504,7 @@ function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueu
   };
 }
 
-export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false): AutopilotDashboard {
+export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false, providerCoverage?: DiscoveryProviderCoverageStatus): AutopilotDashboard {
   const queues = autopilotQueuesForItems(queue);
   const liveQueueCounts = autopilotQueueCountsForItems(queue);
   const reportQueueCounts = campaign.latestRunReport?.queueCounts;
@@ -1490,6 +1514,7 @@ export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
     campaign: { ...campaign, queueCounts },
     queues,
     activity: buildAutopilotActivity({ ...campaign, queueCounts }, queue),
+    providerCoverage,
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     marketTargets,
     databaseConfigured,

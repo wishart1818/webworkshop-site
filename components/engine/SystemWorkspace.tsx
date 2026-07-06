@@ -9,6 +9,7 @@ export type SystemPayload = {
   checks: Record<string, { configured: boolean; reachable?: boolean; message: string }>;
   auditEvents: AuditEventView[];
   selfCheck?: SystemSelfCheckReport | null;
+  buildVersion?: string;
   providerCoverage?: DiscoveryProviderCoverageStatus;
   providerHealth?: DiscoveryProviderHealth[];
 };
@@ -46,7 +47,78 @@ function formatLabel(value: string) {
   return value.replaceAll("_", " ").replace(/^\w/, (character) => character.toUpperCase());
 }
 
+function providerDiagnostic(smokeTest: ProviderSmokeTestPayload | null, provider: keyof DiscoveryDiagnostics["providerDiagnostics"]) {
+  return smokeTest?.diagnostics?.providerDiagnostics?.[provider] ?? null;
+}
+
+function providerLaunchStatus(smokeTest: ProviderSmokeTestPayload | null, providerHealth: DiscoveryProviderHealth[], provider: "googlePlaces" | "yelp") {
+  const health = providerHealth.find((item) => item.provider === provider);
+  const diagnostic = providerDiagnostic(smokeTest, provider);
+  const configured = diagnostic?.configured ?? health?.enabled ?? false;
+  if (!configured) return "Missing";
+  if (diagnostic && ["failed", "timed_out", "rate_limited"].includes(diagnostic.status)) return "Failing";
+  return "Configured";
+}
+
+function smokeTestLaunchStatus(smokeTest: ProviderSmokeTestPayload | null) {
+  if (!smokeTest) return "Not run";
+  if (smokeTest.safeError) return "Failed";
+  const google = providerDiagnostic(smokeTest, "googlePlaces");
+  if (google?.configured && google.status === "succeeded" && google.returnedCount > 0) return "Passed";
+  const attempted = Object.values(smokeTest.diagnostics?.providerDiagnostics ?? {}).filter((provider) => provider.queryExecuted);
+  if (attempted.length && attempted.every((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status))) return "Failed";
+  return "Failed";
+}
+
+function googleNextStep(smokeTest: ProviderSmokeTestPayload | null, providerHealth: DiscoveryProviderHealth[]) {
+  const google = providerDiagnostic(smokeTest, "googlePlaces");
+  const googleStatus = providerLaunchStatus(smokeTest, providerHealth, "googlePlaces");
+  if (googleStatus === "Missing") return "Add GOOGLE_PLACES_API_KEY in Vercel, redeploy, then run Provider Smoke Test.";
+  if (googleStatus === "Failing") {
+    const reason = google?.failureType && google.failureType !== "none" ? google.failureType.replaceAll("_", " ") : google?.status?.replaceAll("_", " ") || "provider error";
+    return `Google Places is configured but failing (${reason}). Check billing, Places API enablement, and API key restrictions, then run Provider Smoke Test again.`;
+  }
+  if (google?.status === "succeeded" && google.returnedCount > 0) return "Run a small Top Prospects test before Autopilot.";
+  return "Run Provider Smoke Test and confirm Google Places succeeds before increasing scan count.";
+}
+
+function launchReadinessFor(system: SystemPayload, providerHealth: DiscoveryProviderHealth[], smokeTest: ProviderSmokeTestPayload | null, coverage?: DiscoveryProviderCoverageStatus) {
+  const databaseReady = Boolean(system.checks.database?.reachable ?? system.checks.database?.configured);
+  const authReady = Boolean(system.checks.authentication?.configured);
+  const googleStatus = providerLaunchStatus(smokeTest, providerHealth, "googlePlaces");
+  const yelpStatus = providerLaunchStatus(smokeTest, providerHealth, "yelp");
+  const smokeStatus = smokeTestLaunchStatus(smokeTest);
+  const google = providerDiagnostic(smokeTest, "googlePlaces");
+  const autopilotSafety = system.selfCheck?.failed?.some((item) => /autopilot|auto email|outreach/i.test(item.label)) ? "Needs attention" : "Safe";
+  const providerLevel = coverage?.level ?? "limited";
+  const finalStatus = !databaseReady || !authReady || autopilotSafety !== "Safe"
+    ? "Do not run Autopilot yet"
+    : providerLevel === "broken"
+      ? "Provider setup broken"
+      : googleStatus === "Missing"
+        ? "Waiting on Google Places"
+        : googleStatus === "Failing"
+          ? "Provider setup broken"
+          : google?.status === "succeeded" && google.returnedCount > 0
+            ? "Ready for small Top Prospects test"
+            : "Waiting on Google Places";
+  return {
+    database: databaseReady ? "Ready" : "Not ready",
+    auth: authReady ? "Ready" : "Not ready",
+    providerCoverage: coverage?.label.replace(" provider setup", "") ?? "Limited",
+    google: googleStatus,
+    yelp: yelpStatus,
+    smokeTest: smokeStatus,
+    autopilotSafety,
+    finalStatus,
+    nextStep: googleNextStep(smokeTest, providerHealth),
+  };
+}
+
 export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCheck, onRunProviderSmokeTest, selfCheckRunning, providerSmokeTestRunning, providerSmokeTest }: SystemWorkspaceProps) {
+  const providerHealth = system?.providerHealth ?? [];
+  const providerCoverage = providerCoverageFromSmokeTest(providerSmokeTest, system?.providerCoverage);
+  const launchReadiness = system ? launchReadinessFor(system, providerHealth, providerSmokeTest, providerCoverage) : null;
   return (
     <div className="engine-content">
       <section className="engine-system-head">
@@ -98,7 +170,8 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
               );
             })}
           </section>
-          <ProviderHealthPanel providerCoverage={system.providerCoverage} providerHealth={system.providerHealth ?? []} smokeTest={providerSmokeTest} />
+          {launchReadiness ? <LaunchReadinessCard buildVersion={system.buildVersion} readiness={launchReadiness} /> : null}
+          <ProviderHealthPanel providerCoverage={providerCoverage} providerHealth={providerHealth} smokeTest={providerSmokeTest} />
           <SystemSelfCheckPanel report={system.selfCheck ?? null} running={selfCheckRunning} />
           <section className="engine-panel engine-audit-panel">
             <div className="engine-panel__head">
@@ -138,6 +211,47 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
         </div>
       )}
     </div>
+  );
+}
+
+function LaunchReadinessCard({ buildVersion, readiness }: { buildVersion?: string; readiness: ReturnType<typeof launchReadinessFor> }) {
+  const statusClass = readiness.finalStatus === "Ready for small Top Prospects test" ? "strong" : readiness.finalStatus === "Waiting on Google Places" ? "limited" : "broken";
+  const checks = [
+    ["Database", readiness.database],
+    ["Auth", readiness.auth],
+    ["Provider coverage", readiness.providerCoverage],
+    ["Google Places", readiness.google],
+    ["Yelp", readiness.yelp],
+    ["Smoke test", readiness.smokeTest],
+    ["Autopilot safety", readiness.autopilotSafety],
+    ["Build version", buildVersion || "Not available"],
+  ] as const;
+  return (
+    <section className={`engine-panel engine-launch-readiness engine-launch-readiness--${statusClass}`} aria-label="Launch Readiness">
+      <div className="engine-panel__head">
+        <div>
+          <h2>Launch Readiness</h2>
+          <p>One glance status before adding Google Places or starting a real Autopilot run.</p>
+        </div>
+        <span>{readiness.finalStatus}</span>
+      </div>
+      <dl className="engine-launch-readiness-grid">
+        {checks.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      </dl>
+      <div className="engine-launch-next-step">
+        <b>Next Step</b>
+        <p>{readiness.nextStep}</p>
+      </div>
+      <div className="engine-recommended-live-test">
+        <b>Recommended First Live Test</b>
+        <ul>
+          <li>Top Prospects test: Pressure Washing in Tampa, FL.</li>
+          <li>Businesses to scan: 25. Final prospects wanted: 5.</li>
+          <li>Written outreach only. Exclude previously reviewed prospects: on.</li>
+          <li>Only run Autopilot after this small test succeeds.</li>
+        </ul>
+      </div>
+    </section>
   );
 }
 
@@ -193,7 +307,7 @@ function providerCoverageDefaults(fallback?: DiscoveryProviderCoverageStatus) {
   };
 }
 
-function providerCoverageFromSmokeTest(smokeTest: ProviderSmokeTestPayload | null, fallback?: DiscoveryProviderCoverageStatus) {
+function providerCoverageFromSmokeTest(smokeTest: ProviderSmokeTestPayload | null, fallback?: DiscoveryProviderCoverageStatus): DiscoveryProviderCoverageStatus | undefined {
   if (!smokeTest?.diagnostics) return fallback;
   const defaults = providerCoverageDefaults(fallback);
   const google = smokeTest.diagnostics.providerDiagnostics.googlePlaces;
@@ -203,12 +317,20 @@ function providerCoverageFromSmokeTest(smokeTest: ProviderSmokeTestPayload | nul
   const allFailed = attempted.length > 0 && attempted.every((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status));
   if (allFailed) return { ...defaults, level: "broken" as const, label: "Broken provider setup", summary: "Provider requests were attempted, but no provider completed successfully.", recommendation: "Check provider configuration, environment variables, HTTP status, and rate limits before running more searches." };
   if (google.configured && google.status === "succeeded") return { ...defaults, googleConfigured: true, level: "strong" as const, label: "Strong provider setup", summary: "Google Places is configured and the latest provider check succeeded.", recommendation: "Run normal focused Top Prospects searches." };
-  if ((google.configured && google.returnedCount >= 3) || (yelp.configured && yelp.returnedCount >= 3)) return { ...defaults, googleConfigured: google.configured, yelpConfigured: yelp.configured, level: "good" as const, label: "Good provider setup", summary: "Google Places or Yelp is configured and returning at least 3 records.", recommendation: "Run focused searches, then add the other provider when you want broader coverage." };
-  return { ...defaults, googleConfigured: google.configured, yelpConfigured: yelp.configured, azureOrBingConfigured: azure.configured, level: "limited" as const, label: "Limited provider setup", summary: azure.configured ? "Azure Maps/Bing is active, but Google Places and Yelp are not configured." : "Only backup provider coverage is available.", recommendation: "Provider coverage is limited. For better local business discovery, configure Google Places and/or Yelp." };
+  if ((google.configured && google.returnedCount >= 3) || (yelp.configured && yelp.returnedCount >= 3)) return { ...defaults, googleConfigured: Boolean(google.configured), yelpConfigured: Boolean(yelp.configured), level: "good" as const, label: "Good provider setup", summary: "Google Places or Yelp is configured and returning at least 3 records.", recommendation: "Run focused searches, then add the other provider when you want broader coverage." };
+  return { ...defaults, googleConfigured: Boolean(google.configured), yelpConfigured: Boolean(yelp.configured), azureOrBingConfigured: Boolean(azure.configured), level: "limited" as const, label: "Limited provider setup", summary: azure.configured ? "Azure Maps/Bing is active, but Google Places and Yelp are not configured." : "Only backup provider coverage is available.", recommendation: "Provider coverage is limited. For better local business discovery, configure Google Places and/or Yelp." };
 }
 
 function ProviderHealthPanel({ providerCoverage, providerHealth, smokeTest }: { providerCoverage?: DiscoveryProviderCoverageStatus; providerHealth: DiscoveryProviderHealth[]; smokeTest: ProviderSmokeTestPayload | null }) {
-  const coverage = providerCoverageFromSmokeTest(smokeTest, providerCoverage);
+  const coverage = providerCoverage ?? providerCoverageFromSmokeTest(smokeTest, undefined);
+  const setupInstructions = [
+    "Add GOOGLE_PLACES_API_KEY in Vercel Production.",
+    "Redeploy latest production deployment.",
+    "Run Provider Smoke Test.",
+    "Confirm Google Places succeeds.",
+    "Run small Top Prospects test.",
+    "Then run Autopilot.",
+  ].join("\n");
   return (
     <section className="engine-panel engine-provider-health" aria-label="Provider health">
       <div className="engine-panel__head">
@@ -236,6 +358,10 @@ function ProviderHealthPanel({ providerCoverage, providerHealth, smokeTest }: { 
             <li>Redeploy after adding env vars.</li>
             <li>Run Provider Smoke Test again.</li>
           </ol>
+          <div className="engine-provider-setup-copy">
+            <b>Copy Setup Instructions</b>
+            <pre>{setupInstructions}</pre>
+          </div>
         </div>
       ) : null}
       <div className="engine-provider-health-grid">
