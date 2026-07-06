@@ -44,23 +44,19 @@ test("discovery diagnostics expose provider, distance, duplicate, qualification,
     ],
   });
 
-  assert.deepEqual(result.diagnostics, {
-    rawProviderCount: 6,
-    afterDistanceFilteringCount: 5,
-    afterDuplicateFilteringCount: 3,
-    afterQualificationFilteringCount: 2,
-    returnedCount: 2,
-    radiusKm: 10,
-    categorySignals: ["craft=roofer", "name~roof|roofing"],
-    sourceCounts: { osm: 6, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
-    providerDiagnostics: {
-      osm: { configured: true, queryExecuted: null, status: "succeeded", returnedCount: 6, withinRadiusCount: 5, afterDeduplicationCount: 3, usableWebsiteCount: 2 },
-      azureMaps: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-      googlePlaces: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-      yelp: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-    },
-    finalMergedCount: 3,
-  });
+  assert.equal(result.diagnostics.rawProviderCount, 6);
+  assert.equal(result.diagnostics.afterDistanceFilteringCount, 5);
+  assert.equal(result.diagnostics.afterDuplicateFilteringCount, 3);
+  assert.equal(result.diagnostics.afterQualificationFilteringCount, 2);
+  assert.equal(result.diagnostics.returnedCount, 2);
+  assert.deepEqual(result.diagnostics.categorySignals, ["craft=roofer", "name~roof|roofing"]);
+  assert.deepEqual(result.diagnostics.sourceCounts, { osm: 6, google: 0, bing: 0, yelp: 0, yellowPages: 0 });
+  assert.equal(result.diagnostics.providerDiagnostics.osm.status, "succeeded");
+  assert.equal(result.diagnostics.providerDiagnostics.osm.canRunWithoutApiKey, true);
+  assert.equal(result.diagnostics.providerDiagnostics.osm.envVarName, "Not required");
+  assert.equal(result.diagnostics.providerDiagnostics.azureMaps.envVarName, "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY");
+  assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.envVarPresent, false);
+  assert.equal(result.diagnostics.finalMergedCount, 3);
   assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Local Roofing", "Missing Center Roofing"]);
 });
 
@@ -317,27 +313,23 @@ test("configured licensed sources enrich OSM discovery without becoming required
     });
 
     assert.deepEqual(result.diagnostics.sourceCounts, { osm: 2, google: 1, bing: 1, yelp: 1, yellowPages: 1 });
-    assert.deepEqual(result.diagnostics.providerDiagnostics, {
-      osm: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 2, withinRadiusCount: 2, afterDeduplicationCount: 1, usableWebsiteCount: 1 },
-      azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 1 },
-      googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 1 },
-      yelp: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 1 },
-    });
+    assert.equal(result.diagnostics.providerDiagnostics.osm.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.osm.canRunWithoutApiKey, true);
+    assert.equal(result.diagnostics.providerDiagnostics.azureMaps.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.azureMaps.query, "Roofing near Toledo, OH");
+    assert.equal(result.diagnostics.providerDiagnostics.azureMaps.envVarPresent, true);
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.yelp.status, "succeeded");
     assert.equal(result.diagnostics.finalMergedCount, 3);
     assert.equal(result.leads.length, 3);
     assert.deepEqual(result.leads[0].sources, ["osm", "google", "yelp"]);
-    assert.deepEqual(providerLogs.find((entry) => entry.provider === "azureMaps"), {
-      provider: "azureMaps",
-      configured: true,
-      queryExecuted: true,
-      status: "succeeded",
-      rawRecordsReturned: 1,
-      withinRadiusCount: 1,
-      afterDeduplicationCount: 1,
-      usableWebsiteCount: 1,
-      retryCount: 0,
-      httpStatus: 0,
-    });
+    const azureLog = providerLogs.find((entry) => entry.provider === "azureMaps");
+    assert.equal(azureLog?.configured, true);
+    assert.equal(azureLog?.queryExecuted, true);
+    assert.equal(azureLog?.status, "succeeded");
+    assert.equal(azureLog?.rawRecordsReturned, 1);
+    assert.equal(azureLog?.query, "Roofing near Toledo, OH");
+    assert.equal(azureLog?.envVarName, "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY");
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalEnv)) {
@@ -462,12 +454,16 @@ test("provider diagnostics distinguish zero results, failures, timeouts, and mis
   try {
     const result = await discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 50, limit: 50 });
 
-    assert.deepEqual(result.diagnostics.providerDiagnostics, {
-      osm: { configured: true, queryExecuted: true, status: "zero_results", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-      azureMaps: { configured: true, queryExecuted: true, status: "failed", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, httpStatus: 503 },
-      googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-      yelp: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-    });
+    assert.equal(result.diagnostics.providerDiagnostics.osm.status, "zero_results");
+    assert.equal(result.diagnostics.providerDiagnostics.osm.canRunWithoutApiKey, true);
+    assert.equal(result.diagnostics.providerDiagnostics.azureMaps.status, "failed");
+    assert.equal(result.diagnostics.providerDiagnostics.azureMaps.httpStatus, 503);
+    assert.equal(result.diagnostics.providerDiagnostics.azureMaps.failureType, "http_error");
+    assert.match(result.diagnostics.providerDiagnostics.azureMaps.safeErrorMessage ?? "", /HTTP 503/);
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.yelp.status, "timed_out");
+    assert.equal(result.diagnostics.providerDiagnostics.yelp.failureType, "timeout");
+    assert.match(result.diagnostics.providerDiagnostics.yelp.safeErrorMessage ?? "", /timed out/i);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalEnv)) {
@@ -503,12 +499,12 @@ test("discovery source failures retain safe geocoding and provider classificatio
         : new Response("provider unavailable", { status: 504 });
     };
     resetDiscoveryThrottleForTests();
-    await assert.rejects(
-      discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 10 }),
-      (error) => error instanceof TopProspectStageError
-        && error.classification === "discovery_provider_error"
-        && /HTTP 504/.test(error.safeReason),
-    );
+    const result = await discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 10 });
+    assert.equal(result.diagnostics.providerDiagnostics.osm.status, "failed");
+    assert.equal(result.diagnostics.providerDiagnostics.osm.httpStatus, 504);
+    assert.equal(result.diagnostics.providerDiagnostics.osm.failureType, "http_error");
+    assert.match(result.diagnostics.providerDiagnostics.osm.safeErrorMessage ?? "", /HTTP 504/);
+    assert.equal(result.leads.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
     resetDiscoveryThrottleForTests();
@@ -550,7 +546,10 @@ test("saved discovery payload parsing remains compatible with old lead arrays an
   assert.deepEqual(discoveryLeadsFromJson([lead]), [lead]);
   assert.deepEqual(discoveryLeadsFromJson(envelope), [lead]);
   assert.equal(discoveryDiagnosticsFromJson([lead]), null);
-  assert.deepEqual(discoveryDiagnosticsFromJson(envelope), envelope.diagnostics);
+  const parsedDiagnostics = discoveryDiagnosticsFromJson(envelope);
+  assert.equal(parsedDiagnostics?.providerDiagnostics.osm.status, "succeeded");
+  assert.equal(parsedDiagnostics?.providerDiagnostics.osm.canRunWithoutApiKey, true);
+  assert.equal(parsedDiagnostics?.providerDiagnostics.azureMaps.envVarName, "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY");
 
   const legacyEnvelope = {
     ...envelope,

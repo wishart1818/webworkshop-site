@@ -5,7 +5,7 @@ import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { AutonomousGrowthWorkspace } from "@/components/engine/AutonomousGrowthWorkspace";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
-import { SystemWorkspace, type SystemPayload } from "@/components/engine/SystemWorkspace";
+import { SystemWorkspace, type ProviderSmokeTestPayload, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
@@ -72,6 +72,8 @@ export function ProspectEngine() {
   const [systemLoading, setSystemLoading] = useState(false);
   const [systemError, setSystemError] = useState("");
   const [selfCheckRunning, setSelfCheckRunning] = useState(false);
+  const [providerSmokeTestRunning, setProviderSmokeTestRunning] = useState(false);
+  const [providerSmokeTest, setProviderSmokeTest] = useState<ProviderSmokeTestPayload | null>(null);
   const saveQueue = useRef<Promise<Prospect | null>>(Promise.resolve(null));
 
   const loadProspects = useCallback(async () => {
@@ -321,6 +323,21 @@ export function ProspectEngine() {
     }
   }
 
+  async function runProviderSmokeTest() {
+    setProviderSmokeTestRunning(true);
+    setSystemError("");
+    try {
+      const response = await fetch("/api/engine/system/provider-smoke-test", { method: "POST" });
+      const payload = (await response.json()) as { smokeTest?: ProviderSmokeTestPayload; error?: string };
+      if (!response.ok || !payload.smokeTest) throw new Error(payload.error || "Unable to run provider smoke test.");
+      setProviderSmokeTest(payload.smokeTest);
+    } catch (error) {
+      setSystemError(error instanceof Error ? error.message : "Unable to run provider smoke test.");
+    } finally {
+      setProviderSmokeTestRunning(false);
+    }
+  }
+
   function runPresenceGapSelected() {
     updateSelected((prospect) => withPresenceGapReview(
       prospect,
@@ -465,7 +482,10 @@ export function ProspectEngine() {
             error={systemError}
             loading={systemLoading}
             onRefresh={() => void loadSystem()}
+            onRunProviderSmokeTest={() => void runProviderSmokeTest()}
             onRunSelfCheck={() => void runSelfCheck()}
+            providerSmokeTest={providerSmokeTest}
+            providerSmokeTestRunning={providerSmokeTestRunning}
             selfCheckRunning={selfCheckRunning}
             system={system}
           />

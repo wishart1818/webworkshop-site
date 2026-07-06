@@ -96,10 +96,15 @@ function combineBooleanState(values: Array<boolean | null>) {
   return null;
 }
 
+function latestProviderDetail(items: DiscoveryProviderDiagnostic[]) {
+  return items.find((item) => item.safeErrorMessage || item.httpStatus || item.query || item.durationMs) ?? items[0];
+}
+
 function combineProviderDiagnosticsFromTradeDiagnostics(tradeDiagnostics: TradeDiscoveryDiagnostic[]): DiscoveryProviderDiagnostics {
   const combined = emptyProviderDiagnostics();
   for (const provider of discoveryProviders) {
     const items = tradeDiagnostics.map((trade) => trade.providerDiagnostics[provider]).filter(Boolean);
+    const detail = latestProviderDetail(items);
     combined[provider] = items.length
       ? {
           configured: combineBooleanState(items.map((item) => item.configured)),
@@ -110,6 +115,16 @@ function combineProviderDiagnosticsFromTradeDiagnostics(tradeDiagnostics: TradeD
           afterDeduplicationCount: items.reduce((total, item) => total + item.afterDeduplicationCount, 0),
           usableWebsiteCount: items.reduce((total, item) => total + item.usableWebsiteCount, 0),
           retryCount: items.reduce((total, item) => total + (item.retryCount ?? 0), 0),
+          ...(detail?.httpStatus ? { httpStatus: detail.httpStatus } : {}),
+          ...(detail?.envVarName ? { envVarName: detail.envVarName } : {}),
+          ...(typeof detail?.envVarPresent === "boolean" || detail?.envVarPresent === null ? { envVarPresent: detail.envVarPresent } : {}),
+          ...(typeof detail?.canRunWithoutApiKey === "boolean" ? { canRunWithoutApiKey: detail.canRunWithoutApiKey } : {}),
+          ...(detail?.query ? { query: detail.query } : {}),
+          ...(detail?.attemptedAt ? { attemptedAt: detail.attemptedAt } : {}),
+          ...(detail?.finishedAt ? { finishedAt: detail.finishedAt } : {}),
+          ...(items.some((item) => item.durationMs) ? { durationMs: items.reduce((total, item) => total + (item.durationMs ?? 0), 0) } : {}),
+          ...(detail?.failureType ? { failureType: detail.failureType } : {}),
+          ...(detail?.safeErrorMessage ? { safeErrorMessage: detail.safeErrorMessage } : {}),
         }
       : combined[provider];
   }
@@ -120,6 +135,7 @@ function combineProviderDiagnosticsFromCityDiagnostics(cityDiagnostics: CityDisc
   const combined = emptyProviderDiagnostics();
   for (const provider of discoveryProviders) {
     const items = cityDiagnostics.map((city) => city.providerDiagnostics[provider]).filter(Boolean);
+    const detail = latestProviderDetail(items);
     combined[provider] = items.length
       ? {
           configured: combineBooleanState(items.map((item) => item.configured)),
@@ -130,6 +146,16 @@ function combineProviderDiagnosticsFromCityDiagnostics(cityDiagnostics: CityDisc
           afterDeduplicationCount: items.reduce((total, item) => total + item.afterDeduplicationCount, 0),
           usableWebsiteCount: items.reduce((total, item) => total + item.usableWebsiteCount, 0),
           retryCount: items.reduce((total, item) => total + (item.retryCount ?? 0), 0),
+          ...(detail?.httpStatus ? { httpStatus: detail.httpStatus } : {}),
+          ...(detail?.envVarName ? { envVarName: detail.envVarName } : {}),
+          ...(typeof detail?.envVarPresent === "boolean" || detail?.envVarPresent === null ? { envVarPresent: detail.envVarPresent } : {}),
+          ...(typeof detail?.canRunWithoutApiKey === "boolean" ? { canRunWithoutApiKey: detail.canRunWithoutApiKey } : {}),
+          ...(detail?.query ? { query: detail.query } : {}),
+          ...(detail?.attemptedAt ? { attemptedAt: detail.attemptedAt } : {}),
+          ...(detail?.finishedAt ? { finishedAt: detail.finishedAt } : {}),
+          ...(items.some((item) => item.durationMs) ? { durationMs: items.reduce((total, item) => total + (item.durationMs ?? 0), 0) } : {}),
+          ...(detail?.failureType ? { failureType: detail.failureType } : {}),
+          ...(detail?.safeErrorMessage ? { safeErrorMessage: detail.safeErrorMessage } : {}),
         }
       : combined[provider];
   }

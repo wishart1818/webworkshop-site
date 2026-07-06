@@ -38,6 +38,7 @@ import {
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "@/lib/autopilot-campaign";
+import { discoveryProviderHealth } from "@/lib/lead-discovery";
 
 export type SystemSelfCheckStatus = "passed" | "warning" | "failed";
 export type SystemSelfCheckOverallStatus = "Healthy" | "Needs attention" | "Blocking issue";
@@ -225,8 +226,22 @@ function autopilotChecks() {
   ];
 }
 
+function providerHealthChecks() {
+  return discoveryProviderHealth().map((provider) => check(
+    `provider_health_${provider.provider}`,
+    `${provider.label} provider configuration is visible`,
+    true,
+    `${provider.requiredEnvVarName}. Env var present: ${providerHealthValue(provider.envVarPresent)}. Can run without API key: ${provider.canRunWithoutApiKey ? "Yes" : "No"}.`,
+  ));
+}
+
+function providerHealthValue(value: boolean | null) {
+  if (value === null) return "not required";
+  return value ? "yes" : "no";
+}
+
 export function runSystemSelfCheck(now = new Date()): SystemSelfCheckReport {
-  const checks = [...topProspectChecks(), ...previewAndOutreachChecks(), ...autonomousChecks(), ...autopilotChecks()];
+  const checks = [...topProspectChecks(), ...previewAndOutreachChecks(), ...autonomousChecks(), ...autopilotChecks(), ...providerHealthChecks()];
   const passed = checks.filter((item) => item.status === "passed");
   const warnings = checks.filter((item) => item.status === "warning");
   const failed = checks.filter((item) => item.status === "failed");

@@ -437,7 +437,9 @@ test("discovery funnel identifies each provider and the final merged count", () 
   assert.match(html, /Azure Maps/);
   assert.match(html, /Google Places/);
   assert.match(html, /Provider Diagnostics/);
-  assert.match(html, /API key configured/);
+  assert.match(html, /Required env var/);
+  assert.match(html, /Env var present/);
+  assert.match(html, /Can run without API key/);
   assert.match(html, /Query executed/);
   assert.match(html, /Succeeded/);
   assert.match(html, /Rate limited/);
@@ -468,6 +470,10 @@ test("system workspace renders the protected self-check report and action", () =
         authentication: { configured: true, message: "Engine access credentials are configured." },
       },
       auditEvents: [],
+      providerHealth: [
+        { provider: "osm", label: "OpenStreetMap", enabled: true, requiredEnvVarName: "Not required", envVarPresent: null, canRunWithoutApiKey: true, lastAttemptedQuery: "Not run", lastStatus: "not_run", lastHttpStatus: "None", lastSafeErrorMessage: "No provider attempt recorded yet.", failureType: "none" },
+        { provider: "azureMaps", label: "Azure Maps", enabled: false, requiredEnvVarName: "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY", envVarPresent: false, canRunWithoutApiKey: false, lastAttemptedQuery: "Not run", lastStatus: "not_run", lastHttpStatus: "None", lastSafeErrorMessage: "No provider attempt recorded yet.", failureType: "none" },
+      ],
       selfCheck: {
         overallStatus: "Needs attention",
         lastRunAt: "2026-07-03T12:00:00.000Z",
@@ -480,11 +486,17 @@ test("system workspace renders the protected self-check report and action", () =
     loading: false,
     error: "",
     onRefresh: () => undefined,
+    onRunProviderSmokeTest: () => undefined,
     onRunSelfCheck: () => undefined,
+    providerSmokeTest: null,
+    providerSmokeTestRunning: false,
     selfCheckRunning: false,
   }));
 
   assert.match(html, /Run System Self-Check/);
+  assert.match(html, /Run Provider Smoke Test/);
+  assert.match(html, /Provider Health/);
+  assert.match(html, /AZURE_MAPS_API_KEY or BING_MAPS_API_KEY/);
   assert.match(html, /Safe internal audit/);
   assert.match(html, /never contacts prospects or changes outreach statuses/i);
   assert.match(html, /Needs attention/);
@@ -514,5 +526,8 @@ test("provider diagnostics remain visible for legacy jobs without provider detai
   assert.match(html, /Azure Maps/);
   assert.match(html, /Google Places/);
   assert.match(html, /Yelp/);
-  assert.equal((html.match(/Not recorded/g) ?? []).length, 12);
+  assert.match(html, /Not required/);
+  assert.match(html, /AZURE_MAPS_API_KEY or BING_MAPS_API_KEY/);
+  assert.match(html, /GOOGLE_PLACES_API_KEY/);
+  assert.match(html, /YELP_API_KEY/);
 });

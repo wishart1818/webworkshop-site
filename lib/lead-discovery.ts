@@ -54,6 +54,7 @@ export type DiscoverySourceCounts = Record<DiscoverySource, number>;
 export const discoveryProviders = ["osm", "azureMaps", "googlePlaces", "yelp"] as const;
 export type DiscoveryProvider = (typeof discoveryProviders)[number];
 export type DiscoveryProviderStatus = "not_recorded" | "not_configured" | "succeeded" | "failed" | "timed_out" | "zero_results" | "rate_limited";
+export type DiscoveryProviderFailureType = "none" | "not_configured" | "timeout" | "rate_limit" | "auth_failure" | "network_error" | "http_error" | "parse_error" | "query_error";
 export type DiscoveryProviderDiagnostic = {
   configured: boolean | null;
   queryExecuted: boolean | null;
@@ -64,8 +65,30 @@ export type DiscoveryProviderDiagnostic = {
   usableWebsiteCount: number;
   retryCount?: number;
   httpStatus?: number;
+  envVarName?: string;
+  envVarPresent?: boolean | null;
+  canRunWithoutApiKey?: boolean;
+  query?: string;
+  attemptedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  failureType?: DiscoveryProviderFailureType;
+  safeErrorMessage?: string;
 };
 export type DiscoveryProviderDiagnostics = Record<DiscoveryProvider, DiscoveryProviderDiagnostic>;
+export type DiscoveryProviderHealth = {
+  provider: DiscoveryProvider;
+  label: string;
+  enabled: boolean;
+  requiredEnvVarName: string;
+  envVarPresent: boolean | null;
+  canRunWithoutApiKey: boolean;
+  lastAttemptedQuery: string;
+  lastStatus: DiscoveryProviderStatus | "not_run";
+  lastHttpStatus: string;
+  lastSafeErrorMessage: string;
+  failureType: DiscoveryProviderFailureType | "none";
+};
 export type TradeDiscoveryDiagnostic = {
   trade: TradeCategory;
   status?: "completed" | "partial" | "skipped";
@@ -188,6 +211,69 @@ const signalsByTrade: Record<TradeCategory, TradeDiscoverySignals> = {
 
 const globalDiscovery = globalThis as typeof globalThis & { lastDiscoveryAt?: number };
 
+const discoveryProviderDefinitions: Record<DiscoveryProvider, {
+  label: string;
+  envVarName: string;
+  envVarNames: string[];
+  canRunWithoutApiKey: boolean;
+}> = {
+  osm: {
+    label: "OpenStreetMap",
+    envVarName: "Not required",
+    envVarNames: [],
+    canRunWithoutApiKey: true,
+  },
+  azureMaps: {
+    label: "Azure Maps",
+    envVarName: "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY",
+    envVarNames: ["AZURE_MAPS_API_KEY", "BING_MAPS_API_KEY"],
+    canRunWithoutApiKey: false,
+  },
+  googlePlaces: {
+    label: "Google Places",
+    envVarName: "GOOGLE_PLACES_API_KEY",
+    envVarNames: ["GOOGLE_PLACES_API_KEY"],
+    canRunWithoutApiKey: false,
+  },
+  yelp: {
+    label: "Yelp",
+    envVarName: "YELP_API_KEY",
+    envVarNames: ["YELP_API_KEY"],
+    canRunWithoutApiKey: false,
+  },
+};
+
+function providerEnvPresent(provider: DiscoveryProvider, env: NodeJS.ProcessEnv = process.env) {
+  const definition = discoveryProviderDefinitions[provider];
+  if (definition.canRunWithoutApiKey) return null;
+  return definition.envVarNames.some((name) => Boolean(env[name]?.trim()));
+}
+
+export function discoveryProviderHealth(
+  diagnostics?: Partial<DiscoveryProviderDiagnostics> | null,
+  env: NodeJS.ProcessEnv = process.env,
+): DiscoveryProviderHealth[] {
+  return discoveryProviders.map((provider) => {
+    const definition = discoveryProviderDefinitions[provider];
+    const diagnostic = diagnostics?.[provider];
+    const envVarPresent = diagnostic?.envVarPresent ?? providerEnvPresent(provider, env);
+    const enabled = definition.canRunWithoutApiKey || envVarPresent === true || diagnostic?.configured === true;
+    return {
+      provider,
+      label: definition.label,
+      enabled,
+      requiredEnvVarName: definition.envVarName,
+      envVarPresent,
+      canRunWithoutApiKey: definition.canRunWithoutApiKey,
+      lastAttemptedQuery: diagnostic?.query ?? "Not run",
+      lastStatus: diagnostic?.status ?? "not_run",
+      lastHttpStatus: diagnostic?.httpStatus ? String(diagnostic.httpStatus) : diagnostic?.failureType === "timeout" ? "timeout" : diagnostic?.failureType === "network_error" ? "network error" : "None",
+      lastSafeErrorMessage: diagnostic?.safeErrorMessage ?? "No provider attempt recorded yet.",
+      failureType: diagnostic?.failureType ?? "none",
+    };
+  });
+}
+
 function providerDelayMs() {
   const configured = Number(process.env.DISCOVERY_PROVIDER_DELAY_MS);
   return Number.isFinite(configured) && configured >= 0 ? Math.min(2_000, configured) : 250;
@@ -223,6 +309,27 @@ async function fetchWithBackoff(
     await new Promise((resolve) => setTimeout(resolve, retryAfterMs(response, providerDelayMs() * (attempt + 2))));
   }
   throw new Error("unreachable");
+}
+
+function providerFailureTypeFromStatus(status: number): DiscoveryProviderFailureType {
+  if (status === 429) return "rate_limit";
+  if (status === 401 || status === 403) return "auth_failure";
+  return "http_error";
+}
+
+function safeProviderHttpMessage(status: number) {
+  if (status === 401 || status === 403) return `Provider authentication failed with HTTP ${status}. Check the configured API key and provider permissions.`;
+  if (status === 429) return "Provider rate limit reached with HTTP 429. Wait before retrying or reduce request load.";
+  return `Provider returned HTTP ${status}.`;
+}
+
+function providerAttemptTiming(startedAt: number) {
+  const finishedAt = Date.now();
+  return {
+    attemptedAt: new Date(startedAt).toISOString(),
+    finishedAt: new Date(finishedAt).toISOString(),
+    durationMs: finishedAt - startedAt,
+  };
 }
 
 function normalizeWebsite(value: string) {
@@ -296,7 +403,7 @@ function providerDiagnostic(
   queryExecuted: boolean | null,
   status: DiscoveryProviderStatus,
   returnedCount = 0,
-  extra: Partial<Pick<DiscoveryProviderDiagnostic, "retryCount" | "httpStatus">> = {},
+  extra: Partial<Pick<DiscoveryProviderDiagnostic, "retryCount" | "httpStatus" | "envVarName" | "envVarPresent" | "canRunWithoutApiKey" | "query" | "attemptedAt" | "finishedAt" | "durationMs" | "failureType" | "safeErrorMessage">> = {},
 ): DiscoveryProviderDiagnostic {
   return {
     configured,
@@ -308,15 +415,33 @@ function providerDiagnostic(
     usableWebsiteCount: 0,
     ...(extra.retryCount ? { retryCount: extra.retryCount } : {}),
     ...(extra.httpStatus ? { httpStatus: extra.httpStatus } : {}),
+    ...(extra.envVarName ? { envVarName: extra.envVarName } : {}),
+    ...(typeof extra.envVarPresent === "boolean" || extra.envVarPresent === null ? { envVarPresent: extra.envVarPresent } : {}),
+    ...(typeof extra.canRunWithoutApiKey === "boolean" ? { canRunWithoutApiKey: extra.canRunWithoutApiKey } : {}),
+    ...(extra.query ? { query: extra.query } : {}),
+    ...(extra.attemptedAt ? { attemptedAt: extra.attemptedAt } : {}),
+    ...(extra.finishedAt ? { finishedAt: extra.finishedAt } : {}),
+    ...(finiteNumber(extra.durationMs) ? { durationMs: finiteNumber(extra.durationMs) } : {}),
+    ...(extra.failureType && extra.failureType !== "none" ? { failureType: extra.failureType } : {}),
+    ...(extra.safeErrorMessage ? { safeErrorMessage: extra.safeErrorMessage } : {}),
   };
 }
 
 function emptyProviderDiagnostics(): DiscoveryProviderDiagnostics {
   return {
-    osm: providerDiagnostic(true, false, "zero_results"),
-    azureMaps: providerDiagnostic(false, false, "not_configured"),
-    googlePlaces: providerDiagnostic(false, false, "not_configured"),
-    yelp: providerDiagnostic(false, false, "not_configured"),
+    osm: providerDiagnostic(true, false, "zero_results", 0, providerStaticDiagnostic("osm")),
+    azureMaps: providerDiagnostic(false, false, "not_configured", 0, providerStaticDiagnostic("azureMaps")),
+    googlePlaces: providerDiagnostic(false, false, "not_configured", 0, providerStaticDiagnostic("googlePlaces")),
+    yelp: providerDiagnostic(false, false, "not_configured", 0, providerStaticDiagnostic("yelp")),
+  };
+}
+
+function providerStaticDiagnostic(provider: DiscoveryProvider): Pick<DiscoveryProviderDiagnostic, "envVarName" | "envVarPresent" | "canRunWithoutApiKey"> {
+  const definition = discoveryProviderDefinitions[provider];
+  return {
+    envVarName: definition.envVarName,
+    envVarPresent: providerEnvPresent(provider),
+    canRunWithoutApiKey: definition.canRunWithoutApiKey,
   };
 }
 
@@ -339,6 +464,7 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
     const validStatus = item?.status && ["not_recorded", "not_configured", "succeeded", "failed", "timed_out", "zero_results", "rate_limited"].includes(item.status)
       ? item.status as DiscoveryProviderStatus
       : fallback[provider].status;
+    const staticDiagnostic = providerStaticDiagnostic(provider);
     return [provider, {
       configured: typeof item?.configured === "boolean" || item?.configured === null ? item.configured : fallback[provider].configured,
       queryExecuted: typeof item?.queryExecuted === "boolean" || item?.queryExecuted === null ? item.queryExecuted : fallback[provider].queryExecuted,
@@ -349,6 +475,17 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
       usableWebsiteCount: finiteNumber(item?.usableWebsiteCount) ?? fallback[provider].usableWebsiteCount,
       ...(finiteNumber(item?.retryCount) ? { retryCount: finiteNumber(item?.retryCount) } : {}),
       ...(finiteNumber(item?.httpStatus) ? { httpStatus: finiteNumber(item?.httpStatus) } : {}),
+      envVarName: typeof item?.envVarName === "string" && item.envVarName ? item.envVarName : staticDiagnostic.envVarName,
+      envVarPresent: typeof item?.envVarPresent === "boolean" || item?.envVarPresent === null ? item.envVarPresent : staticDiagnostic.envVarPresent,
+      canRunWithoutApiKey: typeof item?.canRunWithoutApiKey === "boolean" ? item.canRunWithoutApiKey : staticDiagnostic.canRunWithoutApiKey,
+      ...(typeof item?.query === "string" && item.query ? { query: item.query } : {}),
+      ...(typeof item?.attemptedAt === "string" && item.attemptedAt ? { attemptedAt: item.attemptedAt } : {}),
+      ...(typeof item?.finishedAt === "string" && item.finishedAt ? { finishedAt: item.finishedAt } : {}),
+      ...(finiteNumber(item?.durationMs) ? { durationMs: finiteNumber(item?.durationMs) } : {}),
+      ...(item?.failureType && ["not_configured", "timeout", "rate_limit", "auth_failure", "network_error", "http_error", "parse_error", "query_error"].includes(item.failureType)
+        ? { failureType: item.failureType as DiscoveryProviderFailureType }
+        : {}),
+      ...(typeof item?.safeErrorMessage === "string" && item.safeErrorMessage ? { safeErrorMessage: item.safeErrorMessage } : {}),
     }];
   })) as DiscoveryProviderDiagnostics;
 }
@@ -707,6 +844,15 @@ export function mergeDiscoveryCandidates(input: {
       usableWebsiteCount: diagnostic.usableWebsiteCount,
       retryCount: diagnostic.retryCount ?? 0,
       httpStatus: diagnostic.httpStatus ?? 0,
+      envVarName: diagnostic.envVarName ?? discoveryProviderDefinitions[provider].envVarName,
+      envVarPresent: diagnostic.envVarPresent ?? "not_required",
+      canRunWithoutApiKey: diagnostic.canRunWithoutApiKey ?? discoveryProviderDefinitions[provider].canRunWithoutApiKey,
+      query: diagnostic.query ?? "",
+      attemptedAt: diagnostic.attemptedAt ?? "",
+      finishedAt: diagnostic.finishedAt ?? "",
+      durationMs: diagnostic.durationMs ?? 0,
+      failureType: diagnostic.failureType ?? "none",
+      safeErrorMessage: diagnostic.safeErrorMessage ?? "",
     });
   }
 
@@ -944,6 +1090,7 @@ function parseLicensedDirectory(value: unknown): DiscoveryCandidate[] {
 
 async function optionalProviderCandidates(input: {
   source: Exclude<DiscoverySource, "osm">;
+  provider?: Extract<DiscoveryProvider, "azureMaps" | "googlePlaces" | "yelp">;
   configured: boolean;
   url: string;
   init?: RequestInit;
@@ -951,19 +1098,35 @@ async function optionalProviderCandidates(input: {
   returnedCount?: (value: unknown) => number;
   logger?: DiscoveryLogger;
   radiusKm: number;
+  query: string;
 }): Promise<{ candidates: DiscoveryCandidate[]; diagnostic: DiscoveryProviderDiagnostic }> {
-  if (!input.configured) return { candidates: [], diagnostic: providerDiagnostic(false, false, "not_configured") };
-  input.logger?.("provider_queried", { queryKind: input.source, radiusKm: input.radiusKm });
+  const staticDiagnostic = input.provider ? providerStaticDiagnostic(input.provider) : {};
+  const providerLabel = input.provider ? discoveryProviderDefinitions[input.provider].envVarName : "Provider configuration";
+  if (!input.configured) {
+    return {
+      candidates: [],
+      diagnostic: providerDiagnostic(false, false, "not_configured", 0, {
+        ...staticDiagnostic,
+        query: input.query,
+        failureType: "not_configured",
+        safeErrorMessage: `${providerLabel} is not configured.`,
+      }),
+    };
+  }
+  const startedAt = Date.now();
+  input.logger?.("provider_queried", { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, radiusKm: input.radiusKm, requestStartedAt: new Date(startedAt).toISOString() });
   try {
     await delayProviderRequest();
     const { response, retryCount } = await fetchWithBackoff(
       input.url,
       { ...input.init, signal: AbortSignal.timeout(12_000) },
       input.logger,
-      { queryKind: input.source, radiusKm: input.radiusKm },
+      { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, radiusKm: input.radiusKm },
     );
+    const timing = providerAttemptTiming(startedAt);
     if (!response.ok) {
-      input.logger?.("provider_enrichment_failed", { queryKind: input.source, status: response.status });
+      const failureType = providerFailureTypeFromStatus(response.status);
+      input.logger?.("provider_enrichment_failed", { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, status: response.status, reason: failureType, durationMs: timing.durationMs });
       return {
         candidates: [],
         diagnostic: providerDiagnostic(
@@ -971,22 +1134,47 @@ async function optionalProviderCandidates(input: {
           true,
           response.status === 429 ? "rate_limited" : "failed",
           0,
-          { retryCount, httpStatus: response.status },
+          {
+            ...staticDiagnostic,
+            ...timing,
+            retryCount,
+            httpStatus: response.status,
+            query: input.query,
+            failureType,
+            safeErrorMessage: safeProviderHttpMessage(response.status),
+          },
         ),
       };
     }
     const payload = await response.json();
     const candidates = input.parse(payload);
     const returnedCount = input.returnedCount?.(payload) ?? candidates.length;
-    input.logger?.("provider_returned_count", { queryKind: input.source, rawProviderCount: returnedCount });
+    input.logger?.("provider_returned_count", { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, rawProviderCount: returnedCount, durationMs: timing.durationMs });
     return {
       candidates,
-      diagnostic: providerDiagnostic(true, true, returnedCount ? "succeeded" : "zero_results", returnedCount, { retryCount }),
+      diagnostic: providerDiagnostic(true, true, returnedCount ? "succeeded" : "zero_results", returnedCount, {
+        ...staticDiagnostic,
+        ...timing,
+        retryCount,
+        query: input.query,
+        failureType: "none",
+        safeErrorMessage: returnedCount ? "Provider query completed." : "Provider query completed but returned no records.",
+      }),
     };
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "TimeoutError";
-    input.logger?.("provider_enrichment_failed", { queryKind: input.source, reason: timedOut ? "timed_out" : "request_failed" });
-    return { candidates: [], diagnostic: providerDiagnostic(true, true, timedOut ? "timed_out" : "failed") };
+    const timing = providerAttemptTiming(startedAt);
+    input.logger?.("provider_enrichment_failed", { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, reason: timedOut ? "timed_out" : "request_failed", durationMs: timing.durationMs });
+    return {
+      candidates: [],
+      diagnostic: providerDiagnostic(true, true, timedOut ? "timed_out" : "failed", 0, {
+        ...staticDiagnostic,
+        ...timing,
+        query: input.query,
+        failureType: timedOut ? "timeout" : "network_error",
+        safeErrorMessage: timedOut ? "Provider request timed out." : "Provider request failed before a response was returned.",
+      }),
+    };
   }
 }
 
@@ -1061,8 +1249,11 @@ export async function discoverContractorsWithDiagnostics(input: {
 
   const radiusMeters = input.radiusKm * 1_000;
   const queries = buildTradeDiscoveryQueries(trade, radiusMeters, latitude, longitude);
-  async function providerElements(query: string, queryKind: "primary" | "enrichment", required: boolean) {
-    input.logger?.("provider_queried", { queryKind, radiusKm: input.radiusKm });
+  async function providerElements(query: string, queryKind: "primary" | "enrichment") {
+    const staticDiagnostic = providerStaticDiagnostic("osm");
+    const startedAt = Date.now();
+    const queryLabel = `${trade} ${city} ${displayStateCode(input.state)} (${queryKind})`;
+    input.logger?.("provider_queried", { provider: "osm", queryKind, query: queryLabel, radiusKm: input.radiusKm, requestStartedAt: new Date(startedAt).toISOString() });
     let discoveryResponse: Response;
     let retryCount = 0;
     try {
@@ -1072,68 +1263,86 @@ export async function discoverContractorsWithDiagnostics(input: {
         {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ data: query }),
-          signal: AbortSignal.timeout(required ? 22_000 : 10_000),
+          body: new URLSearchParams({ data: query }).toString(),
+          signal: AbortSignal.timeout(queryKind === "primary" ? 22_000 : 10_000),
         },
         input.logger,
-        { queryKind, radiusKm: input.radiusKm },
+        { provider: "osm", queryKind, query: queryLabel, radiusKm: input.radiusKm },
       );
       discoveryResponse = result.response;
       retryCount = result.retryCount;
     } catch (error) {
-      if (!required) {
-        input.logger?.("provider_enrichment_failed", { queryKind, reason: "request_failed" });
-        return { elements: [], diagnostic: providerDiagnostic(true, true, "failed") };
-      }
-      throw new TopProspectStageError(
-        "discovery_provider_error",
-        error instanceof DOMException && error.name === "TimeoutError"
-          ? "The public business discovery provider timed out before returning candidates."
-          : "The public business discovery provider could not be reached.",
-        { cause: error },
-      );
+      const timedOut = error instanceof Error && error.name === "TimeoutError";
+      const timing = providerAttemptTiming(startedAt);
+      input.logger?.("provider_enrichment_failed", { provider: "osm", queryKind, query: queryLabel, reason: timedOut ? "timed_out" : "request_failed", durationMs: timing.durationMs });
+      return {
+        elements: [],
+        diagnostic: providerDiagnostic(true, true, timedOut ? "timed_out" : "failed", 0, {
+          ...staticDiagnostic,
+          ...timing,
+          query: queryLabel,
+          failureType: timedOut ? "timeout" : "network_error",
+          safeErrorMessage: timedOut
+            ? "OpenStreetMap/Overpass timed out before returning candidates."
+            : "OpenStreetMap/Overpass could not be reached.",
+        }),
+      };
     }
+    const timing = providerAttemptTiming(startedAt);
     if (!discoveryResponse.ok) {
-      if (!required) {
-        input.logger?.("provider_enrichment_failed", { queryKind, status: discoveryResponse.status });
-        return {
-          elements: [],
-          diagnostic: providerDiagnostic(
-            true,
-            true,
-            discoveryResponse.status === 429 ? "rate_limited" : "failed",
-            0,
-            { retryCount, httpStatus: discoveryResponse.status },
-          ),
-        };
-      }
-      throw new TopProspectStageError(
-        "discovery_provider_error",
-        `The public business discovery provider returned HTTP ${discoveryResponse.status}.`,
-      );
+      const failureType = providerFailureTypeFromStatus(discoveryResponse.status);
+      input.logger?.("provider_enrichment_failed", { provider: "osm", queryKind, query: queryLabel, status: discoveryResponse.status, reason: failureType, durationMs: timing.durationMs });
+      return {
+        elements: [],
+        diagnostic: providerDiagnostic(
+          true,
+          true,
+          discoveryResponse.status === 429 ? "rate_limited" : "failed",
+          0,
+          {
+            ...staticDiagnostic,
+            ...timing,
+            retryCount,
+            httpStatus: discoveryResponse.status,
+            query: queryLabel,
+            failureType,
+            safeErrorMessage: safeProviderHttpMessage(discoveryResponse.status),
+          },
+        ),
+      };
     }
     try {
       const payload = (await discoveryResponse.json()) as { elements?: OverpassElement[] };
       const elements = payload.elements ?? [];
-      input.logger?.("provider_returned_count", { queryKind, rawProviderCount: elements.length });
+      input.logger?.("provider_returned_count", { provider: "osm", queryKind, query: queryLabel, rawProviderCount: elements.length, durationMs: timing.durationMs });
       return {
         elements,
-        diagnostic: providerDiagnostic(true, true, elements.length ? "succeeded" : "zero_results", elements.length, { retryCount }),
+        diagnostic: providerDiagnostic(true, true, elements.length ? "succeeded" : "zero_results", elements.length, {
+          ...staticDiagnostic,
+          ...timing,
+          retryCount,
+          query: queryLabel,
+          failureType: "none",
+          safeErrorMessage: elements.length ? "OpenStreetMap/Overpass query completed." : "OpenStreetMap/Overpass query completed but returned no records.",
+        }),
       };
-    } catch (error) {
-      if (!required) {
-        input.logger?.("provider_enrichment_failed", { queryKind, reason: "unreadable_response" });
-        return { elements: [], diagnostic: providerDiagnostic(true, true, "failed", 0, { retryCount }) };
-      }
-      throw new TopProspectStageError(
-        "discovery_provider_error",
-        "The public business discovery provider returned an unreadable response.",
-        { cause: error },
-      );
+    } catch {
+      input.logger?.("provider_enrichment_failed", { provider: "osm", queryKind, query: queryLabel, reason: "unreadable_response", durationMs: timing.durationMs });
+      return {
+        elements: [],
+        diagnostic: providerDiagnostic(true, true, "failed", 0, {
+          ...staticDiagnostic,
+          ...timing,
+          retryCount,
+          query: queryLabel,
+          failureType: "parse_error",
+          safeErrorMessage: "OpenStreetMap/Overpass returned an unreadable response.",
+        }),
+      };
     }
   }
 
-  const primaryResult = await providerElements(queries.primary, "primary", true);
+  const primaryResult = await providerElements(queries.primary, "primary");
   const googleKey = process.env.GOOGLE_PLACES_API_KEY?.trim() ?? "";
   const azureMapsKey = process.env.AZURE_MAPS_API_KEY?.trim() ?? "";
   const bingKey = process.env.BING_MAPS_API_KEY?.trim() ?? "";
@@ -1148,10 +1357,12 @@ export async function discoverContractorsWithDiagnostics(input: {
   yellowUrl?.searchParams.set("limit", String(limit));
 
   const googleUrl = process.env.GOOGLE_PLACES_API_URL?.trim() || "https://places.googleapis.com/v1/places:searchText";
+  const googleQuery = `${trade} near ${city}, ${displayStateCode(input.state)}`;
   const bingUrl = azureMapsKey
     ? providerUrl(process.env.AZURE_MAPS_POI_API_URL, "https://atlas.microsoft.com/search/poi/json")
     : providerUrl(process.env.BING_LOCAL_API_URL, "https://dev.virtualearth.net/REST/v1/LocalSearch/");
-  bingUrl?.searchParams.set("query", `${trade} near ${city}, ${displayStateCode(input.state)}`);
+  const bingQuery = `${trade} near ${city}, ${displayStateCode(input.state)}`;
+  bingUrl?.searchParams.set("query", bingQuery);
   if (azureMapsKey) {
     bingUrl?.searchParams.set("api-version", "1.0");
     bingUrl?.searchParams.set("subscription-key", azureMapsKey);
@@ -1165,6 +1376,7 @@ export async function discoverContractorsWithDiagnostics(input: {
     if (bingKey) bingUrl?.searchParams.set("key", bingKey);
   }
   const yelpUrl = providerUrl(process.env.YELP_API_URL, "https://api.yelp.com/v3/businesses/search");
+  const yelpQuery = `${trade} ${city}, ${displayStateCode(input.state)}`;
   yelpUrl?.searchParams.set("term", trade);
   yelpUrl?.searchParams.set("latitude", String(latitude));
   yelpUrl?.searchParams.set("longitude", String(longitude));
@@ -1172,10 +1384,11 @@ export async function discoverContractorsWithDiagnostics(input: {
   yelpUrl?.searchParams.set("limit", String(Math.min(50, limit)));
 
   const enrichmentResult = queries.enrichment
-    ? await providerElements(queries.enrichment, "enrichment", false)
-    : { elements: [], diagnostic: providerDiagnostic(true, false, "not_recorded") };
+    ? await providerElements(queries.enrichment, "enrichment")
+    : { elements: [], diagnostic: providerDiagnostic(true, false, "not_recorded", 0, providerStaticDiagnostic("osm")) };
   const googleResult = await optionalProviderCandidates({
       source: "google",
+      provider: "googlePlaces",
       configured: Boolean(googleKey),
       url: googleUrl,
       init: {
@@ -1187,7 +1400,7 @@ export async function discoverContractorsWithDiagnostics(input: {
           "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.formattedAddress,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
         },
         body: JSON.stringify({
-          textQuery: `${trade} near ${city}, ${displayStateCode(input.state)}`,
+          textQuery: googleQuery,
           pageSize: Math.min(20, limit),
           includePureServiceAreaBusinesses: true,
           locationBias: { circle: { center: { latitude, longitude }, radius: Math.min(50_000, radiusMeters) } },
@@ -1197,9 +1410,11 @@ export async function discoverContractorsWithDiagnostics(input: {
       returnedCount: (value) => Array.isArray((value as { places?: unknown[] }).places) ? (value as { places: unknown[] }).places.length : 0,
       logger: input.logger,
       radiusKm: input.radiusKm,
+      query: googleQuery,
     });
   const bingResult = await optionalProviderCandidates({
       source: "bing",
+      provider: "azureMaps",
       configured: Boolean(azureMapsKey || bingKey),
       url: bingUrl?.href ?? "https://invalid.local",
       init: { headers },
@@ -1211,9 +1426,11 @@ export async function discoverContractorsWithDiagnostics(input: {
       },
       logger: input.logger,
       radiusKm: input.radiusKm,
+      query: bingQuery,
     });
   const yelpResult = await optionalProviderCandidates({
       source: "yelp",
+      provider: "yelp",
       configured: Boolean(yelpKey),
       url: yelpUrl?.href ?? "https://invalid.local",
       init: { headers: { ...headers, Authorization: `Bearer ${yelpKey}` } },
@@ -1221,6 +1438,7 @@ export async function discoverContractorsWithDiagnostics(input: {
       returnedCount: (value) => Array.isArray((value as { businesses?: unknown[] }).businesses) ? (value as { businesses: unknown[] }).businesses.length : 0,
       logger: input.logger,
       radiusKm: input.radiusKm,
+      query: yelpQuery,
     });
   const yellowPagesResult = await optionalProviderCandidates({
       source: "yellowPages",
@@ -1230,6 +1448,7 @@ export async function discoverContractorsWithDiagnostics(input: {
       parse: parseLicensedDirectory,
       logger: input.logger,
       radiusKm: input.radiusKm,
+      query: `${trade} ${city}, ${displayStateCode(input.state)}`,
     });
   const google = googleResult.candidates;
   const bing = bingResult.candidates;
@@ -1244,21 +1463,30 @@ export async function discoverContractorsWithDiagnostics(input: {
   sourceCounts.bing = bing.length;
   sourceCounts.yelp = yelp.length;
   sourceCounts.yellowPages = yellowPages.length;
+  const osmProblem = [primaryResult.diagnostic, enrichmentResult.diagnostic].find((diagnostic) => ["failed", "timed_out", "rate_limited"].includes(diagnostic.status));
+  const osmZero = [primaryResult.diagnostic, enrichmentResult.diagnostic].some((diagnostic) => diagnostic.status === "zero_results");
   const providerDiagnostics: DiscoveryProviderDiagnostics = {
-    osm: providerDiagnostic(
-      true,
-      true,
-      elements.length
-        ? "succeeded"
-        : primaryResult.diagnostic.status === "rate_limited" || enrichmentResult.diagnostic.status === "rate_limited"
-          ? "rate_limited"
-          : "zero_results",
-      elements.length,
-      {
-        retryCount: (primaryResult.diagnostic.retryCount ?? 0) + (enrichmentResult.diagnostic.retryCount ?? 0),
-        httpStatus: primaryResult.diagnostic.httpStatus ?? enrichmentResult.diagnostic.httpStatus,
-      },
-    ),
+    osm: {
+      ...providerDiagnostic(
+        true,
+        true,
+        elements.length ? "succeeded" : osmProblem?.status ?? (osmZero ? "zero_results" : "not_recorded"),
+        elements.length,
+        {
+          ...providerStaticDiagnostic("osm"),
+          retryCount: (primaryResult.diagnostic.retryCount ?? 0) + (enrichmentResult.diagnostic.retryCount ?? 0),
+          httpStatus: primaryResult.diagnostic.httpStatus ?? enrichmentResult.diagnostic.httpStatus,
+        },
+      ),
+      query: primaryResult.diagnostic.query ?? enrichmentResult.diagnostic.query,
+      attemptedAt: primaryResult.diagnostic.attemptedAt ?? enrichmentResult.diagnostic.attemptedAt,
+      finishedAt: primaryResult.diagnostic.finishedAt ?? enrichmentResult.diagnostic.finishedAt,
+      durationMs: (primaryResult.diagnostic.durationMs ?? 0) + (enrichmentResult.diagnostic.durationMs ?? 0) || undefined,
+      failureType: osmProblem?.failureType ?? (elements.length ? "none" : undefined),
+      safeErrorMessage: elements.length
+        ? "OpenStreetMap/Overpass query completed."
+        : osmProblem?.safeErrorMessage ?? "OpenStreetMap/Overpass query completed but returned no records.",
+    },
     azureMaps: azureMapsKey
       ? bingResult.diagnostic
       : providerDiagnostic(false, false, "not_configured"),

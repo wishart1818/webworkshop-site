@@ -1,5 +1,5 @@
 import React from "react";
-import type { DiscoveryDiagnostics, DiscoveryProvider, DiscoveryProviderStatus } from "@/lib/lead-discovery";
+import type { DiscoveryDiagnostics, DiscoveryProvider, DiscoveryProviderDiagnostic, DiscoveryProviderStatus } from "@/lib/lead-discovery";
 
 const providerLabels: Record<DiscoveryProvider, string> = {
   osm: "OpenStreetMap",
@@ -18,6 +18,13 @@ const statusLabels: Record<DiscoveryProviderStatus, string> = {
   rate_limited: "Rate limited",
 };
 
+const providerEnvLabels: Record<DiscoveryProvider, string> = {
+  osm: "Not required",
+  azureMaps: "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY",
+  googlePlaces: "GOOGLE_PLACES_API_KEY",
+  yelp: "YELP_API_KEY",
+};
+
 const notRecorded = {
   configured: null,
   queryExecuted: null,
@@ -29,7 +36,13 @@ const notRecorded = {
 } as const;
 
 export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable websites" }: { diagnostics: DiscoveryDiagnostics; qualificationLabel?: string }) {
-  const booleanLabel = (value: boolean | null) => value === null ? "Not recorded" : value ? "Yes" : "No";
+  const booleanLabel = (value: boolean | null | undefined) => value === null || value === undefined ? "Not recorded" : value ? "Yes" : "No";
+  const canRunWithoutApiKey = (provider: DiscoveryProvider, diagnostic: DiscoveryProviderDiagnostic) => diagnostic.canRunWithoutApiKey ?? provider === "osm";
+  const keyLabel = (provider: DiscoveryProvider, diagnostic: DiscoveryProviderDiagnostic) => canRunWithoutApiKey(provider, diagnostic) ? "Not required" : booleanLabel(diagnostic.envVarPresent ?? diagnostic.configured);
+  const httpLabel = (diagnostic: DiscoveryProviderDiagnostic) => diagnostic.httpStatus ? String(diagnostic.httpStatus) : diagnostic.failureType === "timeout" ? "timeout" : diagnostic.failureType === "network_error" ? "network error" : "None";
+  const providerNames = (providers: string[] | undefined) => providers?.length
+    ? providers.map((provider) => providerLabels[provider as DiscoveryProvider] ?? provider).join(", ")
+    : "Not attempted";
   return (
     <section className="engine-discovery-diagnostics" aria-label="Discovery diagnostics">
       <div className="engine-discovery-funnel">
@@ -50,14 +63,20 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
                 <span className={`engine-provider-status engine-provider-status--${diagnostic.status}`}>{statusLabels[diagnostic.status]}</span>
               </header>
               <dl>
-                <div><dt>API key configured</dt><dd>{booleanLabel(diagnostic.configured)}</dd></div>
-                <div><dt>Query executed</dt><dd>{booleanLabel(diagnostic.queryExecuted)}</dd></div>
+                <div><dt>Enabled</dt><dd>{canRunWithoutApiKey(provider, diagnostic) || diagnostic.configured ? "Yes" : "No"}</dd></div>
+                <div><dt>Required env var</dt><dd>{diagnostic.envVarName ?? providerEnvLabels[provider]}</dd></div>
+                <div><dt>Env var present</dt><dd>{keyLabel(provider, diagnostic)}</dd></div>
+                <div><dt>Can run without API key</dt><dd>{canRunWithoutApiKey(provider, diagnostic) ? "Yes" : "No"}</dd></div>
+                <div><dt>Query executed</dt><dd>{diagnostic.query ?? booleanLabel(diagnostic.queryExecuted)}</dd></div>
                 <div><dt>Raw records</dt><dd>{diagnostic.returnedCount}</dd></div>
                 <div><dt>Within radius</dt><dd>{diagnostic.withinRadiusCount}</dd></div>
                 <div><dt>After deduplication</dt><dd>{diagnostic.afterDeduplicationCount}</dd></div>
                 <div><dt>Usable websites</dt><dd>{diagnostic.usableWebsiteCount}</dd></div>
                 <div><dt>Retries</dt><dd>{diagnostic.retryCount ?? 0}</dd></div>
-                <div><dt>HTTP status</dt><dd>{diagnostic.httpStatus ?? "None"}</dd></div>
+                <div><dt>HTTP status</dt><dd>{httpLabel(diagnostic)}</dd></div>
+                <div><dt>Duration</dt><dd>{diagnostic.durationMs ? `${diagnostic.durationMs} ms` : "Not recorded"}</dd></div>
+                <div><dt>Failure type</dt><dd>{diagnostic.failureType?.replaceAll("_", " ") ?? "none"}</dd></div>
+                <div><dt>Safe message</dt><dd>{diagnostic.safeErrorMessage ?? "No provider error recorded."}</dd></div>
               </dl>
             </article>
           );
@@ -92,7 +111,7 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
                 <strong>{city.label}</strong>
                 <span>{city.status}</span>
                 <span>{city.requestedCount}</span>
-                <span>{city.providersAttempted?.length ? city.providersAttempted.join(", ") : "None"}</span>
+                <span>{providerNames(city.providersAttempted)}</span>
                 <span>{city.rawProviderCount}</span>
                 <span>{city.usableWebsiteCount}</span>
                 <span>{city.skippedCount ?? Math.max(0, city.afterDeduplicationCount - city.returnedCount)}</span>

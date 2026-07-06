@@ -657,7 +657,8 @@ test("zero-qualified runs explain provider, supplier, directory, and contact-pat
   });
 
   assert.match(recommendations.join(" "), /suppliers|directories|mismatched/i);
-  assert.match(recommendations.join(" "), /Provider coverage was weak/i);
+  assert.match(recommendations.join(" "), /All attempted discovery providers failed/i);
+  assert.doesNotMatch(recommendations.join(" "), /Increase scan count/i);
   assert.match(recommendations.join(" "), /written contact path|Manual DM/i);
 });
 

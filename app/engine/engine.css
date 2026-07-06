@@ -1829,6 +1829,66 @@ body:has(.engine-shell) {
   font-weight: 800;
 }
 
+.engine-provider-health {
+  display: grid;
+  gap: 1rem;
+}
+
+.engine-provider-health-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.engine-provider-health-grid article,
+.engine-provider-smoke-result {
+  border: 1px solid var(--engine-line);
+  background: white;
+  padding: 1rem;
+}
+
+.engine-provider-health-grid header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.engine-provider-health-grid header span {
+  border: 1px solid var(--engine-line);
+  padding: 0.25rem 0.5rem;
+  color: var(--engine-muted);
+  font-size: 0.82rem;
+}
+
+.engine-provider-health-grid dl {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.engine-provider-health-grid dl div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.engine-provider-health-grid dt {
+  color: var(--engine-muted);
+  font-size: 0.78rem;
+}
+
+.engine-provider-health-grid dd {
+  margin: 0;
+  color: var(--engine-ink);
+  overflow-wrap: anywhere;
+}
+
+.engine-provider-smoke-result {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .engine-trade-diagnostics {
   border-top: 1px solid var(--engine-line);
   background: white;

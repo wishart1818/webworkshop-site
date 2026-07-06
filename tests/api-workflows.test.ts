@@ -5,6 +5,7 @@ import { POST as discover } from "../app/api/engine/discover/route";
 import { GET as list, POST as create, PUT as update } from "../app/api/engine/prospects/route";
 import { GET as systemStatus } from "../app/api/engine/system/route";
 import { GET as latestSelfCheck, POST as runSelfCheck } from "../app/api/engine/system/self-check/route";
+import { POST as providerSmokeTest } from "../app/api/engine/system/provider-smoke-test/route";
 import { GET as autonomousDashboard, POST as autonomousAction } from "../app/api/engine/autonomous-growth/route";
 import { POST as updateOutreachPackage } from "../app/api/engine/top-prospects/results/[resultId]/package/route";
 import {
@@ -55,6 +56,31 @@ test("system self-check route stores a safe report for the System page", async (
   const system = await systemStatus();
   const systemPayload = await system.json();
   assert.equal(systemPayload.selfCheck.lastRunAt, runPayload.selfCheck.lastRunAt);
+});
+
+test("provider smoke test returns diagnostics without creating outreach packages", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("nominatim")) return new Response(JSON.stringify([{ lat: "27.9506", lon: "-82.4572" }]), { status: 200 });
+      if (url.includes("overpass")) return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+      return new Response("not configured in smoke fixture", { status: 503 });
+    };
+    resetDiscoveryThrottleForTests();
+    const response = await providerSmokeTest();
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.smokeTest.query, "Pressure Washing near Tampa, FL");
+    assert.equal(payload.smokeTest.createdOutreachPackages, false);
+    assert.equal(payload.smokeTest.sentOutreach, false);
+    assert.equal(payload.smokeTest.diagnostics.providerDiagnostics.osm.canRunWithoutApiKey, true);
+    assert.equal(payload.smokeTest.diagnostics.providerDiagnostics.osm.queryExecuted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetDiscoveryThrottleForTests();
+  }
 });
 
 test("Autopilot dashboard actions start, report, and smoke-test without sending", async () => {

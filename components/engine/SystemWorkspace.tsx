@@ -1,12 +1,23 @@
 import React from "react";
+import type { DiscoveryDiagnostics, DiscoveryProviderHealth } from "@/lib/lead-discovery";
 import type { AuditEventView } from "@/lib/operational-controls";
 import type { SystemSelfCheckReport } from "@/lib/system-self-check";
+import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 
 export type SystemPayload = {
   status: "ready" | "blocked" | "development";
   checks: Record<string, { configured: boolean; reachable?: boolean; message: string }>;
   auditEvents: AuditEventView[];
   selfCheck?: SystemSelfCheckReport | null;
+  providerHealth?: DiscoveryProviderHealth[];
+};
+export type ProviderSmokeTestPayload = {
+  query: string;
+  createdOutreachPackages: boolean;
+  sentOutreach: boolean;
+  diagnostics: DiscoveryDiagnostics | null;
+  sampleCount: number;
+  safeError?: string;
 };
 
 type SystemWorkspaceProps = {
@@ -15,7 +26,10 @@ type SystemWorkspaceProps = {
   error: string;
   onRefresh: () => void;
   onRunSelfCheck: () => void;
+  onRunProviderSmokeTest: () => void;
   selfCheckRunning: boolean;
+  providerSmokeTestRunning: boolean;
+  providerSmokeTest: ProviderSmokeTestPayload | null;
 };
 
 function formatDate(value: string) {
@@ -31,7 +45,7 @@ function formatLabel(value: string) {
   return value.replaceAll("_", " ").replace(/^\w/, (character) => character.toUpperCase());
 }
 
-export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCheck, selfCheckRunning }: SystemWorkspaceProps) {
+export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCheck, onRunProviderSmokeTest, selfCheckRunning, providerSmokeTestRunning, providerSmokeTest }: SystemWorkspaceProps) {
   return (
     <div className="engine-content">
       <section className="engine-system-head">
@@ -52,6 +66,9 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
           </button>
           <button className="engine-button engine-button--primary" disabled={selfCheckRunning} onClick={onRunSelfCheck} type="button">
             {selfCheckRunning ? "Running self-check" : "Run System Self-Check"}
+          </button>
+          <button className="engine-button" disabled={providerSmokeTestRunning} onClick={onRunProviderSmokeTest} type="button">
+            {providerSmokeTestRunning ? "Running smoke test" : "Run Provider Smoke Test"}
           </button>
         </div>
       </section>
@@ -80,6 +97,7 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
               );
             })}
           </section>
+          <ProviderHealthPanel providerHealth={system.providerHealth ?? []} smokeTest={providerSmokeTest} />
           <SystemSelfCheckPanel report={system.selfCheck ?? null} running={selfCheckRunning} />
           <section className="engine-panel engine-audit-panel">
             <div className="engine-panel__head">
@@ -157,6 +175,55 @@ function SystemSelfCheckPanel({ report, running }: { report: SystemSelfCheckRepo
           <p>Run the System Self-Check to verify the full prospect, preview, outreach, Loom, autonomous, learning, and export workflow.</p>
         </div>
       )}
+    </section>
+  );
+}
+
+function providerHealthValue(value: boolean | null) {
+  if (value === null) return "Not required";
+  return value ? "Yes" : "No";
+}
+
+function ProviderHealthPanel({ providerHealth, smokeTest }: { providerHealth: DiscoveryProviderHealth[]; smokeTest: ProviderSmokeTestPayload | null }) {
+  return (
+    <section className="engine-panel engine-provider-health" aria-label="Provider health">
+      <div className="engine-panel__head">
+        <div>
+          <h2>Provider Health</h2>
+          <p>Secret-safe configuration and latest provider smoke-test diagnostics. No outreach packages are created and nothing is sent.</p>
+        </div>
+        <span>{providerHealth.filter((provider) => provider.enabled).length} enabled</span>
+      </div>
+      <div className="engine-provider-health-grid">
+        {providerHealth.map((provider) => (
+          <article key={provider.provider}>
+            <header>
+              <strong>{provider.label}</strong>
+              <span>{provider.lastStatus === "not_run" ? "Not run" : provider.lastStatus.replaceAll("_", " ")}</span>
+            </header>
+            <dl>
+              <div><dt>Enabled</dt><dd>{provider.enabled ? "Yes" : "No"}</dd></div>
+              <div><dt>Required env var</dt><dd>{provider.requiredEnvVarName}</dd></div>
+              <div><dt>Env var present</dt><dd>{providerHealthValue(provider.envVarPresent)}</dd></div>
+              <div><dt>Can run without API key</dt><dd>{provider.canRunWithoutApiKey ? "Yes" : "No"}</dd></div>
+              <div><dt>Last attempted query</dt><dd>{provider.lastAttemptedQuery}</dd></div>
+              <div><dt>Last HTTP status</dt><dd>{provider.lastHttpStatus}</dd></div>
+              <div><dt>Failure type</dt><dd>{provider.failureType.replaceAll("_", " ")}</dd></div>
+              <div><dt>Safe error</dt><dd>{provider.lastSafeErrorMessage}</dd></div>
+            </dl>
+          </article>
+        ))}
+      </div>
+      {smokeTest ? (
+        <div className="engine-provider-smoke-result">
+          <h3>Provider Smoke Test</h3>
+          <p>
+            Query: {smokeTest.query}. Samples returned: {smokeTest.sampleCount}. Outreach packages created: {smokeTest.createdOutreachPackages ? "Yes" : "No"}. Outreach sent: {smokeTest.sentOutreach ? "Yes" : "No"}.
+          </p>
+          {smokeTest.safeError ? <p role="status">{smokeTest.safeError}</p> : null}
+          {smokeTest.diagnostics ? <DiscoveryFunnel diagnostics={smokeTest.diagnostics} qualificationLabel="eligible smoke-test records" /> : null}
+        </div>
+      ) : null}
     </section>
   );
 }
