@@ -623,8 +623,27 @@ const autopilotActivityStatusLabels: Record<AutopilotActivityStatus, string> = {
   failed: "Failed",
   failed_to_start: "Failed to start",
   failed_during_discovery: "Failed during discovery",
+  timed_out_needs_attention: "Timed out / Needs attention",
   cancelled: "Cancelled / stopped",
 };
+
+const autopilotProviderStatusLabels: Record<string, string> = {
+  completed: "Completed",
+  failed: "Failed",
+  fake_only: "Fake only",
+  no_records: "No records returned",
+  not_attempted: "Not attempted",
+  not_configured: "Not configured",
+  not_recorded: "Not recorded",
+  partial_success: "Partial success",
+  running: "Running",
+  succeeded: "Completed",
+  timed_out: "Timed out",
+};
+
+function providerActivityStatusLabel(status: string) {
+  return autopilotProviderStatusLabels[status] ?? optionLabel(status);
+}
 
 const autopilotMarketPickerPresetIds = [
   "northwest-ohio",
@@ -738,6 +757,7 @@ function AutopilotLiveActivitySection({
   onOpenTopProspects,
   onRefresh,
   onRetryHandoff,
+  onStop,
 }: {
   autopilot: AutopilotDashboard;
   disabled: boolean;
@@ -745,9 +765,10 @@ function AutopilotLiveActivitySection({
   onOpenTopProspects: () => void;
   onRefresh: () => void;
   onRetryHandoff: () => void;
+  onStop: () => void;
 }) {
   const { activity } = autopilot;
-  const showHandoffActions = activity.status === "failed_to_start" || activity.status === "failed_during_discovery";
+  const showHandoffActions = ["failed_to_start", "failed_during_discovery", "timed_out_needs_attention", "cancelled"].includes(activity.status);
   const metricCards = [
     ["Raw records", activity.rawRecordsFound],
     ["Duplicates removed", activity.duplicatesRemoved],
@@ -767,7 +788,10 @@ function AutopilotLiveActivitySection({
           <h3 id="autopilot-live-activity-title">Autopilot Live Activity</h3>
           <span>Updates automatically while a run is active. Use Refresh Activity any time to pull the latest safe status.</span>
         </div>
-        <button className="engine-button" disabled={disabled} onClick={onRefresh} type="button">Refresh Activity</button>
+        <div className="engine-autopilot-activity__buttons">
+          {activity.topProspectJobId ? <button className="engine-button" disabled={disabled} onClick={onOpenTopProspects} type="button">Open Top Prospects job {activity.topProspectJobId}</button> : null}
+          <button className="engine-button" disabled={disabled} onClick={onRefresh} type="button">Refresh Activity</button>
+        </div>
       </div>
 
       <div className="engine-autopilot-activity-grid" aria-label="Autopilot current activity">
@@ -832,7 +856,8 @@ function AutopilotLiveActivitySection({
           </div>
           <div>
             <button className="engine-button engine-button--primary" disabled={disabled} onClick={onRetryHandoff} type="button">Retry Autopilot handoff</button>
-            <button className="engine-button" disabled={disabled} onClick={onOpenTopProspects} type="button">Open Top Prospects with same market/trade</button>
+            <button className="engine-button" disabled={disabled} onClick={onOpenTopProspects} type="button">{activity.topProspectJobId ? `Open Top Prospects job ${activity.topProspectJobId}` : "Open Top Prospects with same market/trade"}</button>
+            <button className="engine-button" disabled={disabled} onClick={onStop} type="button">Stop Autopilot</button>
             <button className="engine-button" disabled={disabled} onClick={onCopyRunSettings} type="button">Copy run settings</button>
           </div>
         </div>
@@ -866,11 +891,24 @@ function AutopilotLiveActivitySection({
             ) : null}
           </section>
           <section>
+            <h4>Run settings sent to Top Prospects</h4>
+            <dl>
+              <div><dt>Cities</dt><dd>{activity.topProspectsPrefill.city}</dd></div>
+              <div><dt>State</dt><dd>{activity.topProspectsPrefill.state}</dd></div>
+              <div><dt>Trade</dt><dd>{activity.topProspectsPrefill.trade}</dd></div>
+              <div><dt>Businesses to scan</dt><dd>{activity.topProspectsPrefill.businessesToScan}</dd></div>
+              <div><dt>Final prospects wanted</dt><dd>{activity.topProspectsPrefill.finalProspectsWanted}</dd></div>
+              <div><dt>Prospect mode</dt><dd>{activity.topProspectsPrefill.mode}</dd></div>
+              <div><dt>Outreach preference</dt><dd>{activity.topProspectsPrefill.outreachPreference}</dd></div>
+              <div><dt>Exclude previously reviewed</dt><dd>{activity.topProspectsPrefill.excludePreviouslyReviewed ? "Yes" : "No"}</dd></div>
+            </dl>
+          </section>
+          <section>
             <h4>Provider diagnostics</h4>
             {activity.providerDiagnostics.length ? activity.providerDiagnostics.map((provider) => (
               <dl key={provider.provider}>
                 <div><dt>Provider</dt><dd>{provider.provider}</dd></div>
-                <div><dt>Status</dt><dd>{optionLabel(provider.status)}</dd></div>
+                <div><dt>Status</dt><dd>{providerActivityStatusLabel(provider.status)}</dd></div>
                 <div><dt>Raw records</dt><dd>{provider.rawRecords}</dd></div>
                 <div><dt>Within radius</dt><dd>{provider.withinRadius}</dd></div>
                 <div><dt>After deduplication</dt><dd>{provider.afterDeduplication}</dd></div>
@@ -884,7 +922,10 @@ function AutopilotLiveActivitySection({
               <dl key={city.city}>
                 <div><dt>City</dt><dd>{city.city}</dd></div>
                 <div><dt>Status</dt><dd>{optionLabel(city.status)}</dd></div>
+                <div><dt>Provider attempted</dt><dd>{city.providerAttempted}</dd></div>
                 <div><dt>Raw records</dt><dd>{city.rawRecords}</dd></div>
+                <div><dt>Usable records</dt><dd>{city.usableRecords}</dd></div>
+                <div><dt>Skipped</dt><dd>{city.skipped}</dd></div>
                 <div><dt>Qualified</dt><dd>{city.qualified}</dd></div>
                 <div><dt>Blocked</dt><dd>{city.blocked}</dd></div>
                 <div><dt>Reason</dt><dd>{city.reason}</dd></div>
@@ -1131,6 +1172,7 @@ function AutopilotCampaignPanel({
         onOpenTopProspects={openTopProspectsWithSameSettings}
         onRefresh={onRefreshActivity}
         onRetryHandoff={() => onRetryHandoff(settings)}
+        onStop={onStop}
       />
 
       <div className="engine-autopilot-summary">

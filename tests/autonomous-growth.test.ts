@@ -43,6 +43,68 @@ import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engi
 
 const publicLink = publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF");
 
+function jobProviderDiagnostics(overrides: Partial<NonNullable<TopProspectJob["discoveryDiagnostics"]>["providerDiagnostics"]> = {}) {
+  return {
+    osm: { configured: null, queryExecuted: false, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 25, withinRadiusCount: 21, afterDeduplicationCount: 18, usableWebsiteCount: 9 },
+    googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    ...overrides,
+  } as NonNullable<TopProspectJob["discoveryDiagnostics"]>["providerDiagnostics"];
+}
+
+function topProspectJobFixture(campaign: ReturnType<typeof createAutopilotCampaign>, overrides: Partial<TopProspectJob> = {}): TopProspectJob {
+  const providerDiagnostics = jobProviderDiagnostics();
+  const job = {
+    id: "top-job-123",
+    input: autopilotTopProspectInput(campaign.settings),
+    status: "RUNNING",
+    stage: "DISCOVER",
+    discoveredCount: 25,
+    scannedCount: 8,
+    qualifiedCount: 3,
+    skippedCount: 4,
+    skipSummary: { supplier_distributor: 2, phone_only_written_outreach_blocked: 2 },
+    results: [],
+    reviewedNotRecommended: [],
+    failureClassification: null,
+    errorMessage: "",
+    completedAt: null,
+    createdAt: new Date(1).toISOString(),
+    updatedAt: new Date(2).toISOString(),
+    nextRunRecommendations: ["Wait for this Top Prospects job to finish."],
+    discoveryDiagnostics: {
+      rawProviderCount: 25,
+      afterDistanceFilteringCount: 21,
+      afterDuplicateFilteringCount: 18,
+      afterQualificationFilteringCount: 9,
+      returnedCount: 9,
+      radiusKm: 50,
+      categorySignals: [],
+      sourceCounts: { osm: 0, google: 0, bing: 25, yelp: 0, yellowPages: 0 },
+      finalMergedCount: 18,
+      providerDiagnostics,
+      cityDiagnostics: [{
+        city: "Tampa",
+        state: "FL",
+        label: "Tampa, FL",
+        status: "completed",
+        requestedCount: 100,
+        rawProviderCount: 25,
+        withinRadiusCount: 21,
+        afterDeduplicationCount: 18,
+        usableWebsiteCount: 9,
+        returnedCount: 9,
+        qualifiedCount: 3,
+        skippedCount: 4,
+        providersAttempted: ["azureMaps"],
+        providerDiagnostics,
+      }],
+    },
+  } as TopProspectJob;
+  return { ...job, ...overrides };
+}
+
 function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     OUTREACH_AUTO_SEND_ENABLED: "true",
@@ -471,6 +533,143 @@ test("Autopilot Live Activity tracks a real Top Prospects job instead of fake-co
   assert.ok(dashboard.activity.providerDiagnostics.some((provider) => provider.provider === "Azure Maps" && provider.rawRecords === 25));
   assert.ok(dashboard.activity.cityBreakdown.some((city) => city.city === "Tampa, FL" && city.qualified === 3));
   assert.ok(dashboard.activity.entries.some((entry) => /still running/.test(entry.label)));
+});
+
+test("running Top Prospects jobs stay running and never show completed warnings", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const job = topProspectJobFixture(campaign, {
+    discoveredCount: 0,
+    scannedCount: 0,
+    qualifiedCount: 0,
+    skippedCount: 0,
+    skipSummary: {},
+    discoveryDiagnostics: null,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(30_000).toISOString(),
+  });
+  const report = buildAutopilotTopProspectJobReport(campaign, job, new Date(60_000));
+  const dashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, report, new Date(60_001)), [], true);
+
+  assert.equal(dashboard.activity.status, "top_prospects_running");
+  assert.equal(dashboard.activity.currentStep, "Top Prospects job running");
+  assert.doesNotMatch(dashboard.activity.warnings.join(" "), /completed with warnings|needs review/i);
+  assert.equal(dashboard.activity.rawRecordsFound, 0);
+});
+
+test("stale Top Prospects jobs show expected timeout ladder", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const job = topProspectJobFixture(campaign, {
+    discoveredCount: 0,
+    scannedCount: 0,
+    qualifiedCount: 0,
+    skippedCount: 0,
+    skipSummary: {},
+    discoveryDiagnostics: {
+      rawProviderCount: 0,
+      afterDistanceFilteringCount: 0,
+      afterDuplicateFilteringCount: 0,
+      afterQualificationFilteringCount: 0,
+      returnedCount: 0,
+      radiusKm: 50,
+      categorySignals: [],
+      sourceCounts: { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+      finalMergedCount: 0,
+      providerDiagnostics: jobProviderDiagnostics({
+        osm: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        azureMaps: { configured: true, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      }),
+    },
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  });
+  const fiveMinuteDashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, buildAutopilotTopProspectJobReport(campaign, job, new Date(5 * 60_000)), new Date(5 * 60_000)), [], true);
+  const tenMinuteDashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, buildAutopilotTopProspectJobReport(campaign, job, new Date(10 * 60_000)), new Date(10 * 60_000)), [], true);
+  const fifteenMinuteDashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, buildAutopilotTopProspectJobReport(campaign, job, new Date(15 * 60_000)), new Date(15 * 60_000)), [], true);
+
+  assert.equal(fiveMinuteDashboard.activity.status, "top_prospects_running");
+  assert.match(fiveMinuteDashboard.activity.warnings.join(" "), /Still running longer than expected/);
+  assert.equal(tenMinuteDashboard.activity.status, "top_prospects_running");
+  assert.match(tenMinuteDashboard.activity.warnings.join(" "), /Possibly stuck/);
+  assert.equal(fifteenMinuteDashboard.activity.status, "timed_out_needs_attention");
+  assert.match(fifteenMinuteDashboard.activity.errors.join(" "), /timed out/i);
+});
+
+test("provider diagnostics map operational states clearly", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const runningJob = topProspectJobFixture(campaign, {
+    discoveryDiagnostics: {
+      rawProviderCount: 0,
+      afterDistanceFilteringCount: 0,
+      afterDuplicateFilteringCount: 0,
+      afterQualificationFilteringCount: 0,
+      returnedCount: 0,
+      radiusKm: 50,
+      categorySignals: [],
+      sourceCounts: { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+      finalMergedCount: 0,
+      providerDiagnostics: jobProviderDiagnostics({
+        osm: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        azureMaps: { configured: true, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        googlePlaces: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        yelp: { configured: true, queryExecuted: true, status: "zero_results", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      }),
+    },
+  });
+  const dashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, buildAutopilotTopProspectJobReport(campaign, runningJob, new Date(3)), new Date(4)), [], true);
+  const statusByProvider = Object.fromEntries(dashboard.activity.providerDiagnostics.map((provider) => [provider.provider, provider.status]));
+
+  assert.equal(statusByProvider.OpenStreetMap, "not_configured");
+  assert.equal(statusByProvider["Azure Maps"], "running");
+  assert.equal(statusByProvider["Google Places"], "timed_out");
+  assert.equal(statusByProvider.Yelp, "no_records");
+});
+
+test("completed and failed Top Prospects jobs sync real counts into Autopilot", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const completedJob = topProspectJobFixture(campaign, {
+    status: "COMPLETED",
+    stage: "COMPLETE",
+    discoveredCount: 25,
+    scannedCount: 21,
+    qualifiedCount: 3,
+    skippedCount: 4,
+    completedAt: new Date(10).toISOString(),
+  });
+  const completedDashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, buildAutopilotTopProspectJobReport(campaign, completedJob, new Date(11)), new Date(12)), [], true);
+
+  assert.equal(completedDashboard.activity.status, "completed");
+  assert.equal(completedDashboard.activity.rawRecordsFound, 25);
+  assert.equal(completedDashboard.activity.websitesScanned, 21);
+  assert.equal(completedDashboard.activity.badFitLeadsBlocked, 4);
+  assert.equal(completedDashboard.activity.providerDiagnostics.find((provider) => provider.provider === "Azure Maps")?.status, "completed");
+
+  const failedJob = topProspectJobFixture(campaign, {
+    status: "FAILED",
+    stage: "DISCOVER",
+    discoveredCount: 0,
+    scannedCount: 0,
+    qualifiedCount: 0,
+    skippedCount: 0,
+    errorMessage: "Discovery provider error",
+    completedAt: new Date(15).toISOString(),
+  });
+  const failedDashboard = buildAutopilotDashboard(attachAutopilotRunReport(campaign, buildAutopilotTopProspectJobReport(campaign, failedJob, new Date(16)), new Date(17)), [], true);
+
+  assert.equal(failedDashboard.activity.status, "failed_during_discovery");
+  assert.equal(failedDashboard.activity.currentStep, "Top Prospects job failed during discovery");
+  assert.ok(failedDashboard.activity.errors.length > 0);
+});
+
+test("stopping Autopilot stops polling without claiming provider cancellation", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const report = buildAutopilotTopProspectJobReport(campaign, topProspectJobFixture(campaign), new Date(3));
+  const runningCampaign = attachAutopilotRunReport(campaign, report, new Date(4));
+  const stopped = transitionAutopilotCampaign(runningCampaign, "stop", new Date(5));
+  const dashboard = buildAutopilotDashboard(stopped, [], true);
+
+  assert.equal(dashboard.activity.status, "cancelled");
+  assert.match(dashboard.activity.warnings.join(" "), /underlying Top Prospects job may still be running/);
+  assert.doesNotMatch(dashboard.activity.warnings.join(" "), /provider job was cancelled/i);
 });
 
 test("fake Autopilot smoke activity records fake provider, blocked reasons, and queue routing without sending", () => {

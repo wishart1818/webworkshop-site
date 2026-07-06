@@ -3501,6 +3501,17 @@ body:has(.engine-shell) {
   background: #fff6f2;
 }
 
+.engine-autopilot-activity__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.engine-autopilot-activity__buttons .engine-button {
+  min-height: 42px;
+}
+
 .engine-autopilot-handoff-actions {
   display: grid;
   gap: 0.85rem;
@@ -5370,6 +5381,11 @@ body:has(.engine-shell) {
   .engine-market-actions,
   .engine-market-actions .engine-button,
   .engine-chip-button {
+    width: 100%;
+  }
+
+  .engine-autopilot-activity__buttons,
+  .engine-autopilot-activity__buttons .engine-button {
     width: 100%;
   }
 

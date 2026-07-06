@@ -112,6 +112,7 @@ export type AutopilotHandoffStatus =
   | "completed_with_warnings"
   | "failed_to_start"
   | "failed_during_discovery"
+  | "timed_out_needs_attention"
   | "cancelled";
 
 export type AutopilotHandoffFailure = {
@@ -157,7 +158,9 @@ export type AutopilotRunReport = {
   marketTargets: string[];
   providerRequestEstimate: number;
   prospectsDiscovered: number;
+  prospectsScanned?: number;
   prospectsQualified: number;
+  prospectsSkipped?: number;
   packagesGenerated: number;
   queueCounts: AutopilotQueueCounts;
   failedCities: Array<{ city: string; reason: string }>;
@@ -166,6 +169,9 @@ export type AutopilotRunReport = {
   nextRunRecommendation: string;
   topProspectJobId?: string;
   topProspectJobStatus?: TopProspectJob["status"];
+  topProspectJobStage?: string;
+  topProspectJobCreatedAt?: string;
+  topProspectJobUpdatedAt?: string;
   handoffStatus?: AutopilotHandoffStatus;
   handoffFailure?: AutopilotHandoffFailure;
   providerDiagnostics?: AutopilotProviderActivity[];
@@ -185,6 +191,7 @@ export const autopilotActivityStatuses = [
   "failed",
   "failed_to_start",
   "failed_during_discovery",
+  "timed_out_needs_attention",
   "cancelled",
 ] as const;
 export type AutopilotActivityStatus = (typeof autopilotActivityStatuses)[number];
@@ -199,7 +206,19 @@ export type AutopilotActivityEntry = {
 
 export type AutopilotProviderActivity = {
   provider: string;
-  status: "not_recorded" | "succeeded" | "failed" | "timed_out" | "zero_results" | "fake_only";
+  status:
+    | "not_recorded"
+    | "not_configured"
+    | "not_attempted"
+    | "running"
+    | "completed"
+    | "partial_success"
+    | "failed"
+    | "timed_out"
+    | "no_records"
+    | "succeeded"
+    | "zero_results"
+    | "fake_only";
   rawRecords: number;
   withinRadius: number;
   afterDeduplication: number;
@@ -209,8 +228,11 @@ export type AutopilotProviderActivity = {
 
 export type AutopilotCityActivity = {
   city: string;
-  status: "completed" | "failed" | "not_recorded";
+  status: "completed" | "partial_success" | "failed" | "running" | "timed_out" | "not_recorded";
+  providerAttempted: string;
   rawRecords: number;
+  usableRecords: number;
+  skipped: number;
   qualified: number;
   blocked: number;
   reason: string;
@@ -687,28 +709,59 @@ const providerLabels: Record<string, string> = {
   yelp: "Yelp",
 };
 
-function autopilotProviderStatus(status: string): AutopilotProviderActivity["status"] {
-  if (status === "not_configured" || status === "rate_limited") return status === "rate_limited" ? "failed" : "not_recorded";
-  if (status === "succeeded" || status === "failed" || status === "timed_out" || status === "zero_results") return status;
+function jobProgressCount(job: TopProspectJob) {
+  return job.discoveredCount + job.scannedCount + job.qualifiedCount + job.skippedCount + job.results.length + job.reviewedNotRecommended.length;
+}
+
+function activeJobAgeMinutes(job: TopProspectJob, now: Date) {
+  const startedAt = Date.parse(job.createdAt);
+  if (!Number.isFinite(startedAt)) return 0;
+  return Math.max(0, Math.floor((now.getTime() - startedAt) / 60_000));
+}
+
+function activeJobHasRealProgress(job: TopProspectJob) {
+  return jobProgressCount(job) > 0 || Boolean(job.discoveryDiagnostics?.rawProviderCount || job.discoveryDiagnostics?.returnedCount);
+}
+
+function autopilotProviderStatus(status: string, queryExecuted: boolean | null, jobActive: boolean): AutopilotProviderActivity["status"] {
+  if (status === "not_configured") return "not_configured";
+  if (status === "rate_limited") return "failed";
+  if (status === "timed_out") return "timed_out";
+  if (status === "failed") return "failed";
+  if (status === "zero_results") return "no_records";
+  if (status === "succeeded") return "completed";
+  if (status === "not_recorded" && queryExecuted === false) return "not_attempted";
+  if (status === "not_recorded" && jobActive) return "running";
   return "not_recorded";
+}
+
+function providerDetailText(status: AutopilotProviderActivity["status"], configured: boolean | null, queryExecuted: boolean | null) {
+  if (status === "not_configured") return "Provider key is not configured.";
+  if (status === "not_attempted") return "Provider query has not been attempted for this job.";
+  if (status === "running") return "Provider status is pending while the Top Prospects job runs.";
+  if (status === "timed_out") return "Provider request timed out.";
+  if (status === "failed") return "Provider request failed or was rate-limited.";
+  if (status === "no_records") return "Provider completed but returned no records.";
+  if (status === "completed") return "Provider completed and returned records.";
+  return `Configured: ${configured === null ? "Not recorded" : configured ? "Yes" : "No"}. Query executed: ${queryExecuted === null ? "Not recorded" : queryExecuted ? "Yes" : "No"}.`;
 }
 
 function topProspectProviderDiagnostics(job: TopProspectJob): AutopilotProviderActivity[] {
   const diagnostics = job.discoveryDiagnostics?.providerDiagnostics;
   if (!diagnostics) return [];
-  return Object.entries(diagnostics).map(([provider, diagnostic]) => ({
-    provider: providerLabels[provider] ?? provider,
-    status: autopilotProviderStatus(diagnostic.status),
-    rawRecords: diagnostic.returnedCount,
-    withinRadius: diagnostic.withinRadiusCount,
-    afterDeduplication: diagnostic.afterDeduplicationCount,
-    usableWebsites: diagnostic.usableWebsiteCount,
-    detail: diagnostic.queryExecuted === false
-      ? "Provider query did not execute for this job."
-      : diagnostic.status === "not_configured"
-        ? "Provider key is not configured."
-        : `Configured: ${diagnostic.configured === null ? "Not recorded" : diagnostic.configured ? "Yes" : "No"}. Query executed: ${diagnostic.queryExecuted === null ? "Not recorded" : diagnostic.queryExecuted ? "Yes" : "No"}.`,
-  }));
+  const jobActive = topProspectJobIsActive(job.status);
+  return Object.entries(diagnostics).map(([provider, diagnostic]) => {
+    const status = autopilotProviderStatus(diagnostic.status, diagnostic.queryExecuted, jobActive);
+    return {
+      provider: providerLabels[provider] ?? provider,
+      status,
+      rawRecords: diagnostic.returnedCount,
+      withinRadius: diagnostic.withinRadiusCount,
+      afterDeduplication: diagnostic.afterDeduplicationCount,
+      usableWebsites: diagnostic.usableWebsiteCount,
+      detail: providerDetailText(status, diagnostic.configured, diagnostic.queryExecuted),
+    };
+  });
 }
 
 function topProspectCityBreakdown(job: TopProspectJob): AutopilotCityActivity[] {
@@ -716,8 +769,11 @@ function topProspectCityBreakdown(job: TopProspectJob): AutopilotCityActivity[] 
   if (cityDiagnostics?.length) {
     return cityDiagnostics.map((city) => ({
       city: city.label,
-      status: city.status === "partial" ? "completed" : city.status,
+      status: city.status === "partial" ? "partial_success" : city.status,
+      providerAttempted: (city.providersAttempted?.length ? city.providersAttempted.map((provider) => providerLabels[provider] ?? provider).join(", ") : Object.entries(city.providerDiagnostics).filter(([, diagnostic]) => diagnostic.queryExecuted).map(([provider]) => providerLabels[provider] ?? provider).join(", ")) || "Not attempted",
       rawRecords: city.rawProviderCount,
+      usableRecords: city.usableWebsiteCount,
+      skipped: city.skippedCount ?? 0,
       qualified: city.qualifiedCount ?? city.returnedCount,
       blocked: city.skippedCount ?? 0,
       reason: city.safeReason || city.mainSkipReasons?.join(", ") || (city.status === "failed" ? "City discovery failed safely." : "Completed without a city-level failure."),
@@ -725,13 +781,17 @@ function topProspectCityBreakdown(job: TopProspectJob): AutopilotCityActivity[] 
   }
   const targets = job.input.cityTargets?.length ? job.input.cityTargets : [];
   if (!targets.length) return [];
+  const active = topProspectJobIsActive(job.status);
   return targets.map((target) => ({
     city: target.label,
-    status: topProspectJobFailed(job.status) ? "failed" : "not_recorded",
+    status: topProspectJobFailed(job.status) ? "failed" : active ? "running" : "not_recorded",
+    providerAttempted: active ? "Running" : "Not recorded",
     rawRecords: Math.round(job.discoveredCount / Math.max(1, targets.length)),
+    usableRecords: Math.round((job.discoveryDiagnostics?.afterQualificationFilteringCount ?? job.results.length) / Math.max(1, targets.length)),
+    skipped: Math.round(job.skippedCount / Math.max(1, targets.length)),
     qualified: Math.round((job.qualifiedCount || job.results.length) / Math.max(1, targets.length)),
     blocked: Math.round(job.skippedCount / Math.max(1, targets.length)),
-    reason: topProspectJobFailed(job.status) ? (job.errorMessage || "Top Prospects discovery failed safely.") : "City-level diagnostics are not recorded yet.",
+    reason: topProspectJobFailed(job.status) ? (job.errorMessage || "Top Prospects discovery failed safely.") : active ? "City discovery is still running or waiting for provider data." : "City-level diagnostics are not recorded yet.",
   }));
 }
 
@@ -770,8 +830,11 @@ function reportStatusForTopProspectJob(job: TopProspectJob): AutopilotRunReport[
   return "completed";
 }
 
-function handoffStatusForTopProspectJob(job: TopProspectJob): AutopilotHandoffStatus {
-  if (topProspectJobIsActive(job.status)) return "top_prospects_running";
+function handoffStatusForTopProspectJob(job: TopProspectJob, now = new Date()): AutopilotHandoffStatus {
+  if (topProspectJobIsActive(job.status)) {
+    if (activeJobAgeMinutes(job, now) >= 15 && !activeJobHasRealProgress(job)) return "timed_out_needs_attention";
+    return "top_prospects_running";
+  }
   if (topProspectJobFailed(job.status)) return "failed_during_discovery";
   if (topProspectJobCompletedWithWarnings(job.status) || job.errorMessage) return "completed_with_warnings";
   return "completed";
@@ -783,26 +846,30 @@ export function buildAutopilotTopProspectJobReport(campaign: AutopilotCampaign, 
     : autopilotMarketTargets(campaign.settings).map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`);
   const queueCounts = topProspectQueueCounts(job);
   const packagesGenerated = packagesGeneratedFromTopProspectJob(job);
-  const handoffStatus = handoffStatusForTopProspectJob(job);
+  const handoffStatus = handoffStatusForTopProspectJob(job, now);
   const active = topProspectJobIsActive(job.status);
   const providerDiagnostics = topProspectProviderDiagnostics(job);
   const cityBreakdown = topProspectCityBreakdown(job);
   const blockedReasons = Object.entries(job.skipSummary)
     .filter(([, count]) => Number(count) > 0)
     .map(([reason, count]) => ({ reason: reason.replaceAll("_", " "), count: Number(count) }));
-  const recommendations = job.nextRunRecommendations.length ? job.nextRunRecommendations : [
-    active ? "Wait for the Top Prospects job to finish, then review the generated queue." : "Review the generated Top Prospects and outreach packages before the next run.",
-  ];
+  const recommendations = handoffStatus === "timed_out_needs_attention"
+    ? ["Open the Top Prospects job, refresh activity, or retry the Autopilot handoff after confirming the active job state."]
+    : job.nextRunRecommendations.length ? job.nextRunRecommendations : [
+      active ? "Wait for the Top Prospects job to finish, then review the generated queue." : "Review the generated Top Prospects and outreach packages before the next run.",
+    ];
   return {
     id: campaign.latestRunReport?.id ?? `run-${now.getTime()}`,
     campaignId: campaign.id,
-    status: reportStatusForTopProspectJob(job),
+    status: handoffStatus === "timed_out_needs_attention" ? "blocked" : reportStatusForTopProspectJob(job),
     startedAt: campaign.latestRunReport?.startedAt ?? job.createdAt,
-    completedAt: active ? "" : (job.completedAt ?? job.updatedAt ?? now.toISOString()),
+    completedAt: active && handoffStatus !== "timed_out_needs_attention" ? "" : (job.completedAt ?? job.updatedAt ?? now.toISOString()),
     marketTargets,
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     prospectsDiscovered: job.discoveredCount,
+    prospectsScanned: job.scannedCount,
     prospectsQualified: job.qualifiedCount || job.results.length,
+    prospectsSkipped: job.skippedCount,
     packagesGenerated,
     queueCounts,
     failedCities: (job.discoveryDiagnostics?.cityDiagnostics ?? [])
@@ -817,6 +884,9 @@ export function buildAutopilotTopProspectJobReport(campaign: AutopilotCampaign, 
     nextRunRecommendation: recommendations[0] ?? "Review this Top Prospects run before starting another one.",
     topProspectJobId: job.id,
     topProspectJobStatus: job.status,
+    topProspectJobStage: job.stage,
+    topProspectJobCreatedAt: job.createdAt,
+    topProspectJobUpdatedAt: job.updatedAt,
     handoffStatus,
     providerDiagnostics,
     cityBreakdown,
@@ -855,7 +925,7 @@ export function buildAutopilotHandoffFailureReport(campaign: AutopilotCampaign, 
 
 export function attachAutopilotRunReport(campaign: AutopilotCampaign, report: AutopilotRunReport, now = new Date()): AutopilotCampaign {
   const runningHandoff = report.handoffStatus === "starting_top_prospects" || report.handoffStatus === "top_prospects_running";
-  const failedStart = report.handoffStatus === "failed_to_start" || report.handoffStatus === "failed_during_discovery";
+  const failedStart = report.handoffStatus === "failed_to_start" || report.handoffStatus === "failed_during_discovery" || report.handoffStatus === "timed_out_needs_attention";
   return {
     ...campaign,
     status: runningHandoff ? "running" : report.status === "blocked" ? "paused" : "finished",
@@ -866,9 +936,9 @@ export function attachAutopilotRunReport(campaign: AutopilotCampaign, report: Au
       {
         id: `${campaign.id}-run-${now.getTime()}`,
         level: failedStart ? "warning" as const : runningHandoff ? "info" as const : report.status === "blocked" ? "warning" as const : "success" as const,
-        title: failedStart ? "Autopilot could not start Top Prospects job" : runningHandoff ? "Top Prospects job started" : report.fakeOnly ? "Fake Autopilot smoke test finished" : "Autopilot batch report is ready",
+        title: report.handoffStatus === "timed_out_needs_attention" ? "Autopilot Top Prospects job needs attention" : failedStart ? "Autopilot could not start Top Prospects job" : runningHandoff ? "Top Prospects job started" : report.fakeOnly ? "Fake Autopilot smoke test finished" : "Autopilot batch report is ready",
         body: failedStart
-          ? `${report.handoffFailure?.message ?? "Top Prospects job did not start."} Nothing was sent.`
+          ? `${report.handoffStatus === "timed_out_needs_attention" ? "Top Prospects job timed out without real progress." : report.handoffFailure?.message ?? "Top Prospects job did not start."} Nothing was sent.`
           : runningHandoff
             ? `Top Prospects job ${report.topProspectJobId} is running. Nothing will be sent automatically.`
             : `${report.prospectsQualified} reviewable prospect${report.prospectsQualified === 1 ? "" : "s"} sorted into safe queues. Nothing was sent.`,
@@ -1102,7 +1172,10 @@ function cityBreakdownForReport(campaign: AutopilotCampaign, queue: OutreachQueu
     return [{
       city: "Not recorded",
       status: "not_recorded",
+      providerAttempted: "Not recorded",
       rawRecords: report.prospectsDiscovered,
+      usableRecords: report.packagesGenerated,
+      skipped: report.prospectsSkipped ?? 0,
       qualified: report.prospectsQualified,
       blocked: report.queueCounts.blockedBadFit,
       reason: "City breakdown was not recorded for this run.",
@@ -1114,7 +1187,10 @@ function cityBreakdownForReport(campaign: AutopilotCampaign, queue: OutreachQueu
     return {
       city,
       status: failedReason ? "failed" as const : "completed" as const,
+      providerAttempted: "Not recorded",
       rawRecords: items.length || Math.round(report.prospectsDiscovered / targets.length),
+      usableRecords: items.length || Math.round(report.packagesGenerated / targets.length),
+      skipped: Math.round((report.prospectsSkipped ?? 0) / targets.length),
       qualified: items.length ? items.filter((item) => autopilotQueueKeyForItem(item) !== "blockedBadFit").length : Math.round(report.prospectsQualified / targets.length),
       blocked: items.length ? items.filter((item) => autopilotQueueKeyForItem(item) === "blockedBadFit").length : Math.round(report.queueCounts.blockedBadFit / targets.length),
       reason: failedReason ?? "Completed without a city-level failure.",
@@ -1128,6 +1204,9 @@ function handoffDetailsForReport(report: AutopilotRunReport): Array<{ label: str
     { label: "Database connected", value: failure ? (failure.databaseConnected ? "Yes" : "No") : "Not recorded" },
     { label: "Top Prospects job ID", value: report.topProspectJobId || failure?.activeJobId || "Not created" },
     { label: "Job status", value: report.topProspectJobStatus || failure?.activeJobStatus || "Not recorded" },
+    { label: "Job stage", value: report.topProspectJobStage || "Not recorded" },
+    { label: "Job created", value: report.topProspectJobCreatedAt || "Not recorded" },
+    { label: "Last job update", value: report.topProspectJobUpdatedAt || "Not recorded" },
     { label: "Failure phase", value: failure?.phase ?? "Not recorded" },
     { label: "Attempted market", value: failure?.attemptedMarket || report.marketTargets.join("; ") || "Not recorded" },
     { label: "Attempted cities", value: failure?.attemptedCities || report.marketTargets.join("; ") || "Not recorded" },
@@ -1201,7 +1280,7 @@ function activityEntriesForReport(campaign: AutopilotCampaign, report: Autopilot
   for (const provider of providerDiagnostics) {
     entries.push({
       id: `${report.id}-provider-${provider.provider}`,
-      level: provider.status === "failed" || provider.status === "timed_out" ? "error" : provider.status === "zero_results" ? "warning" : "success",
+      level: provider.status === "failed" || provider.status === "timed_out" ? "error" : provider.status === "no_records" || provider.status === "zero_results" || provider.status === "not_configured" || provider.status === "not_attempted" ? "warning" : provider.status === "running" ? "info" : "success",
       label: `${provider.provider} returned ${provider.rawRecords} records`,
       detail: provider.detail,
       createdAt: report.completedAt,
@@ -1257,14 +1336,17 @@ function activityEntriesForReport(campaign: AutopilotCampaign, report: Autopilot
 
 function autopilotActivityStatus(campaign: AutopilotCampaign, report: AutopilotRunReport | null): AutopilotActivityStatus {
   if (!report) {
+    if (campaign.status === "stopped") return "cancelled";
     if (campaign.status === "running") return "running";
     if (campaign.status === "paused") return "paused";
     return "not_started";
   }
+  if (campaign.status === "stopped") return "cancelled";
   if (report.handoffStatus === "starting_top_prospects") return "starting_top_prospects";
   if (report.handoffStatus === "top_prospects_running") return "top_prospects_running";
   if (report.handoffStatus === "failed_to_start") return "failed_to_start";
   if (report.handoffStatus === "failed_during_discovery") return "failed_during_discovery";
+  if (report.handoffStatus === "timed_out_needs_attention") return "timed_out_needs_attention";
   if (report.handoffStatus === "cancelled") return "cancelled";
   if (report.handoffStatus === "completed_with_warnings") return "completed_with_warnings";
   if (report.handoffStatus === "completed") return "completed";
@@ -1279,11 +1361,23 @@ function currentStepForActivity(status: AutopilotActivityStatus, report: Autopil
   if (status === "starting_top_prospects") return "Starting Top Prospects job";
   if (status === "top_prospects_running") return "Top Prospects job running";
   if (status === "failed_during_discovery") return "Top Prospects job failed during discovery";
+  if (status === "timed_out_needs_attention") return "Timed out / Needs attention";
   if (status === "cancelled") return "Autopilot was cancelled or stopped";
   if (status === "completed_with_warnings") return "Run finished with warnings";
   if (status === "completed") return "Run finished, review queues are ready";
   if (report.status === "blocked") return "Run stopped by a blocking rule";
   return "Run finished with warnings";
+}
+
+function reportJobAgeMinutes(report: AutopilotRunReport, now: Date) {
+  const startedAt = Date.parse(report.topProspectJobCreatedAt || report.startedAt);
+  if (!Number.isFinite(startedAt)) return 0;
+  return Math.max(0, Math.floor((now.getTime() - startedAt) / 60_000));
+}
+
+function reportHasRealProgress(report: AutopilotRunReport) {
+  return (report.prospectsDiscovered + (report.prospectsScanned ?? 0) + report.prospectsQualified + (report.prospectsSkipped ?? 0) + report.packagesGenerated) > 0
+    || (report.providerDiagnostics ?? []).some((provider) => provider.rawRecords > 0 || provider.withinRadius > 0 || provider.afterDeduplication > 0 || provider.usableWebsites > 0);
 }
 
 function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueueItem[], now = new Date()): AutopilotActivitySnapshot {
@@ -1333,30 +1427,39 @@ function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueu
   const providerDiagnostics = providerDiagnosticsForQueue(queue, report);
   const phoneOnlyLeadsBlocked = countPhoneOnlyBlocked(queue);
   const status = autopilotActivityStatus(campaign, report);
+  const runningJob = status === "starting_top_prospects" || status === "top_prospects_running";
+  const jobAgeMinutes = reportJobAgeMinutes(report, now);
+  const hasRealProgress = reportHasRealProgress(report);
   const warnings = [
-    ...(status === "top_prospects_running" || status === "starting_top_prospects" ? ["Top Prospects job is still running. Counts will update as discovery and scanning progress."] : []),
-    ...(report.status === "needs_review" ? ["Run completed with warnings and needs review."] : []),
+    ...(runningJob ? ["Top Prospects job is still running. Counts will update as discovery and scanning progress."] : []),
+    ...(runningJob && jobAgeMinutes >= 5 ? [`Still running longer than expected (${jobAgeMinutes} minutes).`] : []),
+    ...(runningJob && jobAgeMinutes >= 10 ? ["Possibly stuck. Refresh Activity or open the Top Prospects job to inspect live progress."] : []),
+    ...(status === "timed_out_needs_attention" ? ["Timed out / Needs attention. The Top Prospects job has not shown real progress after 15 minutes."] : []),
+    ...(status === "cancelled" && report.topProspectJobId ? ["Autopilot polling is stopped. The underlying Top Prospects job may still be running because provider-job cancellation is not supported here."] : []),
+    ...(!runningJob && status !== "timed_out_needs_attention" && report.status === "needs_review" ? ["Run completed with warnings and needs review."] : []),
+    ...(runningJob && hasRealProgress && jobAgeMinutes >= 15 ? ["Job has run longer than 15 minutes, but real progress has been recorded. Continue monitoring or open the Top Prospects job."] : []),
     ...report.failedCities.map((city) => `${city.city}: ${city.reason}`),
   ];
   const errors = report.handoffStatus === "failed_to_start"
     ? [report.handoffFailure?.message ?? "Top Prospects job did not start."]
     : report.handoffStatus === "failed_during_discovery"
       ? [report.nextRunRecommendation]
+      : report.handoffStatus === "timed_out_needs_attention"
+        ? ["Top Prospects job timed out without real progress. Review the job or retry the handoff."]
       : report.status === "blocked" ? ["Run failed or paused by a blocking rule."] : [];
-  const runningJob = status === "starting_top_prospects" || status === "top_prospects_running";
   return {
     status,
     topProspectJobId: report.topProspectJobId ?? "",
     currentStep: currentStepForActivity(status, report),
-    progressPercent: runningJob ? (report.prospectsDiscovered ? 55 : 25) : 100,
+    progressPercent: runningJob ? (report.prospectsDiscovered ? Math.min(95, 45 + Math.min(45, Math.round(((report.prospectsScanned ?? 0) / Math.max(1, report.prospectsDiscovered)) * 45))) : 25) : 100,
     currentCity: report.marketTargets.at(-1) ?? "",
     currentTrade: displayTradeCategory(campaign.settings.trade),
     currentProvider: providerDiagnostics.at(-1)?.provider ?? "",
     rawRecordsFound: report.prospectsDiscovered,
-    duplicatesRemoved: 0,
+    duplicatesRemoved: Math.max(0, (providerDiagnostics.reduce((sum, provider) => sum + provider.withinRadius, 0) || report.prospectsDiscovered) - (providerDiagnostics.reduce((sum, provider) => sum + provider.afterDeduplication, 0) || report.prospectsDiscovered)),
     badFitLeadsBlocked: Math.max(0, report.queueCounts.blockedBadFit - phoneOnlyLeadsBlocked),
     phoneOnlyLeadsBlocked,
-    websitesScanned: queue.filter((item) => Boolean(item.website)).length || report.packagesGenerated,
+    websitesScanned: report.prospectsScanned ?? (queue.filter((item) => Boolean(item.website)).length || report.packagesGenerated),
     previewsGenerated: report.packagesGenerated,
     previewsPassingQa: countPreviewsPassingQa(queue, report),
     dmScriptsGenerated: queue.filter((item) => Boolean(item.dmScript)).length || report.queueCounts.readyForManualDm,

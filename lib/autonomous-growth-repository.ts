@@ -109,6 +109,7 @@ function autopilotCampaignWithReport(campaign: AutopilotCampaign, report: Autopi
 
 async function refreshAutopilotCampaignFromTopProspects(campaign: AutopilotCampaign) {
   const jobId = campaign.latestRunReport?.topProspectJobId;
+  if (campaign.status === "stopped") return campaign;
   if (!jobId || campaign.latestRunReport?.fakeOnly || campaign.latestRunReport?.handoffStatus === "failed_to_start") return campaign;
   try {
     const job = await getTopProspectJob(jobId);
