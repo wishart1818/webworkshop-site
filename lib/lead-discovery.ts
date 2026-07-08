@@ -55,6 +55,7 @@ export const discoveryProviders = ["osm", "azureMaps", "googlePlaces", "yelp"] a
 export type DiscoveryProvider = (typeof discoveryProviders)[number];
 export type DiscoveryProviderStatus = "not_recorded" | "not_configured" | "succeeded" | "failed" | "timed_out" | "zero_results" | "rate_limited";
 export type DiscoveryProviderFailureType = "none" | "not_configured" | "timeout" | "rate_limit" | "auth_failure" | "network_error" | "http_error" | "parse_error" | "query_error";
+export type GooglePlacesEndpointVersion = "New" | "Legacy";
 export type DiscoveryProviderDiagnostic = {
   configured: boolean | null;
   queryExecuted: boolean | null;
@@ -74,6 +75,7 @@ export type DiscoveryProviderDiagnostic = {
   durationMs?: number;
   failureType?: DiscoveryProviderFailureType;
   safeErrorMessage?: string;
+  endpointVersion?: GooglePlacesEndpointVersion;
 };
 export type DiscoveryProviderDiagnostics = Record<DiscoveryProvider, DiscoveryProviderDiagnostic>;
 export type DiscoveryProviderHealth = {
@@ -88,6 +90,7 @@ export type DiscoveryProviderHealth = {
   lastHttpStatus: string;
   lastSafeErrorMessage: string;
   failureType: DiscoveryProviderFailureType | "none";
+  endpointVersion?: GooglePlacesEndpointVersion;
 };
 export type DiscoveryProviderCoverageStatus = {
   level: "strong" | "good" | "limited" | "broken";
@@ -252,6 +255,18 @@ const discoveryProviderDefinitions: Record<DiscoveryProvider, {
   },
 };
 
+const googlePlacesNewEndpoint = "https://places.googleapis.com/v1/places:searchText";
+const googlePlacesLegacyTextSearchPattern = /\/maps\/api\/place\/textsearch\/json(?:$|[?#])/i;
+const googlePlacesFieldMask = "places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount";
+
+function googlePlacesEndpoint(env: NodeJS.ProcessEnv = process.env): { url: string; version: GooglePlacesEndpointVersion } {
+  const configuredUrl = env.GOOGLE_PLACES_API_URL?.trim();
+  if (configuredUrl && googlePlacesLegacyTextSearchPattern.test(configuredUrl)) {
+    return { url: configuredUrl, version: "Legacy" };
+  }
+  return { url: configuredUrl || googlePlacesNewEndpoint, version: "New" };
+}
+
 function providerEnvPresent(provider: DiscoveryProvider, env: NodeJS.ProcessEnv = process.env) {
   const definition = discoveryProviderDefinitions[provider];
   if (definition.canRunWithoutApiKey) return null;
@@ -279,6 +294,7 @@ export function discoveryProviderHealth(
       lastHttpStatus: diagnostic?.httpStatus ? String(diagnostic.httpStatus) : diagnostic?.failureType === "timeout" ? "timeout" : diagnostic?.failureType === "network_error" ? "network error" : "None",
       lastSafeErrorMessage: diagnostic?.safeErrorMessage ?? "No provider attempt recorded yet.",
       failureType: diagnostic?.failureType ?? "none",
+      ...(provider === "googlePlaces" ? { endpointVersion: diagnostic?.endpointVersion ?? googlePlacesEndpoint(env).version } : {}),
     };
   });
 }
@@ -414,8 +430,13 @@ function providerFailureTypeFromStatus(status: number): DiscoveryProviderFailure
   return "http_error";
 }
 
-function safeProviderHttpMessage(status: number) {
-  if (status === 401 || status === 403) return `Provider authentication failed with HTTP ${status}. Check the configured API key and provider permissions.`;
+function safeProviderHttpMessage(status: number, provider?: DiscoveryProvider, endpointVersion?: GooglePlacesEndpointVersion) {
+  if (status === 401 || status === 403) {
+    if (provider === "googlePlaces") {
+      return `Google Places API key is present, but authentication failed with HTTP ${status}. Possible causes: API key restrictions, Places API ${endpointVersion ?? "New"} not enabled, billing not active, wrong endpoint version, or key restricted to the wrong API.`;
+    }
+    return `Provider authentication failed with HTTP ${status}. Check the configured API key and provider permissions.`;
+  }
   if (status === 429) return "Provider rate limit reached with HTTP 429. Wait before retrying or reduce request load.";
   return `Provider returned HTTP ${status}.`;
 }
@@ -500,7 +521,7 @@ function providerDiagnostic(
   queryExecuted: boolean | null,
   status: DiscoveryProviderStatus,
   returnedCount = 0,
-  extra: Partial<Pick<DiscoveryProviderDiagnostic, "retryCount" | "httpStatus" | "envVarName" | "envVarPresent" | "canRunWithoutApiKey" | "query" | "attemptedAt" | "finishedAt" | "durationMs" | "failureType" | "safeErrorMessage">> = {},
+  extra: Partial<Pick<DiscoveryProviderDiagnostic, "retryCount" | "httpStatus" | "envVarName" | "envVarPresent" | "canRunWithoutApiKey" | "query" | "attemptedAt" | "finishedAt" | "durationMs" | "failureType" | "safeErrorMessage" | "endpointVersion">> = {},
 ): DiscoveryProviderDiagnostic {
   return {
     configured,
@@ -521,6 +542,7 @@ function providerDiagnostic(
     ...(finiteNumber(extra.durationMs) ? { durationMs: finiteNumber(extra.durationMs) } : {}),
     ...(extra.failureType && extra.failureType !== "none" ? { failureType: extra.failureType } : {}),
     ...(extra.safeErrorMessage ? { safeErrorMessage: extra.safeErrorMessage } : {}),
+    ...(extra.endpointVersion ? { endpointVersion: extra.endpointVersion } : {}),
   };
 }
 
@@ -583,6 +605,7 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
         ? { failureType: item.failureType as DiscoveryProviderFailureType }
         : {}),
       ...(typeof item?.safeErrorMessage === "string" && item.safeErrorMessage ? { safeErrorMessage: item.safeErrorMessage } : {}),
+      ...((item?.endpointVersion === "New" || item?.endpointVersion === "Legacy") ? { endpointVersion: item.endpointVersion } : {}),
     }];
   })) as DiscoveryProviderDiagnostics;
 }
@@ -950,6 +973,7 @@ export function mergeDiscoveryCandidates(input: {
       durationMs: diagnostic.durationMs ?? 0,
       failureType: diagnostic.failureType ?? "none",
       safeErrorMessage: diagnostic.safeErrorMessage ?? "",
+      endpointVersion: diagnostic.endpointVersion ?? "",
     });
   }
 
@@ -1054,8 +1078,18 @@ function parseGooglePlaces(value: unknown): DiscoveryCandidate[] {
     rating?: number;
     userRatingCount?: number;
     reviews?: Array<{ publishTime?: string }>;
+  }>; results?: Array<{
+    name?: string;
+    website?: string;
+    url?: string;
+    formatted_phone_number?: string;
+    international_phone_number?: string;
+    formatted_address?: string;
+    geometry?: { location?: { lat?: number; lng?: number } };
+    rating?: number;
+    user_ratings_total?: number;
   }> };
-  return (payload.places ?? []).flatMap((place) => {
+  const newPlaces = (payload.places ?? []).flatMap((place) => {
     const businessName = place.displayName?.text?.trim();
     if (!businessName) return [];
     const city = place.addressComponents?.find((component) => component.types?.includes("locality"))?.longText;
@@ -1077,6 +1111,24 @@ function parseGooglePlaces(value: unknown): DiscoveryCandidate[] {
       source: "google" as const,
     }];
   });
+  const legacyResults = (payload.results ?? []).flatMap((place) => {
+    const businessName = place.name?.trim();
+    if (!businessName) return [];
+    return [{
+      businessName,
+      website: place.website,
+      profileUrl: place.url,
+      phone: place.formatted_phone_number ?? place.international_phone_number,
+      address: place.formatted_address,
+      latitude: finiteNumber(place.geometry?.location?.lat),
+      longitude: finiteNumber(place.geometry?.location?.lng),
+      rating: finiteNumber(place.rating),
+      reviewCount: finiteNumber(place.user_ratings_total),
+      activitySignals: (place.user_ratings_total ?? 0) > 0 ? ["google_places_reviews"] : ["google_places_listing"],
+      source: "google" as const,
+    }];
+  });
+  return [...newPlaces, ...legacyResults];
 }
 
 function parseBingLocal(value: unknown): DiscoveryCandidate[] {
@@ -1196,6 +1248,7 @@ async function optionalProviderCandidates(input: {
   logger?: DiscoveryLogger;
   radiusKm: number;
   query: string;
+  endpointVersion?: GooglePlacesEndpointVersion;
 }): Promise<{ candidates: DiscoveryCandidate[]; diagnostic: DiscoveryProviderDiagnostic }> {
   const staticDiagnostic = input.provider ? providerStaticDiagnostic(input.provider) : {};
   const providerLabel = input.provider ? discoveryProviderDefinitions[input.provider].envVarName : "Provider configuration";
@@ -1205,6 +1258,7 @@ async function optionalProviderCandidates(input: {
       diagnostic: providerDiagnostic(false, false, "not_configured", 0, {
         ...staticDiagnostic,
         query: input.query,
+        endpointVersion: input.endpointVersion,
         failureType: "not_configured",
         safeErrorMessage: `${providerLabel} is not configured.`,
       }),
@@ -1238,7 +1292,8 @@ async function optionalProviderCandidates(input: {
             httpStatus: response.status,
             query: input.query,
             failureType,
-            safeErrorMessage: safeProviderHttpMessage(response.status),
+            endpointVersion: input.endpointVersion,
+            safeErrorMessage: safeProviderHttpMessage(response.status, input.provider, input.endpointVersion),
           },
         ),
       };
@@ -1254,6 +1309,7 @@ async function optionalProviderCandidates(input: {
         ...timing,
         retryCount,
         query: input.query,
+        endpointVersion: input.endpointVersion,
         failureType: "none",
         safeErrorMessage: returnedCount ? "Provider query completed." : "Provider query completed but returned no records.",
       }),
@@ -1268,6 +1324,7 @@ async function optionalProviderCandidates(input: {
         ...staticDiagnostic,
         ...timing,
         query: input.query,
+        endpointVersion: input.endpointVersion,
         failureType: timedOut ? "timeout" : "network_error",
         safeErrorMessage: timedOut ? "Provider request timed out." : "Provider request failed before a response was returned.",
       }),
@@ -1453,8 +1510,15 @@ export async function discoverContractorsWithDiagnostics(input: {
   yellowUrl?.searchParams.set("radiusKm", String(input.radiusKm));
   yellowUrl?.searchParams.set("limit", String(limit));
 
-  const googleUrl = process.env.GOOGLE_PLACES_API_URL?.trim() || "https://places.googleapis.com/v1/places:searchText";
+  const googleEndpoint = googlePlacesEndpoint();
   const googleQuery = `${trade} near ${city}, ${displayStateCode(input.state)}`;
+  const googleUrl = new URL(googleEndpoint.url);
+  if (googleEndpoint.version === "Legacy") {
+    googleUrl.searchParams.set("query", googleQuery);
+    googleUrl.searchParams.set("location", `${latitude},${longitude}`);
+    googleUrl.searchParams.set("radius", String(Math.min(50_000, radiusMeters)));
+    googleUrl.searchParams.set("key", googleKey);
+  }
   const bingUrl = azureMapsKey
     ? providerUrl(process.env.AZURE_MAPS_POI_API_URL, "https://atlas.microsoft.com/search/poi/json")
     : providerUrl(process.env.BING_LOCAL_API_URL, "https://dev.virtualearth.net/REST/v1/LocalSearch/");
@@ -1487,27 +1551,31 @@ export async function discoverContractorsWithDiagnostics(input: {
       source: "google",
       provider: "googlePlaces",
       configured: Boolean(googleKey),
-      url: googleUrl,
-      init: {
+      url: googleUrl.href,
+      init: googleEndpoint.version === "Legacy" ? { headers } : {
         method: "POST",
         headers: {
           ...headers,
           "Content-Type": "application/json",
           "X-Goog-Api-Key": googleKey,
-          "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.formattedAddress,places.addressComponents,places.location,places.rating,places.userRatingCount,places.reviews.publishTime",
+          "X-Goog-FieldMask": googlePlacesFieldMask,
         },
         body: JSON.stringify({
           textQuery: googleQuery,
-          pageSize: Math.min(20, limit),
-          includePureServiceAreaBusinesses: true,
-          locationBias: { circle: { center: { latitude, longitude }, radius: Math.min(50_000, radiusMeters) } },
+          maxResultCount: Math.min(20, limit),
         }),
       },
       parse: parseGooglePlaces,
-      returnedCount: (value) => Array.isArray((value as { places?: unknown[] }).places) ? (value as { places: unknown[] }).places.length : 0,
+      returnedCount: (value) => {
+        const payload = value as { places?: unknown[]; results?: unknown[] };
+        if (Array.isArray(payload.places)) return payload.places.length;
+        if (Array.isArray(payload.results)) return payload.results.length;
+        return 0;
+      },
       logger: input.logger,
       radiusKm: input.radiusKm,
       query: googleQuery,
+      endpointVersion: googleEndpoint.version,
     });
   const bingResult = await optionalProviderCandidates({
       source: "bing",

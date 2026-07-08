@@ -271,12 +271,14 @@ test("configured licensed sources enrich OSM discovery without becoming required
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
     AZURE_MAPS_API_KEY: process.env.AZURE_MAPS_API_KEY,
     BING_MAPS_API_KEY: process.env.BING_MAPS_API_KEY,
     YELP_API_KEY: process.env.YELP_API_KEY,
     YELLOW_PAGES_API_URL: process.env.YELLOW_PAGES_API_URL,
   };
   process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  delete process.env.GOOGLE_PLACES_API_URL;
   process.env.AZURE_MAPS_API_KEY = "azure-test-key";
   delete process.env.BING_MAPS_API_KEY;
   process.env.YELP_API_KEY = "yelp-test-key";
@@ -289,8 +291,15 @@ test("configured licensed sources enrich OSM discovery without becoming required
       return new Response(JSON.stringify({ elements: [{ type: "node", id: 1, tags: { name: "Enriched Roofing", website: "enriched.example" } }] }), { status: 200 });
     }
     if (url.includes("googleapis")) {
+      assert.equal(url, "https://places.googleapis.com/v1/places:searchText");
+      assert.equal(init?.method, "POST");
       assert.equal((init?.headers as Record<string, string>)["X-Goog-Api-Key"], "google-test-key");
-      return new Response(JSON.stringify({ places: [{ displayName: { text: "Enriched Roofing" }, nationalPhoneNumber: "419-555-0100", rating: 4.9, userRatingCount: 120 }] }), { status: 200 });
+      assert.equal((init?.headers as Record<string, string>)["X-Goog-FieldMask"], "places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount");
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.textQuery, "Roofing near Toledo, OH");
+      assert.equal(body.maxResultCount, 20);
+      assert.equal("pageSize" in body, false);
+      return new Response(JSON.stringify({ places: [{ displayName: { text: "Enriched Roofing" }, formattedAddress: "Toledo, OH", location: { latitude: 41.65, longitude: -83.54 }, websiteUri: "https://enriched.example", nationalPhoneNumber: "419-555-0100", rating: 4.9, userRatingCount: 120 }] }), { status: 200 });
     }
     if (url.includes("atlas.microsoft")) {
       assert.match(url, /subscription-key=azure-test-key/);
@@ -320,6 +329,7 @@ test("configured licensed sources enrich OSM discovery without becoming required
     assert.equal(result.diagnostics.providerDiagnostics.azureMaps.query, "Roofing near Toledo, OH");
     assert.equal(result.diagnostics.providerDiagnostics.azureMaps.envVarPresent, true);
     assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.endpointVersion, "New");
     assert.equal(result.diagnostics.providerDiagnostics.yelp.status, "succeeded");
     assert.equal(result.diagnostics.finalMergedCount, 3);
     assert.equal(result.leads.length, 3);
@@ -345,9 +355,11 @@ test("provider throttling retries HTTP 429 and records retry diagnostics", async
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
     DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
   };
   process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  delete process.env.GOOGLE_PLACES_API_URL;
   process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
   let googleCalls = 0;
   globalThis.fetch = async (input) => {
@@ -380,15 +392,103 @@ test("provider throttling retries HTTP 429 and records retry diagnostics", async
   }
 });
 
+test("Google Places uses the legacy text search endpoint only when explicitly configured", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
+    DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
+  };
+  process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  process.env.GOOGLE_PLACES_API_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json";
+  process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.hostname.includes("nominatim")) return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
+    if (url.hostname.includes("overpass")) return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+    if (url.pathname.includes("/maps/api/place/textsearch/json")) {
+      assert.equal(init?.method, undefined);
+      assert.equal(url.searchParams.get("query"), "Roofing near Toledo, OH");
+      assert.equal(url.searchParams.get("key"), "google-test-key");
+      assert.equal(url.searchParams.get("location"), "41.6528,-83.5379");
+      return new Response(JSON.stringify({ results: [{ name: "Legacy Roofing", formatted_address: "Toledo, OH", formatted_phone_number: "419-555-0100", website: "legacyroofing.example", geometry: { location: { lat: 41.65, lng: -83.54 } }, rating: 4.6, user_ratings_total: 22 }] }), { status: 200 });
+    }
+    return new Response("unavailable", { status: 503 });
+  };
+  resetDiscoveryThrottleForTests();
+  try {
+    const result = await discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 25, limit: 10 });
+
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.endpointVersion, "Legacy");
+    assert.equal(result.leads[0]?.businessName, "Legacy Roofing");
+    assert.equal(result.leads[0]?.website, "https://legacyroofing.example/");
+    assert.equal(result.leads[0]?.phone, "419-555-0100");
+    assert.equal(result.leads[0]?.reviewCount, 22);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetDiscoveryThrottleForTests();
+  }
+});
+
+test("Google Places authentication failures explain likely New API setup causes without exposing the key", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
+    DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
+  };
+  process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  delete process.env.GOOGLE_PLACES_API_URL;
+  process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("nominatim")) return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
+    if (url.includes("overpass")) return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+    if (url.includes("places.googleapis.com/v1/places:searchText")) return new Response("forbidden", { status: 403 });
+    return new Response("unavailable", { status: 503 });
+  };
+  resetDiscoveryThrottleForTests();
+  try {
+    const result = await discoverContractorsWithDiagnostics({ city: "Toledo", state: "OH", trade: "Roofing", radiusKm: 25, limit: 10 });
+    const google = result.diagnostics.providerDiagnostics.googlePlaces;
+
+    assert.equal(google.status, "failed");
+    assert.equal(google.httpStatus, 403);
+    assert.equal(google.failureType, "auth_failure");
+    assert.equal(google.endpointVersion, "New");
+    assert.match(google.safeErrorMessage ?? "", /API key is present/);
+    assert.match(google.safeErrorMessage ?? "", /API key restrictions/);
+    assert.match(google.safeErrorMessage ?? "", /Places API New not enabled/);
+    assert.match(google.safeErrorMessage ?? "", /billing not active/);
+    assert.match(google.safeErrorMessage ?? "", /wrong endpoint version/);
+    assert.match(google.safeErrorMessage ?? "", /wrong API/);
+    assert.doesNotMatch(google.safeErrorMessage ?? "", /google-test-key/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetDiscoveryThrottleForTests();
+  }
+});
+
 test("provider calls run sequentially for a single trade search", async () => {
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
     AZURE_MAPS_API_KEY: process.env.AZURE_MAPS_API_KEY,
     YELP_API_KEY: process.env.YELP_API_KEY,
     DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
   };
   process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  delete process.env.GOOGLE_PLACES_API_URL;
   process.env.AZURE_MAPS_API_KEY = "azure-test-key";
   process.env.YELP_API_KEY = "yelp-test-key";
   process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
@@ -436,10 +536,12 @@ test("provider diagnostics distinguish zero results, failures, timeouts, and mis
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
     AZURE_MAPS_API_KEY: process.env.AZURE_MAPS_API_KEY,
     YELP_API_KEY: process.env.YELP_API_KEY,
   };
   process.env.GOOGLE_PLACES_API_KEY = "google-test-key";
+  delete process.env.GOOGLE_PLACES_API_URL;
   process.env.AZURE_MAPS_API_KEY = "azure-test-key";
   process.env.YELP_API_KEY = "yelp-test-key";
   globalThis.fetch = async (input) => {
@@ -462,6 +564,7 @@ test("provider diagnostics distinguish zero results, failures, timeouts, and mis
     assert.equal(result.diagnostics.providerDiagnostics.azureMaps.failureType, "http_error");
     assert.match(result.diagnostics.providerDiagnostics.azureMaps.safeErrorMessage ?? "", /HTTP 503/);
     assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
+    assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.endpointVersion, "New");
     assert.equal(result.diagnostics.providerDiagnostics.yelp.status, "timed_out");
     assert.equal(result.diagnostics.providerDiagnostics.yelp.failureType, "timeout");
     assert.match(result.diagnostics.providerDiagnostics.yelp.safeErrorMessage ?? "", /timed out/i);

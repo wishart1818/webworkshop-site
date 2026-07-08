@@ -62,6 +62,8 @@ For real Top Prospects and Autopilot discovery, configure provider coverage befo
 - Provider Smoke Test creates no Outreach Packages and sends nothing.
 - Autopilot sends nothing automatically. Emails, social DMs, contact forms, phone calls, and Looms remain manual or review-only.
 
+Google Places uses Places API (New) by default through `https://places.googleapis.com/v1/places:searchText`. Only set `GOOGLE_PLACES_API_URL` if you intentionally need the legacy `https://maps.googleapis.com/maps/api/place/textsearch/json` endpoint; otherwise leave it unset.
+
 Recommended launch sequence:
 
 1. Add `GOOGLE_PLACES_API_KEY` in Vercel Production.

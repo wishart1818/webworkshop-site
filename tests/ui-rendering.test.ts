@@ -384,7 +384,7 @@ test("discovery funnel identifies each provider and the final merged count", () 
       providerDiagnostics: {
         osm: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 7, withinRadiusCount: 7, afterDeduplicationCount: 6, usableWebsiteCount: 4 },
         azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 10, withinRadiusCount: 9, afterDeduplicationCount: 8, usableWebsiteCount: 6 },
-        googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        googlePlaces: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, endpointVersion: "New" },
         yelp: { configured: true, queryExecuted: true, status: "rate_limited", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, retryCount: 2, httpStatus: 429 },
       },
       finalMergedCount: 27,
@@ -440,6 +440,8 @@ test("discovery funnel identifies each provider and the final merged count", () 
   assert.match(html, /Required env var/);
   assert.match(html, /Env var present/);
   assert.match(html, /Can run without API key/);
+  assert.match(html, /Endpoint/);
+  assert.match(html, /New/);
   assert.match(html, /Query executed/);
   assert.match(html, /Succeeded/);
   assert.match(html, /Rate limited/);
@@ -572,7 +574,7 @@ test("system launch readiness advances after Google Places smoke test succeeds",
         azureOrBingConfigured: true,
       },
       providerHealth: [
-        { provider: "googlePlaces", label: "Google Places", enabled: true, requiredEnvVarName: "GOOGLE_PLACES_API_KEY", envVarPresent: true, canRunWithoutApiKey: false, lastAttemptedQuery: "Tampa pressure washing", lastStatus: "succeeded", lastHttpStatus: "200", lastSafeErrorMessage: "", failureType: "none" },
+        { provider: "googlePlaces", label: "Google Places", enabled: true, requiredEnvVarName: "GOOGLE_PLACES_API_KEY", envVarPresent: true, canRunWithoutApiKey: false, lastAttemptedQuery: "Tampa pressure washing", lastStatus: "succeeded", lastHttpStatus: "200", lastSafeErrorMessage: "", failureType: "none", endpointVersion: "New" },
         { provider: "yelp", label: "Yelp", enabled: false, requiredEnvVarName: "YELP_API_KEY", envVarPresent: false, canRunWithoutApiKey: false, lastAttemptedQuery: "Not run", lastStatus: "not_run", lastHttpStatus: "None", lastSafeErrorMessage: "No provider attempt recorded yet.", failureType: "none" },
       ],
       selfCheck: { overallStatus: "Healthy", lastRunAt: "2026-07-03T12:00:00.000Z", passed: [], warnings: [], failed: [], suggestedFixes: [] },
@@ -600,7 +602,7 @@ test("system launch readiness advances after Google Places smoke test succeeds",
         providerDiagnostics: {
           osm: { configured: true, queryExecuted: false, status: "not_attempted", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
           azureMaps: { configured: true, queryExecuted: false, status: "not_attempted", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-          googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 12, withinRadiusCount: 11, afterDeduplicationCount: 10, usableWebsiteCount: 6 },
+          googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 12, withinRadiusCount: 11, afterDeduplicationCount: 10, usableWebsiteCount: 6, endpointVersion: "New" },
           yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
         },
         finalMergedCount: 10,
@@ -613,6 +615,8 @@ test("system launch readiness advances after Google Places smoke test succeeds",
   assert.match(html, /Ready for small Top Prospects test/);
   assert.match(html, /Google Places/);
   assert.match(html, /Configured/);
+  assert.match(html, /Endpoint/);
+  assert.match(html, /New/);
   assert.match(html, /Smoke test/);
   assert.match(html, /Passed/);
   assert.match(html, /Run a small Top Prospects test before Autopilot\./);
