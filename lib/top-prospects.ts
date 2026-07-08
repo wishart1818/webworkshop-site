@@ -382,10 +382,10 @@ export function isThirdPartyDirectoryUrl(value: string | undefined) {
 }
 
 export function thirdPartyListingOnly(
-  prospect: Pick<Prospect, "website" | "profileUrl" | "email" | "contactFormUrl" | "recommendedContactMethod" | "classification">,
+  prospect: Pick<Prospect, "website" | "profileUrl" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "recommendedContactMethod" | "classification">,
 ) {
   const hasDirectorySignal = isThirdPartyDirectoryUrl(prospect.website) || isThirdPartyDirectoryUrl(prospect.profileUrl) || prospect.classification === "listing_only";
-  const hasWrittenContact = Boolean(prospect.email || prospect.contactFormUrl || prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social");
+  const hasWrittenContact = Boolean(prospect.email || prospect.contactFormUrl || prospect.quoteFormUrl || prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl || prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social");
   return hasDirectorySignal && !hasWrittenContact;
 }
 
@@ -538,7 +538,7 @@ function isPublicPreviewLink(value: string) {
   }
 }
 
-export function prospectHasWrittenContactMethod(prospect: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl">) {
+export function prospectHasWrittenContactMethod(prospect: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">) {
   return prospectWrittenContactMethodIsUsable(prospect);
 }
 
@@ -649,24 +649,24 @@ export function evaluateOutreachEmailQuality(
     },
     {
       key: "no_internal_scores",
-      label: "Email contains no internal score language",
+      label: "Outreach contains no internal score language",
       passed: drafts.length > 0
         && !/\b\d{1,3}\s*\/\s*100\b|\bscore(?:d)?(?:\s+of|:)?\s+\d{1,3}\b|\b(?:overall|website|opportunity|conversion readiness|mobile experience|trust signals|contactability|weighted sales)\s+score\b|\b(?:website quality|revenue opportunity|contactability|local market competitiveness|ai website replacement confidence|weighted sales|mobile experience|conversion readiness|trust signals|opportunity)\b.{0,30}\b\d{1,3}\b/i.test(combined),
     },
     {
       key: "real_strength",
-      label: "Email includes one real strength",
-      passed: mainEmails.length === 2 && mainEmails.every((draft) => /one thing that already works well:/i.test(draft)),
+      label: "Outreach includes one real strength",
+      passed: mainEmails.length === 2 && /one thing that already works well:/i.test(combined),
     },
     {
       key: "missed_opportunity",
-      label: "Email includes one real missed opportunity",
-      passed: mainEmails.length === 2 && mainEmails.every((draft) => /one missed opportunity:/i.test(draft)),
+      label: "Outreach includes one real missed opportunity",
+      passed: mainEmails.length === 2 && /one missed opportunity:/i.test(combined),
     },
     {
       key: "clear_cta",
-      label: "Email includes a clear call to action",
-      passed: mainEmails.length === 2 && mainEmails.every((draft) => /would you be open to a quick 10-minute call/i.test(draft)),
+      label: "Outreach includes a clear call to action",
+      passed: mainEmails.length === 2 && mainEmails.every((draft) => /would you be open to a quick 10-minute call|would you like to see it|would you like me to send/i.test(draft)),
     },
     {
       key: "opt_out",
@@ -768,6 +768,9 @@ export function calculateProspectSalesScores(prospect: Prospect, opportunityScor
     analysis.scores.contactAccessibility * 0.48
     + (prospect.phone ? 28 : 0)
     + (prospect.email ? 19 : 0)
+    + (prospect.quoteFormUrl ? 22 : prospect.contactFormUrl ? 18 : 0)
+    + (prospect.facebookUrl || prospect.instagramUrl ? 10 : 0)
+    + (prospect.linkedinUrl ? 8 : 0)
     + 5,
   );
   const localMarketCompetitivenessScore = clampScore(
@@ -785,7 +788,7 @@ export function calculateProspectSalesScores(prospect: Prospect, opportunityScor
       analysis.scores.technicalQuality,
     )) * 0.82
     + (prospect.serviceArea ? 10 : 5)
-    + (prospect.phone || prospect.email ? 8 : 3),
+    + (prospect.phone || prospect.email || prospect.contactFormUrl || prospect.quoteFormUrl ? 8 : prospect.facebookUrl || prospect.instagramUrl ? 5 : 3),
   );
   const weightedSalesScore = clampScore(
     opportunityScore * 0.3
@@ -856,7 +859,10 @@ export function calculateNoWebsitePresenceScores(prospect: Prospect): NoWebsiteP
   const onlinePresenceGapScore = clampScore(socialOnly ? 88 : googleOnly ? 92 : 100);
   const contactabilityScore = clampScore(
     (prospect.email ? 88 : 0)
+    + (prospect.quoteFormUrl ? 82 : 0)
     + (prospect.contactFormUrl ? 76 : 0)
+    + (prospect.facebookUrl || prospect.instagramUrl ? 54 : 0)
+    + (prospect.linkedinUrl ? 44 : 0)
     + (prospect.phone ? 64 : 0)
     + (/facebook|fb\.com/i.test(prospect.profileUrl) ? 48 : prospect.profileUrl ? 18 : 0),
   );
@@ -916,7 +922,7 @@ function hasMeaningfulImprovementGap(prospect: Pick<Prospect, "analysis">) {
 }
 
 export function topProspectRejectionReason(
-  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
   outreachPreference: OutreachPreference = "written_only",
@@ -961,7 +967,7 @@ export function topProspectRejectionReason(
 
 export function topProspectResultDisposition(
   persistedSelected: boolean,
-  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
   outreachPreference: OutreachPreference = "written_only",

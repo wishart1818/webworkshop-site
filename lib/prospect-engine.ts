@@ -103,6 +103,19 @@ export const recommendedContactMethods = [
   "do_not_contact",
 ] as const;
 export type RecommendedContactMethod = (typeof recommendedContactMethods)[number];
+export const manualContactMethods = [
+  "email",
+  "quote_form",
+  "contact_form",
+  "facebook",
+  "instagram",
+  "linkedin",
+  "phone_only",
+  "unknown",
+] as const;
+export type ManualContactMethod = (typeof manualContactMethods)[number];
+export const contactConfidenceLevels = ["high", "medium", "low"] as const;
+export type ContactConfidence = (typeof contactConfidenceLevels)[number];
 export type ProspectSort = "priority" | "websiteScore" | "newest" | "businessName";
 export type ScoreKey =
   | "mobileExperience"
@@ -207,7 +220,20 @@ export type Prospect = {
   classification: ProspectClassification;
   phone: string;
   email: string;
+  contactPageUrl: string;
   contactFormUrl: string;
+  quoteFormUrl: string;
+  contactFormDetected: boolean;
+  quoteFormDetected: boolean;
+  facebookUrl: string;
+  instagramUrl: string;
+  linkedinUrl: string;
+  xUrl: string;
+  youtubeUrl: string;
+  contactPersonName: string;
+  contactConfidence: ContactConfidence;
+  bestManualContactMethod: ManualContactMethod;
+  contactDiscoveryNotes: string[];
   address: string;
   city: string;
   state: string;
@@ -679,19 +705,48 @@ function isFacebookProfile(value: string) {
 }
 
 function isSocialProfile(value: string) {
-  return /(?:^|\/\/)(?:www\.)?(?:facebook|fb|instagram)\.com\//i.test(value);
+  return /(?:^|\/\/)(?:www\.)?(?:facebook|fb|instagram|linkedin|x|twitter)\.com\//i.test(value);
 }
 
 function isInstagramProfile(value: string) {
   return /(?:^|\/\/)(?:www\.)?instagram\.com\//i.test(value);
 }
 
-export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl">): ProspectClassification {
+function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl">>) {
+  return Boolean(
+    input.email
+    || input.contactFormUrl
+    || input.quoteFormUrl
+    || input.facebookUrl
+    || input.instagramUrl
+    || input.linkedinUrl
+    || isSocialProfile(input.profileUrl ?? ""),
+  );
+}
+
+export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl" | "phone">>): ManualContactMethod {
+  if (input.email) return "email";
+  if (input.quoteFormUrl) return "quote_form";
+  if (input.contactFormUrl) return "contact_form";
+  if (input.facebookUrl || isFacebookProfile(input.profileUrl ?? "")) return "facebook";
+  if (input.instagramUrl || isInstagramProfile(input.profileUrl ?? "")) return "instagram";
+  if (input.linkedinUrl) return "linkedin";
+  if (input.phone) return "phone_only";
+  return "unknown";
+}
+
+export function prospectContactConfidence(input: Partial<Pick<Prospect, "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "phone">>): ContactConfidence {
+  if (input.email || input.quoteFormUrl || input.contactFormUrl) return "high";
+  if (input.facebookUrl || input.instagramUrl || input.linkedinUrl) return "medium";
+  return input.phone ? "low" : "low";
+}
+
+export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): ProspectClassification {
   if (input.website) return "website_redesign";
   if (isSocialProfile(input.profileUrl)) return "social_only";
   if (input.profileUrl) return "listing_only";
-  if (input.phone && !input.email && !input.contactFormUrl) return "phone_only";
-  if (input.phone || input.email || input.contactFormUrl) return "no_website";
+  if (input.phone && !hasAnyWrittenContactPath(input)) return "phone_only";
+  if (input.phone || hasAnyWrittenContactPath(input)) return "no_website";
   return "not_enough_contact_info";
 }
 
@@ -711,7 +766,7 @@ export function prospectHasUnusableWebsite(prospect: Pick<Prospect, "prospectTyp
     || !["unknown", "usable"].includes(prospect.websiteStatus);
 }
 
-export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" | "classification" | "email" | "contactFormUrl" | "recommendedContactMethod">) {
+export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" | "classification" | "email" | "contactFormUrl" | "recommendedContactMethod"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "bestManualContactMethod">>) {
   const labels: string[] = [];
   if (prospect.websiteStatus === "no_owned_website" || prospect.classification === "no_website") labels.push("No website found");
   if (["invalid_website", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) labels.push("Broken website");
@@ -720,35 +775,38 @@ export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" 
   if (prospect.classification === "phone_only" || prospect.recommendedContactMethod === "call_first") labels.push("Phone-only / written outreach blocked");
   if (prospect.recommendedContactMethod === "needs_manual_contact_research") labels.push("Needs manual contact research");
   if (prospect.email) labels.push("Public email available");
-  if (prospect.contactFormUrl) labels.push("Contact form available");
-  if (prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social") labels.push("Social message available");
+  if (prospect.contactFormUrl) labels.push("Contact form found");
+  if (prospect.quoteFormUrl) labels.push("Quote form found");
+  if (prospect.facebookUrl) labels.push("Facebook found");
+  if (prospect.instagramUrl) labels.push("Instagram found");
+  if (prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl || prospect.recommendedContactMethod === "message_on_facebook" || prospect.recommendedContactMethod === "message_on_social") labels.push("Social outreach path found");
   return [...new Set(labels)];
 }
 
-export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive">): RecommendedContactMethod {
+export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): RecommendedContactMethod {
   if (input.inactive || input.classification === "national_large_brand" || input.classification === "duplicate_bad_fit") return "do_not_contact";
   if (input.email) return "send_email";
-  if (input.contactFormUrl) return "submit_contact_form";
-  if (isFacebookProfile(input.profileUrl)) return "message_on_facebook";
-  if (isInstagramProfile(input.profileUrl)) return "message_on_social";
+  if (input.quoteFormUrl || input.contactFormUrl) return "submit_contact_form";
+  if (input.facebookUrl || isFacebookProfile(input.profileUrl)) return "message_on_facebook";
+  if (input.instagramUrl || input.linkedinUrl || isInstagramProfile(input.profileUrl)) return "message_on_social";
   if (input.phone) return "needs_manual_contact_research";
   return "do_not_contact";
 }
 
-export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl">) {
+export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
   if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
-  if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.contactFormUrl);
-  if (input.recommendedContactMethod === "message_on_facebook") return isFacebookProfile(input.profileUrl);
-  if (input.recommendedContactMethod === "message_on_social") return isSocialProfile(input.profileUrl);
+  if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.quoteFormUrl || input.contactFormUrl);
+  if (input.recommendedContactMethod === "message_on_facebook") return Boolean(input.facebookUrl || isFacebookProfile(input.profileUrl));
+  if (input.recommendedContactMethod === "message_on_social") return Boolean(input.instagramUrl || input.linkedinUrl || isSocialProfile(input.profileUrl));
   if (input.recommendedContactMethod === "call_first") return Boolean(input.phone);
   return false;
 }
 
-export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl">) {
+export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
   if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
-  if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.contactFormUrl);
-  if (input.recommendedContactMethod === "message_on_facebook") return isFacebookProfile(input.profileUrl);
-  if (input.recommendedContactMethod === "message_on_social") return isSocialProfile(input.profileUrl);
+  if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.quoteFormUrl || input.contactFormUrl);
+  if (input.recommendedContactMethod === "message_on_facebook") return Boolean(input.facebookUrl || isFacebookProfile(input.profileUrl));
+  if (input.recommendedContactMethod === "message_on_social") return Boolean(input.instagramUrl || input.linkedinUrl || isSocialProfile(input.profileUrl));
   return false;
 }
 
@@ -796,6 +854,44 @@ function localTradePhrase(prospect: Prospect) {
 }
 
 export function generateOutreach(prospect: Prospect, previewLink = ""): OutreachDraft {
+  const manualMethod = prospect.bestManualContactMethod || prospectBestManualContactMethod(prospect);
+  const draftLabel = manualMethod === "quote_form"
+    ? "quote/request estimate form"
+    : manualMethod === "contact_form"
+      ? "contact form"
+      : manualMethod === "facebook"
+        ? "Facebook DM"
+        : manualMethod === "instagram"
+          ? "Instagram DM"
+          : manualMethod === "linkedin"
+            ? "LinkedIn message"
+            : "email";
+  if (!prospect.email && ["quote_form", "contact_form", "facebook", "instagram", "linkedin"].includes(manualMethod)) {
+    const trade = prospectTrade(prospect);
+    const publicPreviewLine = previewLink ? `\n\nPreview: ${previewLink}` : "";
+    const missedOpportunity = prospect.prospectType === "no_website_social_only"
+      ? "I could not find a dedicated website where customers can view services, proof, and estimate options in one place."
+      : "The quote/estimate path could be clearer for people who are already interested.";
+    const strength = prospect.reviewCount > 0
+      ? `${prospect.reviewCount} public reviews give people a reason to take a closer look.`
+      : "You already have a public business presence where local customers can find you.";
+    const firstDraft = `Hey, how's it going? I came across ${prospect.businessName} and made a quick preview showing what a cleaner website/quote page could look like for your business.${publicPreviewLine}\n\nWould you like to see it?\n\n${complianceFooter}`;
+    return {
+      subjects: [
+        `A quick website preview for ${prospect.businessName}`,
+        `${displayTradeCategory(trade)} website idea for ${titleCaseLocation(prospect.city)}`,
+        `A cleaner quote path for ${prospect.businessName}`,
+      ],
+      concise: firstDraft,
+      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: ${missedOpportunity}\n\nI made a quick concept showing how the page could make services, proof, and the next step easier to understand.${publicPreviewLine}\n\nIf this direction feels useful, would you like me to send a few notes on what I would improve first?\n\n${complianceFooter}`,
+      followUps: [
+        `Hi again,\n\nJust following up on the ${draftLabel} note I sent about the website preview for ${prospect.businessName}.${publicPreviewLine}\n\nWould you like to take a look?\n\n${complianceFooter}`,
+        `Hi again,\n\nLast note from me. The preview is just a simple idea for making services and estimate requests clearer online.${publicPreviewLine}\n\nIf the timing is not right, no problem. I will close the loop.\n\n${complianceFooter}`,
+      ],
+      approved: false,
+      generatedAt: now(),
+    };
+  }
   if (prospect.prospectType === "no_website_social_only") {
     const trade = prospectTrade(prospect);
     const playbook = contractorPlaybooks[trade];
@@ -975,8 +1071,8 @@ export function withPreview(prospect: Prospect): Prospect {
 
 type CreateProspectInput = Omit<
   Prospect,
-  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt"
-> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactFormUrl" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt">>;
+  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactPageUrl" | "contactFormUrl" | "quoteFormUrl" | "contactFormDetected" | "quoteFormDetected" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "xUrl" | "youtubeUrl" | "contactPersonName" | "contactConfidence" | "bestManualContactMethod" | "contactDiscoveryNotes" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt"
+> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactPageUrl" | "contactFormUrl" | "quoteFormUrl" | "contactFormDetected" | "quoteFormDetected" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "xUrl" | "youtubeUrl" | "contactPersonName" | "contactConfidence" | "bestManualContactMethod" | "contactDiscoveryNotes" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt">>;
 
 export function createProspect(input: CreateProspectInput): Prospect {
   const createdAt = now();
@@ -996,7 +1092,20 @@ export function createProspect(input: CreateProspectInput): Prospect {
     profileUrl: input.profileUrl ?? "",
     prospectType: input.prospectType ?? "redesign",
     classification: input.classification ?? "not_enough_contact_info",
+    contactPageUrl: input.contactPageUrl ?? "",
     contactFormUrl: input.contactFormUrl ?? "",
+    quoteFormUrl: input.quoteFormUrl ?? "",
+    contactFormDetected: input.contactFormDetected ?? Boolean(input.contactFormUrl),
+    quoteFormDetected: input.quoteFormDetected ?? Boolean(input.quoteFormUrl),
+    facebookUrl: input.facebookUrl ?? "",
+    instagramUrl: input.instagramUrl ?? "",
+    linkedinUrl: input.linkedinUrl ?? "",
+    xUrl: input.xUrl ?? "",
+    youtubeUrl: input.youtubeUrl ?? "",
+    contactPersonName: input.contactPersonName ?? "",
+    contactConfidence: input.contactConfidence ?? prospectContactConfidence(input),
+    bestManualContactMethod: input.bestManualContactMethod ?? prospectBestManualContactMethod(input),
+    contactDiscoveryNotes: input.contactDiscoveryNotes ?? [],
     address: input.address ?? "",
     rating: input.rating ?? 0,
     reviewCount: input.reviewCount ?? 0,
@@ -1016,6 +1125,8 @@ export function createProspect(input: CreateProspectInput): Prospect {
   };
   prospect.classification = input.classification ?? classifyProspectPresence(prospect);
   prospect.recommendedContactMethod = input.recommendedContactMethod ?? recommendProspectContactMethod(prospect);
+  prospect.bestManualContactMethod = input.bestManualContactMethod ?? prospectBestManualContactMethod(prospect);
+  prospect.contactConfidence = input.contactConfidence ?? prospectContactConfidence(prospect);
   return prospect;
 }
 
@@ -1037,7 +1148,20 @@ export const seedProspects: Prospect[] = [
   classification: "website_redesign",
   phone,
   email,
+  contactPageUrl: "",
   contactFormUrl: "",
+  quoteFormUrl: "",
+  contactFormDetected: false,
+  quoteFormDetected: false,
+  facebookUrl: "",
+  instagramUrl: "",
+  linkedinUrl: "",
+  xUrl: "",
+  youtubeUrl: "",
+  contactPersonName: "",
+  contactConfidence: email ? "high" : "low",
+  bestManualContactMethod: email ? "email" : "phone_only",
+  contactDiscoveryNotes: [],
   address: "",
   city,
   state,

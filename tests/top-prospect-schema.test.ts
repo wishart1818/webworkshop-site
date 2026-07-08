@@ -5,6 +5,8 @@ import {
   AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS,
   AUTONOMOUS_LEARNING_MIGRATION_ID,
   AUTONOMOUS_LEARNING_MIGRATION_STATEMENTS,
+  CONTACT_DISCOVERY_MIGRATION_ID,
+  CONTACT_DISCOVERY_MIGRATION_STATEMENTS,
   initializeTopProspectSchema,
   NO_WEBSITE_PROSPECT_MIGRATION_ID,
   NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS,
@@ -74,6 +76,7 @@ test("Top Prospects schema initializer creates only its additive tables under a 
   assert.ok(OUTREACH_PREFERENCE_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
   assert.ok(AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
   assert.ok(AUTONOMOUS_LEARNING_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
+  assert.ok(CONTACT_DISCOVERY_MIGRATION_STATEMENTS.every((statement) => fake.statements.includes(statement)));
   assert.ok(fake.statements.some((statement) => statement.includes(TOP_PROSPECT_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(TOP_PROSPECT_UPGRADE_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(NO_WEBSITE_PROSPECT_MIGRATION_ID)));
@@ -84,13 +87,14 @@ test("Top Prospects schema initializer creates only its additive tables under a 
   assert.ok(fake.statements.some((statement) => statement.includes(OUTREACH_PREFERENCE_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(AUTONOMOUS_GROWTH_MIGRATION_ID)));
   assert.ok(fake.statements.some((statement) => statement.includes(AUTONOMOUS_LEARNING_MIGRATION_ID)));
+  assert.ok(fake.statements.some((statement) => statement.includes(CONTACT_DISCOVERY_MIGRATION_ID)));
   assert.equal(fake.disconnected(), true);
 });
 
 test("Top Prospects schema initializer repairs migration bookkeeping and refuses partial schema", async () => {
   const ready = fakeDatabase(["TopProspectJob", "TopProspectResult"]);
   assert.equal(await initializeTopProspectSchema(ready.database), "ready");
-  assert.equal(ready.statements.length, 50);
+  assert.equal(ready.statements.length, 54);
   assert.ok(ready.statements.some((statement) => statement.includes(TOP_PROSPECT_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(TOP_PROSPECT_UPGRADE_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(NO_WEBSITE_PROSPECT_MIGRATION_ID)));
@@ -101,6 +105,7 @@ test("Top Prospects schema initializer repairs migration bookkeeping and refuses
   assert.ok(ready.statements.some((statement) => statement.includes(OUTREACH_PREFERENCE_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(AUTONOMOUS_GROWTH_MIGRATION_ID)));
   assert.ok(ready.statements.some((statement) => statement.includes(AUTONOMOUS_LEARNING_MIGRATION_ID)));
+  assert.ok(ready.statements.some((statement) => statement.includes(CONTACT_DISCOVERY_MIGRATION_ID)));
   assert.ok(TOP_PROSPECT_UPGRADE_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(NO_WEBSITE_PROSPECT_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(OUTREACH_PACKAGE_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
@@ -110,6 +115,7 @@ test("Top Prospects schema initializer repairs migration bookkeeping and refuses
   assert.ok(OUTREACH_PREFERENCE_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(AUTONOMOUS_GROWTH_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
   assert.ok(AUTONOMOUS_LEARNING_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
+  assert.ok(CONTACT_DISCOVERY_MIGRATION_STATEMENTS.every((statement) => ready.statements.includes(statement)));
 
   const partial = fakeDatabase(["TopProspectJob"]);
   await assert.rejects(initializeTopProspectSchema(partial.database), /partially initialized/);

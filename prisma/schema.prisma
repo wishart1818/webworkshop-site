@@ -26,7 +26,20 @@ model Prospect {
   classification String         @default("not_enough_contact_info")
   phone         String?
   publicEmail   String?
+  contactPageUrl String?
   contactFormUrl String?
+  quoteFormUrl String?
+  contactFormDetected Boolean @default(false)
+  quoteFormDetected Boolean @default(false)
+  facebookUrl   String?
+  instagramUrl  String?
+  linkedinUrl   String?
+  xUrl          String?
+  youtubeUrl    String?
+  contactPersonName String?
+  contactConfidence String @default("low")
+  bestManualContactMethod String @default("unknown")
+  contactDiscoveryNotes Json @default("[]")
   address       String?
   city          String
   state         String

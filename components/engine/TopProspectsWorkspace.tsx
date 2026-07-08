@@ -159,6 +159,17 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
   do_not_contact: "Do not contact",
 };
 
+const manualContactMethodLabels: Record<TopProspectResult["prospect"]["bestManualContactMethod"], string> = {
+  email: "Email",
+  quote_form: "Quote form",
+  contact_form: "Contact form",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  phone_only: "Phone only",
+  unknown: "Needs research",
+};
+
 const outreachPreferenceLabels: Record<OutreachPreference, string> = {
   written_only: "Written outreach only",
   phone_allowed: "Phone allowed",
@@ -169,11 +180,38 @@ type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "
 function matchesContactFilter(result: TopProspectResult, filter: ContactFilter) {
   if (filter === "all") return true;
   if (filter === "email") return Boolean(result.prospect.email);
-  if (filter === "form") return Boolean(result.prospect.contactFormUrl);
-  if (filter === "social") return result.prospect.recommendedContactMethod === "message_on_facebook" || result.prospect.recommendedContactMethod === "message_on_social";
+  if (filter === "form") return Boolean(result.prospect.contactFormUrl || result.prospect.quoteFormUrl);
+  if (filter === "social") return Boolean(result.prospect.facebookUrl || result.prospect.instagramUrl || result.prospect.linkedinUrl || result.prospect.recommendedContactMethod === "message_on_facebook" || result.prospect.recommendedContactMethod === "message_on_social");
   if (filter === "hide_phone_only") return result.prospect.classification !== "phone_only" && result.prospect.recommendedContactMethod !== "call_first";
   if (filter === "send_ready") return result.emailQuality.ready;
   return result.prospect.recommendedContactMethod === "needs_manual_contact_research" || result.emailQuality.readinessLabel === "Missing written contact method" || result.emailQuality.readinessLabel === "Phone-only / written outreach blocked";
+}
+
+function compactUrl(value: string) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return `${url.hostname.replace(/^www\./, "")}${url.pathname === "/" ? "" : url.pathname}`;
+  } catch {
+    return value;
+  }
+}
+
+function ContactPaths({ prospect }: { prospect: TopProspectResult["prospect"] }) {
+  return (
+    <div className="engine-contact-paths" aria-label={`Contact paths for ${prospect.businessName}`}>
+      <strong>Contact Paths</strong>
+      <span>Email found: {prospect.email ? <a href={`mailto:${prospect.email}`}>{prospect.email}</a> : "No"}</span>
+      <span>Contact form found: {prospect.contactFormUrl ? <a href={prospect.contactFormUrl} rel="noreferrer" target="_blank">{compactUrl(prospect.contactFormUrl)}</a> : prospect.contactFormDetected ? "Yes" : "No"}</span>
+      <span>Quote form found: {prospect.quoteFormUrl ? <a href={prospect.quoteFormUrl} rel="noreferrer" target="_blank">{compactUrl(prospect.quoteFormUrl)}</a> : prospect.quoteFormDetected ? "Yes" : "No"}</span>
+      <span>Facebook found: {prospect.facebookUrl ? <a href={prospect.facebookUrl} rel="noreferrer" target="_blank">Open Facebook</a> : "No"}</span>
+      <span>Instagram found: {prospect.instagramUrl ? <a href={prospect.instagramUrl} rel="noreferrer" target="_blank">Open Instagram</a> : "No"}</span>
+      <span>LinkedIn found: {prospect.linkedinUrl ? <a href={prospect.linkedinUrl} rel="noreferrer" target="_blank">Open LinkedIn</a> : "No"}</span>
+      <span>Phone: {prospect.phone || "No public phone"}</span>
+      <span>Recommended manual outreach: {manualContactMethodLabels[prospect.bestManualContactMethod]}</span>
+      <span>Contact confidence: {prospect.contactConfidence}</span>
+    </div>
+  );
 }
 
 function jobProgress(job: TopProspectJob) {
@@ -682,7 +720,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             {filteredResults.map((result) => (
               <article key={result.id} role="row">
                 <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
-                <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
+                <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span><em>{result.pitchAngle}</em></div>
                 <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.prospect.status}</span></div>
@@ -709,7 +747,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             {filteredReviewedNotRecommended.map((result) => (
               <article key={result.id} role="row">
                 <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
-                <div><span>{result.prospect.phone || "No public phone"}</span><span>{result.prospect.email || "No public email"}</span></div>
+                <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
                 <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.prospect.status}</span></div>
@@ -742,8 +780,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <div><span>Recommended contact</span><p>{contactMethodLabels[outreachResult.prospect.recommendedContactMethod]}</p></div>
                 <div><span>Public preview link</span><a href={outreachResult.previewLink} rel="noreferrer" target="_blank">{outreachResult.previewLink}</a><small>Safe to include in a prospect email. Internal Prospect Engine pages remain protected.</small></div>
               </div>
-              <section className="engine-email-quality" aria-label="Email quality checks">
-                <div className="engine-copy-head"><h3>Email quality checks</h3><b className={outreachResult.emailQuality.ready ? "is-ready" : "needs-fixes"}>{outreachResult.emailQuality.readinessLabel}</b></div>
+              <ContactPaths prospect={outreachResult.prospect} />
+              <section className="engine-email-quality" aria-label="Outreach quality checks">
+                <div className="engine-copy-head"><h3>Outreach quality checks</h3><small>Email quality checks now cover form and DM drafts too.</small><b className={outreachResult.emailQuality.ready ? "is-ready" : "needs-fixes"}>{outreachResult.emailQuality.readinessLabel}</b></div>
                 <ul>
                   {outreachResult.emailQuality.checks.map((check) => (
                     <li className={check.passed ? "is-passed" : "is-failed"} key={check.key}>
@@ -754,7 +793,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                     </li>
                   ))}
                 </ul>
-                {!outreachResult.emailQuality.ready && <p className="engine-copy-warning">Email copy is blocked until this package is send-ready. Current blocker: {outreachResult.emailQuality.readinessLabel}.</p>}
+                {!outreachResult.emailQuality.ready && <p className="engine-copy-warning">Outreach copy is blocked until this package is ready for human review. Current blocker: {outreachResult.emailQuality.readinessLabel}.</p>}
               </section>
               {outreachPlaybook && (
                 <section className="engine-manual-playbook" aria-label="Manual Facebook and Loom playbook">
@@ -775,8 +814,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 </section>
               )}
               <section><h3>Subject lines</h3><ul>{outreachResult.prospect.outreach.subjects.map((subject) => <li key={subject}>{subject}</li>)}</ul></section>
-              <section><div className="engine-copy-head"><h3>Short email with preview</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short email"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
-              <section><div className="engine-copy-head"><h3>Detailed email with preview</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed email"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>
+              <section><div className="engine-copy-head"><h3>Short outreach draft</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:short`, outreachResult.prospect.outreach!.concise)} type="button">{copied === `${outreachResult.id}:short` ? "Copied" : "Copy short draft"}</button></div><pre>{outreachResult.prospect.outreach.concise}</pre></section>
+              <section><div className="engine-copy-head"><h3>Detailed outreach draft</h3><button className="engine-button" disabled={!outreachResult.emailQuality.ready} onClick={() => void copyText(`${outreachResult.id}:detailed`, outreachResult.prospect.outreach!.detailed)} type="button">{copied === `${outreachResult.id}:detailed` ? "Copied" : "Copy detailed draft"}</button></div><pre>{outreachResult.prospect.outreach.detailed}</pre></section>
               <section><h3>Follow-ups</h3>{outreachResult.prospect.outreach.followUps.map((followUp, index) => <div className="engine-package-follow-up" key={followUp}><b>Follow-up {index + 1}</b><pre>{followUp}</pre></div>)}</section>
             </div>
             <footer>
@@ -859,11 +898,11 @@ function PackageReviewCard({
         <p><b>{classificationLabels[result.prospect.classification]}</b></p>
         <span>Recommended contact</span>
         <p>{contactMethodLabels[result.prospect.recommendedContactMethod]}</p>
-        <span>Email quality</span>
+        <span>Outreach quality</span>
         <p><b>{result.emailQuality.readinessLabel}</b></p>
         <span>Recommended pitch</span>
         <p>{result.pitchAngle}</p>
-        <span>Email preview</span>
+        <span>Outreach preview</span>
         <p>{emailSummary}</p>
       </div>
       <div className="engine-package-card__actions">

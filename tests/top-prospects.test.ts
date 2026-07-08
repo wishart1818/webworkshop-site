@@ -420,6 +420,35 @@ test("written outreach readiness blocks phone-only leads from send-ready approva
   assert.throws(() => assertOutreachEmailReady(prepared.prospect, publicLink), /Phone-only \/ written outreach blocked/);
 });
 
+test("Top Prospects treats contact forms and social profiles as usable manual written outreach", () => {
+  const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
+  const formProspect = withAnalysis(structuredClone(seedProspects[0]));
+  formProspect.email = "";
+  formProspect.phone = "419-555-0100";
+  formProspect.contactFormUrl = "https://local-roofing.example/contact";
+  formProspect.contactFormDetected = true;
+  formProspect.bestManualContactMethod = "contact_form";
+  formProspect.recommendedContactMethod = "submit_contact_form";
+  const formPackage = prepareTopProspectArtifacts(formProspect, publicLink);
+
+  assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
+  assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick preview/i);
+  assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/engine\/previews/i);
+
+  const socialProspect = withAnalysis(structuredClone(seedProspects[2]));
+  socialProspect.email = "";
+  socialProspect.contactFormUrl = "";
+  socialProspect.facebookUrl = "https://facebook.com/evergreenoutdoor";
+  socialProspect.bestManualContactMethod = "facebook";
+  socialProspect.recommendedContactMethod = "message_on_facebook";
+  const socialPackage = prepareTopProspectArtifacts(socialProspect, publicLink);
+
+  assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
+  assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
+  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you like to see it\?/);
+});
+
 test("Prospect Modes preserve strict behavior and expand local qualification deliberately", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.businessName = "Local Roofing Company";
@@ -757,6 +786,9 @@ test("presence classification and contact recommendations cover public lead shap
   assert.equal(recommendProspectContactMethod({ classification: "social_only", profileUrl: "https://facebook.com/local", phone: "", email: "", contactFormUrl: "", inactive: false }), "message_on_facebook");
   assert.equal(recommendProspectContactMethod({ classification: "social_only", profileUrl: "https://instagram.com/local", phone: "", email: "", contactFormUrl: "", inactive: false }), "message_on_social");
   assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "", contactFormUrl: "https://listing.example/contact", inactive: false }), "submit_contact_form");
+  assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "", contactFormUrl: "", quoteFormUrl: "https://listing.example/free-estimate", inactive: false }), "submit_contact_form");
+  assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "", contactFormUrl: "", facebookUrl: "https://facebook.com/local", inactive: false }), "message_on_facebook");
+  assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "", contactFormUrl: "", linkedinUrl: "https://linkedin.com/company/local", inactive: false }), "message_on_social");
   assert.equal(recommendProspectContactMethod({ classification: "no_website", profileUrl: "", phone: "", email: "hello@example.com", contactFormUrl: "", inactive: false }), "send_email");
   assert.equal(recommendProspectContactMethod({ classification: "phone_only", profileUrl: "", phone: "419-555-0100", email: "", contactFormUrl: "", inactive: false }), "needs_manual_contact_research");
 });

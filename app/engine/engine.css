@@ -564,6 +564,29 @@ body:has(.engine-shell) {
   min-width: 13rem;
 }
 
+.engine-contact-paths {
+  display: grid;
+  gap: 0.35rem;
+  color: #31433d;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.engine-contact-paths strong {
+  color: #10251f;
+  font-size: 0.9rem;
+}
+
+.engine-contact-paths a {
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.engine-contact-paths a:hover {
+  text-decoration: underline;
+}
+
 .engine-mobile-search {
   display: none;
 }

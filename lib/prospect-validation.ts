@@ -4,11 +4,15 @@ import {
   websiteAvailabilityStatuses,
   prospectClassifications,
   recommendedContactMethods,
+  manualContactMethods,
+  contactConfidenceLevels,
   classifyProspectPresence,
   displayStateCode,
   normalizeTradeCategory,
   recommendProspectContactMethod,
   scoreLabels,
+  prospectBestManualContactMethod,
+  prospectContactConfidence,
   titleCaseLocation,
   type Activity,
   type Analysis,
@@ -22,6 +26,8 @@ import {
   type WebsiteAvailabilityStatus,
   type ProspectClassification,
   type RecommendedContactMethod,
+  type ManualContactMethod,
+  type ContactConfidence,
   type ScoreKey,
 } from "@/lib/prospect-engine";
 
@@ -210,7 +216,14 @@ export function validateProspect(input: unknown): ValidationResult {
     };
     const parsedWebsite = validateUrl(website, "Website");
     const parsedProfileUrl = validateUrl(profileUrl, "Profile URL");
+    const parsedContactPageUrl = validateUrl(text(input.contactPageUrl ?? "", "Contact page URL", 2048, false), "Contact page URL");
     const parsedContactFormUrl = validateUrl(text(input.contactFormUrl ?? "", "Contact form URL", 2048, false), "Contact form URL");
+    const parsedQuoteFormUrl = validateUrl(text(input.quoteFormUrl ?? "", "Quote form URL", 2048, false), "Quote form URL");
+    const parsedFacebookUrl = validateUrl(text(input.facebookUrl ?? "", "Facebook URL", 2048, false), "Facebook URL");
+    const parsedInstagramUrl = validateUrl(text(input.instagramUrl ?? "", "Instagram URL", 2048, false), "Instagram URL");
+    const parsedLinkedinUrl = validateUrl(text(input.linkedinUrl ?? "", "LinkedIn URL", 2048, false), "LinkedIn URL");
+    const parsedXUrl = validateUrl(text(input.xUrl ?? "", "X/Twitter URL", 2048, false), "X/Twitter URL");
+    const parsedYoutubeUrl = validateUrl(text(input.youtubeUrl ?? "", "YouTube URL", 2048, false), "YouTube URL");
 
     const trade = normalizeTradeCategory(text(input.trade, "Trade", 40));
     if (!trade) throw new Error("Trade category is not supported.");
@@ -229,8 +242,19 @@ export function validateProspect(input: unknown): ValidationResult {
     const email = text(input.email, "Email", 254, false);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email must be valid.");
     const phone = text(input.phone, "Phone", 50, false);
+    const contactFields = {
+      website: parsedWebsite,
+      profileUrl: parsedProfileUrl,
+      phone,
+      email,
+      contactFormUrl: parsedContactFormUrl,
+      quoteFormUrl: parsedQuoteFormUrl,
+      facebookUrl: parsedFacebookUrl,
+      instagramUrl: parsedInstagramUrl,
+      linkedinUrl: parsedLinkedinUrl,
+    };
     const classification = input.classification === undefined
-      ? classifyProspectPresence({ website: parsedWebsite, profileUrl: parsedProfileUrl, phone, email, contactFormUrl: parsedContactFormUrl })
+      ? classifyProspectPresence(contactFields)
       : text(input.classification, "Prospect classification", 50) as ProspectClassification;
     if (!prospectClassifications.includes(classification)) throw new Error("Prospect classification is not supported.");
     const inactive = input.inactive === undefined ? false : input.inactive;
@@ -242,9 +266,17 @@ export function validateProspect(input: unknown): ValidationResult {
       throw new Error("Website analysis attempt date must be valid.");
     }
     const recommendedContactMethod = input.recommendedContactMethod === undefined
-      ? recommendProspectContactMethod({ classification, profileUrl: parsedProfileUrl, phone, email, contactFormUrl: parsedContactFormUrl, inactive })
+      ? recommendProspectContactMethod({ ...contactFields, classification, inactive })
       : text(input.recommendedContactMethod, "Recommended contact method", 60) as RecommendedContactMethod;
     if (!recommendedContactMethods.includes(recommendedContactMethod)) throw new Error("Recommended contact method is not supported.");
+    const bestManualContactMethod = input.bestManualContactMethod === undefined
+      ? prospectBestManualContactMethod(contactFields)
+      : text(input.bestManualContactMethod, "Best manual contact method", 50) as ManualContactMethod;
+    if (!manualContactMethods.includes(bestManualContactMethod)) throw new Error("Best manual contact method is not supported.");
+    const contactConfidence = input.contactConfidence === undefined
+      ? prospectContactConfidence(contactFields)
+      : text(input.contactConfidence, "Contact confidence", 20) as ContactConfidence;
+    if (!contactConfidenceLevels.includes(contactConfidence)) throw new Error("Contact confidence is not supported.");
 
     const scoreValue = (value: unknown, field: string, fallback = 0) => {
       const score = value === undefined ? fallback : Number(value);
@@ -268,7 +300,20 @@ export function validateProspect(input: unknown): ValidationResult {
         classification,
         phone,
         email,
+        contactPageUrl: parsedContactPageUrl,
         contactFormUrl: parsedContactFormUrl,
+        quoteFormUrl: parsedQuoteFormUrl,
+        contactFormDetected: Boolean(input.contactFormDetected ?? parsedContactFormUrl),
+        quoteFormDetected: Boolean(input.quoteFormDetected ?? parsedQuoteFormUrl),
+        facebookUrl: parsedFacebookUrl,
+        instagramUrl: parsedInstagramUrl,
+        linkedinUrl: parsedLinkedinUrl,
+        xUrl: parsedXUrl,
+        youtubeUrl: parsedYoutubeUrl,
+        contactPersonName: text(input.contactPersonName ?? "", "Contact person", 160, false),
+        contactConfidence,
+        bestManualContactMethod,
+        contactDiscoveryNotes: input.contactDiscoveryNotes === undefined ? [] : stringArray(input.contactDiscoveryNotes, "Contact discovery notes", 25, 500),
         address: text(input.address ?? "", "Address", 500, false),
         city: titleCaseLocation(text(input.city, "City", 100)),
         state: displayStateCode(text(input.state, "State", 2)),

@@ -27,7 +27,7 @@ import {
 } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
-import { analyzePublicWebsite, classifyWebsiteAnalysisFailure } from "@/lib/site-analysis";
+import { analyzePublicWebsite, classifyWebsiteAnalysisFailure, discoverWebsiteContactPaths } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
   likelySupplierOrDistributor,
@@ -775,6 +775,7 @@ async function processLead(
   if (prospect.prospectType === "redesign") {
     try {
       const analysis = await analyzePublicWebsite(prospect);
+      prospect = await discoverWebsiteContactPaths(prospect);
       prospect = {
         ...prospect,
         analysis,

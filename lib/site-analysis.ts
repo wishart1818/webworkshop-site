@@ -1,6 +1,10 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import {
+  displayStateCode,
+  prospectBestManualContactMethod,
+  prospectContactConfidence,
+  recommendProspectContactMethod,
   scoreLabels,
   type Analysis,
   type Prospect,
@@ -158,6 +162,244 @@ async function assertRobotsAllowed(url: URL) {
   } catch (error) {
     if (error instanceof Error && error.message.includes("robots.txt does not allow")) throw error;
   }
+}
+
+export type ContactDiscoveryPage = {
+  url: string;
+  html: string;
+};
+
+export type ContactDiscoveryResult = Pick<
+  Prospect,
+  | "email"
+  | "contactPageUrl"
+  | "contactFormUrl"
+  | "quoteFormUrl"
+  | "contactFormDetected"
+  | "quoteFormDetected"
+  | "facebookUrl"
+  | "instagramUrl"
+  | "linkedinUrl"
+  | "xUrl"
+  | "youtubeUrl"
+  | "contactPersonName"
+  | "contactConfidence"
+  | "bestManualContactMethod"
+  | "contactDiscoveryNotes"
+>;
+
+const contactPathSignals = [
+  "contact",
+  "contact-us",
+  "about",
+  "about-us",
+  "services",
+  "locations",
+  "request-a-quote",
+  "quote",
+  "free-estimate",
+  "estimate",
+  "get-a-quote",
+  "schedule",
+  "booking",
+  "book-now",
+];
+
+function cleanHtmlText(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanSocialUrl(value: string) {
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    return url.href.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function extractLinks(html: string, baseUrl: string) {
+  const links: string[] = [];
+  for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>/gi)) {
+    const href = match[1]?.trim();
+    if (!href || href.startsWith("#") || /^(?:tel|javascript):/i.test(href)) continue;
+    try {
+      links.push(new URL(href, baseUrl).href);
+    } catch {
+      // Ignore malformed links from old contractor sites.
+    }
+  }
+  return [...new Set(links)];
+}
+
+function emailAllowed(value: string) {
+  const lower = value.toLowerCase();
+  if (/@(?:example|test)\./i.test(lower)) return false;
+  if (/^(?:test|example|no-?reply|noreply)@/i.test(lower)) return false;
+  return true;
+}
+
+function bestEmail(emails: string[]) {
+  const unique = [...new Set(emails.map((email) => email.toLowerCase()).filter(emailAllowed))];
+  return unique.find((email) => !/^privacy@/i.test(email)) ?? unique[0] ?? "";
+}
+
+function pageLooksLikeContact(url: string, text: string) {
+  return /contact|about|location|service/i.test(new URL(url).pathname)
+    || /\b(contact us|get in touch|request information|office|service area)\b/i.test(text);
+}
+
+function pageLooksLikeQuote(url: string, text: string) {
+  return /quote|estimate|schedule|booking|book-now|request-a-quote|free-estimate/i.test(new URL(url).pathname)
+    || /\b(request (a )?(quote|estimate)|get (a )?(quote|estimate)|free estimate|schedule service|book now)\b/i.test(text);
+}
+
+function detectForm(html: string, text: string) {
+  const hasForm = /<form\b/i.test(html);
+  const hasFields = /\b(?:name|email|phone|message|quote|estimate|service|project|address)\b/i.test(text)
+    && (/<(?:input|textarea|select)\b/i.test(html) || /\b(?:submit|send|request quote|get estimate|contact us|book|schedule)\b/i.test(text));
+  return hasForm && hasFields;
+}
+
+function detectContactPerson(text: string) {
+  const match = text.match(/\b(?:owner|founder|manager|contact)\s*:?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b/);
+  return match?.[1] ?? "";
+}
+
+export function extractContactDiscoveryFromPages(baseWebsite: string, pages: ContactDiscoveryPage[], existing: Partial<Prospect> = {}): ContactDiscoveryResult {
+  const baseOrigin = new URL(baseWebsite).origin;
+  const pageUrls = pages.map((page) => page.url);
+  const emails: string[] = [];
+  let contactPageUrl = "";
+  let contactFormUrl = "";
+  let quoteFormUrl = "";
+  let contactFormDetected = false;
+  let quoteFormDetected = false;
+  let facebookUrl = "";
+  let instagramUrl = "";
+  let linkedinUrl = "";
+  let xUrl = "";
+  let youtubeUrl = "";
+  let contactPersonName = "";
+  const notes: string[] = [];
+
+  for (const page of pages) {
+    const text = cleanHtmlText(page.html);
+    if (new URL(page.url).origin !== baseOrigin) continue;
+    const lower = text.toLowerCase();
+    const links = extractLinks(page.html, page.url);
+    for (const email of text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []) emails.push(email);
+    for (const match of page.html.matchAll(/href\s*=\s*["']mailto:([^?"']+)/gi)) {
+      if (match[1]) emails.push(decodeURIComponent(match[1]));
+    }
+    for (const link of links) {
+      if (/facebook\.com|fb\.com/i.test(link) && !facebookUrl) facebookUrl = cleanSocialUrl(link);
+      if (/instagram\.com/i.test(link) && !instagramUrl) instagramUrl = cleanSocialUrl(link);
+      if (/linkedin\.com/i.test(link) && !linkedinUrl) linkedinUrl = cleanSocialUrl(link);
+      if (/(?:^|\/\/)(?:www\.)?(?:x|twitter)\.com/i.test(link) && !xUrl) xUrl = cleanSocialUrl(link);
+      if (/youtube\.com|youtu\.be/i.test(link) && !youtubeUrl) youtubeUrl = cleanSocialUrl(link);
+    }
+    if (!contactPageUrl && pageLooksLikeContact(page.url, lower)) contactPageUrl = page.url;
+    const hasDetectedForm = detectForm(page.html, lower);
+    if (hasDetectedForm && pageLooksLikeQuote(page.url, lower)) {
+      quoteFormDetected = true;
+      quoteFormUrl ||= page.url;
+    } else if (hasDetectedForm) {
+      contactFormDetected = true;
+      contactFormUrl ||= page.url;
+    }
+    contactPersonName ||= detectContactPerson(text);
+  }
+
+  if (!contactPageUrl) {
+    contactPageUrl = pageUrls.find((url) => /contact/i.test(url)) ?? "";
+  }
+  if (quoteFormUrl) notes.push("Quote/request estimate form detected; form was not submitted.");
+  if (contactFormUrl) notes.push("Contact form detected; form was not submitted.");
+  if (facebookUrl || instagramUrl || linkedinUrl) notes.push("Public social profile link found on scanned website pages.");
+
+  const email = existing.email || bestEmail(emails);
+  const result = {
+    email,
+    contactPageUrl,
+    contactFormUrl: existing.contactFormUrl || contactFormUrl,
+    quoteFormUrl,
+    contactFormDetected,
+    quoteFormDetected,
+    facebookUrl,
+    instagramUrl,
+    linkedinUrl,
+    xUrl,
+    youtubeUrl,
+    contactPersonName,
+    contactConfidence: "low" as const,
+    bestManualContactMethod: "unknown" as const,
+    contactDiscoveryNotes: notes,
+  };
+  return {
+    ...result,
+    contactConfidence: prospectContactConfidence({ ...existing, ...result }),
+    bestManualContactMethod: prospectBestManualContactMethod({ ...existing, ...result }),
+  };
+}
+
+function likelyContactPageUrl(value: string) {
+  try {
+    const path = new URL(value).pathname.toLowerCase();
+    return contactPathSignals.some((signal) => path.includes(signal));
+  } catch {
+    return false;
+  }
+}
+
+export async function discoverWebsiteContactPaths(prospect: Prospect): Promise<Prospect> {
+  if (!prospect.website) return prospect;
+  const root = await assertPublicUrl(prospect.website);
+  const candidates = new Set<string>([root.href]);
+  for (const path of contactPathSignals) candidates.add(new URL(`/${path}`, root.origin).href);
+  const fetched: ContactDiscoveryPage[] = [];
+  const queue = [...candidates];
+  for (let index = 0; index < queue.length && fetched.length < 10; index += 1) {
+    const candidate = queue[index];
+    try {
+      const pageUrl = await assertPublicUrl(candidate);
+      if (pageUrl.origin !== root.origin) continue;
+      await assertRobotsAllowed(pageUrl);
+      const { response, url } = await fetchPublicPage(pageUrl.href);
+      if (!response.ok || !(response.headers.get("content-type") ?? "").includes("text/html")) continue;
+      const html = await readLimitedText(response);
+      fetched.push({ url: url.href, html });
+      if (fetched.length === 1) {
+        for (const link of extractLinks(html, url.href)) {
+          const parsed = new URL(link);
+          if (parsed.origin === root.origin && likelyContactPageUrl(parsed.href) && !candidates.has(parsed.href)) {
+            candidates.add(parsed.href);
+            queue.push(parsed.href);
+          }
+        }
+      }
+    } catch {
+      // Contact discovery is enrichment only; failed auxiliary pages should not block analysis.
+    }
+  }
+  const discovery = extractContactDiscoveryFromPages(root.href, fetched, prospect);
+  const updated = {
+    ...prospect,
+    ...discovery,
+    state: displayStateCode(prospect.state),
+  };
+  return {
+    ...updated,
+    classification: prospect.classification === "website_redesign" ? prospect.classification : prospect.classification,
+    recommendedContactMethod: recommendProspectContactMethod(updated),
+  };
 }
 
 function countMatches(value: string, expression: RegExp) {
