@@ -4,6 +4,7 @@ import {
   displayStateCode,
   prospectBestManualContactMethod,
   prospectContactConfidence,
+  prospectEmailNeedsManualVerification,
   recommendProspectContactMethod,
   scoreLabels,
   type Analysis,
@@ -242,13 +243,16 @@ function extractLinks(html: string, baseUrl: string) {
 function emailAllowed(value: string) {
   const lower = value.toLowerCase();
   if (/@(?:example|test)\./i.test(lower)) return false;
-  if (/^(?:test|example|no-?reply|noreply)@/i.test(lower)) return false;
+  if (/^(?:test|example|no-?reply|noreply|do-?not-?reply|donotreply|wordpress|wp)@/i.test(lower)) return false;
   return true;
 }
 
-function bestEmail(emails: string[]) {
+function bestEmail(emails: string[], existing: Partial<Prospect>) {
   const unique = [...new Set(emails.map((email) => email.toLowerCase()).filter(emailAllowed))];
-  return unique.find((email) => !/^privacy@/i.test(email)) ?? unique[0] ?? "";
+  return unique.find((email) => !/^privacy@/i.test(email) && !prospectEmailNeedsManualVerification({ ...existing, email }))
+    ?? unique.find((email) => !/^privacy@/i.test(email))
+    ?? unique[0]
+    ?? "";
 }
 
 function pageLooksLikeContact(url: string, text: string) {
@@ -325,7 +329,7 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
   if (contactFormUrl) notes.push("Contact form detected; form was not submitted.");
   if (facebookUrl || instagramUrl || linkedinUrl) notes.push("Public social profile link found on scanned website pages.");
 
-  const email = existing.email || bestEmail(emails);
+  const email = existing.email || bestEmail(emails, existing);
   const result = {
     email,
     contactPageUrl,

@@ -18,6 +18,31 @@ test("contact discovery extracts visible and mailto emails while ignoring fake a
   assert.equal(result.bestManualContactMethod, "email");
 });
 
+test("contact discovery downgrades suspicious unrelated theme/admin emails", () => {
+  const suspiciousOnly = extractContactDiscoveryFromPages("https://tampapressurepros.com", [
+    {
+      url: "https://tampapressurepros.com/contact",
+      html: `<footer>Email admin@totalwptheme.com for site admin help.</footer>`,
+    },
+  ], { businessName: "Tampa Pressure Pros", website: "https://tampapressurepros.com" });
+
+  assert.equal(suspiciousOnly.email, "admin@totalwptheme.com");
+  assert.equal(suspiciousOnly.contactConfidence, "low");
+  assert.equal(suspiciousOnly.bestManualContactMethod, "unknown");
+
+  const betterEmail = extractContactDiscoveryFromPages("https://tampapressurepros.com", [
+    {
+      url: "https://tampapressurepros.com/contact",
+      html: `<footer>admin@totalwptheme.com estimates@tampapressurepros.com</footer>`,
+    },
+  ], { businessName: "Tampa Pressure Pros", website: "https://tampapressurepros.com" });
+
+  assert.equal(betterEmail.email, "estimates@tampapressurepros.com");
+  assert.equal(betterEmail.contactConfidence, "high");
+  assert.equal(betterEmail.bestManualContactMethod, "email");
+});
+
+
 test("contact discovery detects contact and quote forms without submitting anything", () => {
   const result = extractContactDiscoveryFromPages("https://tampapros.example", [
     {

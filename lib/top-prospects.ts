@@ -9,6 +9,7 @@ import {
   displayStateCode,
   displayTradeCategory,
   prospectContactMethodIsUsable,
+  prospectEmailNeedsManualVerification,
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
   scorePreviewQuality,
@@ -21,6 +22,7 @@ import {
   type ProspectSearchType,
   type TopProspectTradeSelection,
   type TradeCategory,
+  webworkshopPostalAddress,
 } from "@/lib/prospect-engine";
 
 export const topProspectJobStatuses = [
@@ -170,6 +172,8 @@ export const sendReadinessLabels = [
   "Needs review",
   "Missing written contact method",
   "Phone-only / written outreach blocked",
+  "Needs sender postal address before sending",
+  "Verify email manually",
   "Preview quality issue",
   "Unsupported claim",
   "Too generic",
@@ -617,6 +621,7 @@ export function evaluateOutreachEmailQuality(
   prospect: Prospect,
   previewLink: string,
   outreachPreference: OutreachPreference = "written_only",
+  environment: NodeJS.ProcessEnv = process.env,
 ): OutreachEmailQuality {
   const outreach = prospect.outreach;
   const drafts = outreach ? [outreach.concise, outreach.detailed, ...outreach.followUps] : [];
@@ -640,6 +645,16 @@ export function evaluateOutreachEmailQuality(
   const publicLinkReady = isPublicPreviewLink(previewLink)
     && mainEmails.every((draft) => draft.includes(previewLink))
     && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier email/i.test(draft)));
+  const senderPostalAddress = webworkshopPostalAddress(environment);
+  const emailNeedsVerification = prospectEmailNeedsManualVerification(prospect)
+    && !prospect.quoteFormUrl
+    && !prospect.contactFormUrl
+    && !prospect.facebookUrl
+    && !prospect.instagramUrl
+    && !prospect.linkedinUrl;
+  const postalAddressReady = prospect.bestManualContactMethod !== "email" && prospect.recommendedContactMethod !== "send_email"
+    ? true
+    : Boolean(senderPostalAddress) && drafts.every((draft) => draft.includes(senderPostalAddress));
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
     {
@@ -666,7 +681,7 @@ export function evaluateOutreachEmailQuality(
     {
       key: "clear_cta",
       label: "Outreach includes a clear call to action",
-      passed: mainEmails.length === 2 && mainEmails.every((draft) => /would you be open to a quick 10-minute call|would you like to see it|would you like me to send/i.test(draft)),
+      passed: mainEmails.length === 2 && mainEmails.every((draft) => /would you be open to a quick 10-minute call|would you be open to taking a look|would you like to see it|would you like me to send/i.test(draft)),
     },
     {
       key: "opt_out",
@@ -675,8 +690,17 @@ export function evaluateOutreachEmailQuality(
     },
     {
       key: "postal_address",
-      label: "Every draft includes a postal address or placeholder",
-      passed: drafts.length >= 4 && drafts.every((draft) => /\[Add your business postal address before sending\]/i.test(draft)),
+      label: "Sender postal address is configured",
+      passed: drafts.length >= 4 && postalAddressReady && !/\[Add your business postal address before sending\]/i.test(combined),
+      reason: "Set WEBWORKSHOP_POSTAL_ADDRESS before marking email outreach send-ready.",
+      suggestion: "Add WEBWORKSHOP_POSTAL_ADDRESS in Vercel and redeploy.",
+    },
+    {
+      key: "contact_quality",
+      label: "Email address appears business-owned",
+      passed: !emailNeedsVerification,
+      reason: "The email looks like a theme, developer, noreply, or unrelated-domain address.",
+      suggestion: "Verify the email manually or use a contact form/social path instead.",
     },
     {
       key: "written_contact_method",
@@ -713,15 +737,19 @@ export function evaluateOutreachEmailQuality(
       ? "Bad fit"
       : !publicLinkReady
         ? "Preview quality issue"
-        : phoneOnlyBlocked
-          ? "Phone-only / written outreach blocked"
-          : !writtenContactReady && outreachPreference === "written_only"
-            ? "Missing written contact method"
-            : checks.some((check) => check.key === "supported_facts_only" && !check.passed)
-              ? "Unsupported claim"
-              : checks.some((check) => ["real_strength", "missed_opportunity", "clear_cta"].includes(check.key) && !check.passed)
-                ? "Too generic"
-                : "Needs review";
+        : !postalAddressReady
+          ? "Needs sender postal address before sending"
+          : emailNeedsVerification
+            ? "Verify email manually"
+            : phoneOnlyBlocked
+              ? "Phone-only / written outreach blocked"
+              : !writtenContactReady && outreachPreference === "written_only"
+                ? "Missing written contact method"
+                : checks.some((check) => check.key === "supported_facts_only" && !check.passed)
+                  ? "Unsupported claim"
+                  : checks.some((check) => ["real_strength", "missed_opportunity", "clear_cta"].includes(check.key) && !check.passed)
+                    ? "Too generic"
+                    : "Needs review";
   return { ready: issues.length === 0, readinessLabel, checks, issues };
 }
 

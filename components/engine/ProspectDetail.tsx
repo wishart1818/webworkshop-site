@@ -39,6 +39,7 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
   submit_contact_form: "Submit contact form",
   message_on_facebook: "Message on Facebook",
   message_on_social: "Message on social",
+  verify_email_manually: "Verify email manually",
   call_first: "Call first",
   needs_manual_contact_research: "Needs manual contact research",
   do_not_contact: "Do not contact",
@@ -270,7 +271,7 @@ function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "p
       <div className={`engine-approval ${outreach.approved ? "is-approved" : ""}`}>
         <div>
           <b>{outreach.approved ? "Approved for personal sending" : "Human review required"}</b>
-          <p>{outreach.approved ? "This draft has been reviewed. Copy it into your normal email workflow and complete the postal-address placeholder before sending." : "Review facts, tone, recipient details, sender identity, and opt-out handling before approving."}</p>
+          <p>{outreach.approved ? "This draft has been reviewed. Copy it into your normal email workflow after the sender postal address is configured." : "Review facts, tone, recipient details, sender identity, and opt-out handling before approving."}</p>
           {!writtenContactReady && <p className="engine-copy-warning">Written outreach is blocked for this prospect because no email, contact form, or social message path is available. Treat it as Needs manual contact research.</p>}
           {!outreach.approved && (
             <label className="engine-compliance-check">

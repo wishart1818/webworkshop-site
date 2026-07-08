@@ -44,6 +44,7 @@ In **Vercel project settings > Environment Variables**, add:
 | `OUTREACH_NOTIFY_EMAIL` | No | Internal operator email for Loom Needed notifications only |
 | `OUTREACH_NOTIFY_FROM_EMAIL` | No | Verified sender address for internal Loom Needed notifications |
 | `OUTREACH_NOTIFY_ON_LOOM_NEEDED` | No | Set to `true` to notify internally when a prospect says yes and a Loom task is created |
+| `WEBWORKSHOP_POSTAL_ADDRESS` | Recommended | Sender mailing address inserted into manual email drafts; email packages are not send-ready until this is set |
 
 Apply production secrets to the **Production** environment. Use separate credentials and a separate database for Preview if preview deployments need engine access.
 

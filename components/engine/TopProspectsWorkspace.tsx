@@ -154,6 +154,7 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
   submit_contact_form: "Submit contact form",
   message_on_facebook: "Message on Facebook",
   message_on_social: "Message on social",
+  verify_email_manually: "Verify email manually",
   call_first: "Call first",
   needs_manual_contact_research: "Needs manual contact research",
   do_not_contact: "Do not contact",

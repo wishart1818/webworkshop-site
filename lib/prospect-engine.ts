@@ -98,6 +98,7 @@ export const recommendedContactMethods = [
   "submit_contact_form",
   "message_on_facebook",
   "message_on_social",
+  "verify_email_manually",
   "call_first",
   "needs_manual_contact_research",
   "do_not_contact",
@@ -712,9 +713,50 @@ function isInstagramProfile(value: string) {
   return /(?:^|\/\/)(?:www\.)?instagram\.com\//i.test(value);
 }
 
-function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl">>) {
+function emailParts(value: string) {
+  const [local = "", domain = ""] = value.toLowerCase().split("@");
+  return { local, domain };
+}
+
+function identityTokensForContact(value: string) {
+  return value.toLowerCase()
+    .replace(/\b(llc|inc|company|co|corp|corporation|services?|service|the|and|of|for|a|an)\b/g, " ")
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4);
+}
+
+function rootDomain(value: string) {
+  if (!value) return "";
+  try {
+    const hostname = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`).hostname.replace(/^www\./, "").toLowerCase();
+    const parts = hostname.split(".");
+    return parts.length > 2 ? parts.slice(-2).join(".") : hostname;
+  } catch {
+    return value.replace(/^www\./, "").toLowerCase();
+  }
+}
+
+export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospect, "businessName" | "website" | "email">>) {
+  if (!input.email) return false;
+  const { local, domain } = emailParts(input.email);
+  if (!local || !domain) return true;
+  if (/^(?:no-?reply|noreply|do-?not-?reply|donotreply|wordpress|wp|example|test|privacy)$/i.test(local)) return true;
+  if (/(?:totalwp|wp[-.]?theme|wordpress|themeforest|template|demo|staging|developer|webdesigner|webmaster|hosting|wpengine)/i.test(domain)) return true;
+  const websiteDomain = rootDomain(input.website ?? "");
+  if (websiteDomain && domain === websiteDomain) return false;
+  const businessTokens = identityTokensForContact(input.businessName ?? "");
+  const domainTokens = identityTokensForContact(domain.replace(/\.[a-z.]+$/i, ""));
+  if (!websiteDomain && businessTokens.length === 0) return false;
+  return !businessTokens.some((token) => domainTokens.includes(token));
+}
+
+function hasUsableEmail(input: Partial<Pick<Prospect, "businessName" | "website" | "email">>) {
+  return Boolean(input.email) && !prospectEmailNeedsManualVerification(input);
+}
+
+function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl">>) {
   return Boolean(
-    input.email
+    hasUsableEmail(input)
     || input.contactFormUrl
     || input.quoteFormUrl
     || input.facebookUrl
@@ -724,8 +766,8 @@ function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "email" | "conta
   );
 }
 
-export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl" | "phone">>): ManualContactMethod {
-  if (input.email) return "email";
+export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl" | "phone">>): ManualContactMethod {
+  if (hasUsableEmail(input)) return "email";
   if (input.quoteFormUrl) return "quote_form";
   if (input.contactFormUrl) return "contact_form";
   if (input.facebookUrl || isFacebookProfile(input.profileUrl ?? "")) return "facebook";
@@ -735,13 +777,13 @@ export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "e
   return "unknown";
 }
 
-export function prospectContactConfidence(input: Partial<Pick<Prospect, "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "phone">>): ContactConfidence {
-  if (input.email || input.quoteFormUrl || input.contactFormUrl) return "high";
+export function prospectContactConfidence(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "phone">>): ContactConfidence {
+  if (hasUsableEmail(input) || input.quoteFormUrl || input.contactFormUrl) return "high";
   if (input.facebookUrl || input.instagramUrl || input.linkedinUrl) return "medium";
   return input.phone ? "low" : "low";
 }
 
-export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): ProspectClassification {
+export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): ProspectClassification {
   if (input.website) return "website_redesign";
   if (isSocialProfile(input.profileUrl)) return "social_only";
   if (input.profileUrl) return "listing_only";
@@ -783,18 +825,19 @@ export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" 
   return [...new Set(labels)];
 }
 
-export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): RecommendedContactMethod {
+export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): RecommendedContactMethod {
   if (input.inactive || input.classification === "national_large_brand" || input.classification === "duplicate_bad_fit") return "do_not_contact";
-  if (input.email) return "send_email";
+  if (hasUsableEmail(input)) return "send_email";
   if (input.quoteFormUrl || input.contactFormUrl) return "submit_contact_form";
   if (input.facebookUrl || isFacebookProfile(input.profileUrl)) return "message_on_facebook";
   if (input.instagramUrl || input.linkedinUrl || isInstagramProfile(input.profileUrl)) return "message_on_social";
+  if (input.email) return "verify_email_manually";
   if (input.phone) return "needs_manual_contact_research";
   return "do_not_contact";
 }
 
-export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
-  if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
+export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
+  if (input.recommendedContactMethod === "send_email") return hasUsableEmail(input);
   if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.quoteFormUrl || input.contactFormUrl);
   if (input.recommendedContactMethod === "message_on_facebook") return Boolean(input.facebookUrl || isFacebookProfile(input.profileUrl));
   if (input.recommendedContactMethod === "message_on_social") return Boolean(input.instagramUrl || input.linkedinUrl || isSocialProfile(input.profileUrl));
@@ -802,8 +845,8 @@ export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommended
   return false;
 }
 
-export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
-  if (input.recommendedContactMethod === "send_email") return Boolean(input.email);
+export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
+  if (input.recommendedContactMethod === "send_email") return hasUsableEmail(input);
   if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.quoteFormUrl || input.contactFormUrl);
   if (input.recommendedContactMethod === "message_on_facebook") return Boolean(input.facebookUrl || isFacebookProfile(input.profileUrl));
   if (input.recommendedContactMethod === "message_on_social") return Boolean(input.instagramUrl || input.linkedinUrl || isSocialProfile(input.profileUrl));
@@ -843,7 +886,21 @@ function outreachGoal(prospect: Prospect) {
   return `help turn more local visitors into ${displayTradeCategory(trade).toLowerCase()} estimate requests`;
 }
 
-const complianceFooter = "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+export function webworkshopPostalAddress(environment: NodeJS.ProcessEnv = process.env) {
+  return environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() ?? "";
+}
+
+export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = process.env) {
+  const address = webworkshopPostalAddress(environment);
+  return [
+    "Thanks,",
+    "Brendan",
+    "WebWorkshop",
+    ...(address ? [address] : []),
+    "",
+    "If you would rather not receive another note, just reply and I will close the loop.",
+  ].join("\n");
+}
 
 function conceptPreviewSentence(previewLink: string, lead = "I put together a short concept showing the idea") {
   return previewLink ? `${lead}: ${previewLink}` : `${lead}.`;
@@ -853,7 +910,8 @@ function localTradePhrase(prospect: Prospect) {
   return `local ${displayTradeCategory(prospectTrade(prospect)).toLowerCase()} businesses around ${titleCaseLocation(prospect.city)}`;
 }
 
-export function generateOutreach(prospect: Prospect, previewLink = ""): OutreachDraft {
+export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {
+  const complianceFooter = outreachComplianceFooter(environment);
   const manualMethod = prospect.bestManualContactMethod || prospectBestManualContactMethod(prospect);
   const draftLabel = manualMethod === "quote_form"
     ? "quote/request estimate form"
@@ -866,16 +924,14 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
           : manualMethod === "linkedin"
             ? "LinkedIn message"
             : "email";
-  if (!prospect.email && ["quote_form", "contact_form", "facebook", "instagram", "linkedin"].includes(manualMethod)) {
+  if (prospect.prospectType !== "no_website_social_only" && !prospect.email && ["quote_form", "contact_form", "facebook", "instagram", "linkedin"].includes(manualMethod)) {
     const trade = prospectTrade(prospect);
-    const publicPreviewLine = previewLink ? `\n\nPreview: ${previewLink}` : "";
-    const missedOpportunity = prospect.prospectType === "no_website_social_only"
-      ? "I could not find a dedicated website where customers can view services, proof, and estimate options in one place."
-      : "The quote/estimate path could be clearer for people who are already interested.";
+    const publicPreviewLine = previewLink ? `\n\nHere's the preview:\n${previewLink}` : "";
+    const missedOpportunity = "The quote/estimate path could be clearer for people who are already interested.";
     const strength = prospect.reviewCount > 0
       ? `${prospect.reviewCount} public reviews give people a reason to take a closer look.`
       : "You already have a public business presence where local customers can find you.";
-    const firstDraft = `Hey, how's it going? I came across ${prospect.businessName} and made a quick preview showing what a cleaner website/quote page could look like for your business.${publicPreviewLine}\n\nWould you like to see it?\n\n${complianceFooter}`;
+    const firstDraft = `Hey, how's it going? I made a quick preview showing what a cleaner website/quote page could look like for ${prospect.businessName}.${publicPreviewLine}\n\nWould you like to see it?\n\n${complianceFooter}`;
     return {
       subjects: [
         `A quick website preview for ${prospect.businessName}`,
@@ -905,7 +961,7 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
         `Own the online home for ${prospect.businessName}`,
         `Turn ${titleCaseLocation(prospect.city)} searches into direct inquiries`,
       ],
-      concise: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+      concise: `Hi ${prospect.businessName} team,\n\nI made a quick preview showing how an owned website could make it easier for visitors to understand your services and request an estimate.\n\nOne thing that already works well: ${activityProof} gives homeowners a reason to take a closer look.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\n${previewSentence}\n\nWould you be open to taking a look?\n\n${complianceFooter}`,
       detailed: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${activityProof} gives the business visible local credibility.\n\nOne missed opportunity: I could not find a dedicated website where customers can view services, proof, and estimate options in one place.\n\nI made a simple concept centered on ${playbook.services.join(", ")}, a clear service area, space for customer proof you can verify, and a direct "${playbook.primaryCta}" action.\n\n${previewSentence}\n\nIf the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
       followUps: [
         `Hi again,\n\nI wanted to follow up on the website concept I shared for ${prospect.businessName}. It is designed to turn local searches into direct inquiries while keeping your public profiles working alongside an owned site.\n\n${conceptPreviewSentence(previewLink, "Here is the concept again")}\n\nWould a quick 10-minute call next week be useful?\n\n${complianceFooter}`,
@@ -923,11 +979,11 @@ export function generateOutreach(prospect: Prospect, previewLink = ""): Outreach
   const previewSentence = conceptPreviewSentence(previewLink);
   return {
     subjects: [
-      `A website idea for ${prospect.businessName}`,
+      `Quick website idea for ${prospect.businessName}`,
       `${displayTradeCategory(trade)} website notes for ${titleCaseLocation(prospect.city)}`,
       `A clearer quote path for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: ${opportunity}\n\n${previewSentence}\n\nThe idea is to ${goal}. If the direction feels useful, would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
+    concise: `Hi ${prospect.businessName} team,\n\nI came across your site and made a quick preview showing how it could be easier for visitors to request a quote.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: there may be an opportunity to make ${opportunity.charAt(0).toLowerCase()}${opportunity.slice(1)}\n\nHere's the preview:\n${previewLink || previewSentence}\n\nWould you be open to taking a look?\n\n${complianceFooter}`,
     detailed: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nOne thing that already works well: ${strength}\n\nOne missed opportunity: ${opportunity}\n\nI made a business-specific concept centered on ${playbook.services.join(", ")}, clearer customer proof, and a shorter "${playbook.primaryCta}" path.\n\n${previewSentence}\n\nThe idea is to ${goal} without losing what already works on the current site. Would you be open to a quick 10-minute call next week?\n\n${complianceFooter}`,
     followUps: [
       `Hi again,\n\nI wanted to follow up on the website concept I shared for ${prospect.businessName}. The main idea is a clearer estimate path supported by useful local proof.\n\n${conceptPreviewSentence(previewLink, "Here is the concept again")}\n\nWould a quick 10-minute call next week be useful?\n\n${complianceFooter}`,
@@ -1133,11 +1189,11 @@ export function createProspect(input: CreateProspectInput): Prospect {
 const seedCreatedAt = "2026-06-01T12:00:00.000Z";
 
 export const seedProspects: Prospect[] = [
-  ["Summit Ridge Roofing", "https://example.com/summit-roofing", "(419) 555-0142", "hello@summitridge.example", "Findlay", "OH", "Roofing", "Established"],
+  ["Summit Ridge Roofing", "https://example.com/summit-roofing", "(419) 555-0142", "hello@example.com", "Findlay", "OH", "Roofing", "Established"],
   ["Northline Heating & Air", "https://example.com/northline-hvac", "(419) 555-0188", "", "Toledo", "OH", "HVAC", "Growing"],
-  ["Evergreen Outdoor Works", "https://example.com/evergreen-outdoor", "(614) 555-0129", "office@evergreen.example", "Dublin", "OH", "Landscaping", "Growing"],
+  ["Evergreen Outdoor Works", "https://example.com/evergreen-outdoor", "(614) 555-0129", "office@example.com", "Dublin", "OH", "Landscaping", "Growing"],
   ["ClearFlow Plumbing", "https://example.com/clearflow", "(567) 555-0134", "", "Lima", "OH", "Plumbing", "Established"],
-  ["BrightWire Electric", "https://example.com/brightwire", "(419) 555-0171", "service@brightwire.example", "Perrysburg", "OH", "Electrical", "Small"],
+  ["BrightWire Electric", "https://example.com/brightwire", "(419) 555-0171", "service@example.com", "Perrysburg", "OH", "Electrical", "Small"],
   ["Freshline Pressure Washing", "https://example.com/freshline", "(419) 555-0160", "", "Bowling Green", "OH", "Pressure Washing", "Small"],
 ].map(([businessName, website, phone, email, city, state, trade, sizeIndicator], index) => ({
   id: `seed-prospect-${index + 1}`,

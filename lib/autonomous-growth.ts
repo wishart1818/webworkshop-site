@@ -1,6 +1,7 @@
 import {
   displayTradeCategory,
   normalizeTradeCategory,
+  outreachComplianceFooter,
   prospectWrittenContactMethodIsUsable,
   type PreviewConcept,
   type Prospect,
@@ -649,8 +650,8 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
 }
 
 export function rewriteOutreachWithFixes(emailBody: string) {
-  const optOut = emailBody.match(/WebWorkshop[\s\S]*?would rather not receive another note, reply and I will close the loop\./i)?.[0]
-    ?? "WebWorkshop\n[Add your business postal address before sending]\nIf you would rather not receive another note, reply and I will close the loop.";
+  const optOut = emailBody.match(/Thanks,[\s\S]*?If you would rather not receive another note, just reply and I will close the loop\./i)?.[0]
+    ?? outreachComplianceFooter();
   const greeting = emailBody.split("\n").find((line) => /^Hi\b/i.test(line.trim()))?.trim() ?? "Hi there,";
   const previewLink = emailBody.match(/https?:\/\/[^\s)]+\/p\/[A-Za-z0-9_-]{32}/)?.[0] ?? "";
   return [

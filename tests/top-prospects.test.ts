@@ -40,6 +40,7 @@ import {
   classifyProspectPresence,
   displayTradeCategory,
   normalizeTradeCategory,
+  prospectEmailNeedsManualVerification,
   recommendProspectContactMethod,
   seedProspects,
   titleCaseLocation,
@@ -48,6 +49,9 @@ import {
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { createPublicPreviewToken } from "../lib/public-preview-token";
 import { combineCityDiscoveryResults, combineTradeDiscoveryResults, recoverableTopProspect, tradeFailureDiscoveryResult } from "../lib/top-prospect-worker";
+
+const testPostalAddress = "123 Main St, Findlay, OH 45840";
+process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= testPostalAddress;
 
 function manualAssessment(opportunityScore: number): OpportunityAssessment {
   return {
@@ -349,6 +353,7 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
   const husky = withAnalysis(structuredClone(seedProspects[0]));
   husky.businessName = "Husky Roofing";
   husky.website = "https://husky-roofing.example";
+  husky.email = "hello@husky-roofing.example";
   husky.analysis!.overallScore = 62;
   husky.analysis!.scores.contactAccessibility = 42;
   husky.analysis!.scores.trustSignals = 44;
@@ -358,12 +363,14 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
   const strong = withAnalysis(structuredClone(seedProspects[0]));
   strong.businessName = "Shingle And Metal Roofs";
   strong.website = "https://shingle-and-metal.example";
+  strong.email = "hello@shingle-and-metal.example";
   strong.analysis!.overallScore = 97;
   const strongAssessment = assessOpportunity(strong);
 
   const national = withAnalysis(structuredClone(seedProspects[0]));
   national.businessName = "Erie Home";
   national.website = "https://eriehome.com";
+  national.email = "hello@eriehome.com";
   national.analysis!.overallScore = 93;
   const nationalAssessment = assessOpportunity(national);
 
@@ -453,6 +460,7 @@ test("Prospect Modes preserve strict behavior and expand local qualification del
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.businessName = "Local Roofing Company";
   prospect.website = "https://local-roofing.example";
+  prospect.email = "hello@local-roofing.example";
   prospect.analysis!.overallScore = 84;
   prospect.analysis!.scores.ctaStrength = 62;
   prospect.analysis!.scores.conversionReadiness = 58;
@@ -753,6 +761,11 @@ test("No Website / Social Only prospects receive separate presence scoring and o
   prospect.website = "";
   prospect.profileUrl = "https://www.facebook.com/local-social-roofing";
   prospect.prospectType = "no_website_social_only";
+  prospect.email = "";
+  prospect.facebookUrl = "https://www.facebook.com/local-social-roofing";
+  prospect.recommendedContactMethod = "message_on_facebook";
+  prospect.bestManualContactMethod = "facebook";
+  prospect.contactConfidence = "medium";
   prospect.phone = "(419) 555-0111";
   prospect.rating = 4.8;
   prospect.reviewCount = 48;
@@ -836,6 +849,47 @@ test("public preview tokens are hard to guess and internal preview links fail se
   assert.equal(evaluateOutreachEmailQuality(scoreLeak, publicLink).ready, false);
   assert.throws(() => assertOutreachEmailReady(publicPackage.prospect, internalLink), /cannot be approved/i);
   assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, publicLink));
+});
+
+test("missing sender postal address blocks email send-readiness without adding placeholders", () => {
+  const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
+  const prepared = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0])), publicLink);
+  const quality = evaluateOutreachEmailQuality(prepared.prospect, publicLink, "written_only", {});
+  const allDrafts = [
+    prepared.prospect.outreach!.concise,
+    prepared.prospect.outreach!.detailed,
+    ...prepared.prospect.outreach!.followUps,
+  ].join("\n");
+
+  assert.equal(quality.ready, false);
+  assert.equal(quality.readinessLabel, "Needs sender postal address before sending");
+  assert.doesNotMatch(allDrafts, /\[Add your business postal address before sending\]/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
+  assert.doesNotMatch(allDrafts, /\/engine\/previews\//i);
+});
+
+test("suspicious theme/admin emails require manual verification instead of send-ready approval", () => {
+  const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.businessName = "Tampa Roofing Pros";
+  prospect.website = "https://tamparoofingpros.com";
+  prospect.email = "admin@totalwptheme.com";
+  prospect.contactFormUrl = "";
+  prospect.quoteFormUrl = "";
+  prospect.facebookUrl = "";
+  prospect.instagramUrl = "";
+  prospect.linkedinUrl = "";
+  prospect.recommendedContactMethod = recommendProspectContactMethod(prospect);
+  prospect.bestManualContactMethod = "unknown";
+  prospect.contactConfidence = "low";
+  const prepared = prepareTopProspectArtifacts(prospect, publicLink);
+  const quality = evaluateOutreachEmailQuality(prepared.prospect, publicLink);
+
+  assert.equal(prospectEmailNeedsManualVerification(prospect), true);
+  assert.equal(prospect.recommendedContactMethod, "verify_email_manually");
+  assert.equal(quality.ready, false);
+  assert.equal(quality.readinessLabel, "Verify email manually");
+  assert.ok(quality.issues.some((issue) => /Email address appears business-owned/i.test(issue)));
 });
 
 test("unsupported outreach claim is explainable and safely repairable", () => {

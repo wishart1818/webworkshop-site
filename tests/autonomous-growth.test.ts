@@ -42,6 +42,8 @@ import {
 import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob } from "../lib/top-prospects";
 import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 
+process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
+
 const publicLink = publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF");
 
 function jobProviderDiagnostics(overrides: Partial<NonNullable<TopProspectJob["discoveryDiagnostics"]>["providerDiagnostics"]> = {}) {
