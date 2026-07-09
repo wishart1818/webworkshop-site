@@ -12,6 +12,7 @@ export type SystemPayload = {
   buildVersion?: string;
   providerCoverage?: DiscoveryProviderCoverageStatus;
   providerHealth?: DiscoveryProviderHealth[];
+  autopilotEnvironmentKillSwitchEnabled?: boolean;
 };
 export type ProviderSmokeTestPayload = {
   query: string;
@@ -89,7 +90,8 @@ function launchReadinessFor(system: SystemPayload, providerHealth: DiscoveryProv
   const yelpStatus = providerLaunchStatus(smokeTest, providerHealth, "yelp");
   const smokeStatus = smokeTestLaunchStatus(smokeTest);
   const google = providerDiagnostic(smokeTest, "googlePlaces");
-  const autopilotSafety = system.selfCheck?.failed?.some((item) => /autopilot|auto email|outreach/i.test(item.label)) ? "Needs attention" : "Safe";
+  const environmentKillSwitchEnabled = Boolean(system.autopilotEnvironmentKillSwitchEnabled);
+  const autopilotSafety = environmentKillSwitchEnabled || system.selfCheck?.failed?.some((item) => /autopilot|auto email|outreach/i.test(item.label)) ? "Needs attention" : "Safe";
   const providerLevel = coverage?.level ?? "limited";
   const finalStatus = !databaseReady || !authReady || autopilotSafety !== "Safe"
     ? "Do not run Autopilot yet"
@@ -110,8 +112,9 @@ function launchReadinessFor(system: SystemPayload, providerHealth: DiscoveryProv
     yelp: yelpStatus,
     smokeTest: smokeStatus,
     autopilotSafety,
+    autopilotEnvironmentKillSwitch: environmentKillSwitchEnabled ? "Enabled" : "Disabled",
     finalStatus,
-    nextStep: googleNextStep(smokeTest, providerHealth),
+    nextStep: environmentKillSwitchEnabled ? "Disable AUTOPILOT_DISABLED before starting a real Autopilot run. Manual review of saved batches still works." : googleNextStep(smokeTest, providerHealth),
   };
 }
 
@@ -224,6 +227,7 @@ function LaunchReadinessCard({ buildVersion, readiness }: { buildVersion?: strin
     ["Yelp", readiness.yelp],
     ["Smoke test", readiness.smokeTest],
     ["Autopilot safety", readiness.autopilotSafety],
+    ["Env kill switch", readiness.autopilotEnvironmentKillSwitch],
     ["Build version", buildVersion || "Not available"],
   ] as const;
   return (

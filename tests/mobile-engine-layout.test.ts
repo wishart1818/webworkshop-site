@@ -106,6 +106,7 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /missing trade/);
   assert.match(autonomousGrowthWorkspace, /invalid city/);
   assert.match(autonomousGrowthWorkspace, /campaign already running/);
+  assert.match(autonomousGrowthWorkspace, /Autopilot is disabled by environment kill switch\./);
   assert.match(autonomousGrowthWorkspace, /no database connection/);
   assert.match(autonomousGrowthWorkspace, /safety setting required/);
   assert.equal((autonomousGrowthWorkspace.match(/<AutopilotActionRow/g) ?? []).length, 2);

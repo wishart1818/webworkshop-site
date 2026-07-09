@@ -61,6 +61,7 @@ const globalAutonomous = globalThis as typeof globalThis & {
 };
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
+const autopilotEnvironmentKillSwitchEnabled = () => process.env.AUTOPILOT_DISABLED === "true";
 
 function memorySettings() {
   if (!globalAutonomous.autonomousGrowthSettingsMemory) {
@@ -346,7 +347,7 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
 }
 
 function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
-  return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus());
+  return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus(), autopilotEnvironmentKillSwitchEnabled());
 }
 
 export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard & { autopilot: AutopilotDashboard }> {

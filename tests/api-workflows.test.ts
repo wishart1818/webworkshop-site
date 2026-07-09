@@ -131,6 +131,79 @@ test("Autopilot dashboard actions start, report, and smoke-test without sending"
   assert.ok(smokePayload.smokeTest.fixtureResults.some((fixture: { actualQueue: string }) => fixture.actualQueue === "blockedBadFit"));
 });
 
+test("AUTOPILOT_DISABLED blocks real Autopilot starts but leaves safe dashboard actions available", async () => {
+  const previousDisabled = process.env.AUTOPILOT_DISABLED;
+  try {
+    process.env.AUTOPILOT_DISABLED = "true";
+    const initial = await autonomousDashboard();
+    const initialPayload = await initial.json();
+    assert.equal(initial.status, 200);
+    assert.equal(initialPayload.autopilot.environmentKillSwitchEnabled, true);
+
+    const blocked = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "start_autopilot",
+        autopilotSettings: {
+          campaignName: "Blocked by env",
+          customCities: "Tampa, FL",
+          state: "FL",
+          trade: "Pressure Washing",
+        },
+      }),
+    }));
+    const blockedPayload = await blocked.json();
+    assert.equal(blocked.status, 200);
+    assert.equal(blockedPayload.autopilot.activity.status, "failed_to_start");
+    assert.equal(blockedPayload.autopilot.activity.handoffDetails.find((detail: { label: string }) => detail.label === "Failure phase")?.value, "environment");
+    assert.equal(blockedPayload.topProspectJobWarning, "Autopilot is disabled by environment kill switch.");
+    assert.match(blockedPayload.autopilot.campaign.notifications[0].body, /Nothing was sent/);
+
+    const smoke = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
+      method: "POST",
+      body: JSON.stringify({ action: "run_fake_autopilot_smoke_test" }),
+    }));
+    const smokePayload = await smoke.json();
+    assert.equal(smoke.status, 200);
+    assert.equal(smokePayload.smokeTest.passed, true);
+    assert.equal(smokePayload.smokeTest.report.fakeOnly, true);
+  } finally {
+    if (previousDisabled === undefined) delete process.env.AUTOPILOT_DISABLED;
+    else process.env.AUTOPILOT_DISABLED = previousDisabled;
+  }
+});
+
+test("AUTOPILOT_DISABLED false or missing allows the normal safe Autopilot start path", async () => {
+  const previousDisabled = process.env.AUTOPILOT_DISABLED;
+  try {
+    process.env.AUTOPILOT_DISABLED = "false";
+    const response = await autonomousAction(new Request("https://example.com/api/engine/autonomous-growth", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "start_autopilot",
+        autopilotSettings: {
+          campaignName: "Allowed by env",
+          customCities: "Tampa, FL",
+          state: "FL",
+          trade: "Pressure Washing",
+        },
+      }),
+    }));
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.notEqual(payload.autopilot.activity.handoffDetails.find((detail: { label: string }) => detail.label === "Failure phase")?.value, "environment");
+    assert.doesNotMatch(payload.topProspectJobWarning ?? "", /environment kill switch/i);
+
+    delete process.env.AUTOPILOT_DISABLED;
+    const dashboard = await autonomousDashboard();
+    const dashboardPayload = await dashboard.json();
+    assert.equal(dashboardPayload.autopilot.environmentKillSwitchEnabled, false);
+  } finally {
+    if (previousDisabled === undefined) delete process.env.AUTOPILOT_DISABLED;
+    else process.env.AUTOPILOT_DISABLED = previousDisabled;
+  }
+});
+
 test("system audit status remains available when PostgreSQL is unreachable", async () => {
   const events = await safeListAuditEvents(
     { configured: true, reachable: false },

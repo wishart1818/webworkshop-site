@@ -681,6 +681,10 @@ function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean):
   if (saving) {
     for (const key of Object.keys(reasons) as Array<keyof AutopilotActionReasons>) reasons[key].push("saving in progress");
   }
+  if (autopilot.environmentKillSwitchEnabled) {
+    reasons.start.push("Autopilot is disabled by environment kill switch.");
+    reasons.batch.push("Autopilot is disabled by environment kill switch.");
+  }
   if (!autopilot.databaseConfigured) reasons.start.push("no database connection");
   if (!settings.marketPresetId && !settings.customCities.trim()) reasons.start.push("missing market");
   if (!marketTargets.length) reasons.start.push(settings.customCities.trim() ? "invalid city" : "missing market");
@@ -1169,6 +1173,12 @@ function AutopilotCampaignPanel({
         <div className="engine-autopilot-provider-warning" role="alert">
           <b>Provider coverage is limited. Run Provider Smoke Test or a small Top Prospects test before starting Autopilot.</b>
           <ul>{providerGuardrailWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+        </div>
+      ) : null}
+      {autopilot.environmentKillSwitchEnabled ? (
+        <div className="engine-autopilot-provider-warning" role="alert">
+          <b>Autopilot is disabled by environment kill switch.</b>
+          <p>Saved batches and manual review stay available, but new Autopilot runs cannot start until <code>AUTOPILOT_DISABLED</code> is not set to <code>true</code>.</p>
         </div>
       ) : null}
 

@@ -117,7 +117,7 @@ export type AutopilotHandoffStatus =
   | "cancelled";
 
 export type AutopilotHandoffFailure = {
-  phase: "validation" | "job_creation" | "active_job" | "polling" | "database" | "unknown";
+  phase: "validation" | "job_creation" | "active_job" | "polling" | "database" | "environment" | "unknown";
   message: string;
   databaseConnected: boolean;
   activeJobId?: string;
@@ -291,6 +291,7 @@ export type AutopilotDashboard = {
   providerRequestEstimate: number;
   marketTargets: string[];
   databaseConfigured: boolean;
+  environmentKillSwitchEnabled: boolean;
   queueCountsSource: "saved_queue" | "latest_run_report";
   safeModeSummary: string[];
   exportRows: Array<Record<string, string | number>>;
@@ -1504,7 +1505,7 @@ function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueu
   };
 }
 
-export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false, providerCoverage?: DiscoveryProviderCoverageStatus): AutopilotDashboard {
+export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false, providerCoverage?: DiscoveryProviderCoverageStatus, environmentKillSwitchEnabled = false): AutopilotDashboard {
   const queues = autopilotQueuesForItems(queue);
   const liveQueueCounts = autopilotQueueCountsForItems(queue);
   const reportQueueCounts = campaign.latestRunReport?.queueCounts;
@@ -1518,8 +1519,10 @@ export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     marketTargets,
     databaseConfigured,
+    environmentKillSwitchEnabled,
     queueCountsSource: reportQueueCounts ? "latest_run_report" : "saved_queue",
     safeModeSummary: [
+      environmentKillSwitchEnabled ? "Autopilot is disabled by environment kill switch." : "Autopilot environment kill switch is off.",
       "Manual/social-safe mode is the default.",
       "The first Facebook DM never includes a preview link.",
       "Loom recording and Loom sending are manual tasks.",

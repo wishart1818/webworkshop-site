@@ -514,6 +514,8 @@ test("system workspace renders the protected self-check report and action", () =
   assert.match(html, /Provider coverage/);
   assert.match(html, /Smoke test/);
   assert.match(html, /Autopilot safety/);
+  assert.match(html, /Env kill switch/);
+  assert.match(html, /Disabled/);
   assert.match(html, /Build version/);
   assert.match(html, /outreach-package-v1-test/);
   assert.match(html, /Next Step/);
@@ -624,6 +626,71 @@ test("system launch readiness advances after Google Places smoke test succeeds",
   assert.match(html, /Outreach sent: No/);
 });
 
+test("system launch readiness blocks Autopilot when the environment kill switch is enabled", () => {
+  const html = renderToStaticMarkup(createElement(SystemWorkspace, {
+    system: {
+      status: "ready",
+      checks: {
+        database: { configured: true, reachable: true, message: "PostgreSQL is reachable." },
+        authentication: { configured: true, message: "Engine access credentials are configured." },
+      },
+      auditEvents: [],
+      providerCoverage: {
+        level: "strong",
+        label: "Strong provider setup",
+        summary: "Google Places is available and smoke test returned local businesses.",
+        recommendation: "Run a small Top Prospects test before Autopilot.",
+        googleConfigured: true,
+        yelpConfigured: false,
+        azureOrBingConfigured: true,
+      },
+      providerHealth: [
+        { provider: "googlePlaces", label: "Google Places", enabled: true, requiredEnvVarName: "GOOGLE_PLACES_API_KEY", envVarPresent: true, canRunWithoutApiKey: false, lastAttemptedQuery: "Tampa pressure washing", lastStatus: "succeeded", lastHttpStatus: "200", lastSafeErrorMessage: "", failureType: "none", endpointVersion: "New" },
+      ],
+      selfCheck: { overallStatus: "Healthy", lastRunAt: "2026-07-03T12:00:00.000Z", passed: [], warnings: [], failed: [], suggestedFixes: [] },
+      buildVersion: "outreach-package-v1-test",
+      autopilotEnvironmentKillSwitchEnabled: true,
+    },
+    loading: false,
+    error: "",
+    onRefresh: () => undefined,
+    onRunProviderSmokeTest: () => undefined,
+    onRunSelfCheck: () => undefined,
+    providerSmokeTest: {
+      query: "Pressure Washing near Tampa, FL",
+      createdOutreachPackages: false,
+      sentOutreach: false,
+      sampleCount: 5,
+      diagnostics: {
+        rawProviderCount: 12,
+        afterDistanceFilteringCount: 11,
+        afterDuplicateFilteringCount: 10,
+        afterQualificationFilteringCount: 6,
+        returnedCount: 5,
+        radiusKm: 50,
+        categorySignals: ["pressure washing"],
+        sourceCounts: { osm: 0, google: 12, bing: 0, yelp: 0, yellowPages: 0 },
+        providerDiagnostics: {
+          osm: { configured: true, queryExecuted: false, status: "not_attempted", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: true, queryExecuted: false, status: "not_attempted", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 12, withinRadiusCount: 11, afterDeduplicationCount: 10, usableWebsiteCount: 6, endpointVersion: "New" },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+        finalMergedCount: 10,
+      },
+    },
+    providerSmokeTestRunning: false,
+    selfCheckRunning: false,
+  }));
+
+  assert.match(html, /Do not run Autopilot yet/);
+  assert.match(html, /Env kill switch/);
+  assert.match(html, /Enabled/);
+  assert.match(html, /Autopilot safety/);
+  assert.match(html, /Needs attention/);
+  assert.match(html, /Disable AUTOPILOT_DISABLED before starting a real Autopilot run/);
+});
+
 test("deployment docs explain provider setup and no-send safety", () => {
   const docs = readFileSync(new URL("../ENGINE_DEPLOYMENT.md", import.meta.url), "utf8");
 
@@ -633,6 +700,10 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /OpenStreetMap.*backup-only.*may timeout/is);
   assert.match(docs, /Provider Smoke Test creates no Outreach Packages and sends nothing/);
   assert.match(docs, /Autopilot sends nothing automatically/);
+  assert.match(docs, /WEBWORKSHOP_POSTAL_ADDRESS.*Prospect Engine uses for Top Prospects/is);
+  assert.match(docs, /OUTREACH_POSTAL_ADDRESS.*Auto Email Pilot\/provider readiness/is);
+  assert.match(docs, /If both exist, Top Prospects and Prospect Engine email packages use `WEBWORKSHOP_POSTAL_ADDRESS`/);
+  assert.match(docs, /AUTOPILOT_DISABLED=true.*hard Production kill switch/is);
 });
 
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {

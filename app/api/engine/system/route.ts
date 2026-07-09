@@ -49,5 +49,6 @@ export async function GET() {
     buildVersion: topProspectBuildVersion(),
     providerCoverage: discoveryProviderCoverageStatus(),
     providerHealth: discoveryProviderHealth(),
+    autopilotEnvironmentKillSwitchEnabled: process.env.AUTOPILOT_DISABLED === "true",
   });
 }

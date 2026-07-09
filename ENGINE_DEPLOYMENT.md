@@ -44,13 +44,24 @@ In **Vercel project settings > Environment Variables**, add:
 | `OUTREACH_NOTIFY_EMAIL` | No | Internal operator email for Loom Needed notifications only |
 | `OUTREACH_NOTIFY_FROM_EMAIL` | No | Verified sender address for internal Loom Needed notifications |
 | `OUTREACH_NOTIFY_ON_LOOM_NEEDED` | No | Set to `true` to notify internally when a prospect says yes and a Loom task is created |
-| `WEBWORKSHOP_POSTAL_ADDRESS` | Recommended | Sender mailing address inserted into manual email drafts; email packages are not send-ready until this is set |
+| `WEBWORKSHOP_POSTAL_ADDRESS` | Recommended | Prospect Engine sender mailing address inserted into manual email drafts; email packages are not send-ready until this is set |
+| `OUTREACH_POSTAL_ADDRESS` | Auto Email Pilot only | Separate Auto Email Pilot/provider-readiness postal address; this does not replace `WEBWORKSHOP_POSTAL_ADDRESS` for Top Prospects packages |
+| `AUTOPILOT_DISABLED` | No | Set to `true` for a hard environment-level kill switch that prevents new Autopilot runs while leaving saved-batch review available |
 
 Apply production secrets to the **Production** environment. Use separate credentials and a separate database for Preview if preview deployments need engine access.
 
 Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-side code, public documentation, screenshots, or variables prefixed with `NEXT_PUBLIC_`.
 
 The optional Loom notification variables are internal only. They never send anything to prospects, and the workflow still requires you to manually record and send the Loom. If the notification variables or `RESEND_API_KEY` are missing, the Loom Needed task still works and no runtime error is raised.
+
+Postal address variables are intentionally split:
+
+- `WEBWORKSHOP_POSTAL_ADDRESS` is the address the Prospect Engine uses for Top Prospects and manual Outreach Package email draft compliance/readiness.
+- `OUTREACH_POSTAL_ADDRESS`, if configured, is only for the separate Auto Email Pilot/provider readiness gate.
+- If both exist, Top Prospects and Prospect Engine email packages use `WEBWORKSHOP_POSTAL_ADDRESS`.
+- If `WEBWORKSHOP_POSTAL_ADDRESS` is missing, email packages can still be reviewed, but they are not considered send-ready and no placeholder address is inserted into copyable final drafts.
+
+Set `AUTOPILOT_DISABLED=true` when you want a hard Production kill switch. It blocks new Autopilot starts, retries, and next-batch handoffs. It does not cancel completed jobs, does not pretend provider jobs were cancelled, and does not block manual review of saved batches or manual Top Prospects searches.
 
 ### Provider Coverage for Real Lead Discovery
 

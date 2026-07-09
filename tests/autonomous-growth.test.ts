@@ -529,6 +529,52 @@ test("Autopilot dashboard shows latest run queue counts when fake smoke test doe
   assert.equal(dashboard.exportRows.length, 0);
 });
 
+test("Autopilot dashboard exposes the environment kill switch without blocking saved review queues", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const queueItem = {
+    id: "saved-review-item",
+    prospectId: "prospect-1",
+    topProspectResultId: "result-1",
+    businessName: "Saved Review Lead",
+    trade: "Pressure Washing",
+    city: "Tampa, FL",
+    website: "https://example.com",
+    email: "",
+    contactSource: "Contact form",
+    contactConfidence: "medium",
+    previewLink: publicLink,
+    previewQualityScore: 88,
+    subjectLine: "Quick website idea",
+    emailBody: "",
+    dmScript: "Manual draft only.",
+    loomTalkingPoints: "",
+    eligibilityReason: "Saved package is ready for human review.",
+    blockedReason: "",
+    reviewScore: 86,
+    reviewSummary: "Manual review remains available.",
+    improvementSuggestions: [],
+    detectedIssues: [],
+    recommendedNextAction: "Keep",
+    regenerationPlan: [],
+    rewritePlan: [],
+    feedbackLabels: [],
+    status: "Needs Review",
+    sourceProvider: "Top Prospects",
+    queuedDate: "",
+    sentDate: "",
+    followUpDate: "",
+    replyStatus: "",
+    notes: "",
+    createdAt: new Date(1).toISOString(),
+    updatedAt: new Date(1).toISOString(),
+  } satisfies OutreachQueueItem;
+  const dashboard = buildAutopilotDashboard(campaign, [queueItem], true, undefined, true);
+
+  assert.equal(dashboard.environmentKillSwitchEnabled, true);
+  assert.equal(dashboard.queues.needsPreviewReview.length, 1);
+  assert.ok(dashboard.safeModeSummary.includes("Autopilot is disabled by environment kill switch."));
+});
+
 test("Autopilot Live Activity shows a clear empty state before the first run", () => {
   const campaign = { ...createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0)), status: "draft" as const };
   const dashboard = buildAutopilotDashboard(campaign, [], true);

@@ -29,6 +29,12 @@ import { autopilotStartConfirmation, autopilotTopProspectInput, normalizeAutopil
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const autopilotDisabledMessage = "Autopilot is disabled by environment kill switch.";
+
+function autopilotEnvironmentDisabled() {
+  return process.env.AUTOPILOT_DISABLED === "true";
+}
+
 function handoffFailure(settings: AutopilotCampaignSettings, overrides: Partial<AutopilotHandoffFailure> & Pick<AutopilotHandoffFailure, "phase" | "message">): AutopilotHandoffFailure {
   const confirmation = autopilotStartConfirmation(settings);
   const input = autopilotTopProspectInput(settings);
@@ -44,6 +50,13 @@ function handoffFailure(settings: AutopilotCampaignSettings, overrides: Partial<
 }
 
 async function startAutopilotTopProspectsHandoff(request: Request, settings: AutopilotCampaignSettings) {
+  if (autopilotEnvironmentDisabled()) {
+    const autopilot = await failAutopilotCampaignHandoff(settings, handoffFailure(settings, {
+      phase: "environment",
+      message: autopilotDisabledMessage,
+    }));
+    return NextResponse.json({ autopilot, topProspectJobWarning: autopilotDisabledMessage });
+  }
   const validation = validateTopProspectInput(autopilotTopProspectInput(settings));
   if (!validation.ok) {
     const autopilot = await failAutopilotCampaignHandoff(settings, handoffFailure(settings, { phase: "validation", message: validation.error }));
@@ -151,6 +164,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ autopilot: await stopAutopilotCampaign() });
     }
     if (payload.action === "run_autopilot_batch") {
+      if (autopilotEnvironmentDisabled()) {
+        const dashboard = await getAutonomousGrowthDashboard();
+        return NextResponse.json({ autopilot: dashboard.autopilot, topProspectJobWarning: autopilotDisabledMessage });
+      }
       return NextResponse.json({ autopilot: await runAutopilotNextBatchNow() });
     }
     if (payload.action === "run_fake_autopilot_smoke_test") {
