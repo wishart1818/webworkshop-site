@@ -24,6 +24,7 @@ import {
   parseTopProspectCityTargets,
   applyRecommendedMarketPresetFields,
   recommendedMarketPresets,
+  topProspectResultBucket,
   type RecommendedMarketPreset,
 } from "@/lib/top-prospects";
 import type {
@@ -98,7 +99,10 @@ const skipReasonLabels: Record<string, string> = {
   no_usable_contact_path: "No written contact path",
   below_final_cutoff: "Below final cutoff",
   duplicate: "Duplicate",
+  previously_reviewed: "Previously reviewed",
   already_contacted: "Already contacted",
+  phone_only_written_outreach_blocked: "Phone-only / written outreach blocked",
+  phone_only_written_outreach: "Phone-only / written outreach blocked",
   broken_or_inactive_website: "Broken or inactive website",
 };
 
@@ -186,6 +190,18 @@ function matchesContactFilter(result: TopProspectResult, filter: ContactFilter) 
   if (filter === "hide_phone_only") return result.prospect.classification !== "phone_only" && result.prospect.recommendedContactMethod !== "call_first";
   if (filter === "send_ready") return result.emailQuality.ready;
   return result.prospect.recommendedContactMethod === "needs_manual_contact_research" || result.emailQuality.readinessLabel === "Missing written contact method" || result.emailQuality.readinessLabel === "Phone-only / written outreach blocked";
+}
+
+function bucketForResult(result: TopProspectResult) {
+  return result.resultBucket ?? topProspectResultBucket(result);
+}
+
+function failedDiscoveryIssueCount(job: TopProspectJob) {
+  const diagnostics = job.discoveryDiagnostics;
+  if (!diagnostics) return job.status === "FAILED" || job.status === "FAILED_AFTER_DISCOVERY" ? 1 : 0;
+  const failedCities = diagnostics.cityDiagnostics?.filter((city) => city.status === "failed").length ?? 0;
+  const failedProviders = Object.values(diagnostics.providerDiagnostics ?? {}).filter((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status)).length;
+  return failedCities + failedProviders;
 }
 
 function compactUrl(value: string) {
@@ -362,8 +378,21 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const best = latestJob && latestJob.scannedCount > 0 ? latestJob.results[0] : null;
   const queuedResults = latestJob ? [...latestJob.results, ...latestJob.reviewedNotRecommended] : [];
   const outreachPlaybook = outreachResult?.prospect ? casualDmPlaybook(outreachResult.prospect, outreachResult.previewLink) : null;
+  const reviewableLowerPriorityResults = latestJob
+    ? latestJob.reviewableLowerPriority ?? latestJob.reviewedNotRecommended.filter((result) => bucketForResult(result) === "reviewable_lower_priority")
+    : [];
+  const blockedProspects = latestJob
+    ? latestJob.blockedProspects ?? latestJob.reviewedNotRecommended.filter((result) => bucketForResult(result) === "blocked")
+    : [];
+  const remainingReviewedNotRecommended = latestJob
+    ? latestJob.reviewedNotRecommended.filter((result) => bucketForResult(result) !== "reviewable_lower_priority" && bucketForResult(result) !== "blocked")
+    : [];
+  const previouslyReviewedCount = latestJob ? latestJob.skipSummary.previously_reviewed ?? 0 : 0;
+  const failedDiscoveryCount = latestJob ? failedDiscoveryIssueCount(latestJob) : 0;
   const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
-  const filteredReviewedNotRecommended = latestJob ? latestJob.reviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter)) : [];
+  const filteredReviewableLowerPriority = reviewableLowerPriorityResults.filter((result) => matchesContactFilter(result, contactFilter));
+  const filteredBlockedProspects = blockedProspects.filter((result) => matchesContactFilter(result, contactFilter));
+  const filteredReviewedNotRecommended = remainingReviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter));
   const preparedArtifacts = queuedResults.filter((result) => result.prospect.preview && result.prospect.outreach && result.buildPrompt).length;
   const parsedCityTargets = useMemo(() => parseTopProspectCityTargets(cityInput, stateInput), [cityInput, stateInput]);
   const providerRequestEstimate = estimatedProviderRequestLoad(parsedCityTargets.length || 1, selectedTrade);
@@ -664,6 +693,12 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} qualificationLabel={latestJob.input.prospectType === "no_website_social_only" ? "eligible no-website leads" : latestJob.input.prospectType === "all" ? "eligible prospects" : "usable websites"} />
           {partialDiscoverySummary(latestJob.discoveryDiagnostics) ? <p className="engine-skip-summary">{partialDiscoverySummary(latestJob.discoveryDiagnostics)}</p> : null}
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
+          {(previouslyReviewedCount > 0 || failedDiscoveryCount > 0) && (
+            <div className="engine-result-bucket-summary" aria-label="Skipped and failed prospect summary">
+              {previouslyReviewedCount > 0 && <span><b>{previouslyReviewedCount}</b> previously reviewed prospects excluded from this run.</span>}
+              {failedDiscoveryCount > 0 && <span><b>{failedDiscoveryCount}</b> provider or city issue{failedDiscoveryCount === 1 ? "" : "s"} need attention.</span>}
+            </div>
+          )}
           {latestJob.nextRunRecommendations.length ? (
             <div className="engine-next-run-recommendations">
               <h3>Best next run recommendation</h3>
@@ -740,9 +775,51 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         <section className="engine-panel"><EmptyState title="No ranked Top Prospects yet" body={latestJob ? latestJob.input.prospectType === "no_website_social_only" ? "No active, contactable no-website prospects matched this search. Increase radius or scan count." : `No prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.` : "Start a search to discover, qualify, analyze, and rank local contractor businesses."} /></section>
       ) : null}
 
-      {latestJob?.reviewedNotRecommended.length ? (
+      {latestJob && reviewableLowerPriorityResults.length > 0 ? (
         <section className="engine-panel engine-top-results">
-          <div className="engine-panel__head"><div><h2>Reviewed but not recommended</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Active no-website leads that did not meet the contactability or website-need threshold." : "Analyzed leads that did not meet the selected mode's sales-fit threshold."}</p></div><span>{latestJob.reviewedNotRecommended.length} reviewed</span></div>
+          <div className="engine-panel__head"><div><h2>Reviewable lower-priority packages</h2><p>These prospects have a manual written contact path or generated package, but landed below the final ranked list because of sales-fit, redesign-gap, or cutoff rules.</p></div><span>{reviewableLowerPriorityResults.length} reviewable</span></div>
+          <ContactFilterBar contactFilter={contactFilter} setContactFilter={setContactFilter} />
+          <div className="engine-top-table" role="table" aria-label="Reviewable lower-priority prospects">
+            <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
+            {filteredReviewableLowerPriority.map((result) => (
+              <article key={result.id} role="row">
+                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
+                <ContactPaths prospect={result.prospect} />
+                <SalesScoreBreakdown result={result} />
+                <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.emailQuality.readinessLabel}</span></div>
+                <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button><button className="engine-button" onClick={() => openPackageReview(result)} type="button">Review package</button><button className="engine-button" disabled={packageActioning.startsWith(`${result.id}:`) || result.packageStatus === "SENT"} onClick={() => void runPackageAction(result, "generate")} type="button">Generate Outreach Package</button><button className="engine-button" onClick={() => setPromptResult(result)} type="button">Open Lovable prompt</button></div>
+              </article>
+            ))}
+          </div>
+          {filteredReviewableLowerPriority.length === 0 && <EmptyState title="No lower-priority packages match this contact filter" body="Choose a broader contact filter to review the rest of this batch." action={() => setContactFilter("all")} />}
+        </section>
+      ) : null}
+
+      {latestJob && blockedProspects.length > 0 ? (
+        <section className="engine-panel engine-top-results">
+          <div className="engine-panel__head"><div><h2>Blocked prospects</h2><p>These records were analyzed but should not move into send-ready review without manual correction because they are bad fit, mismatched, phone-only, inactive, or missing a usable written contact path.</p></div><span>{blockedProspects.length} blocked</span></div>
+          <ContactFilterBar contactFilter={contactFilter} setContactFilter={setContactFilter} />
+          <div className="engine-top-table" role="table" aria-label="Blocked prospects">
+            <div className="engine-top-table__head" role="row"><span>Block reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
+            {filteredBlockedProspects.map((result) => (
+              <article key={result.id} role="row">
+                <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
+                <ContactPaths prospect={result.prospect} />
+                <SalesScoreBreakdown result={result} />
+                <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.emailQuality.readinessLabel}</span></div>
+                <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button><button className="engine-button" disabled={!result.prospect.outreach} onClick={() => openPackageReview(result)} type="button">Inspect package</button></div>
+              </article>
+            ))}
+          </div>
+          {filteredBlockedProspects.length === 0 && <EmptyState title="No blocked prospects match this contact filter" body="Choose a broader contact filter to inspect all blocked records." action={() => setContactFilter("all")} />}
+        </section>
+      ) : null}
+
+      {latestJob && remainingReviewedNotRecommended.length > 0 ? (
+        <section className="engine-panel engine-top-results">
+          <div className="engine-panel__head"><div><h2>Reviewed but not recommended</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Active no-website leads that did not meet the contactability or website-need threshold." : "Analyzed leads that did not fit the ranked, reviewable, or blocked buckets."}</p></div><span>{remainingReviewedNotRecommended.length} reviewed</span></div>
           <div className="engine-top-table" role="table" aria-label="Reviewed but not recommended prospects">
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredReviewedNotRecommended.map((result) => (

@@ -25,6 +25,7 @@ import {
   prepareTopProspectArtifacts,
   publicProspectPreviewLink,
   topProspectNextRunRecommendations,
+  topProspectResultBucket,
   topProspectResultDisposition,
   validPublicPreviewToken,
 } from "@/lib/top-prospects";
@@ -106,7 +107,8 @@ async function toResult(
     pitchAngle: row.pitchAngle,
   };
   const { selected, rejectionReason } = topProspectResultDisposition(row.selected, prospect, assessment, mode, outreachPreference);
-  return {
+  const emailQuality = evaluateOutreachEmailQuality(prospect, row.previewLink, outreachPreference);
+  const result: TopProspectResult = {
     id: row.id,
     rank: row.rank,
     selected,
@@ -120,9 +122,10 @@ async function toResult(
     packageApprovedAt: row.packageApprovedAt?.toISOString() ?? null,
     packageSentAt: row.packageSentAt?.toISOString() ?? null,
     packageSkippedAt: row.packageSkippedAt?.toISOString() ?? null,
-    emailQuality: evaluateOutreachEmailQuality(prospect, row.previewLink, outreachPreference),
+    emailQuality,
     prospect,
   };
+  return { ...result, resultBucket: topProspectResultBucket(result) };
 }
 
 async function toJob(row: JobRow): Promise<TopProspectJob> {
@@ -137,6 +140,10 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
   const reviewedNotRecommended = allResults
     .filter((result) => !result.selected)
     .sort((left, right) => right.salesScores.weightedSalesScore - left.salesScores.weightedSalesScore);
+  const reviewableLowerPriority = reviewedNotRecommended
+    .filter((result) => topProspectResultBucket(result) === "reviewable_lower_priority");
+  const blockedProspects = reviewedNotRecommended
+    .filter((result) => topProspectResultBucket(result) === "blocked");
   const inferredScannedCount = Math.max(row.scannedCount, row.nextLeadIndex, allResults.length);
   const inferredSkippedCount = Math.max(row.skippedCount, inferredScannedCount - recommended.length);
   const diagnostics = discoveryDiagnosticsFromJson(row.discoveredLeads);
@@ -168,6 +175,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     skipSummary: recordValue(row.skipSummary),
     results: recommended,
     reviewedNotRecommended,
+    reviewableLowerPriority,
+    blockedProspects,
     failureClassification: failure.classification,
     errorMessage: failure.reason,
     nextRunRecommendations: [],

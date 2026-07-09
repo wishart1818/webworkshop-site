@@ -30,6 +30,7 @@ import {
   topProspectJobStatuses,
   topProspectNextRunRecommendations,
   topProspectRejectionReason,
+  topProspectResultBucket,
   topProspectResultDisposition,
   thirdPartyListingOnly,
   validateTopProspectInput,
@@ -500,6 +501,56 @@ test("Top Prospects final cutoff never leaks extra qualified leads into ranked r
     selected: false,
     rejectionReason: "Below final cutoff",
   });
+});
+
+test("Top Prospects separates reviewable lower-priority packages from blocked prospects", () => {
+  const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
+  const formProspect = withAnalysis(structuredClone(seedProspects[0]));
+  formProspect.businessName = "Tampa Pressure Washing Co";
+  formProspect.trade = "Pressure Washing";
+  formProspect.city = "Tampa";
+  formProspect.state = "FL";
+  formProspect.email = "";
+  formProspect.contactFormUrl = "https://tampapressurewashing.example/contact";
+  formProspect.contactFormDetected = true;
+  formProspect.bestManualContactMethod = "contact_form";
+  formProspect.recommendedContactMethod = "submit_contact_form";
+  const reviewablePackage = prepareTopProspectArtifacts(formProspect, publicLink);
+
+  assert.equal(
+    topProspectResultBucket({
+      selected: false,
+      rejectionReason: "Weak sales fit",
+      packageStatus: "READY_FOR_REVIEW",
+      emailQuality: reviewablePackage.emailQuality,
+      prospect: reviewablePackage.prospect,
+    }),
+    "reviewable_lower_priority",
+  );
+
+  const phoneOnlyProspect = withAnalysis(structuredClone(seedProspects[1]));
+  phoneOnlyProspect.email = "";
+  phoneOnlyProspect.contactFormUrl = "";
+  phoneOnlyProspect.quoteFormUrl = "";
+  phoneOnlyProspect.facebookUrl = "";
+  phoneOnlyProspect.instagramUrl = "";
+  phoneOnlyProspect.linkedinUrl = "";
+  phoneOnlyProspect.phone = "419-555-0100";
+  phoneOnlyProspect.classification = "phone_only";
+  phoneOnlyProspect.recommendedContactMethod = "call_first";
+  phoneOnlyProspect.bestManualContactMethod = "phone_only";
+  const phoneOnlyPackage = prepareTopProspectArtifacts(phoneOnlyProspect, publicLink);
+
+  assert.equal(
+    topProspectResultBucket({
+      selected: false,
+      rejectionReason: "Phone-only / written outreach blocked",
+      packageStatus: "PACKAGE_GENERATED",
+      emailQuality: phoneOnlyPackage.emailQuality,
+      prospect: phoneOnlyPackage.prospect,
+    }),
+    "blocked",
+  );
 });
 
 test("returning to Top Prospects automatically resumes a stalled saved job", async () => {

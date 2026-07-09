@@ -134,11 +134,19 @@ export const topProspectRejectionReasons = [
 ] as const;
 export type TopProspectRejectionReason = (typeof topProspectRejectionReasons)[number];
 
+export const topProspectResultBuckets = [
+  "ranked_top_prospect",
+  "reviewable_lower_priority",
+  "blocked",
+] as const;
+export type TopProspectResultBucket = (typeof topProspectResultBuckets)[number];
+
 export type TopProspectResult = OpportunityAssessment & {
   id: string;
   rank: number | null;
   selected: boolean;
   rejectionReason: TopProspectRejectionReason | null;
+  resultBucket?: TopProspectResultBucket;
   buildPrompt: string;
   previewLink: string;
   packageStatus: OutreachPackageStatus;
@@ -194,6 +202,8 @@ export type TopProspectJob = {
   skipSummary: Record<string, number>;
   results: TopProspectResult[];
   reviewedNotRecommended: TopProspectResult[];
+  reviewableLowerPriority?: TopProspectResult[];
+  blockedProspects?: TopProspectResult[];
   failureClassification: TopProspectJobFailureClassification | null;
   errorMessage: string;
   nextRunRecommendations: string[];
@@ -1005,6 +1015,50 @@ export function topProspectResultDisposition(
     selected: persistedSelected && salesFitRejection === null,
     rejectionReason: salesFitRejection ?? (persistedSelected ? null : "Below final cutoff" as const),
   };
+}
+
+const hardBlockedResultReasons = new Set<TopProspectRejectionReason>([
+  "National/large brand",
+  "No usable contact path",
+  "Inactive business",
+  "Duplicate/bad fit",
+  "Supplier/distributor",
+  "Institutional/non-business page",
+  "Website/business mismatch",
+  "Third-party listing only",
+  "No clear local service intent",
+  "Phone-only / written outreach blocked",
+]);
+
+const reviewableLowerPriorityReasons = new Set<TopProspectRejectionReason>([
+  "Already strong website",
+  "Low redesign opportunity",
+  "Weak sales fit",
+  "Below final cutoff",
+]);
+
+export function topProspectResultBucket(
+  result: Pick<TopProspectResult, "selected" | "rejectionReason" | "packageStatus" | "emailQuality" | "prospect">,
+): TopProspectResultBucket {
+  if (result.selected) return "ranked_top_prospect";
+  if (!result.rejectionReason) return "reviewable_lower_priority";
+  if (hardBlockedResultReasons.has(result.rejectionReason)) return "blocked";
+
+  const hasManualWrittenPath = prospectWrittenContactMethodIsUsable(result.prospect)
+    || result.prospect.recommendedContactMethod === "verify_email_manually";
+  const hasGeneratedPackage = result.packageStatus !== "NOT_GENERATED";
+  const manuallyReviewable = hasManualWrittenPath && (
+    result.emailQuality.readinessLabel === "Send-ready"
+    || result.emailQuality.readinessLabel === "Needs sender postal address before sending"
+    || result.emailQuality.readinessLabel === "Verify email manually"
+    || result.emailQuality.readinessLabel === "Needs review"
+  );
+
+  if (reviewableLowerPriorityReasons.has(result.rejectionReason) && (hasManualWrittenPath || hasGeneratedPackage || manuallyReviewable)) {
+    return "reviewable_lower_priority";
+  }
+
+  return "blocked";
 }
 
 export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: OpportunityAssessment) {

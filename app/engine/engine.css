@@ -2426,6 +2426,27 @@ body:has(.engine-shell) {
   line-height: 1.45;
 }
 
+.engine-result-bucket-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border-top: 1px solid var(--engine-line);
+  padding: 0.75rem 1rem;
+}
+
+.engine-result-bucket-summary span {
+  border: 1px solid #d7e2dd;
+  background: #f7faf8;
+  color: var(--engine-muted);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.engine-result-bucket-summary b {
+  color: var(--engine-ink);
+}
+
 .engine-auto-queue__summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
