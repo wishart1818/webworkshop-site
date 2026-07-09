@@ -291,6 +291,16 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(prospectEngineWorkspace, /Filter by contact method/);
   assert.match(topProspectsWorkspace, /Morning Prospect Batch/);
   assert.match(topProspectsWorkspace, /Auto Prospect Queue/);
+  assert.match(topProspectsWorkspace, /Ranked Top Prospects/);
+  assert.match(topProspectsWorkspace, /Reviewable lower-priority packages/);
+  assert.match(topProspectsWorkspace, /Blocked prospects/);
+  assert.match(topProspectsWorkspace, /Previously reviewed prospects/);
+  assert.match(topProspectsWorkspace, /Failed or timed-out discovery/);
+  assert.match(topProspectsWorkspace, /Prospect outcome buckets/);
+  assert.match(topProspectsWorkspace, /failedProviderDiagnostics/);
+  assert.match(topProspectsWorkspace, /failedCityDiagnostics/);
+  assert.match(css, /\.engine-outcome-buckets__grid\s*{\s*display: grid;/);
+  assert.match(mobileCss, /\.engine-outcome-buckets__grid,\s*\.engine-outcome-detail-grid,\s*\.engine-outcome-skip-list ul\s*{\s*grid-template-columns: 1fr;/);
   assert.match(topProspectsWorkspace, /Final weighted sales/);
   assert.match(topProspectsWorkspace, /Revenue opportunity/);
   assert.match(topProspectsWorkspace, /AI replacement confidence/);

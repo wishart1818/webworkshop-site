@@ -2447,6 +2447,93 @@ body:has(.engine-shell) {
   color: var(--engine-ink);
 }
 
+.engine-outcome-buckets__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.engine-outcome-buckets__grid article {
+  border-top: 1px solid var(--engine-line);
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+}
+
+.engine-outcome-buckets__grid h3,
+.engine-outcome-detail-grid h3,
+.engine-outcome-skip-list h3 {
+  margin: 0;
+  color: var(--engine-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.engine-outcome-buckets__grid b {
+  color: var(--engine-ink);
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.engine-outcome-buckets__grid p {
+  margin: 0;
+  color: var(--engine-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.engine-outcome-detail-grid {
+  border-top: 1px solid var(--engine-line);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.engine-outcome-detail-grid > div,
+.engine-outcome-skip-list {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+}
+
+.engine-outcome-detail-grid ul,
+.engine-outcome-skip-list ul {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.engine-outcome-detail-grid li,
+.engine-outcome-skip-list li {
+  border: 1px solid #d7e2dd;
+  background: #fbfdfc;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.6rem;
+}
+
+.engine-outcome-detail-grid li b,
+.engine-outcome-skip-list li b {
+  color: var(--engine-ink);
+  font-size: 0.74rem;
+}
+
+.engine-outcome-detail-grid li span,
+.engine-outcome-skip-list li span {
+  color: var(--engine-muted);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.engine-outcome-skip-list {
+  border-top: 1px solid var(--engine-line);
+}
+
+.engine-outcome-skip-list ul {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .engine-auto-queue__summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5764,6 +5851,12 @@ body:has(.engine-shell) {
 
   .engine-auto-queue__summary span:nth-child(-n + 2) {
     border-bottom: 1px solid var(--engine-line);
+  }
+
+  .engine-outcome-buckets__grid,
+  .engine-outcome-detail-grid,
+  .engine-outcome-skip-list ul {
+    grid-template-columns: 1fr;
   }
 
   .engine-package-review-grid,

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
-import type { DiscoveryDiagnostics, DiscoveryProviderCoverageStatus } from "@/lib/lead-discovery";
+import type { DiscoveryDiagnostics, DiscoveryProvider, DiscoveryProviderCoverageStatus, DiscoveryProviderDiagnostic, DiscoveryProviderStatus } from "@/lib/lead-discovery";
 import { casualDmPlaybook } from "@/lib/autonomous-growth";
 import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket, topProspectsAutopilotPrefillStorageKey, type AutopilotTopProspectsPrefill } from "@/lib/autopilot-campaign";
 import {
@@ -110,6 +110,23 @@ function skipReasonLabel(reason: string) {
   return skipReasonLabels[reason] ?? reason.replaceAll("_", " ");
 }
 
+const discoveryProviderLabels: Record<DiscoveryProvider, string> = {
+  osm: "OpenStreetMap",
+  azureMaps: "Azure Maps",
+  googlePlaces: "Google Places",
+  yelp: "Yelp",
+};
+
+const discoveryProviderStatusLabels: Record<DiscoveryProviderStatus, string> = {
+  not_recorded: "Not recorded",
+  not_configured: "Not configured",
+  succeeded: "Succeeded",
+  failed: "Failed",
+  timed_out: "Timed out",
+  zero_results: "No records returned",
+  rate_limited: "Rate limited",
+};
+
 const failureLabels: Record<TopProspectJobFailureClassification, string> = {
   discovery_provider_error: "Discovery provider error",
   geocoding_error: "Geocoding error",
@@ -202,6 +219,23 @@ function failedDiscoveryIssueCount(job: TopProspectJob) {
   const failedCities = diagnostics.cityDiagnostics?.filter((city) => city.status === "failed").length ?? 0;
   const failedProviders = Object.values(diagnostics.providerDiagnostics ?? {}).filter((provider) => ["failed", "timed_out", "rate_limited"].includes(provider.status)).length;
   return failedCities + failedProviders;
+}
+
+function failedProviderDiagnostics(diagnostics: DiscoveryDiagnostics | null) {
+  if (!diagnostics?.providerDiagnostics) return [];
+  return (Object.entries(diagnostics.providerDiagnostics) as Array<[DiscoveryProvider, DiscoveryProviderDiagnostic]>)
+    .filter(([, diagnostic]) => ["failed", "timed_out", "rate_limited"].includes(diagnostic.status));
+}
+
+function failedCityDiagnostics(diagnostics: DiscoveryDiagnostics | null) {
+  return diagnostics?.cityDiagnostics?.filter((city) => city.status === "failed") ?? [];
+}
+
+function mainSkippedBucketEntries(skipSummary: Record<string, number>) {
+  return Object.entries(skipSummary)
+    .filter(([, count]) => count > 0)
+    .filter(([reason]) => reason !== "previously_reviewed")
+    .sort((left, right) => right[1] - left[1]);
 }
 
 function compactUrl(value: string) {
@@ -389,6 +423,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     : [];
   const previouslyReviewedCount = latestJob ? latestJob.skipSummary.previously_reviewed ?? 0 : 0;
   const failedDiscoveryCount = latestJob ? failedDiscoveryIssueCount(latestJob) : 0;
+  const failedProviders = latestJob ? failedProviderDiagnostics(latestJob.discoveryDiagnostics) : [];
+  const failedCities = latestJob ? failedCityDiagnostics(latestJob.discoveryDiagnostics) : [];
+  const skippedBucketEntries = latestJob ? mainSkippedBucketEntries(latestJob.skipSummary) : [];
   const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
   const filteredReviewableLowerPriority = reviewableLowerPriorityResults.filter((result) => matchesContactFilter(result, contactFilter));
   const filteredBlockedProspects = blockedProspects.filter((result) => matchesContactFilter(result, contactFilter));
@@ -707,6 +744,62 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           ) : null}
         </section>
       )}
+
+      {latestJob && (previouslyReviewedCount > 0 || failedDiscoveryCount > 0 || skippedBucketEntries.length > 0) ? (
+        <section className="engine-panel engine-outcome-buckets" aria-label="Prospect outcome buckets">
+          <div className="engine-panel__head">
+            <div><h2>Prospect outcome buckets</h2><p>Run results are separated by what needs review, what was blocked, what was already handled, and what failed or timed out.</p></div>
+            <span>{latestJob.scannedCount} scanned</span>
+          </div>
+          <div className="engine-outcome-buckets__grid">
+            <article>
+              <h3>Previously reviewed prospects</h3>
+              <b>{previouslyReviewedCount}</b>
+              <p>{previouslyReviewedCount > 0 ? "Excluded because Exclude previously reviewed prospects is on. Turn that setting off only if you intentionally want repeats." : "None excluded in this run."}</p>
+            </article>
+            <article>
+              <h3>Failed or timed-out discovery</h3>
+              <b>{failedDiscoveryCount}</b>
+              <p>{failedDiscoveryCount > 0 ? "These city or provider issues need attention before scaling this market." : "No failed or timed-out providers/cities recorded."}</p>
+            </article>
+            <article>
+              <h3>Other skipped records</h3>
+              <b>{skippedBucketEntries.reduce((total, [, count]) => total + count, 0)}</b>
+              <p>{skippedBucketEntries.length ? "Records removed before review because they matched duplicate, contact, quality, or bad-fit rules." : "No additional skip buckets recorded."}</p>
+            </article>
+          </div>
+          {failedDiscoveryCount > 0 && (
+            <div className="engine-outcome-detail-grid">
+              {failedCities.length > 0 && (
+                <div>
+                  <h3>Failed cities</h3>
+                  <ul>
+                    {failedCities.map((city) => (
+                      <li key={city.label}><b>{city.label}</b><span>{city.safeReason || city.mainSkipReasons?.join(" / ") || "City discovery failed before enough records were returned."}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {failedProviders.length > 0 && (
+                <div>
+                  <h3>Failed or timed-out providers</h3>
+                  <ul>
+                    {failedProviders.map(([provider, diagnostic]) => (
+                      <li key={provider}><b>{discoveryProviderLabels[provider]}</b><span>{discoveryProviderStatusLabels[diagnostic.status]}{diagnostic.safeErrorMessage ? `: ${diagnostic.safeErrorMessage}` : ""}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          {skippedBucketEntries.length > 0 && (
+            <div className="engine-outcome-skip-list">
+              <h3>Skipped reason counts</h3>
+              <ul>{skippedBucketEntries.map(([reason, count]) => <li key={reason}><b>{count}</b><span>{skipReasonLabel(reason)}</span></li>)}</ul>
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {latestJob && queuedResults.length > 0 && (
         <section className="engine-panel engine-auto-queue">
