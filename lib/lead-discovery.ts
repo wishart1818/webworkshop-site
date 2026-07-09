@@ -387,6 +387,39 @@ export function discoveryProviderCoverageStatus(
   };
 }
 
+function providerSucceededWithUsableRecords(diagnostic?: DiscoveryProviderDiagnostic | null) {
+  return Boolean(
+    diagnostic?.configured
+    && diagnostic.queryExecuted
+    && diagnostic.status === "succeeded"
+    && ((diagnostic.returnedCount ?? 0) > 0 || (diagnostic.usableWebsiteCount ?? 0) > 0),
+  );
+}
+
+export function discoveryDiagnosticsHavePremiumProviderSuccess(diagnostics?: DiscoveryDiagnostics | null) {
+  if (!diagnostics) return false;
+  if (providerSucceededWithUsableRecords(diagnostics.providerDiagnostics?.googlePlaces)) return true;
+  if (providerSucceededWithUsableRecords(diagnostics.providerDiagnostics?.yelp)) return true;
+  return Boolean(
+    diagnostics.cityDiagnostics?.some((city) => (
+      providerSucceededWithUsableRecords(city.providerDiagnostics?.googlePlaces)
+      || providerSucceededWithUsableRecords(city.providerDiagnostics?.yelp)
+    ))
+    || diagnostics.tradeDiagnostics?.some((trade) => (
+      providerSucceededWithUsableRecords(trade.providerDiagnostics?.googlePlaces)
+      || providerSucceededWithUsableRecords(trade.providerDiagnostics?.yelp)
+    )),
+  );
+}
+
+export function shouldShowLimitedProviderCoverageWarning(
+  coverage?: DiscoveryProviderCoverageStatus | null,
+  diagnostics?: DiscoveryDiagnostics | null,
+) {
+  if (!coverage || !["limited", "broken"].includes(coverage.level)) return false;
+  return !discoveryDiagnosticsHavePremiumProviderSuccess(diagnostics);
+}
+
 function providerDelayMs() {
   const configured = Number(process.env.DISCOVERY_PROVIDER_DELAY_MS);
   return Number.isFinite(configured) && configured >= 0 ? Math.min(2_000, configured) : 250;

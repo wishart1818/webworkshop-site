@@ -6,6 +6,7 @@ import {
   discoveryDiagnosticsFromJson,
   discoveryLeadsFromJson,
   discoveryProviderCoverageStatus,
+  shouldShowLimitedProviderCoverageWarning,
   mergeDiscoveryCandidates,
   processDiscoveryElements,
   resetDiscoveryThrottleForTests,
@@ -154,6 +155,33 @@ test("multi-source discovery merges business identity and prioritizes enriched l
   assert.deepEqual(result.leads[0].sources, ["osm", "google", "yelp"]);
   assert.equal(result.leads[1].email, "sales@maumeeroof.example");
   assert.ok((result.leads[0].sourceConfidence ?? 0) > (result.leads[1].sourceConfidence ?? 0));
+});
+
+test("limited provider warning is suppressed when Google Places succeeds in latest diagnostics", () => {
+  const coverage = discoveryProviderCoverageStatus(null, {
+    AZURE_MAPS_API_KEY: "azure-key",
+  } as NodeJS.ProcessEnv);
+  const diagnostics = {
+    rawProviderCount: 115,
+    afterDistanceFilteringCount: 115,
+    afterDuplicateFilteringCount: 28,
+    afterQualificationFilteringCount: 28,
+    returnedCount: 28,
+    radiusKm: 50,
+    categorySignals: [],
+    sourceCounts: { osm: 0, google: 115, bing: 0, yelp: 0, yellowPages: 0 },
+    finalMergedCount: 28,
+    providerDiagnostics: {
+      osm: { configured: null, queryExecuted: false, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      azureMaps: { configured: true, queryExecuted: true, status: "zero_results", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", endpointVersion: "New", returnedCount: 115, withinRadiusCount: 115, afterDeduplicationCount: 28, usableWebsiteCount: 28 },
+      yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    },
+  } as DiscoveryResult["diagnostics"];
+
+  assert.equal(coverage.level, "limited");
+  assert.equal(shouldShowLimitedProviderCoverageWarning(coverage, diagnostics), false);
+  assert.equal(shouldShowLimitedProviderCoverageWarning(coverage, null), true);
 });
 
 test("discovery marks institutional, supplier, and mismatched businesses as bad fit", () => {

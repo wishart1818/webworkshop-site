@@ -35,6 +35,10 @@ const notRecorded = {
   usableWebsiteCount: 0,
 } as const;
 
+function googleEndpointLabel(diagnostic: DiscoveryProviderDiagnostic) {
+  return diagnostic.endpointVersion ?? "New";
+}
+
 export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable websites" }: { diagnostics: DiscoveryDiagnostics; qualificationLabel?: string }) {
   const booleanLabel = (value: boolean | null | undefined) => value === null || value === undefined ? "Not recorded" : value ? "Yes" : "No";
   const canRunWithoutApiKey = (provider: DiscoveryProvider, diagnostic: DiscoveryProviderDiagnostic) => diagnostic.canRunWithoutApiKey ?? provider === "osm";
@@ -67,7 +71,7 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
                 <div><dt>Required env var</dt><dd>{diagnostic.envVarName ?? providerEnvLabels[provider]}</dd></div>
                 <div><dt>Env var present</dt><dd>{keyLabel(provider, diagnostic)}</dd></div>
                 <div><dt>Can run without API key</dt><dd>{canRunWithoutApiKey(provider, diagnostic) ? "Yes" : "No"}</dd></div>
-                <div><dt>Endpoint</dt><dd>{provider === "googlePlaces" ? diagnostic.endpointVersion ?? "Not recorded" : "Not applicable"}</dd></div>
+                <div><dt>Endpoint</dt><dd>{provider === "googlePlaces" ? googleEndpointLabel(diagnostic) : "Not applicable"}</dd></div>
                 <div><dt>Query executed</dt><dd>{diagnostic.query ?? booleanLabel(diagnostic.queryExecuted)}</dd></div>
                 <div><dt>Raw records</dt><dd>{diagnostic.returnedCount}</dd></div>
                 <div><dt>Within radius</dt><dd>{diagnostic.withinRadiusCount}</dd></div>

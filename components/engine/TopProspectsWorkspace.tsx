@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
-import type { DiscoveryDiagnostics, DiscoveryProvider, DiscoveryProviderCoverageStatus, DiscoveryProviderDiagnostic, DiscoveryProviderStatus } from "@/lib/lead-discovery";
+import { shouldShowLimitedProviderCoverageWarning, type DiscoveryDiagnostics, type DiscoveryProvider, type DiscoveryProviderCoverageStatus, type DiscoveryProviderDiagnostic, type DiscoveryProviderStatus } from "@/lib/lead-discovery";
 import { casualDmPlaybook } from "@/lib/autonomous-growth";
 import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket, topProspectsAutopilotPrefillStorageKey, type AutopilotTopProspectsPrefill } from "@/lib/autopilot-campaign";
 import {
@@ -231,6 +231,24 @@ function failedCityDiagnostics(diagnostics: DiscoveryDiagnostics | null) {
   return diagnostics?.cityDiagnostics?.filter((city) => city.status === "failed") ?? [];
 }
 
+function phoneOnlyWrittenOutreachBlocked(result: TopProspectResult) {
+  return result.prospect.classification === "phone_only"
+    || result.prospect.recommendedContactMethod === "call_first"
+    || result.prospect.bestManualContactMethod === "phone_only"
+    || result.emailQuality.readinessLabel === "Phone-only / written outreach blocked";
+}
+
+function generatedPackageNeedsReview(result: TopProspectResult) {
+  return result.packageStatus !== "NOT_GENERATED" && result.packageStatus !== "SENT" && result.packageStatus !== "SKIPPED";
+}
+
+function packageReviewStatusText(result: TopProspectResult) {
+  if (phoneOnlyWrittenOutreachBlocked(result) && result.packageStatus !== "NOT_GENERATED") {
+    return "Preview generated, outreach blocked: phone-only.";
+  }
+  return result.emailQuality.readinessLabel;
+}
+
 function mainSkippedBucketEntries(skipSummary: Record<string, number>) {
   return Object.entries(skipSummary)
     .filter(([, count]) => count > 0)
@@ -400,6 +418,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [selectedTrade, setSelectedTrade] = useState<TopProspectJob["input"]["trade"]>("Landscaping");
   const [cityInput, setCityInput] = useState("");
   const [stateInput, setStateInput] = useState("OH");
+  const [selectedRadiusKm, setSelectedRadiusKm] = useState(50);
   const [businessesToScan, setBusinessesToScan] = useState(100);
   const [finalProspectsWanted, setFinalProspectsWanted] = useState(20);
   const [excludePreviouslyReviewed, setExcludePreviouslyReviewed] = useState(true);
@@ -427,6 +446,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const failedCities = latestJob ? failedCityDiagnostics(latestJob.discoveryDiagnostics) : [];
   const skippedBucketEntries = latestJob ? mainSkippedBucketEntries(latestJob.skipSummary) : [];
   const filteredResults = latestJob ? latestJob.results.filter((result) => matchesContactFilter(result, contactFilter)) : [];
+  const packageReviewResults = latestJob ? [...latestJob.results, ...reviewableLowerPriorityResults] : [];
+  const filteredPackageReviewResults = packageReviewResults.filter((result) => matchesContactFilter(result, contactFilter));
+  const packageReviewableCount = packageReviewResults.filter(generatedPackageNeedsReview).length;
   const filteredReviewableLowerPriority = reviewableLowerPriorityResults.filter((result) => matchesContactFilter(result, contactFilter));
   const filteredBlockedProspects = blockedProspects.filter((result) => matchesContactFilter(result, contactFilter));
   const filteredReviewedNotRecommended = remainingReviewedNotRecommended.filter((result) => matchesContactFilter(result, contactFilter));
@@ -434,10 +456,13 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const parsedCityTargets = useMemo(() => parseTopProspectCityTargets(cityInput, stateInput), [cityInput, stateInput]);
   const providerRequestEstimate = estimatedProviderRequestLoad(parsedCityTargets.length || 1, selectedTrade);
   const largeSearch = parsedCityTargets.length > 3 || selectedTrade === allCoreServiceTradesOption || providerRequestEstimate > 24;
+  const showProviderCoverageWarning = shouldShowLimitedProviderCoverageWarning(providerCoverage, latestJob?.discoveryDiagnostics ?? null);
 
   const applyAutopilotPrefill = useCallback((prefill: Partial<AutopilotTopProspectsPrefill>) => {
+    const prefillWithRunSettings = prefill as Partial<AutopilotTopProspectsPrefill> & { radiusKm?: number };
     if (typeof prefill.city === "string") setCityInput(prefill.city);
     if (typeof prefill.state === "string") setStateInput(prefill.state.toUpperCase());
+    if (typeof prefillWithRunSettings.radiusKm === "number") setSelectedRadiusKm(prefillWithRunSettings.radiusKm);
     if (typeof prefill.trade === "string") setSelectedTrade(prefill.trade as TopProspectJob["input"]["trade"]);
     if (typeof prefill.businessesToScan === "number") setBusinessesToScan(prefill.businessesToScan);
     if (typeof prefill.finalProspectsWanted === "number") setFinalProspectsWanted(prefill.finalProspectsWanted);
@@ -646,7 +671,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Trade<select name="trade" onChange={(event) => setSelectedTrade(event.target.value as TopProspectJob["input"]["trade"])} value={selectedTrade}><option value={allCoreServiceTradesOption}>{allCoreServiceTradesOption}</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label className="engine-form-wide">City<span>Enter one city, city-only list, or city/state pairs. Examples: Toledo, Sylvania, Perrysburg with State OH, or Toledo, OH; Tampa, FL.</span><input name="city" onChange={(event) => setCityInput(event.target.value)} ref={cityInputRef} required value={cityInput} /></label>
           <label>State<input maxLength={2} name="state" onChange={(event) => setStateInput(event.target.value.toUpperCase())} required value={stateInput} /></label>
-          <label>Radius<select defaultValue="50" name="radiusKm"><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
+          <label>Radius<select name="radiusKm" onChange={(event) => setSelectedRadiusKm(Number(event.target.value))} value={selectedRadiusKm}><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
           <label>Businesses to scan<input max="250" min="5" name="businessesToScan" onChange={(event) => setBusinessesToScan(Number(event.target.value))} type="number" value={businessesToScan} /></label>
           <label>Final prospects wanted<input max="25" min="1" name="finalProspectsWanted" onChange={(event) => setFinalProspectsWanted(Number(event.target.value))} type="number" value={finalProspectsWanted} /></label>
           <label className="engine-checkbox-label"><input checked={excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => setExcludePreviouslyReviewed(event.target.checked)} type="checkbox" /> Exclude previously reviewed prospects</label>
@@ -660,10 +685,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <b>Estimated provider request load: about {providerRequestEstimate} provider queries.</b>
             <span>{largeSearch ? "This may take longer and use more provider requests." : "Small, focused searches are fastest to review."}</span>
           </div>
-          {providerCoverage && ["limited", "broken"].includes(providerCoverage.level) ? (
+          {showProviderCoverageWarning && providerCoverage ? (
             <div className={`engine-provider-coverage-warning engine-provider-coverage-warning--${providerCoverage.level}`} role="status">
-              <b>Provider coverage is limited. This run may return very few prospects until Google Places or Yelp is configured.</b>
-              <span>{providerCoverage.recommendation}</span>
+              <b>{providerCoverage.level === "broken" ? "Provider setup needs attention before scaling." : providerCoverage.recommendation}</b>
+              <span>{providerCoverage.summary}</span>
             </div>
           ) : null}
           <p className="engine-mode-note">{selectedProspectType === "no_website_social_only" ? <><b>No Website / Social Only:</b> Ranks active local businesses by presence gap, contactability, activity, and local fit.</> : selectedProspectType === "all" ? <><b>All Prospect Types:</b> Reviews redesign and no-website opportunities together, while preserving the correct scoring model for each.</> : <><b>{modeLabels[selectedMode]}:</b> {modeDescriptions[selectedMode]}</>} <b>{outreachPreferenceLabels[selectedOutreachPreference]}:</b> {selectedOutreachPreference === "written_only" ? "Email, contact form, or social message required before send-ready approval." : "Phone-first leads may be reviewed, but sending remains manual."} <b>Starter tip:</b> Start with one preset and one trade first. Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete for first tests. <b>Businesses to scan is the total budget across all selected cities and trades.</b> {selectedWorkflow === "morning_batch" ? "The batch continues in the background and saves every generated artifact." : ""}</p>
@@ -709,6 +734,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span>Workflow <b>{workflowLabels[latestJob.input.workflowType]}</b></span>
             <span>Outreach <b>{outreachPreferenceLabels[latestJob.input.outreachPreference]}</b></span>
             <span>Reviewed filter <b>{latestJob.input.excludePreviouslyReviewed ? "Excluding previous" : "Including previous"}</b></span>
+            <span>Radius <b>{latestJob.input.radiusKm} km</b></span>
+            <span>Scan budget <b>{latestJob.input.businessesToScan}</b></span>
+            <span>Final target <b>{latestJob.input.finalProspectsWanted}</b></span>
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
           <StageProgress job={latestJob} preparedArtifacts={preparedArtifacts} />
@@ -728,6 +756,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             </div>
           )}
           <DiscoveryFunnel diagnostics={latestJob.discoveryDiagnostics ?? legacyJobDiagnostics(latestJob)} qualificationLabel={latestJob.input.prospectType === "no_website_social_only" ? "eligible no-website leads" : latestJob.input.prospectType === "all" ? "eligible prospects" : "usable websites"} />
+          <p className="engine-skip-summary">Run settings used: {latestJob.input.radiusKm} km radius, {latestJob.input.businessesToScan} businesses to scan total across selected cities and trades, {latestJob.input.finalProspectsWanted} final prospects wanted.</p>
           {partialDiscoverySummary(latestJob.discoveryDiagnostics) ? <p className="engine-skip-summary">{partialDiscoverySummary(latestJob.discoveryDiagnostics)}</p> : null}
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
           {(previouslyReviewedCount > 0 || failedDiscoveryCount > 0) && (
@@ -813,15 +842,15 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         </section>
       )}
 
-      {latestJob?.results.length ? (
+      {latestJob && packageReviewResults.length ? (
         <section className="engine-panel engine-package-review">
           <div className="engine-panel__head">
             <div><h2>Outreach Package Review</h2><p>Review the business-specific preview, email, pitch, and builder handoff. Approve or skip without opening each prospect record.</p></div>
-            <span>{latestJob.results.filter((result) => result.packageStatus === "READY_FOR_REVIEW").length} ready for review</span>
+            <span>{packageReviewableCount} package{packageReviewableCount === 1 ? "" : "s"} to review</span>
           </div>
           <ContactFilterBar contactFilter={contactFilter} setContactFilter={setContactFilter} />
           <div className="engine-package-review-grid">
-            {filteredResults.map((result) => (
+            {filteredPackageReviewResults.map((result) => (
               <PackageReviewCard
                 actioning={packageActioning}
                 key={result.id}
@@ -831,7 +860,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               />
             ))}
           </div>
-          {filteredResults.length === 0 && <EmptyState title="No packages match this contact filter" body="Choose a broader contact filter to review the rest of this batch." action={() => setContactFilter("all")} />}
+          {filteredPackageReviewResults.length === 0 && <EmptyState title="No packages match this contact filter" body="Choose a broader contact filter to review the rest of this batch." action={() => setContactFilter("all")} />}
         </section>
       ) : null}
 
@@ -839,7 +868,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
 
       {latestJob?.results.length ? (
         <section className="engine-panel engine-top-results">
-          <div className="engine-panel__head"><div><h2>{latestJob.input.prospectType === "no_website_social_only" ? "No Website / Social Only Prospects" : latestJob.input.prospectType === "all" ? "Ranked Prospects Across All Types" : "Ranked Top Prospects"}</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Kept separate from redesign prospects and ranked by presence gap, activity, contactability, and local fit." : latestJob.input.prospectType === "all" ? "Redesign and no-website opportunities are ranked together using the scoring model appropriate to each business." : `${modeLabels[latestJob.input.mode]} ranks qualified local businesses by a public-data sales heuristic, not verified revenue.`}</p></div><span>{latestJob.results.length} ready for review</span></div>
+          <div className="engine-panel__head"><div><h2>{latestJob.input.prospectType === "no_website_social_only" ? "No Website / Social Only Prospects" : latestJob.input.prospectType === "all" ? "Ranked Prospects Across All Types" : "Ranked Top Prospects"}</h2><p>{latestJob.input.prospectType === "no_website_social_only" ? "Kept separate from redesign prospects and ranked by presence gap, activity, contactability, and local fit." : latestJob.input.prospectType === "all" ? "Redesign and no-website opportunities are ranked together using the scoring model appropriate to each business." : `${modeLabels[latestJob.input.mode]} ranks qualified local businesses by a public-data sales heuristic, not verified revenue.`}</p></div><span>{latestJob.results.length} ranked</span></div>
           {jobIsComplete(latestJob.status) && latestJob.results.length < latestJob.input.finalProspectsWanted && (
             <p className="engine-skip-summary">{latestJob.input.prospectType === "no_website_social_only" ? `Only ${latestJob.results.length} active no-website prospects found. Increase radius or scan count to find more.` : `Only ${latestJob.results.length} prospects matched ${modeLabels[latestJob.input.mode]}. Choose a broader prospect mode or adjust the next batch.`}</p>
           )}
@@ -852,7 +881,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span><em>{result.pitchAngle}</em></div>
-                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.prospect.status}</span></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{packageReviewStatusText(result)}</span></div>
                 <div className="engine-result-actions">
                   <button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button>
                   <a className="engine-button" href={`/engine/previews/${result.prospect.id}`} target="_blank">Open preview</a>
@@ -880,7 +909,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
-                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.emailQuality.readinessLabel}</span></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{packageReviewStatusText(result)}</span></div>
                 <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button><button className="engine-button" onClick={() => openPackageReview(result)} type="button">Review package</button><button className="engine-button" disabled={packageActioning.startsWith(`${result.id}:`) || result.packageStatus === "SENT"} onClick={() => void runPackageAction(result, "generate")} type="button">Generate Outreach Package</button><button className="engine-button" onClick={() => setPromptResult(result)} type="button">Open Lovable prompt</button></div>
               </article>
             ))}
@@ -901,7 +930,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
-                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.emailQuality.readinessLabel}</span></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{packageReviewStatusText(result)}</span></div>
                 <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button><button className="engine-button" disabled={!result.prospect.outreach} onClick={() => openPackageReview(result)} type="button">Inspect package</button></div>
               </article>
             ))}
@@ -921,7 +950,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
                 <div><b>{result.mainWeakness}</b><span>{result.whyMayBuy}</span></div>
-                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{result.prospect.status}</span></div>
+                <div><i className={`engine-package-state engine-package-state--${result.packageStatus.toLowerCase().replaceAll("_", "-")}`}>{outreachPackageStatusLabel(result.packageStatus)}</i><span>{packageReviewStatusText(result)}</span></div>
                 <div className="engine-result-actions"><button className="engine-button" onClick={() => onOpenProspect(result.prospect.id)} type="button">Review</button><button className="engine-button" onClick={() => openPackageReview(result)} type="button">Review package</button><button className="engine-button" disabled={packageActioning.startsWith(`${result.id}:`) || result.packageStatus === "SENT"} onClick={() => void runPackageAction(result, "generate")} type="button">Generate Outreach Package</button><button className="engine-button" onClick={() => setPromptResult(result)} type="button">Open Lovable prompt</button></div>
               </article>
             ))}
@@ -953,7 +982,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               </div>
               <ContactPaths prospect={outreachResult.prospect} />
               <section className="engine-email-quality" aria-label="Outreach quality checks">
-                <div className="engine-copy-head"><h3>Outreach quality checks</h3><small>Email quality checks now cover form and DM drafts too.</small><b className={outreachResult.emailQuality.ready ? "is-ready" : "needs-fixes"}>{outreachResult.emailQuality.readinessLabel}</b></div>
+                <div className="engine-copy-head"><h3>Outreach quality checks</h3><small>Email quality checks now cover form and DM drafts too.</small><b className={outreachResult.emailQuality.ready && !phoneOnlyWrittenOutreachBlocked(outreachResult) ? "is-ready" : "needs-fixes"}>{packageReviewStatusText(outreachResult)}</b></div>
                 <ul>
                   {outreachResult.emailQuality.checks.map((check) => (
                     <li className={check.passed ? "is-passed" : "is-failed"} key={check.key}>
@@ -964,7 +993,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                     </li>
                   ))}
                 </ul>
-                {!outreachResult.emailQuality.ready && <p className="engine-copy-warning">Outreach copy is blocked until this package is ready for human review. Current blocker: {outreachResult.emailQuality.readinessLabel}.</p>}
+                {(!outreachResult.emailQuality.ready || phoneOnlyWrittenOutreachBlocked(outreachResult)) && <p className="engine-copy-warning">Outreach copy is blocked until this package is ready for human review. Current blocker: {packageReviewStatusText(outreachResult)}</p>}
               </section>
               {outreachPlaybook && (
                 <section className="engine-manual-playbook" aria-label="Manual Facebook and Loom playbook">
@@ -996,7 +1025,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               {outreachResult.packageStatus === "APPROVED_TO_SEND"
                 ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`)} onClick={() => void runPackageAction(outreachResult, "mark_sent")} type="button">Mark Sent</button>
                 : outreachResult.packageStatus !== "SENT" && outreachResult.packageStatus !== "SKIPPED"
-                  ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`) || !outreachResult.emailQuality.ready} onClick={() => void runPackageAction(outreachResult, "approve")} type="button">Approve to Send</button>
+                  ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`) || !outreachResult.emailQuality.ready || phoneOnlyWrittenOutreachBlocked(outreachResult)} onClick={() => void runPackageAction(outreachResult, "approve")} type="button">Approve to Send</button>
                   : null}
             </footer>
           </dialog>
@@ -1044,7 +1073,8 @@ function PackageReviewCard({
   const busy = actioning.startsWith(`${result.id}:`);
   const generated = result.packageStatus !== "NOT_GENERATED" && result.packageStatus !== "SKIPPED";
   const reviewable = generated && result.packageStatus !== "SENT";
-  const approvable = result.emailQuality.ready && (result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW");
+  const phoneOnlyBlocked = phoneOnlyWrittenOutreachBlocked(result);
+  const approvable = !phoneOnlyBlocked && result.emailQuality.ready && (result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW");
   const miniStyle = {
     "--package-primary": profile.primaryColor,
     "--package-accent": profile.accentColor,
@@ -1070,7 +1100,7 @@ function PackageReviewCard({
         <span>Recommended contact</span>
         <p>{contactMethodLabels[result.prospect.recommendedContactMethod]}</p>
         <span>Outreach quality</span>
-        <p><b>{result.emailQuality.readinessLabel}</b></p>
+        <p><b>{packageReviewStatusText(result)}</b></p>
         <span>Recommended pitch</span>
         <p>{result.pitchAngle}</p>
         <span>Outreach preview</span>

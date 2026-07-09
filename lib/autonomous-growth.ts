@@ -275,9 +275,20 @@ export type LoomNeededTask = {
   previewLink: string;
   previewQuality: string;
   fixNotes: string[];
+  recommendation: LoomRecommendation;
   checklist: LoomReadinessCheck[];
   scripts: CasualDmPlaybook;
   canMarkReadyForLoom: boolean;
+};
+
+export type LoomRecommendation = {
+  recommended: boolean;
+  title: string;
+  talkingPoints: string[];
+  currentSiteIssue: string;
+  previewImprovement: string;
+  previewLink: string;
+  whyRecommended: string;
 };
 
 type CasualDmProspect = {
@@ -598,6 +609,7 @@ export function queueStatusForPackage({
   settings: AutonomousGrowthSettings;
 }): OutreachQueueStatus {
   if (settings.mode === "off") return "Draft";
+  if (autoEligibility.blockedReasons.some((reason) => /Phone-only leads never auto-send/i.test(reason))) return "Blocked";
   if (previewGate.status === "Blocked") return "Blocked";
   if (previewGate.status === "Needs Review" || !emailQuality.ready) return "Needs Review";
   if (settings.mode === "auto_email_pilot" && autoEligibility.eligible) return "Queued";
@@ -835,6 +847,46 @@ export function loomReadinessChecklist(item: OutreachQueueItem): LoomReadinessCh
   ];
 }
 
+function hasUsableManualContactForLoom(item: OutreachQueueItem) {
+  return Boolean(item.contactSource)
+    && !/phone(?:\s|-)?only|^phone$/i.test(item.contactSource)
+    && item.contactSource !== "Unknown"
+    && item.contactSource !== "Manual research";
+}
+
+function visualIssueForLoom(item: OutreachQueueItem) {
+  return [...item.detectedIssues, ...item.improvementSuggestions, item.reviewSummary]
+    .find((issue) => /\b(website|homepage|visual|layout|mobile|quote|estimate|contact|cta|preview|service|proof)\b/i.test(issue))
+    ?? "";
+}
+
+export function loomRecommendationForQueueItem(item: OutreachQueueItem): LoomRecommendation {
+  const visualIssue = visualIssueForLoom(item);
+  const highValue = item.reviewScore >= 70;
+  const strongPreview = item.previewQualityScore >= 85 && item.regenerationPlan.length === 0;
+  const usableContact = hasUsableManualContactForLoom(item);
+  const publicPreview = publicPreviewReady(item.previewLink);
+  const recommended = highValue && strongPreview && usableContact && publicPreview && Boolean(visualIssue);
+  const currentSiteIssue = visualIssue || "No specific visual website issue has been recorded yet.";
+  const previewImprovement = item.improvementSuggestions.find((suggestion) => /preview|quote|contact|layout|service/i.test(suggestion))
+    ?? "Show the public preview's cleaner service layout and quote path.";
+  return {
+    recommended,
+    title: recommended ? `Loom walkthrough for ${item.businessName}` : "Loom not recommended yet",
+    talkingPoints: [
+      `Show the current-site issue: ${currentSiteIssue}`,
+      `Show the preview improvement: ${previewImprovement}`,
+      "End by asking whether they want the finished version set up manually.",
+    ],
+    currentSiteIssue,
+    previewImprovement,
+    previewLink: publicPreview ? item.previewLink : "",
+    whyRecommended: recommended
+      ? "High-value prospect with a strong preview, usable manual contact path, and a visual issue worth showing."
+      : "Wait until the prospect has a strong score, public preview, usable manual contact path, and a clear visual issue.",
+  };
+}
+
 export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededTask {
   const prospect = {
     id: item.prospectId,
@@ -868,6 +920,7 @@ export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededT
     previewLink: item.previewLink,
     previewQuality: `${item.previewQualityScore || item.reviewScore || 0}/100`,
     fixNotes: [...new Set(fixNotes)].slice(0, 6),
+    recommendation: loomRecommendationForQueueItem(item),
     checklist,
     scripts: casualDmPlaybook(prospect, item.previewLink),
     canMarkReadyForLoom: checklist.every((check) => check.passed),

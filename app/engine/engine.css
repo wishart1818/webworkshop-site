@@ -4168,7 +4168,8 @@ body:has(.engine-shell) {
 
 .engine-loom-task__facts > div,
 .engine-loom-checklist,
-.engine-loom-fixes {
+.engine-loom-fixes,
+.engine-loom-recommendation {
   display: grid;
   gap: 0.35rem;
   border: 1px solid var(--engine-line);
@@ -4176,12 +4177,40 @@ body:has(.engine-shell) {
   padding: 0.75rem;
 }
 
+.engine-loom-recommendation {
+  gap: 0.65rem;
+  background: #f8fbf8;
+}
+
+.engine-loom-recommendation dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.engine-loom-recommendation dl > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.engine-loom-recommendation dt {
+  color: var(--engine-accent-dark);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .engine-loom-task__facts a,
 .engine-loom-task__facts span,
 .engine-loom-checklist span,
 .engine-loom-checklist small,
 .engine-loom-fixes p,
-.engine-loom-fixes li {
+.engine-loom-fixes li,
+.engine-loom-recommendation p,
+.engine-loom-recommendation dd,
+.engine-loom-recommendation li {
   color: var(--engine-muted);
   font-size: 0.76rem;
   line-height: 1.45;
@@ -4189,7 +4218,8 @@ body:has(.engine-shell) {
 }
 
 .engine-loom-checklist ul,
-.engine-loom-fixes ul {
+.engine-loom-fixes ul,
+.engine-loom-recommendation ul {
   display: grid;
   gap: 0.4rem;
   margin: 0;
@@ -5822,6 +5852,7 @@ body:has(.engine-shell) {
   }
 
   .engine-loom-task__facts,
+  .engine-loom-recommendation dl,
   .engine-script-grid,
   .engine-loom-actions {
     grid-template-columns: 1fr;

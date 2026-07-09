@@ -376,7 +376,7 @@ function ProviderHealthPanel({ providerCoverage, providerHealth, smokeTest }: { 
               <div><dt>Required env var</dt><dd>{provider.requiredEnvVarName}</dd></div>
               <div><dt>Env var present</dt><dd>{providerHealthValue(provider.envVarPresent)}</dd></div>
               <div><dt>Can run without API key</dt><dd>{provider.canRunWithoutApiKey ? "Yes" : "No"}</dd></div>
-              {provider.provider === "googlePlaces" ? <div><dt>Endpoint</dt><dd>{provider.endpointVersion ?? "Not recorded"}</dd></div> : null}
+              {provider.provider === "googlePlaces" ? <div><dt>Endpoint</dt><dd>{provider.endpointVersion ?? "New"}</dd></div> : null}
               <div><dt>Last attempted query</dt><dd>{provider.lastAttemptedQuery}</dd></div>
               <div><dt>Last HTTP status</dt><dd>{provider.lastHttpStatus}</dd></div>
               <div><dt>Failure type</dt><dd>{provider.failureType.replaceAll("_", " ")}</dd></div>

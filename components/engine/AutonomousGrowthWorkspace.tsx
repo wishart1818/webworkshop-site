@@ -1373,6 +1373,16 @@ function LoomQueueSection({
                   <h4>Preview fix notes</h4>
                   {task.fixNotes.length ? <ul>{task.fixNotes.map((note) => <li key={note}>{note}</li>)}</ul> : <p>No preview polish notes recorded.</p>}
                 </section>
+                <section className="engine-loom-recommendation" aria-label={`${task.businessName} Loom recommendation`}>
+                  <h4>{task.recommendation.title}</h4>
+                  <p>{task.recommendation.whyRecommended}</p>
+                  <dl>
+                    <div><dt>Current-site issue to show</dt><dd>{task.recommendation.currentSiteIssue}</dd></div>
+                    <div><dt>Preview improvement to show</dt><dd>{task.recommendation.previewImprovement}</dd></div>
+                    <div><dt>Public preview link</dt><dd>{task.recommendation.previewLink ? <a href={task.recommendation.previewLink} rel="noreferrer" target="_blank">{task.recommendation.previewLink}</a> : "Generate a public /p/ preview first."}</dd></div>
+                  </dl>
+                  <ul>{task.recommendation.talkingPoints.map((point) => <li key={point}>{point}</li>)}</ul>
+                </section>
                 <section className="engine-script-grid" aria-label={`${task.businessName} copyable Loom scripts`}>
                   <CopyScriptButton copied={copied} copyKey={`${item.id}:yes`} label="Copy yes reply" onCopy={onCopy} value={task.scripts.yesReply} />
                   <CopyScriptButton copied={copied} copyKey={`${item.id}:loom-script`} label="Copy Loom script" onCopy={onCopy} value={task.scripts.loomScript} />

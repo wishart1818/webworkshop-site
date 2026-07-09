@@ -7,6 +7,7 @@ import {
   evaluatePreviewQualityGate,
   evaluateSelfReview,
   learningSummaryForQueue,
+  loomRecommendationForQueueItem,
   loomNeededNotificationDraft,
   loomNeededTaskForQueueItem,
   normalizeAutonomousGrowthMode,
@@ -227,6 +228,52 @@ test("phone-only, social-only, contact-form-only, and bad-fit leads never auto-s
   ];
   for (const [label, prospect] of cases) {
     assert.equal(eligibilityFor(prospect).eligible, false, label);
+  }
+});
+
+test("phone-only prospects are blocked for written outreach queues, not sent to review", () => {
+  const prospect = { ...eligibleProspect(), email: "", recommendedContactMethod: "call_first", classification: "phone_only" } as Prospect;
+  const previewGate = evaluatePreviewQualityGate(prospect);
+  const emailQuality = evaluateOutreachEmailQuality(prospect, publicLink);
+  const autoEligibility = evaluateAutoSendEligibility({
+    emailQuality,
+    environment: env(),
+    previewGate,
+    previewLink: publicLink,
+    prospect,
+    settings: { ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false },
+  });
+
+  assert.equal(queueStatusForPackage({
+    autoEligibility,
+    emailQuality,
+    previewGate,
+    settings: { ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false },
+  }), "Blocked");
+});
+
+test("social or form prospects remain manual reviewable instead of phone-only blocked", () => {
+  const base = eligibleProspect();
+  for (const prospect of [
+    { ...base, email: "", contactFormUrl: "https://example.com/contact", recommendedContactMethod: "submit_contact_form" },
+    { ...base, email: "", facebookUrl: "https://facebook.com/example", recommendedContactMethod: "message_on_social", classification: "social_only" },
+  ] as Prospect[]) {
+    const previewGate = evaluatePreviewQualityGate(prospect);
+    const emailQuality = evaluateOutreachEmailQuality(prospect, publicLink);
+    const autoEligibility = evaluateAutoSendEligibility({
+      emailQuality,
+      environment: env(),
+      previewGate,
+      previewLink: publicLink,
+      prospect,
+      settings: { ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false },
+    });
+    assert.notEqual(queueStatusForPackage({
+      autoEligibility,
+      emailQuality,
+      previewGate,
+      settings: { ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false },
+    }), "Blocked");
   }
 });
 
@@ -960,6 +1007,8 @@ test("Loom Needed task exposes checklist, fix notes, scripts, and no auto-send p
   assert.equal(task.canMarkReadyForLoom, false);
   assert.ok(task.checklist.some((check) => check.key === "preview_quality" && !check.passed));
   assert.ok(task.fixNotes.includes("make layout more believable"));
+  assert.equal(task.recommendation.recommended, false);
+  assert.match(task.recommendation.whyRecommended, /Wait until/);
   assert.match(task.scripts.loomScript, /This isn't live or anything/);
   assert.match(task.scripts.sendAfterLoom, /Preview:/);
 });
@@ -974,6 +1023,43 @@ test("strong Loom preview can be marked ready only after public preview and qual
   }));
 
   assert.equal(task.canMarkReadyForLoom, true);
+});
+
+test("Loom recommendation appears only for high-value prospects with visual reason", () => {
+  const recommended = loomRecommendationForQueueItem(queueItem({
+    status: "Loom Needed",
+    contactSource: "Facebook",
+    previewQualityScore: 92,
+    reviewScore: 84,
+    detectedIssues: ["Current homepage makes the quote path hard to see."],
+    improvementSuggestions: ["Preview shows a clearer quote path above the fold."],
+    regenerationPlan: [],
+  }));
+  const blockedPhone = loomRecommendationForQueueItem(queueItem({
+    status: "Loom Needed",
+    contactSource: "Phone",
+    previewQualityScore: 92,
+    reviewScore: 84,
+    detectedIssues: ["Current homepage makes the quote path hard to see."],
+    improvementSuggestions: ["Preview shows a clearer quote path above the fold."],
+    regenerationPlan: [],
+  }));
+  const weakPreview = loomRecommendationForQueueItem(queueItem({
+    status: "Loom Needed",
+    contactSource: "Facebook",
+    previewQualityScore: 72,
+    reviewScore: 84,
+    detectedIssues: ["Current homepage makes the quote path hard to see."],
+    regenerationPlan: ["make layout more believable"],
+  }));
+
+  assert.equal(recommended.recommended, true);
+  assert.match(recommended.title, /Sample Roofing/);
+  assert.equal(recommended.talkingPoints.length, 3);
+  assert.match(recommended.currentSiteIssue, /quote path/);
+  assert.match(recommended.previewLink, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
+  assert.equal(blockedPhone.recommended, false);
+  assert.equal(weakPreview.recommended, false);
 });
 
 test("Loom notification draft is internal-only and secret-safe", () => {
