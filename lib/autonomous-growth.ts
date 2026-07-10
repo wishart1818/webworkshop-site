@@ -240,6 +240,7 @@ export type AutonomousGrowthDashboard = {
   settings: AutonomousGrowthSettings;
   env: {
     autoSendEnabled: boolean;
+    fullAutoSendEnabled: boolean;
     sendProvider: string;
     hasResendApiKey: boolean;
     hasFromEmail: boolean;
@@ -528,6 +529,7 @@ export function outreachEnvironment(environment: NodeJS.ProcessEnv = process.env
   const notifyOnLoomNeeded = environment.OUTREACH_NOTIFY_ON_LOOM_NEEDED === "true";
   return {
     autoSendEnabled: environment.OUTREACH_AUTO_SEND_ENABLED === "true",
+    fullAutoSendEnabled: environment.OUTREACH_FULL_AUTO_SEND_ENABLED === "true",
     sendProvider,
     hasResendApiKey: Boolean(environment.RESEND_API_KEY?.trim()),
     hasFromEmail: Boolean(environment.OUTREACH_FROM_EMAIL?.trim()),

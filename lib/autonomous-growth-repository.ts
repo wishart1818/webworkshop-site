@@ -363,6 +363,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
     settings,
     env: {
       autoSendEnabled: env.autoSendEnabled,
+      fullAutoSendEnabled: env.fullAutoSendEnabled,
       sendProvider: env.sendProvider || "not configured",
       hasResendApiKey: env.hasResendApiKey,
       hasFromEmail: env.hasFromEmail,
@@ -586,6 +587,19 @@ export type SendQueuedEmailResult = {
   providerMessageId?: string;
 };
 
+export type FullAutoEmailBatchResult = {
+  attempted: number;
+  sent: number;
+  blocked: number;
+  fullAutoEnabled: boolean;
+  blockedReasons: Array<{
+    queueItemId: string;
+    businessName: string;
+    email: string;
+    reasons: string[];
+  }>;
+};
+
 export type EmailSuppressionReason = "bounce" | "complaint" | "unsubscribe" | "manual_suppression";
 export type EmailSuppressionResult = {
   matched: number;
@@ -706,6 +720,87 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
     });
     return { item, sent: false, blockedReasons: [message] };
   }
+}
+
+export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult> {
+  const settings = await getAutonomousGrowthSettings();
+  const env = outreachEnvironment();
+  const queue = await listOutreachQueueItems();
+  if (!env.fullAutoSendEnabled) {
+    await safeRecordAudit({
+      action: "autonomous_email_batch",
+      outcome: "rejected",
+      subject: "full-auto-email",
+      metadata: { reason: "OUTREACH_FULL_AUTO_SEND_ENABLED is not true." },
+    });
+    return {
+      attempted: 0,
+      sent: 0,
+      blocked: 0,
+      fullAutoEnabled: false,
+      blockedReasons: [{
+        queueItemId: "",
+        businessName: "Full auto email batch",
+        email: "",
+        reasons: ["OUTREACH_FULL_AUTO_SEND_ENABLED is not true."],
+      }],
+    };
+  }
+  const queued = queue.filter((item) => item.status === "Queued" && item.contactSource === "Public email");
+  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
+  const batchLimit = Math.min(queued.length, remainingDailyCap, 5);
+  const result: FullAutoEmailBatchResult = {
+    attempted: batchLimit,
+    sent: 0,
+    blocked: 0,
+    fullAutoEnabled: true,
+    blockedReasons: [],
+  };
+  if (batchLimit <= 0) {
+    await safeRecordAudit({
+      action: "autonomous_email_batch",
+      outcome: "rejected",
+      subject: "full-auto-email",
+      metadata: { reason: "No eligible queued public-email items or daily cap is exhausted.", queued: queued.length, remainingDailyCap },
+    });
+    return {
+      ...result,
+      blocked: queued.length ? queued.length : 1,
+      blockedReasons: [{
+        queueItemId: queued[0]?.id ?? "",
+        businessName: queued[0]?.businessName ?? "Full auto email batch",
+        email: queued[0]?.email ?? "",
+        reasons: ["No eligible queued public-email items or daily cap is exhausted."],
+      }],
+    };
+  }
+  for (const item of queued.slice(0, batchLimit)) {
+    const send = await sendQueuedEmailQueueItem(item.id);
+    if (send.sent) {
+      result.sent += 1;
+    } else {
+      result.blocked += 1;
+      result.blockedReasons.push({
+        queueItemId: item.id,
+        businessName: item.businessName,
+        email: item.email,
+        reasons: send.blockedReasons,
+      });
+    }
+  }
+  await safeRecordAudit({
+    action: "autonomous_email_batch",
+    outcome: result.sent > 0 ? "success" : "rejected",
+    subject: "full-auto-email",
+    metadata: {
+      attempted: result.attempted,
+      sent: result.sent,
+      blocked: result.blocked,
+      limit: batchLimit,
+    },
+  });
+  return result;
 }
 
 export async function recordEmailSuppression(email: string, reason: EmailSuppressionReason, source = "operator"): Promise<EmailSuppressionResult> {

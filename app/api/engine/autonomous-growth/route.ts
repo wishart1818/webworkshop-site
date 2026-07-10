@@ -13,6 +13,7 @@ import {
   resumeAutopilotCampaign,
   runAutopilotNextBatchNow,
   runFakeAutopilotSmokeTestForDashboard,
+  runFullAutoEmailBatch,
   sendQueuedEmailQueueItem,
   startAutopilotCampaign,
   stopAutopilotCampaign,
@@ -158,6 +159,9 @@ export async function POST(request: Request) {
       const result = await sendQueuedEmailQueueItem(payload.queueItemId);
       if (!result.item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item: result.item, sendResult: result });
+    }
+    if (payload.action === "run_full_auto_email_batch") {
+      return NextResponse.json({ autoEmailBatch: await runFullAutoEmailBatch() });
     }
     if (payload.action === "record_email_suppression") {
       if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });

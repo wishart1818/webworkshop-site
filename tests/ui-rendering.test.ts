@@ -705,6 +705,8 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /If both exist, Top Prospects and Prospect Engine email packages use `WEBWORKSHOP_POSTAL_ADDRESS`/);
   assert.match(docs, /AUTOPILOT_DISABLED=true.*hard Production kill switch/is);
   assert.match(docs, /OUTREACH_AUTO_SEND_ENABLED.*exactly `true`/);
+  assert.match(docs, /OUTREACH_FULL_AUTO_SEND_ENABLED.*fully automatic queued-email batches/is);
+  assert.match(docs, /Fully automatic queued-email batches require the additional `OUTREACH_FULL_AUTO_SEND_ENABLED=true` flag/is);
   assert.match(docs, /queued email can send only when all of these are true/i);
   assert.match(docs, /Contact forms, quote forms, social DMs, phone calls, and Looms remain manual-only/);
   assert.match(docs, /Emergency suppression controls are available in Autonomous Growth/);

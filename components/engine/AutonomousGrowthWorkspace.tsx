@@ -53,6 +53,13 @@ type ApiPayload = Partial<DashboardPayload> & {
   autopilot?: AutopilotDashboard;
   smokeTest?: AutopilotSmokeTestResult;
   sendResult?: { sent: boolean; blockedReasons: string[] };
+  autoEmailBatch?: {
+    attempted: number;
+    sent: number;
+    blocked: number;
+    fullAutoEnabled: boolean;
+    blockedReasons: Array<{ queueItemId: string; businessName: string; email: string; reasons: string[] }>;
+  };
   suppression?: { matched: number; updated: number; reason: string };
   topProspectJobId?: string;
   topProspectJobWarning?: string;
@@ -363,6 +370,30 @@ export function AutonomousGrowthWorkspace() {
     }
   }
 
+  async function runFullAutoEmailBatch() {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run_full_auto_email_batch" }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.autoEmailBatch) throw new Error(apiError(payload, "Unable to run full auto email batch."));
+      await loadDashboard();
+      const batch = payload.autoEmailBatch;
+      setNotice(batch.sent > 0
+        ? `Full auto email batch sent ${batch.sent} approved email${batch.sent === 1 ? "" : "s"} and logged every action. Manual channels stayed manual.`
+        : `Full auto email batch did not send: ${batch.blockedReasons.flatMap((item) => item.reasons).join("; ")}`);
+    } catch (batchError) {
+      setError(batchError instanceof Error ? batchError.message : "Unable to run full auto email batch.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function recordSuppression(item: OutreachQueueItem, suppressionReason: "bounce" | "complaint" | "manual_suppression") {
     setSaving(true);
     setError("");
@@ -568,12 +599,19 @@ export function AutonomousGrowthWorkspace() {
           <Gate label="Mode is Auto Email Pilot" passed={settings.mode === "auto_email_pilot"} />
           <Gate label="Global kill switch is off" passed={!settings.killSwitch} />
           <Gate label="OUTREACH_AUTO_SEND_ENABLED is true" passed={env.autoSendEnabled} />
+          <Gate label="OUTREACH_FULL_AUTO_SEND_ENABLED is true" passed={env.fullAutoSendEnabled} detail="Required only for automatic batches" />
           <Gate label="Provider is configured" passed={env.sendProvider === "resend" && env.hasResendApiKey} detail={env.sendProvider} />
           <Gate label="Sender and reply-to are configured" passed={env.hasFromEmail && env.hasReplyToEmail} />
           <Gate label="Postal address is configured" passed={env.hasPostalAddress} />
           <Gate label="Only Queued public-email leads can send" passed detail="Forms, DMs, calls, and Looms stay manual." />
           <Gate label="Daily cap, cooldown, suppression, and audit logs enforced" passed />
           <Gate label="Optional Loom notification configured" passed={env.notifyOnLoomNeeded && env.hasNotifyEmail && env.hasNotifyFromEmail} detail="Internal only" />
+        </div>
+        <div className="engine-action-row">
+          <button className="engine-button engine-button--danger" disabled={saving || !env.fullAutoSendEnabled} onClick={() => void runFullAutoEmailBatch()} type="button">
+            Run full auto email batch
+          </button>
+          <p>Fully automatic batch sending is separate from <b>Send approved email</b>. It stays off unless <code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code>, then still sends only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.</p>
         </div>
       </section>
 

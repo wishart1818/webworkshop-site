@@ -25,6 +25,7 @@ import {
 import {
   resetAutonomousGrowthMemoryForTests,
   recordEmailSuppression,
+  runFullAutoEmailBatch,
   sendQueuedEmailQueueItem,
   updateAutonomousGrowthSettings,
   upsertAutonomousQueueItemFromPackage,
@@ -334,6 +335,96 @@ test("human-approved queued email sends through Resend only after every gate pas
     assert.equal(duplicate.sent, false);
     assert.match(duplicate.blockedReasons.join(" "), /Only Queued email items|already has a sent date/i);
     assert.equal(providerCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("fully automatic email batches are off by default and require the separate env flag", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_FULL_AUTO_SEND_ENABLED = "false";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "should-not-send" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "full-auto-off-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    const result = await runFullAutoEmailBatch();
+    assert.equal(result.fullAutoEnabled, false);
+    assert.equal(result.sent, 0);
+    assert.equal(providerCalls, 0);
+    assert.match(result.blockedReasons.flatMap((entry) => entry.reasons).join(" "), /OUTREACH_FULL_AUTO_SEND_ENABLED is not true/);
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "autonomous_email_batch" && event.outcome === "rejected"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("fully automatic email batch sends only queued public-email items through existing gates", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_FULL_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      providerCalls += 1;
+      const body = JSON.parse(String(init?.body ?? "{}")) as { to?: string[]; text?: string };
+      assert.deepEqual(body.to, ["owner@example.com"]);
+      assert.match(body.text ?? "", /https:\/\/webworkshop\.dev\/p\//);
+      assert.doesNotMatch(body.text ?? "", /\/engine\//);
+      return new Response(JSON.stringify({ id: "resend-full-auto-1" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "full-auto-send-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    const result = await runFullAutoEmailBatch();
+    assert.equal(result.fullAutoEnabled, true);
+    assert.equal(result.attempted, 1);
+    assert.equal(result.sent, 1);
+    assert.equal(result.blocked, 0);
+    assert.equal(providerCalls, 1);
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "autonomous_email_batch" && event.outcome === "success"));
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "autonomous_email_send" && event.outcome === "success"));
   } finally {
     globalThis.fetch = originalFetch;
     process.env = originalEnv;
