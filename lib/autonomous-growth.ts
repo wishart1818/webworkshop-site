@@ -2,6 +2,7 @@ import {
   displayTradeCategory,
   normalizeTradeCategory,
   outreachComplianceFooter,
+  prospectEmailNeedsManualVerification,
   prospectWrittenContactMethodIsUsable,
   type PreviewConcept,
   type Prospect,
@@ -637,6 +638,9 @@ export function evaluateQueuedEmailSendReadiness({
     !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
     item.status !== "Queued" ? "Only Queued email items can be sent by Auto Email Pilot." : "",
     email ? "" : "Recipient email is missing.",
+    email && prospectEmailNeedsManualVerification({ businessName: item.businessName, website: item.website, email })
+      ? "Recipient email needs manual verification before sending."
+      : "",
     item.contactSource !== "Public email" ? "Only public-email contacts can be sent automatically." : "",
     emailSendsToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",
     item.sentDate ? "This queue item already has a sent date." : "",

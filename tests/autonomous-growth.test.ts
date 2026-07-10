@@ -308,6 +308,15 @@ test("queued email send readiness enforces suppression, public links, compliance
     settings,
   });
   assert.equal(sharedMailboxDomain.blockedReasons.some((reason) => /business email domain|domain is suppressed/i.test(reason)), false);
+
+  const suspiciousEmail = evaluateQueuedEmailSendReadiness({
+    environment: env(),
+    item: { ...item, email: "admin@totalwptheme.com", emailBody: item.emailBody.replace("owner@readypressurewashing.com", "admin@totalwptheme.com") },
+    queue: [item],
+    settings,
+  });
+  assert.equal(suspiciousEmail.ready, false);
+  assert.match(suspiciousEmail.blockedReasons.join(" "), /needs manual verification/i);
 });
 
 test("human-approved queued email sends through Resend only after every gate passes", async () => {
