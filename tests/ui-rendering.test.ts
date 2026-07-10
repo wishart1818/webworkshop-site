@@ -707,10 +707,12 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /OUTREACH_AUTO_SEND_ENABLED.*exactly `true`/);
   assert.match(docs, /OUTREACH_FULL_AUTO_SEND_ENABLED.*fully automatic queued-email batches/is);
   assert.match(docs, /Fully automatic queued-email batches require the additional `OUTREACH_FULL_AUTO_SEND_ENABLED=true` flag/is);
+  assert.match(docs, /OUTREACH_SUPPRESSION_WEBHOOK_TOKEN.*outreach-events/is);
   assert.match(docs, /queued email can send only when all of these are true/i);
   assert.match(docs, /Contact forms, quote forms, social DMs, phone calls, and Looms remain manual-only/);
   assert.match(docs, /Emergency suppression controls are available in Autonomous Growth/);
   assert.match(docs, /Mark bounced, complained, opted-out, or manually suppressed addresses/i);
+  assert.match(docs, /records suppression only and never sends outreach/i);
 });
 
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {

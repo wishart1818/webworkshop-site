@@ -7,6 +7,7 @@ import { GET as systemStatus } from "../app/api/engine/system/route";
 import { GET as latestSelfCheck, POST as runSelfCheck } from "../app/api/engine/system/self-check/route";
 import { POST as providerSmokeTest } from "../app/api/engine/system/provider-smoke-test/route";
 import { GET as autonomousDashboard, POST as autonomousAction } from "../app/api/engine/autonomous-growth/route";
+import { POST as outreachEvent } from "../app/api/engine/outreach-events/route";
 import { POST as updateOutreachPackage } from "../app/api/engine/top-prospects/results/[resultId]/package/route";
 import {
   memoryAuditEventsForTests,
@@ -17,7 +18,12 @@ import {
 import { seedProspects } from "../lib/prospect-engine";
 import { resetProspectMemoryForTests } from "../lib/prospect-repository";
 import { resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
-import { resetAutonomousGrowthMemoryForTests } from "../lib/autonomous-growth-repository";
+import { defaultAutonomousGrowthSettings } from "../lib/autonomous-growth";
+import {
+  resetAutonomousGrowthMemoryForTests,
+  updateAutonomousGrowthSettings,
+  upsertAutonomousQueueItemFromPackage,
+} from "../lib/autonomous-growth-repository";
 
 test.beforeEach(() => {
   resetProspectMemoryForTests();
@@ -201,6 +207,114 @@ test("AUTOPILOT_DISABLED false or missing allows the normal safe Autopilot start
   } finally {
     if (previousDisabled === undefined) delete process.env.AUTOPILOT_DISABLED;
     else process.env.AUTOPILOT_DISABLED = previousDisabled;
+  }
+});
+
+test("suppression event endpoint requires a secret token and never sends outreach", async () => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  try {
+    delete process.env.OUTREACH_SUPPRESSION_WEBHOOK_TOKEN;
+    process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+    process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+    process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+    process.env.OUTREACH_SEND_PROVIDER = "resend";
+    process.env.RESEND_API_KEY = "test-resend-key";
+    process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+    process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response("should not send", { status: 500 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+      prospect: { ...seedProspects[0], website: "https://suppression-test.com", email: "owner@suppression-test.com", recommendedContactMethod: "send_email" },
+      topProspectResultId: "suppression-token-test",
+    });
+
+    const missingToken = await outreachEvent(new Request("https://example.com/api/engine/outreach-events", {
+      method: "POST",
+      body: JSON.stringify({ type: "bounce", email: queued.email }),
+    }));
+    assert.equal(missingToken.status, 503);
+
+    process.env.OUTREACH_SUPPRESSION_WEBHOOK_TOKEN = "test-webhook-token";
+    const badToken = await outreachEvent(new Request("https://example.com/api/engine/outreach-events", {
+      method: "POST",
+      headers: { Authorization: "Bearer wrong-token" },
+      body: JSON.stringify({ type: "complaint", email: queued.email }),
+    }));
+    assert.equal(badToken.status, 401);
+    assert.equal(providerCalls, 0);
+    assert.ok(!memoryAuditEventsForTests().some((event) => event.action === "email_suppression_record"));
+    assert.ok(!memoryAuditEventsForTests().some((event) => event.action === "outreach_suppression_webhook" && event.outcome === "success"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+  }
+});
+
+test("suppression event endpoint records bounces, complaints, and unsubscribes into blocked statuses", async () => {
+  const originalEnv = { ...process.env };
+  try {
+    process.env.OUTREACH_SUPPRESSION_WEBHOOK_TOKEN = "test-webhook-token";
+    process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+    process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+    process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+    process.env.OUTREACH_SEND_PROVIDER = "resend";
+    process.env.RESEND_API_KEY = "test-resend-key";
+    process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+    process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const bounce = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+      prospect: { ...seedProspects[0], id: "bounce-webhook", website: "https://suppression-test.com", email: "bounce@suppression-test.com", recommendedContactMethod: "send_email" },
+      topProspectResultId: "bounce-webhook-result",
+    });
+    const complaint = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+      prospect: { ...seedProspects[2], id: "complaint-webhook", website: "https://complaint-test.com", email: "complaint@complaint-test.com", recommendedContactMethod: "send_email" },
+      topProspectResultId: "complaint-webhook-result",
+    });
+    const unsubscribe = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+      prospect: { ...seedProspects[4], id: "unsubscribe-webhook", website: "https://unsubscribe-test.com", email: "unsubscribe@unsubscribe-test.com", recommendedContactMethod: "send_email" },
+      topProspectResultId: "unsubscribe-webhook-result",
+    });
+
+    const events = [
+      ["delivery.bounced", bounce.email],
+      ["spam.complaint", complaint.email],
+      ["unsubscribe", unsubscribe.email],
+    ];
+    for (const [type, email] of events) {
+      const response = await outreachEvent(new Request("https://example.com/api/engine/outreach-events", {
+        method: "POST",
+        headers: { "x-webworkshop-webhook-token": "test-webhook-token" },
+        body: JSON.stringify({ type, data: { email } }),
+      }));
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.received, true);
+      assert.equal(payload.updated, 1);
+    }
+
+    const dashboard = await autonomousDashboard();
+    const payload = await dashboard.json();
+    const statuses = new Map(payload.queue.map((item: { email: string; status: string }) => [item.email, item.status]));
+    assert.equal(statuses.get(bounce.email), "Bounced");
+    assert.equal(statuses.get(complaint.email), "Complained");
+    assert.equal(statuses.get(unsubscribe.email), "Opted Out");
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "outreach_suppression_webhook" && event.outcome === "success"));
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "email_suppression_record" && event.outcome === "success"));
+  } finally {
+    process.env = originalEnv;
   }
 });
 

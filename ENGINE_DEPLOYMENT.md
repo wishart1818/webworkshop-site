@@ -53,6 +53,7 @@ In **Vercel project settings > Environment Variables**, add:
 | `OUTREACH_FROM_EMAIL` | Auto Email Pilot only | Verified sender used by approved queued email sending |
 | `OUTREACH_REPLY_TO_EMAIL` | Auto Email Pilot only | Reply-to address used by approved queued email sending |
 | `OUTREACH_DAILY_CAP` | Auto Email Pilot only | Hard provider-side daily cap, clamped to 0-25 by the app |
+| `OUTREACH_SUPPRESSION_WEBHOOK_TOKEN` | Auto Email Pilot only | Secret token for `/api/engine/outreach-events` bounce/complaint/unsubscribe suppression intake |
 | `AUTOPILOT_DISABLED` | No | Set to `true` for a hard environment-level kill switch that prevents new Autopilot runs while leaving saved-batch review available |
 
 Apply production secrets to the **Production** environment. Use separate credentials and a separate database for Preview if preview deployments need engine access.
@@ -72,7 +73,7 @@ Set `AUTOPILOT_DISABLED=true` when you want a hard Production kill switch. It bl
 
 Auto Email Pilot remains off by default. A queued email can send only when all of these are true: Autonomous Growth mode is `Auto Email Pilot`, the in-app kill switch is off, `OUTREACH_AUTO_SEND_ENABLED=true`, Resend sender/reply-to/postal env vars are configured, the item is already `Queued`, the recipient is a public email, the email body uses a public `/p/` preview link, opt-out language and sender postal address are present, no placeholder/internal score/protected `/engine` link exists, daily cap and cooldown allow it, and no matching email/domain suppression or previous send is found. Human-approved sending uses the per-item **Send approved email** action. Fully automatic queued-email batches require the additional `OUTREACH_FULL_AUTO_SEND_ENABLED=true` flag and still reuse every send-ready, suppression, cooldown, rate-limit, and audit gate. Contact forms, quote forms, social DMs, phone calls, and Looms remain manual-only.
 
-Emergency suppression controls are available in Autonomous Growth. Mark bounced, complained, opted-out, or manually suppressed addresses immediately move matching queue items into non-sendable statuses and write audit events. Future Auto Email Pilot sends are blocked for those matching addresses/domains.
+Emergency suppression controls are available in Autonomous Growth. Mark bounced, complained, opted-out, or manually suppressed addresses immediately move matching queue items into non-sendable statuses and write audit events. Future Auto Email Pilot sends are blocked for those matching addresses/domains. Provider or automation events can also POST bounce, complaint, or unsubscribe events to `/api/engine/outreach-events` only when `OUTREACH_SUPPRESSION_WEBHOOK_TOKEN` is configured and supplied as a bearer token or `x-webworkshop-webhook-token`; the endpoint records suppression only and never sends outreach.
 
 ### Provider Coverage for Real Lead Discovery
 
