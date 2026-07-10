@@ -720,6 +720,31 @@ async function markQueueItemSent(item: OutreachQueueItem, providerMessageId: str
   return domain;
 }
 
+async function markQueueItemSendFailure(item: OutreachQueueItem, message: string, now = new Date()) {
+  const failedAt = now.toISOString();
+  const note = `Auto Email Pilot send failed safely on ${failedAt}: ${message}`;
+  const notes = [item.notes, note].filter(Boolean).join("\n");
+  if (!hasDatabase) {
+    const existing = memoryQueue().find((entry) => entry.id === item.id);
+    if (!existing) return item;
+    existing.status = "Needs Review";
+    existing.notes = notes;
+    existing.updatedAt = failedAt;
+    await recordRunReview(memorySettings(), memoryQueue());
+    return structuredClone(existing);
+  }
+  await ensureTopProspectSchema();
+  const row = await getProspectDatabase().outreachQueueItem.update({
+    where: { id: item.id },
+    data: {
+      status: "Needs Review",
+      notes,
+    },
+  });
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  return queueToDomain(row);
+}
+
 export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEmailResult> {
   const settings = await getAutonomousGrowthSettings();
   const queue = await listOutreachQueueItems();
@@ -760,13 +785,14 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
     return { item: sentItem, sent: true, blockedReasons: [], providerMessageId };
   } catch (error) {
     const message = safeEmailSendFailureMessage(error);
+    const failedItem = await markQueueItemSendFailure(item, message);
     await safeRecordAudit({
       action: "autonomous_email_send",
       outcome: "failure",
       subject: item.email || item.businessName,
       metadata: { queueItemId: item.id, reason: message },
     });
-    return { item, sent: false, blockedReasons: [message] };
+    return { item: failedItem, sent: false, blockedReasons: [message] };
   }
 }
 

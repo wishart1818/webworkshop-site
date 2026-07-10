@@ -396,11 +396,17 @@ test("email provider failures return secret-safe send errors and audit metadata"
 
     const result = await sendQueuedEmailQueueItem(queued.id);
     assert.equal(result.sent, false);
+    assert.equal(result.item?.status, "Needs Review");
+    assert.match(result.item?.notes ?? "", /Auto Email Pilot send failed safely/);
     assert.match(result.blockedReasons.join(" "), /Email provider request failed safely/);
     assert.doesNotMatch(result.blockedReasons.join(" "), /secret-resend-key/);
     const failureAudit = memoryAuditEventsForTests().find((event) => event.action === "autonomous_email_send" && event.outcome === "failure");
     assert.ok(failureAudit);
     assert.doesNotMatch(JSON.stringify(failureAudit), /secret-resend-key/);
+
+    const batch = await runFullAutoEmailBatch();
+    assert.equal(batch.sent, 0);
+    assert.equal(batch.attempted, 0);
   } finally {
     globalThis.fetch = originalFetch;
     process.env = originalEnv;
