@@ -142,6 +142,7 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Latest suppression/);
   assert.match(autonomousGrowthWorkspace, /Only Queued public-email leads can send/);
   assert.match(autonomousGrowthWorkspace, /Daily cap, cooldown, suppression, and audit logs enforced/);
+  assert.match(autonomousGrowthWorkspace, /OUTREACH_EMAIL_DISABLED is not true/);
   assert.match(autonomousGrowthWorkspace, /OUTREACH_FULL_AUTO_SEND_ENABLED is true/);
   assert.match(autonomousGrowthWorkspace, /Run full auto email batch/);
   assert.match(autonomousGrowthWorkspace, /Send approved email/);

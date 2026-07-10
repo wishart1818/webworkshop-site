@@ -364,6 +364,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
     env: {
       autoSendEnabled: env.autoSendEnabled,
       fullAutoSendEnabled: env.fullAutoSendEnabled,
+      emailKillSwitchEnabled: env.emailKillSwitchEnabled,
       sendProvider: env.sendProvider || "not configured",
       hasResendApiKey: env.hasResendApiKey,
       hasFromEmail: env.hasFromEmail,

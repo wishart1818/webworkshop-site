@@ -704,6 +704,8 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /OUTREACH_POSTAL_ADDRESS.*Auto Email Pilot\/provider readiness/is);
   assert.match(docs, /If both exist, Top Prospects and Prospect Engine email packages use `WEBWORKSHOP_POSTAL_ADDRESS`/);
   assert.match(docs, /AUTOPILOT_DISABLED=true.*hard Production kill switch/is);
+  assert.match(docs, /OUTREACH_EMAIL_DISABLED.*block all human-approved and fully automatic email sends/is);
+  assert.match(docs, /OUTREACH_EMAIL_DISABLED=true.*email-specific emergency stop/is);
   assert.match(docs, /OUTREACH_AUTO_SEND_ENABLED.*exactly `true`/);
   assert.match(docs, /OUTREACH_FULL_AUTO_SEND_ENABLED.*fully automatic queued-email batches/is);
   assert.match(docs, /Fully automatic queued-email batches require the additional `OUTREACH_FULL_AUTO_SEND_ENABLED=true` flag/is);

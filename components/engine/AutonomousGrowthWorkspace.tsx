@@ -504,7 +504,7 @@ export function AutonomousGrowthWorkspace() {
   if (!dashboard) return <div className="engine-content"><EmptyState title="Autonomous Growth unavailable" body={error || "Reload the engine and try again."} action={() => void loadDashboard()} actionLabel="Retry" /></div>;
 
   const { autopilot, env, metrics, queue, settings } = dashboard;
-  const autoPilotBlocked = settings.mode !== "auto_email_pilot" || settings.killSwitch || !env.autoSendEnabled || !env.hasResendApiKey || !env.hasFromEmail || !env.hasReplyToEmail || !env.hasPostalAddress;
+  const autoPilotBlocked = settings.mode !== "auto_email_pilot" || settings.killSwitch || env.emailKillSwitchEnabled || !env.autoSendEnabled || !env.hasResendApiKey || !env.hasFromEmail || !env.hasReplyToEmail || !env.hasPostalAddress;
   const sentEmailHistory = queue.filter((item) => item.status === "Sent" || item.sentDate);
   const suppressionHistory = queue.filter((item) => ["Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact"].includes(item.status));
   const latestSentEmail = sentEmailHistory
@@ -638,6 +638,7 @@ export function AutonomousGrowthWorkspace() {
         <div className="engine-safety-grid">
           <Gate label="Mode is Auto Email Pilot" passed={settings.mode === "auto_email_pilot"} />
           <Gate label="Global kill switch is off" passed={!settings.killSwitch} />
+          <Gate label="OUTREACH_EMAIL_DISABLED is not true" passed={!env.emailKillSwitchEnabled} detail="Hard email stop" />
           <Gate label="OUTREACH_AUTO_SEND_ENABLED is true" passed={env.autoSendEnabled} />
           <Gate label="OUTREACH_FULL_AUTO_SEND_ENABLED is true" passed={env.fullAutoSendEnabled} detail="Required only for automatic batches" />
           <Gate label="Provider is configured" passed={env.sendProvider === "resend" && env.hasResendApiKey} detail={env.sendProvider} />
@@ -648,10 +649,10 @@ export function AutonomousGrowthWorkspace() {
           <Gate label="Optional Loom notification configured" passed={env.notifyOnLoomNeeded && env.hasNotifyEmail && env.hasNotifyFromEmail} detail="Internal only" />
         </div>
         <div className="engine-action-row">
-          <button className="engine-button engine-button--danger" disabled={saving || !env.fullAutoSendEnabled} onClick={() => void runFullAutoEmailBatch()} type="button">
+          <button className="engine-button engine-button--danger" disabled={saving || env.emailKillSwitchEnabled || !env.fullAutoSendEnabled} onClick={() => void runFullAutoEmailBatch()} type="button">
             Run full auto email batch
           </button>
-          <p>Fully automatic batch sending is separate from <b>Send approved email</b>. It stays off unless <code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code>, then still sends only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.</p>
+          <p>Fully automatic batch sending is separate from <b>Send approved email</b>. It stays off unless <code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code>, and <code>OUTREACH_EMAIL_DISABLED=true</code> stops all email sends immediately. Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.</p>
         </div>
       </section>
 
