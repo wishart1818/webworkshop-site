@@ -767,10 +767,10 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
     plan.add("make it more human");
     plan.add("remove hype and agency-sounding phrases");
   }
-  if (!/would you be open|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
+  if (!/would you be open|would you want|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
   if (!/would rather not receive another note/i.test(outreachText)) plan.add("preserve opt-out language");
   if (/\bfree audit\b/i.test(outreachText)) plan.add("remove free audit language");
-  if (!/One thing that already works well:/i.test(outreachText)) plan.add("replace generic compliment with one specific strength");
+  if (/One thing that already works well:|One missed opportunity:/i.test(outreachText)) plan.add("rewrite audit-style phrases into plain language");
   return [...plan];
 }
 
@@ -782,15 +782,13 @@ export function rewriteOutreachWithFixes(emailBody: string) {
   return [
     greeting,
     "",
-    "I came across your business while looking at local service companies.",
+    "I came across your business while looking at local service companies and put together a quick website preview.",
     "",
-    "One thing that already works well: customers can find enough public information to know you are active locally.",
+    "Nothing crazy - just a cleaner version focused on making it easier for people to see what you do, request a quote, or call.",
     "",
-    "One missed opportunity: the next step could be clearer for someone ready to ask about service or an estimate.",
+    previewLink ? `Here's the preview:\n${previewLink}` : "I put together a short concept showing one possible direction.",
     "",
-    previewLink ? `I put together a short concept showing one possible direction: ${previewLink}` : "I put together a short concept showing one possible direction.",
-    "",
-    "Would you be open to a quick 10-minute call next week?",
+    "Would you want me to send over what the next steps and pricing would look like if you like the direction?",
     "",
     optOut,
   ].join("\n");
@@ -867,32 +865,32 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
   return {
     firstDm: noWebsite
       ? [
-          "Hey, how's it going? I noticed you didn't have a website, so I made you a quick preview showing how you could get more calls.",
-          "",
-          "Would you like to see it?",
+          `Hey, how's it going? I noticed ${prospect.businessName} didn't have a website, so I built you a quick preview showing how you could get more calls. Would you like to see it?`,
         ].join("\n")
       : [
-          "Hey, how's it going? I came across your site and made you a quick preview showing a cleaner way customers could view services and reach out.",
-          "",
-          "Would you like to see it?",
+          `Hey, how's it going? I came across ${prospect.businessName} and made you a quick preview showing how your site could be cleaner and help get more calls. Would you like to see it?`,
         ].join("\n"),
     softerFirstDm: [
-      "Hey, how's it going? I came across your page and made you a quick preview showing how a simple page could help people see your services and reach out.",
-      "",
-      "Would you like to see it?",
+      `Hey, how's it going? I came across ${prospect.businessName} and made you a quick website preview. It is just a simple idea for making the page cleaner and easier for people to request a quote. Would you like to see it?`,
     ].join("\n"),
-    yesReply: "Awesome, I'll send it over. I'm going to make a quick video walking through it too so it makes more sense.",
+    yesReply: [
+      "Sounds good - here's the preview:",
+      "",
+      previewReference,
+      "",
+      "It's just a quick concept, but the idea is to make the site cleaner and make it easier for people to request a quote.",
+    ].join("\n"),
     loomScript: [
       "Hey, I just wanted to walk you through this quick.",
       "",
-      `${context} and put together a simple preview of what your site could look like.`,
+      `${context} and put together a simple preview for ${prospect.businessName}.`,
       "",
-      `The main idea is giving people one clean place to see what you do, look at photos, and request a quote instead of having everything scattered through posts or messages.`,
+      "The main idea is giving people one clean place to see what you do and request a quote.",
       "",
-      "This isn't live or anything, just a concept. But if you like the direction, I can finish it out and get it set up for you.",
+      "This isn't live or anything, just a concept. If you like the direction, I can send over the next steps and pricing.",
     ].join("\n"),
     sendAfterLoom: [
-      "Awesome, here it is:",
+      "Sounds good - here's the Loom and preview:",
       "",
       "Loom walkthrough:",
       "[LOOM LINK]",
@@ -900,12 +898,12 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
       "Preview:",
       previewReference,
       "",
-      "It's just a concept, not live or anything. I just wanted to show you what it could look like.",
+      "It's just a quick concept, but the idea is to make the site cleaner and make it easier for people to request a quote.",
     ].join("\n"),
-    websiteExplanation: "It's basically a simple website, but focused on giving people one clean place to see your services, photos, and request a quote.",
+    websiteExplanation: "It's a simple website concept focused on giving people one clean place to see your services and request a quote.",
     nextStepsReply: "Yeah, if you like the direction, I can finish it out and get it ready to go live for you.",
     pricingReply: [
-      "For this kind of site, it would be $1,000 total.",
+      "If you like the direction, pricing for this type of site is $1,000 total.",
       "",
       "$500 to start, then $500 once it's finished and ready to go live.",
       "",

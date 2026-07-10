@@ -599,7 +599,7 @@ const unsupportedClaimPatterns: Array<{ pattern: RegExp; reason: string; suggest
   {
     pattern: /\b(?:licensed|insured|certified|award(?:ed|-winning)?|guaranteed?|warrant(?:y|ies)|testimonials?|years? (?:of experience|in business)|family[- ]owned|recent local (?:work|projects?|roofs?))\b/i,
     reason: "This business claim must not be used unless it was directly verified from a public source.",
-    suggestion: "customer proof you can verify",
+    suggestion: "plain service details a customer can check",
   },
 ];
 
@@ -652,9 +652,16 @@ export function evaluateOutreachEmailQuality(
     || likelyInstitutionalOrNonBusiness(prospect)
     || websiteBusinessMismatch(prospect)
     || !hasClearLocalServiceIntent(prospect);
-  const publicLinkReady = isPublicPreviewLink(previewLink)
-    && mainEmails.every((draft) => draft.includes(previewLink))
-    && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier email/i.test(draft)));
+  const socialFirstDm = ["facebook", "instagram", "linkedin"].includes(prospect.bestManualContactMethod || "");
+  const publicLinkReady = socialFirstDm
+    ? isPublicPreviewLink(previewLink)
+      && Boolean(mainEmails[0])
+      && !mainEmails[0].includes(previewLink)
+      && mainEmails.slice(1).every((draft) => draft.includes(previewLink))
+      && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier message|earlier note|earlier email/i.test(draft)))
+    : isPublicPreviewLink(previewLink)
+      && mainEmails.every((draft) => draft.includes(previewLink))
+      && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier message|earlier note|earlier email/i.test(draft)));
   const senderPostalAddress = webworkshopPostalAddress(environment);
   const emailNeedsVerification = prospectEmailNeedsManualVerification(prospect)
     && !prospect.quoteFormUrl
@@ -665,6 +672,15 @@ export function evaluateOutreachEmailQuality(
   const postalAddressReady = prospect.bestManualContactMethod !== "email" && prospect.recommendedContactMethod !== "send_email"
     ? true
     : Boolean(senderPostalAddress) && drafts.every((draft) => draft.includes(senderPostalAddress));
+  const optOutReady = socialFirstDm
+    ? drafts.length >= 4 && drafts.slice(1).every((draft) => /would rather not receive another note/i.test(draft))
+    : drafts.length >= 4 && drafts.every((draft) => /would rather not receive another note/i.test(draft));
+  const clearCtaReady = socialFirstDm
+    ? mainEmails.length === 2
+      && /would you like to see it|would you want to see it/i.test(mainEmails[0])
+      && /here's the preview|here is the preview/i.test(mainEmails[1])
+    : mainEmails.length === 2
+      && mainEmails.every((draft) => /would you be open to a quick 10-minute call|would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send/i.test(draft));
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
     {
@@ -680,23 +696,25 @@ export function evaluateOutreachEmailQuality(
     },
     {
       key: "real_strength",
-      label: "Outreach includes one real strength",
-      passed: mainEmails.length === 2 && /one thing that already works well:/i.test(combined),
+      label: "Outreach includes simple business context",
+      passed: mainEmails.length === 2 && /I was looking at|I came across|dedicated website|public business presence/i.test(combined),
     },
     {
       key: "missed_opportunity",
-      label: "Outreach includes one real missed opportunity",
-      passed: mainEmails.length === 2 && /one missed opportunity:/i.test(combined),
+      label: "Outreach uses natural improvement framing",
+      passed: mainEmails.length === 2
+        && !/one missed opportunity:/i.test(combined)
+        && /cleaner|easier|services|trust|quote|call/i.test(combined),
     },
     {
       key: "clear_cta",
       label: "Outreach includes a clear call to action",
-      passed: mainEmails.length === 2 && mainEmails.every((draft) => /would you be open to a quick 10-minute call|would you be open to taking a look|would you like to see it|would you like me to send/i.test(draft)),
+      passed: clearCtaReady,
     },
     {
       key: "opt_out",
       label: "Every draft includes opt-out language",
-      passed: drafts.length >= 4 && drafts.every((draft) => /would rather not receive another note/i.test(draft)),
+      passed: optOutReady,
     },
     {
       key: "postal_address",

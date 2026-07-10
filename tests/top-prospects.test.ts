@@ -441,7 +441,7 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick preview/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick website preview/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/engine\/previews/i);
 
   const socialProspect = withAnalysis(structuredClone(seedProspects[2]));
@@ -455,6 +455,8 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
   assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
   assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you like to see it\?/);
+  assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//);
+  assert.match(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 });
 
 test("Prospect Modes preserve strict behavior and expand local qualification deliberately", () => {
@@ -836,7 +838,7 @@ test("No Website / Social Only prospects receive separate presence scoring and o
   assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
-  assert.match(prepared.prospect.outreach?.detailed ?? "", /owned website|online home/i);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", /simple website concept|dedicated website/i);
   assert.match(prepared.buildPrompt, /first owned/i);
   assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", /licensed|insured|warrant|recent local roofs?/i);

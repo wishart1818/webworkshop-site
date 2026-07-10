@@ -1414,7 +1414,7 @@ function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueIte
     previewLink: publicLink,
     previewQualityScore: 88,
     subjectLine: "A clearer estimate path",
-    emailBody: "Hi there,\n\nOne thing that already works well: customers can find your services.\n\nIf you would rather not receive another note, reply and I will close the loop.",
+    emailBody: "Hi there,\n\nI made you a quick preview showing how the site could be cleaner and easier for people to request a quote.\n\nIf you would rather not receive another note, reply and I will close the loop.",
     dmScript: "",
     loomTalkingPoints: "",
     eligibilityReason: "Send-safe package.",
@@ -1475,11 +1475,15 @@ test("casual DM playbook keeps the first DM link-free and creates Loom-safe scri
   const playbook = casualDmPlaybook(prospect, publicLink);
 
   assert.match(playbook.firstDm, /Would you like to see it\?/);
+  assert.match(playbook.firstDm, /built you a quick preview/i);
   assert.doesNotMatch(playbook.firstDm, /https?:\/\/|\/p\//);
-  assert.doesNotMatch(playbook.firstDm, /AI website|free audit/i);
+  assert.doesNotMatch(playbook.firstDm, /AI website|free audit|One missed opportunity|customer proof/i);
+  assert.match(playbook.yesReply, /Sounds good - here's the preview/i);
+  assert.match(playbook.yesReply, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.match(playbook.sendAfterLoom, /Loom walkthrough/);
   assert.match(playbook.sendAfterLoom, /Preview:/);
   assert.match(playbook.sendAfterLoom, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
+  assert.doesNotMatch(playbook.sendAfterLoom, /One missed opportunity|customer proof you can verify/i);
   assert.match(playbook.pricingReply, /\$1,000 total/);
   assert.match(playbook.pricingReply, /\$49\/month/);
   assert.match(playbook.higherSupportReply, /\$79\/month/);
