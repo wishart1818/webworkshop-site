@@ -560,6 +560,25 @@ function emailDomain(value: string) {
   return email.includes("@") ? email.split("@").at(-1) ?? "" : "";
 }
 
+const sharedMailboxDomains = new Set([
+  "aol.com",
+  "gmail.com",
+  "hotmail.com",
+  "icloud.com",
+  "live.com",
+  "me.com",
+  "msn.com",
+  "outlook.com",
+  "proton.me",
+  "protonmail.com",
+  "yahoo.com",
+]);
+
+function businessEmailDomain(value: string) {
+  const domain = emailDomain(value);
+  return domain && !sharedMailboxDomains.has(domain) ? domain : "";
+}
+
 function senderPostalAddressForDrafts(environment: NodeJS.ProcessEnv = process.env) {
   return [
     environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() ?? "",
@@ -595,11 +614,12 @@ export function evaluateQueuedEmailSendReadiness({
 }): QueuedEmailSendReadiness {
   const env = outreachEnvironment(environment);
   const email = normalizeEmailAddress(item.email);
-  const domain = emailDomain(email);
+  const domain = businessEmailDomain(email);
   const matchingItems = queue.filter((other) => other.id !== item.id && normalizeEmailAddress(other.email) === email);
-  const matchingDomains = domain ? queue.filter((other) => other.id !== item.id && emailDomain(other.email) === domain) : [];
+  const matchingDomains = domain ? queue.filter((other) => other.id !== item.id && businessEmailDomain(other.email) === domain) : [];
   const suppressedStatuses = new Set<OutreachQueueStatus>(["Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact", "Not Interested", "Bad Fit", "Blocked", "Lost"]);
   const previouslySent = matchingItems.find((other) => other.sentDate || other.status === "Sent");
+  const previouslySentDomain = matchingDomains.find((other) => other.sentDate || other.status === "Sent");
   const suppressed = [...matchingItems, ...matchingDomains].find((other) => suppressedStatuses.has(other.status));
   const cooldownMs = Math.max(1, settings.emailCooldownMinutes) * 60_000;
   const cooldownHit = matchingItems.find((other) => {
@@ -618,6 +638,7 @@ export function evaluateQueuedEmailSendReadiness({
     emailSendsToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",
     item.sentDate ? "This queue item already has a sent date." : "",
     previouslySent ? "This email address was already contacted." : "",
+    previouslySentDomain ? "This business email domain was already contacted." : "",
     suppressed ? "This email address or domain is suppressed." : "",
     cooldownHit ? "Email cooldown is still active for this address." : "",
     ...prospectFacingEmailBodySafe(item, environment),

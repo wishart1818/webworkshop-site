@@ -291,6 +291,23 @@ test("queued email send readiness enforces suppression, public links, compliance
   const notQueued = evaluateQueuedEmailSendReadiness({ environment: env(), item: { ...item, status: "Eligible" }, queue: [item], settings });
   assert.equal(notQueued.ready, false);
   assert.match(notQueued.blockedReasons.join(" "), /Only Queued email items/i);
+
+  const contactedDomain = evaluateQueuedEmailSendReadiness({
+    environment: env(),
+    item: { ...item, email: "sales@readypressurewashing.com" },
+    queue: [item, { ...item, id: "sent-domain", status: "Sent", email: "owner@readypressurewashing.com", sentDate: new Date(0).toISOString() }],
+    settings,
+  });
+  assert.equal(contactedDomain.ready, false);
+  assert.match(contactedDomain.blockedReasons.join(" "), /business email domain was already contacted/i);
+
+  const sharedMailboxDomain = evaluateQueuedEmailSendReadiness({
+    environment: env(),
+    item: { ...item, email: "second@gmail.com", emailBody: item.emailBody.replace("owner@readypressurewashing.com", "second@gmail.com") },
+    queue: [item, { ...item, id: "sent-gmail", status: "Sent", email: "first@gmail.com", sentDate: new Date(0).toISOString() }],
+    settings,
+  });
+  assert.equal(sharedMailboxDomain.blockedReasons.some((reason) => /business email domain|domain is suppressed/i.test(reason)), false);
 });
 
 test("human-approved queued email sends through Resend only after every gate passes", async () => {
