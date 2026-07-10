@@ -1076,14 +1076,27 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   if (!hasDatabase) {
     const item = memoryQueue().find((entry) => entry.id === id);
     if (!item) return null;
-    item.status = nextStatus;
-    item.sentDate = ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(nextStatus) ? nowIso : item.sentDate;
-    item.followUpDate = nextStatus === "Follow-up Needed" ? nowIso : item.followUpDate;
+    let effectiveStatus = nextStatus;
+    if (nextStatus === "Queued") {
+      const candidate = { ...item, status: "Queued" as const, queuedDate: item.queuedDate || nowIso };
+      const candidateQueue = memoryQueue().map((entry) => entry.id === id ? candidate : entry);
+      const readiness = evaluateQueuedEmailSendReadiness({ item: candidate, queue: candidateQueue, settings: memorySettings() });
+      if (!readiness.ready) {
+        effectiveStatus = "Needs Review";
+        item.blockedReason = blockedReasonText(readiness.blockedReasons, []);
+        item.notes = [item.notes, `Queue request blocked by send-readiness gates: ${item.blockedReason}`].filter(Boolean).join("\n");
+      } else {
+        item.queuedDate = item.queuedDate || nowIso;
+      }
+    }
+    item.status = effectiveStatus;
+    item.sentDate = ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(effectiveStatus) ? nowIso : item.sentDate;
+    item.followUpDate = effectiveStatus === "Follow-up Needed" ? nowIso : item.followUpDate;
     item.replyStatus = status === "Prospect Said Yes" ? "prospect_said_yes" : item.replyStatus;
-    if (nextStatus === "Bad Fit") item.recommendedNextAction = "Bad Fit";
-    if (["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(nextStatus)) item.recommendedNextAction = "Never Contact";
-    if (nextStatus === "Preview Needs Polish") item.recommendedNextAction = "Regenerate Preview";
-    if (nextStatus === "Loom Needed" || nextStatus === "Ready for Loom") item.recommendedNextAction = "Needs Human Review";
+    if (effectiveStatus === "Bad Fit") item.recommendedNextAction = "Bad Fit";
+    if (["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(effectiveStatus)) item.recommendedNextAction = "Never Contact";
+    if (effectiveStatus === "Preview Needs Polish") item.recommendedNextAction = "Regenerate Preview";
+    if (effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom" || (nextStatus === "Queued" && effectiveStatus === "Needs Review")) item.recommendedNextAction = "Needs Human Review";
     item.updatedAt = nowIso;
     await recordRunReview(memorySettings(), memoryQueue());
     await sendLoomNeededNotificationIfConfigured(item, status);
@@ -1091,20 +1104,45 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   }
   await ensureTopProspectSchema();
   const now = new Date();
+  let effectiveStatus = nextStatus;
+  let queueBlockedData: Partial<OutreachQueueItem> = {};
+  if (nextStatus === "Queued") {
+    const queue = await listOutreachQueueItems();
+    const current = queue.find((entry) => entry.id === id);
+    if (!current) return null;
+    const candidate = { ...current, status: "Queued" as const, queuedDate: current.queuedDate || nowIso };
+    const readiness = evaluateQueuedEmailSendReadiness({
+      item: candidate,
+      queue: queue.map((entry) => entry.id === id ? candidate : entry),
+      settings: await getAutonomousGrowthSettings(),
+    });
+    if (!readiness.ready) {
+      effectiveStatus = "Needs Review";
+      const blockedReason = blockedReasonText(readiness.blockedReasons, []);
+      queueBlockedData = {
+        blockedReason,
+        notes: [current.notes, `Queue request blocked by send-readiness gates: ${blockedReason}`].filter(Boolean).join("\n"),
+        recommendedNextAction: "Needs Human Review",
+      };
+    } else {
+      queueBlockedData = { queuedDate: candidate.queuedDate };
+    }
+  }
   const extraReviewData =
-    nextStatus === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
-      : ["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(nextStatus) ? { recommendedNextAction: "Never Contact" }
-        : nextStatus === "Preview Needs Polish" ? { recommendedNextAction: "Regenerate Preview" }
-          : nextStatus === "Loom Needed" || nextStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
+    effectiveStatus === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
+      : ["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(effectiveStatus) ? { recommendedNextAction: "Never Contact" }
+        : effectiveStatus === "Preview Needs Polish" ? { recommendedNextAction: "Regenerate Preview" }
+          : effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
             : {};
   const row = await getProspectDatabase().outreachQueueItem.update({
     where: { id },
     data: {
-      status: nextStatus,
-      sentDate: ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(nextStatus) ? now : undefined,
-      followUpDate: nextStatus === "Follow-up Needed" ? now : undefined,
+      status: effectiveStatus,
+      sentDate: ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(effectiveStatus) ? now : undefined,
+      followUpDate: effectiveStatus === "Follow-up Needed" ? now : undefined,
       replyStatus: status === "Prospect Said Yes" ? "prospect_said_yes" : undefined,
       ...extraReviewData,
+      ...queueBlockedData,
     },
   });
   const domain = queueToDomain(row);

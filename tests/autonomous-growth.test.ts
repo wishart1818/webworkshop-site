@@ -28,6 +28,7 @@ import {
   runFullAutoEmailBatch,
   sendQueuedEmailQueueItem,
   updateAutonomousGrowthSettings,
+  updateOutreachQueueStatus,
   upsertAutonomousQueueItemFromPackage,
 } from "../lib/autonomous-growth-repository";
 import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
@@ -363,6 +364,37 @@ test("human-approved queued email sends through Resend only after every gate pas
     assert.equal(providerCalls, 1);
   } finally {
     globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("manual status updates cannot force an unsafe item into the email queue", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  delete process.env.OUTREACH_AUTO_SEND_ENABLED;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.OUTREACH_FROM_EMAIL;
+  delete process.env.OUTREACH_REPLY_TO_EMAIL;
+  delete process.env.OUTREACH_POSTAL_ADDRESS;
+  delete process.env.WEBWORKSHOP_POSTAL_ADDRESS;
+  try {
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const unsafe = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "manual-queue-bypass-result",
+    });
+    assert.notEqual(unsafe.status, "Queued");
+
+    const updated = await updateOutreachQueueStatus(unsafe.id, "Queued");
+    assert.equal(updated?.status, "Needs Review");
+    assert.match(updated?.blockedReason ?? "", /OUTREACH_AUTO_SEND_ENABLED|Email provider/i);
+    assert.match(updated?.notes ?? "", /Queue request blocked by send-readiness gates/);
+  } finally {
     process.env = originalEnv;
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
