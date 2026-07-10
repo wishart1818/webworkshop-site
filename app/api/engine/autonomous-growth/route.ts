@@ -7,6 +7,7 @@ import {
   failAutopilotCampaignHandoff,
   getAutonomousGrowthDashboard,
   pauseAutopilotCampaign,
+  recordEmailSuppression,
   recordAutonomousFeedback,
   rewriteOutreachQueueItem,
   resumeAutopilotCampaign,
@@ -122,6 +123,7 @@ export async function POST(request: Request) {
       queueItemId?: string;
       status?: OutreachQueueStatus;
       feedbackLabel?: AutonomousFeedbackLabel;
+      suppressionReason?: "bounce" | "complaint" | "unsubscribe" | "manual_suppression";
       note?: string;
     };
     if (payload.action === "update_settings") {
@@ -156,6 +158,15 @@ export async function POST(request: Request) {
       const result = await sendQueuedEmailQueueItem(payload.queueItemId);
       if (!result.item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item: result.item, sendResult: result });
+    }
+    if (payload.action === "record_email_suppression") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      const dashboard = await getAutonomousGrowthDashboard();
+      const item = dashboard.queue.find((entry) => entry.id === payload.queueItemId);
+      if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+      const reason = payload.suppressionReason ?? "manual_suppression";
+      const suppression = await recordEmailSuppression(item.email, reason, "engine_operator");
+      return NextResponse.json({ suppression });
     }
     if (payload.action === "start_autopilot" || payload.action === "retry_autopilot_handoff") {
       const settings = normalizeAutopilotCampaignSettings(payload.autopilotSettings ?? {});

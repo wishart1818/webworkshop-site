@@ -586,6 +586,24 @@ export type SendQueuedEmailResult = {
   providerMessageId?: string;
 };
 
+export type EmailSuppressionReason = "bounce" | "complaint" | "unsubscribe" | "manual_suppression";
+export type EmailSuppressionResult = {
+  matched: number;
+  updated: number;
+  reason: EmailSuppressionReason;
+};
+
+function suppressionStatus(reason: EmailSuppressionReason): OutreachQueueStatus {
+  if (reason === "bounce") return "Bounced";
+  if (reason === "complaint") return "Complained";
+  if (reason === "unsubscribe") return "Opted Out";
+  return "Suppressed";
+}
+
+function normalizeEmailAddress(value: string) {
+  return value.trim().toLowerCase();
+}
+
 async function sendWithResend(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
   const apiKey = environment.RESEND_API_KEY?.trim();
   const from = environment.OUTREACH_FROM_EMAIL?.trim();
@@ -688,6 +706,60 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
     });
     return { item, sent: false, blockedReasons: [message] };
   }
+}
+
+export async function recordEmailSuppression(email: string, reason: EmailSuppressionReason, source = "operator"): Promise<EmailSuppressionResult> {
+  const normalized = normalizeEmailAddress(email);
+  if (!normalized || !normalized.includes("@")) {
+    await safeRecordAudit({
+      action: "email_suppression_record",
+      outcome: "rejected",
+      subject: normalized || "missing-email",
+      metadata: { reason: "invalid_email", source },
+    });
+    return { matched: 0, updated: 0, reason };
+  }
+  const status = suppressionStatus(reason);
+  const note = `Suppressed by ${source}: ${reason}.`;
+  const nowIso = new Date().toISOString();
+  if (!hasDatabase) {
+    const matches = memoryQueue().filter((item) => normalizeEmailAddress(item.email) === normalized);
+    for (const item of matches) {
+      item.status = status;
+      item.replyStatus = reason;
+      item.notes = [item.notes, note].filter(Boolean).join("\n");
+      item.recommendedNextAction = "Never Contact";
+      item.updatedAt = nowIso;
+    }
+    await safeRecordAudit({
+      action: "email_suppression_record",
+      outcome: "success",
+      subject: normalized,
+      metadata: { reason, source, matched: matches.length, updated: matches.length },
+    });
+    await recordRunReview(memorySettings(), memoryQueue());
+    return { matched: matches.length, updated: matches.length, reason };
+  }
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const matches = await database.outreachQueueItem.findMany({ where: { email: { equals: normalized, mode: "insensitive" } } });
+  const update = await database.outreachQueueItem.updateMany({
+    where: { email: { equals: normalized, mode: "insensitive" } },
+    data: {
+      status,
+      replyStatus: reason,
+      recommendedNextAction: "Never Contact",
+      notes: note,
+    },
+  });
+  await safeRecordAudit({
+    action: "email_suppression_record",
+    outcome: "success",
+    subject: normalized,
+    metadata: { reason, source, matched: matches.length, updated: update.count },
+  });
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  return { matched: matches.length, updated: update.count, reason };
 }
 
 export async function upsertAutonomousQueueItemFromPackage({
@@ -801,7 +873,7 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
     item.followUpDate = nextStatus === "Follow-up Needed" ? nowIso : item.followUpDate;
     item.replyStatus = status === "Prospect Said Yes" ? "prospect_said_yes" : item.replyStatus;
     if (nextStatus === "Bad Fit") item.recommendedNextAction = "Bad Fit";
-    if (nextStatus === "Never Contact" || nextStatus === "Opted Out") item.recommendedNextAction = "Never Contact";
+    if (["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(nextStatus)) item.recommendedNextAction = "Never Contact";
     if (nextStatus === "Preview Needs Polish") item.recommendedNextAction = "Regenerate Preview";
     if (nextStatus === "Loom Needed" || nextStatus === "Ready for Loom") item.recommendedNextAction = "Needs Human Review";
     item.updatedAt = nowIso;
@@ -813,7 +885,7 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   const now = new Date();
   const extraReviewData =
     nextStatus === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
-      : nextStatus === "Never Contact" || nextStatus === "Opted Out" ? { recommendedNextAction: "Never Contact" }
+      : ["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(nextStatus) ? { recommendedNextAction: "Never Contact" }
         : nextStatus === "Preview Needs Polish" ? { recommendedNextAction: "Regenerate Preview" }
           : nextStatus === "Loom Needed" || nextStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
             : {};

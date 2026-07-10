@@ -50,6 +50,9 @@ export const outreachQueueStatuses = [
   "No Response",
   "Not Interested",
   "Opted Out",
+  "Bounced",
+  "Complained",
+  "Suppressed",
   "Skipped",
   "Never Contact",
   "Bad Fit",
@@ -593,7 +596,7 @@ export function evaluateQueuedEmailSendReadiness({
   const domain = emailDomain(email);
   const matchingItems = queue.filter((other) => other.id !== item.id && normalizeEmailAddress(other.email) === email);
   const matchingDomains = domain ? queue.filter((other) => other.id !== item.id && emailDomain(other.email) === domain) : [];
-  const suppressedStatuses = new Set<OutreachQueueStatus>(["Opted Out", "Never Contact", "Not Interested", "Bad Fit", "Blocked", "Lost"]);
+  const suppressedStatuses = new Set<OutreachQueueStatus>(["Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact", "Not Interested", "Bad Fit", "Blocked", "Lost"]);
   const previouslySent = matchingItems.find((other) => other.sentDate || other.status === "Sent");
   const suppressed = [...matchingItems, ...matchingDomains].find((other) => suppressedStatuses.has(other.status));
   const cooldownMs = Math.max(1, settings.emailCooldownMinutes) * 60_000;

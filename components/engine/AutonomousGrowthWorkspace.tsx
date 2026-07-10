@@ -53,6 +53,7 @@ type ApiPayload = Partial<DashboardPayload> & {
   autopilot?: AutopilotDashboard;
   smokeTest?: AutopilotSmokeTestResult;
   sendResult?: { sent: boolean; blockedReasons: string[] };
+  suppression?: { matched: number; updated: number; reason: string };
   topProspectJobId?: string;
   topProspectJobWarning?: string;
 };
@@ -362,6 +363,27 @@ export function AutonomousGrowthWorkspace() {
     }
   }
 
+  async function recordSuppression(item: OutreachQueueItem, suppressionReason: "bounce" | "complaint" | "manual_suppression") {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "record_email_suppression", queueItemId: item.id, suppressionReason }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.suppression) throw new Error(apiError(payload, "Unable to record email suppression."));
+      await loadDashboard();
+      setNotice(`Email suppression recorded for ${payload.suppression.updated} queue item${payload.suppression.updated === 1 ? "" : "s"}. Nothing was sent.`);
+    } catch (suppressionError) {
+      setError(suppressionError instanceof Error ? suppressionError.message : "Unable to record email suppression.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function autopilotSettingsFromForm(form: FormData): Partial<AutopilotCampaignSettings> {
     return {
       campaignName: String(form.get("campaignName") ?? defaultAutopilotCampaignSettings.campaignName),
@@ -437,7 +459,7 @@ export function AutonomousGrowthWorkspace() {
     return {
       loom: queue.filter((item) => loomStatuses.includes(item.status)),
       dryRun: queue.filter((item) => ["Draft", "Eligible", "Needs Review", "DM Draft", "First DM Sent"].includes(item.status)),
-      blocked: queue.filter((item) => ["Blocked", "Bad Fit", "Never Contact", "Opted Out", "Skipped"].includes(item.status)),
+      blocked: queue.filter((item) => ["Blocked", "Bad Fit", "Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed", "Skipped"].includes(item.status)),
       sent: queue.filter((item) => ["Queued", "Sent", "Loom Sent", "Pricing Requested", "Pricing Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"].includes(item.status)),
     };
   }, [dashboard?.queue]);
@@ -570,6 +592,7 @@ export function AutonomousGrowthWorkspace() {
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
         onSendEmail={sendQueuedEmail}
+        onSuppressEmail={recordSuppression}
         onStatus={updateStatus}
         title="Dry-run and review queue"
       />
@@ -582,6 +605,7 @@ export function AutonomousGrowthWorkspace() {
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
         onSendEmail={sendQueuedEmail}
+        onSuppressEmail={recordSuppression}
         onStatus={updateStatus}
         title="Blocked queue"
       />
@@ -594,6 +618,7 @@ export function AutonomousGrowthWorkspace() {
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
         onSendEmail={sendQueuedEmail}
+        onSuppressEmail={recordSuppression}
         onStatus={updateStatus}
         title="Send queue and sent log"
       />
@@ -1458,6 +1483,7 @@ function QueueSection({
   onFeedback,
   onRewrite,
   onSendEmail,
+  onSuppressEmail,
   onStatus,
   title,
 }: {
@@ -1469,6 +1495,7 @@ function QueueSection({
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
   onSendEmail: (item: OutreachQueueItem) => Promise<void>;
+  onSuppressEmail: (item: OutreachQueueItem, reason: "bounce" | "complaint" | "manual_suppression") => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
   title: string;
 }) {
@@ -1488,6 +1515,7 @@ function QueueSection({
               onRegenerate={onRegenerate}
               onRewrite={onRewrite}
               onSendEmail={onSendEmail}
+              onSuppressEmail={onSuppressEmail}
               onStatus={onStatus}
             />
           ))}
@@ -1505,6 +1533,7 @@ function QueueItemRow({
   onRegenerate,
   onRewrite,
   onSendEmail,
+  onSuppressEmail,
   onStatus,
 }: {
   copied: string;
@@ -1514,6 +1543,7 @@ function QueueItemRow({
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
   onSendEmail: (item: OutreachQueueItem) => Promise<void>;
+  onSuppressEmail: (item: OutreachQueueItem, reason: "bounce" | "complaint" | "manual_suppression") => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
 }) {
   const scripts = loomNeededTaskForQueueItem(item).scripts;
@@ -1542,6 +1572,9 @@ function QueueItemRow({
         <button className="engine-button" onClick={() => void onStatus(item, "First DM Sent")} type="button">First DM Sent</button>
         {item.status === "Queued" ? <button className="engine-button engine-button--primary" onClick={() => void onSendEmail(item)} type="button">Send approved email</button> : null}
         <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button>
+        <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "bounce")} type="button">Mark bounced</button>
+        <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "complaint")} type="button">Mark complained</button>
+        <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "manual_suppression")} type="button">Suppress email</button>
         <button className="engine-button" onClick={() => void onStatus(item, "Eligible")} type="button">Mark reviewed</button>
         <button className="engine-button" onClick={() => void onStatus(item, "Skipped")} type="button">Skip</button>
         <div className="engine-feedback-controls">

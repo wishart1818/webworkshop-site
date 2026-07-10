@@ -707,6 +707,8 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /OUTREACH_AUTO_SEND_ENABLED.*exactly `true`/);
   assert.match(docs, /queued email can send only when all of these are true/i);
   assert.match(docs, /Contact forms, quote forms, social DMs, phone calls, and Looms remain manual-only/);
+  assert.match(docs, /Emergency suppression controls are available in Autonomous Growth/);
+  assert.match(docs, /Mark bounced, complained, opted-out, or manually suppressed addresses/i);
 });
 
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {

@@ -24,6 +24,7 @@ import {
 } from "../lib/autonomous-growth";
 import {
   resetAutonomousGrowthMemoryForTests,
+  recordEmailSuppression,
   sendQueuedEmailQueueItem,
   updateAutonomousGrowthSettings,
   upsertAutonomousQueueItemFromPackage,
@@ -280,7 +281,7 @@ test("queued email send readiness enforces suppression, public links, compliance
   const suppressed = evaluateQueuedEmailSendReadiness({
     environment: env(),
     item,
-    queue: [item, { ...item, id: "opted-out", status: "Opted Out", email: "owner@readypressurewashing.com" }],
+    queue: [item, { ...item, id: "bounced", status: "Bounced", email: "owner@readypressurewashing.com" }],
     settings,
   });
   assert.equal(suppressed.ready, false);
@@ -335,6 +336,42 @@ test("human-approved queued email sends through Resend only after every gate pas
     assert.equal(providerCalls, 1);
   } finally {
     globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("email suppression records bounces and prevents future Auto Email Pilot sends", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  try {
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "bounce-ready-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    const suppression = await recordEmailSuppression(queued.email, "bounce", "resend_webhook");
+    assert.equal(suppression.matched, 1);
+    assert.equal(suppression.updated, 1);
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "email_suppression_record" && event.outcome === "success"));
+
+    const send = await sendQueuedEmailQueueItem(queued.id);
+    assert.equal(send.sent, false);
+    assert.match(send.blockedReasons.join(" "), /Only Queued email items|suppressed/i);
+  } finally {
     process.env = originalEnv;
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
@@ -996,6 +1033,12 @@ test("Autopilot queue classification keeps Loom and weak preview items manual", 
 });
 
 test("opt-out and duplicate style statuses can stay blocked in the durable queue model", () => {
+  assert.ok(outreachQueueStatuses.includes("Opted Out"));
+  assert.ok(outreachQueueStatuses.includes("Bounced"));
+  assert.ok(outreachQueueStatuses.includes("Complained"));
+  assert.ok(outreachQueueStatuses.includes("Suppressed"));
+  assert.ok(outreachQueueStatuses.includes("Never Contact"));
+  assert.ok(outreachQueueStatuses.includes("Bad Fit"));
   const prospect = eligibleProspect();
   const blocked = eligibilityFor({ ...prospect, recommendedContactMethod: "do_not_contact" });
   assert.equal(blocked.eligible, false);

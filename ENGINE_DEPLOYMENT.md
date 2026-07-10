@@ -71,6 +71,8 @@ Set `AUTOPILOT_DISABLED=true` when you want a hard Production kill switch. It bl
 
 Auto Email Pilot remains off by default. A queued email can send only when all of these are true: Autonomous Growth mode is `Auto Email Pilot`, the in-app kill switch is off, `OUTREACH_AUTO_SEND_ENABLED=true`, Resend sender/reply-to/postal env vars are configured, the item is already `Queued`, the recipient is a public email, the email body uses a public `/p/` preview link, opt-out language and sender postal address are present, no placeholder/internal score/protected `/engine` link exists, daily cap and cooldown allow it, and no matching email/domain suppression or previous send is found. Contact forms, quote forms, social DMs, phone calls, and Looms remain manual-only.
 
+Emergency suppression controls are available in Autonomous Growth. Mark bounced, complained, opted-out, or manually suppressed addresses immediately move matching queue items into non-sendable statuses and write audit events. Future Auto Email Pilot sends are blocked for those matching addresses/domains.
+
 ### Provider Coverage for Real Lead Discovery
 
 For real Top Prospects and Autopilot discovery, configure provider coverage before increasing scan count:
