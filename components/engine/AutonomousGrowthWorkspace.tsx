@@ -165,6 +165,11 @@ function formatList(values: string[], empty = "Not enough data yet") {
   return values.length ? values.join(", ") : empty;
 }
 
+function formatDate(value: string) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toLocaleString() : "date not recorded";
+}
+
 function profileFieldName(trade: string, field: "name" | "direction" | "strengths" | "cautions") {
   return `styleProfile__${encodeURIComponent(trade)}__${field}`;
 }
@@ -500,6 +505,12 @@ export function AutonomousGrowthWorkspace() {
 
   const { autopilot, env, metrics, queue, settings } = dashboard;
   const autoPilotBlocked = settings.mode !== "auto_email_pilot" || settings.killSwitch || !env.autoSendEnabled || !env.hasResendApiKey || !env.hasFromEmail || !env.hasReplyToEmail || !env.hasPostalAddress;
+  const sentEmailHistory = queue.filter((item) => item.status === "Sent" || item.sentDate);
+  const suppressionHistory = queue.filter((item) => ["Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact"].includes(item.status));
+  const latestSentEmail = sentEmailHistory
+    .toSorted((left, right) => Date.parse(right.sentDate || right.updatedAt) - Date.parse(left.sentDate || left.updatedAt))[0];
+  const latestSuppression = suppressionHistory
+    .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0];
 
   return (
     <div className="engine-content engine-autonomous-growth">
@@ -591,6 +602,35 @@ export function AutonomousGrowthWorkspace() {
           ["Follow-ups due", metrics.followUpsDue, "Manual follow-up queue"],
           ["Replies", metrics.replies, `${metrics.replyRate}% reply rate`],
         ].map(([label, value, detail]) => <article key={label}><span>{label}</span><strong>{value}</strong><p>{detail}</p></article>)}
+      </section>
+
+      <section className="engine-panel engine-autonomous-history">
+        <div className="engine-panel__head">
+          <div>
+            <h2>Email Send &amp; Suppression History</h2>
+            <p>Operator audit snapshot for sent emails, queued sends, bounces, complaints, opt-outs, and manual suppressions. Forms, DMs, calls, and Looms are not sent from this history.</p>
+          </div>
+        </div>
+        <div className="engine-metrics" aria-label="Email send and suppression history">
+          {[
+            ["Queued public-email sends", queue.filter((item) => item.status === "Queued" && item.contactSource === "Public email").length, "Eligible only after all send-ready gates pass"],
+            ["Emails sent", sentEmailHistory.length, "Recorded by sent date and audit log"],
+            ["Bounces", queue.filter((item) => item.status === "Bounced").length, "Blocked from future sending"],
+            ["Complaints", queue.filter((item) => item.status === "Complained").length, "Blocked from future sending"],
+            ["Opt-outs", queue.filter((item) => item.status === "Opted Out").length, "Never contact again"],
+            ["Manual suppressions", queue.filter((item) => item.status === "Suppressed" || item.status === "Never Contact").length, "Operator emergency controls"],
+          ].map(([label, value, detail]) => <article key={label}><span>{label}</span><strong>{value}</strong><p>{detail}</p></article>)}
+        </div>
+        <div className="engine-learning-summary">
+          <article>
+            <span>Latest sent email</span>
+            <p>{latestSentEmail ? `${latestSentEmail.businessName} to ${latestSentEmail.email} on ${formatDate(latestSentEmail.sentDate || latestSentEmail.updatedAt)}` : "No sent email recorded yet."}</p>
+          </article>
+          <article>
+            <span>Latest suppression</span>
+            <p>{latestSuppression ? `${latestSuppression.status}: ${latestSuppression.businessName} (${latestSuppression.email || "no email"}) on ${formatDate(latestSuppression.updatedAt)}` : "No suppression event recorded yet."}</p>
+          </article>
+        </div>
       </section>
 
       <section className="engine-panel engine-autonomous-safety">
