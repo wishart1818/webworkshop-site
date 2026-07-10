@@ -883,7 +883,7 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
     loomScript: [
       "Hey, I just wanted to walk you through this quick.",
       "",
-      `${context} and put together a simple preview for ${prospect.businessName}.`,
+      `${context} and put together a simple preview for you.`,
       "",
       "The main idea is giving people one clean place to see what you do and request a quote.",
       "",

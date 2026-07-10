@@ -70,6 +70,22 @@ test("Outreach Package email uses casual human copy and public preview links", (
   assert.ok(outreach.followUps.every((followUp) => followUp.includes(previewLink)));
 });
 
+test("detailed outreach avoids repeating the business name immediately after greeting", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.businessName = "Styles Power Wash";
+  prospect.trade = "Pressure Washing";
+  prospect.city = "St Augustine";
+  const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
+  const outreach = generateOutreach(prospect, previewLink, { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
+
+  assert.match(outreach.detailed, /Hi Styles Power Wash team,\n\nI was looking at pressure washing businesses around St Augustine and put together a quick preview for you\./);
+  assert.doesNotMatch(outreach.detailed, /Hi Styles Power Wash team,\n\nI was looking at[^.]+(?:made you|put together) a quick preview for Styles Power Wash/i);
+  assert.match(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
+  assert.match(outreach.detailed, /Thanks,\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.detailed, new RegExp(testPostalAddress));
+  assert.match(outreach.detailed, /would rather not receive another note/i);
+});
+
 test("outreach drafts omit postal-address placeholders when sender address is missing", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   const outreach = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", {});
