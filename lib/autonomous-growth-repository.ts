@@ -618,6 +618,46 @@ function normalizeEmailAddress(value: string) {
   return value.trim().toLowerCase();
 }
 
+function unknownSuppressionQueueItem(email: string, status: OutreachQueueStatus, reason: EmailSuppressionReason, source: string, note: string, nowIso: string): OutreachQueueItem {
+  return {
+    id: `suppression-${email.replace(/[^a-z0-9]+/gi, "-")}`,
+    prospectId: "",
+    topProspectResultId: "",
+    businessName: `Suppressed email: ${email}`,
+    trade: "Unknown",
+    city: "Unknown",
+    website: "",
+    email,
+    contactSource: "Suppression event",
+    contactConfidence: 0,
+    previewLink: "",
+    previewQualityScore: 0,
+    subjectLine: "",
+    emailBody: "",
+    dmScript: "",
+    loomTalkingPoints: "",
+    eligibilityReason: "Email was suppressed before a matching prospect package existed.",
+    blockedReason: `Suppressed by ${source}: ${reason}.`,
+    reviewScore: 0,
+    reviewSummary: "Suppression placeholder blocks future Auto Email Pilot sends for this address/domain.",
+    improvementSuggestions: [],
+    detectedIssues: [`Suppression event: ${reason}`],
+    recommendedNextAction: "Never Contact",
+    regenerationPlan: [],
+    rewritePlan: [],
+    feedbackLabels: [],
+    status,
+    sourceProvider: source,
+    queuedDate: "",
+    sentDate: "",
+    followUpDate: "",
+    replyStatus: reason,
+    notes: note,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
 async function sendWithResend(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
   const apiKey = environment.RESEND_API_KEY?.trim();
   const from = environment.OUTREACH_FROM_EMAIL?.trim();
@@ -826,14 +866,18 @@ export async function recordEmailSuppression(email: string, reason: EmailSuppres
       item.recommendedNextAction = "Never Contact";
       item.updatedAt = nowIso;
     }
+    if (matches.length === 0) {
+      const placeholder = unknownSuppressionQueueItem(normalized, status, reason, source, note, nowIso);
+      memoryQueue().unshift(placeholder);
+    }
     await safeRecordAudit({
       action: "email_suppression_record",
       outcome: "success",
       subject: normalized,
-      metadata: { reason, source, matched: matches.length, updated: matches.length },
+      metadata: { reason, source, matched: matches.length, updated: matches.length || 1, createdSuppressionRecord: matches.length === 0 },
     });
     await recordRunReview(memorySettings(), memoryQueue());
-    return { matched: matches.length, updated: matches.length, reason };
+    return { matched: matches.length, updated: matches.length || 1, reason };
   }
   await ensureTopProspectSchema();
   const database = getProspectDatabase();
@@ -847,14 +891,49 @@ export async function recordEmailSuppression(email: string, reason: EmailSuppres
       notes: note,
     },
   });
+  let createdSuppressionRecord = false;
+  if (matches.length === 0) {
+    await database.outreachQueueItem.create({
+      data: {
+        businessName: `Suppressed email: ${normalized}`,
+        trade: "Unknown",
+        city: "Unknown",
+        website: null,
+        email: normalized,
+        contactSource: "Suppression event",
+        contactConfidence: 0,
+        previewLink: "",
+        previewQualityScore: 0,
+        subjectLine: "",
+        emailBody: "",
+        dmScript: "",
+        loomTalkingPoints: "",
+        eligibilityReason: "Email was suppressed before a matching prospect package existed.",
+        blockedReason: `Suppressed by ${source}: ${reason}.`,
+        reviewScore: 0,
+        reviewSummary: "Suppression placeholder blocks future Auto Email Pilot sends for this address/domain.",
+        improvementSuggestions: [],
+        detectedIssues: [`Suppression event: ${reason}`],
+        recommendedNextAction: "Never Contact",
+        regenerationPlan: [],
+        rewritePlan: [],
+        feedbackLabels: [],
+        status,
+        sourceProvider: source,
+        replyStatus: reason,
+        notes: note,
+      },
+    });
+    createdSuppressionRecord = true;
+  }
   await safeRecordAudit({
     action: "email_suppression_record",
     outcome: "success",
     subject: normalized,
-    metadata: { reason, source, matched: matches.length, updated: update.count },
+    metadata: { reason, source, matched: matches.length, updated: update.count || 1, createdSuppressionRecord },
   });
   await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
-  return { matched: matches.length, updated: update.count, reason };
+  return { matched: matches.length, updated: update.count || 1, reason };
 }
 
 export async function upsertAutonomousQueueItemFromPackage({

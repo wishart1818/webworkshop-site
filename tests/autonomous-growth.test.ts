@@ -469,6 +469,50 @@ test("email suppression records bounces and prevents future Auto Email Pilot sen
   }
 });
 
+test("unknown suppression events create durable blockers for future queued emails", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "should-not-send" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const suppression = await recordEmailSuppression("future@suppression-test.com", "complaint", "resend_webhook");
+    assert.equal(suppression.matched, 0);
+    assert.equal(suppression.updated, 1);
+
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: { ...eligibleProspect(), website: "https://suppression-test.com", email: "future@suppression-test.com" },
+      topProspectResultId: "future-suppressed-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    const send = await sendQueuedEmailQueueItem(queued.id);
+    assert.equal(send.sent, false);
+    assert.match(send.blockedReasons.join(" "), /suppressed/i);
+    assert.equal(providerCalls, 0);
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "email_suppression_record" && event.outcome === "success"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 test("phone-only, social-only, contact-form-only, and bad-fit leads never auto-send", () => {
   const base = eligibleProspect();
   const cases: Array<[string, Prospect]> = [
