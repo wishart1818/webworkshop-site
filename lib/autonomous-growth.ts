@@ -241,6 +241,7 @@ export type AutonomousGrowthDashboard = {
   env: {
     autoSendEnabled: boolean;
     fullAutoSendEnabled: boolean;
+    emailKillSwitchEnabled: boolean;
     sendProvider: string;
     hasResendApiKey: boolean;
     hasFromEmail: boolean;
@@ -530,6 +531,7 @@ export function outreachEnvironment(environment: NodeJS.ProcessEnv = process.env
   return {
     autoSendEnabled: environment.OUTREACH_AUTO_SEND_ENABLED === "true",
     fullAutoSendEnabled: environment.OUTREACH_FULL_AUTO_SEND_ENABLED === "true",
+    emailKillSwitchEnabled: environment.OUTREACH_EMAIL_DISABLED === "true",
     sendProvider,
     hasResendApiKey: Boolean(environment.RESEND_API_KEY?.trim()),
     hasFromEmail: Boolean(environment.OUTREACH_FROM_EMAIL?.trim()),
@@ -630,6 +632,7 @@ export function evaluateQueuedEmailSendReadiness({
   const blockedReasons = [
     settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
     settings.killSwitch ? "Global kill switch is on." : "",
+    env.emailKillSwitchEnabled ? "OUTREACH_EMAIL_DISABLED is true." : "",
     !env.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true." : "",
     !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
     item.status !== "Queued" ? "Only Queued email items can be sent by Auto Email Pilot." : "",
@@ -676,6 +679,7 @@ export function evaluateAutoSendEligibility({
   const blockedReasons = [
     settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
     settings.killSwitch ? "Global kill switch is on." : "",
+    env.emailKillSwitchEnabled ? "OUTREACH_EMAIL_DISABLED is true." : "",
     !env.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true." : "",
     !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
     emailsSentToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",

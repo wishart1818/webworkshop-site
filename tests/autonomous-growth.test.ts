@@ -402,6 +402,53 @@ test("fully automatic email batches are off by default and require the separate 
   }
 });
 
+test("OUTREACH_EMAIL_DISABLED blocks human-approved and full-auto email sends", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_EMAIL_DISABLED = "false";
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_FULL_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "should-not-send" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "email-disabled-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    process.env.OUTREACH_EMAIL_DISABLED = "true";
+    const manual = await sendQueuedEmailQueueItem(queued.id);
+    assert.equal(manual.sent, false);
+    assert.match(manual.blockedReasons.join(" "), /OUTREACH_EMAIL_DISABLED is true/);
+
+    const batch = await runFullAutoEmailBatch();
+    assert.equal(batch.fullAutoEnabled, true);
+    assert.equal(batch.sent, 0);
+    assert.match(batch.blockedReasons.flatMap((entry) => entry.reasons).join(" "), /OUTREACH_EMAIL_DISABLED is true/);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 test("fully automatic email batch sends only queued public-email items through existing gates", async () => {
   const originalFetch = globalThis.fetch;
   const originalEnv = { ...process.env };
