@@ -598,7 +598,8 @@ function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJ
     /\b(?:website quality|opportunity|conversion readiness|internal|score)\s*(?:is|:)?\s*\d{1,3}\/100\b/i.test(combined) || /\b\d{1,3}\/100\b/.test(combined) ? "Prospect-facing email contains internal score language." : "",
     !/would rather not receive another note|unsubscribe|opt[- ]?out|close the loop/i.test(combined) ? "Opt-out language is missing." : "",
     postalAddresses.length && !postalAddresses.some((address) => item.emailBody.includes(address)) ? "Configured sender postal address is missing from the email body." : "",
-    !publicPreviewReady(item.previewLink) || !item.emailBody.includes(item.previewLink) ? "Public /p/ preview link is missing from the email body." : "",
+    /\/engine(?:\/|$)/i.test(item.previewLink) ? "Protected /engine preview links are blocked." : "",
+    !publicPreviewReady(item.previewLink) ? "Public /p/ preview link is missing from the outreach package." : "",
   ].filter(Boolean);
 }
 
@@ -778,7 +779,6 @@ export function rewriteOutreachWithFixes(emailBody: string) {
   const optOut = emailBody.match(/Thanks,[\s\S]*?If you would rather not receive another note, just reply and I will close the loop\./i)?.[0]
     ?? outreachComplianceFooter();
   const greeting = emailBody.split("\n").find((line) => /^Hi\b/i.test(line.trim()))?.trim() ?? "Hi there,";
-  const previewLink = emailBody.match(/https?:\/\/[^\s)]+\/p\/[A-Za-z0-9_-]{32}/)?.[0] ?? "";
   return [
     greeting,
     "",
@@ -786,9 +786,7 @@ export function rewriteOutreachWithFixes(emailBody: string) {
     "",
     "Nothing crazy - just a cleaner version focused on making it easier for people to see what you do, request a quote, or call.",
     "",
-    previewLink ? `Here's the preview:\n${previewLink}` : "I put together a short concept showing one possible direction.",
-    "",
-    "Would you want me to send over what the next steps and pricing would look like if you like the direction?",
+    "Would you want me to send it over?",
     "",
     optOut,
   ].join("\n");
@@ -865,20 +863,22 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
   return {
     firstDm: noWebsite
       ? [
-          `Hey, how's it going? I noticed ${prospect.businessName} didn't have a website, so I built you a quick preview showing how you could get more calls. Would you like to see it?`,
+          `Hey, how's it going? I noticed ${prospect.businessName} didn't have a website, so I built you a quick preview showing how you could get more calls. Would you want to see it?`,
         ].join("\n")
       : [
-          `Hey, how's it going? I came across ${prospect.businessName} and made you a quick preview showing how your site could be cleaner and help get more calls. Would you like to see it?`,
+          `Hey, how's it going? I came across ${prospect.businessName} and put together a quick website preview for you. Would you want to see it?`,
         ].join("\n"),
     softerFirstDm: [
-      `Hey, how's it going? I came across ${prospect.businessName} and made you a quick website preview. It is just a simple idea for making the page cleaner and easier for people to request a quote. Would you like to see it?`,
+      `Hey, how's it going? I came across ${prospect.businessName} and made you a quick website preview. It is just a simple idea for making the page cleaner and easier for people to request a quote. Would you want to see it?`,
     ].join("\n"),
     yesReply: [
       "Sounds good - here's the preview:",
       "",
       previewReference,
       "",
-      "It's just a quick concept, but the idea is to make the site cleaner and make it easier for people to request a quote.",
+      "It's just a quick concept, but the idea is to make the services, trust points, and quote path easier to see.",
+      "",
+      "Would it be worth sending over what a simple version of this would cost?",
     ].join("\n"),
     loomScript: [
       "Hey, I just wanted to walk you through this quick.",

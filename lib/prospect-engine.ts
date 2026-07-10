@@ -861,16 +861,12 @@ function localTradePhrase(prospect: Prospect) {
   return `${displayTradeCategory(prospectTrade(prospect)).toLowerCase()} businesses around ${titleCaseLocation(prospect.city)}`;
 }
 
-function publicPreviewBlock(previewLink: string) {
-  return previewLink ? `Here's the preview:\n${previewLink}` : "I put together a quick preview showing the idea.";
-}
-
-function noWebsitePreviewBlock(previewLink: string) {
-  return previewLink ? `Here's the preview:\n${previewLink}` : "I put together a quick website concept showing the idea.";
-}
-
 function simplePreviewIdea() {
-  return "Nothing crazy - just a cleaner version focused on making it easier for people to see what you do, request a quote, or call.";
+  return "The idea is simple: a cleaner page that makes it easier for people to see your services, trust the business, and request a quote or call.";
+}
+
+function askToSendPreview() {
+  return "Would you want me to send it over?";
 }
 
 function socialManualMethod(method: string) {
@@ -893,14 +889,13 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
             : "email";
   if (prospect.prospectType !== "no_website_social_only" && !prospect.email && ["quote_form", "contact_form", "facebook", "instagram", "linkedin"].includes(manualMethod)) {
     const trade = prospectTrade(prospect);
-    const previewBlock = publicPreviewBlock(previewLink);
     const isSocial = socialManualMethod(manualMethod);
     const firstDraft = isSocial
-      ? `Hey, how's it going? I came across ${prospect.businessName} and made you a quick preview showing how the site could be cleaner and help get more calls. Would you like to see it?`
-      : `Hi ${prospect.businessName} team,\n\nI came across your business and made you a quick website preview.\n\n${simplePreviewIdea()}\n\n${previewBlock}\n\nWould you want me to send over what the next steps and pricing would look like if you like the direction?\n\n${complianceFooter}`;
+      ? `Hey, how's it going? I came across ${prospect.businessName} and put together a quick website preview for you. Would you want to see it?`
+      : `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and put together a quick preview for you.\n\n${simplePreviewIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`;
     const detailedDraft = isSocial
-      ? `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but the idea is to make the site cleaner and make it easier for people to request a quote.\n\n${complianceFooter}`
-      : `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and put together a quick preview for you.\n\nThe idea is simple: a cleaner site that makes it easier for people to see your services, request a quote, or call.\n\n${previewBlock}\n\nIf you like the direction, would you want me to send over next steps and pricing?\n\n${complianceFooter}`;
+      ? `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but the idea is to make the services, trust points, and quote path easier to see.\n\nWould it be worth sending over what a simple version of this would cost?\n\n${complianceFooter}`
+      : `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but the idea is to make the services, trust points, and quote path easier to see.\n\nWould it be worth sending over what a simple version of this would cost?\n\n${complianceFooter}`;
     return {
       subjects: [
         `Quick preview for ${prospect.businessName}`,
@@ -910,49 +905,42 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
       concise: firstDraft,
       detailed: detailedDraft,
       followUps: [
-        `Hi again,\n\nJust following up on the ${draftLabel} note I sent about the website preview for ${prospect.businessName}.\n\n${previewBlock}\n\nWould you want me to send over next steps if the direction feels useful?\n\n${complianceFooter}`,
-        `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${previewBlock}\n\n${complianceFooter}`,
+        `Hi again,\n\nJust following up on the ${draftLabel} note I sent about the website preview for ${prospect.businessName}.\n\nWould you want me to send it over?\n\n${complianceFooter}`,
+        `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
       generatedAt: now(),
     };
   }
   if (prospect.prospectType === "no_website_social_only") {
-    const trade = prospectTrade(prospect);
-    const playbook = contractorPlaybooks[trade];
-    const activityProof = prospect.reviewCount > 0
-      ? `${prospect.reviewCount} public reviews`
-      : "an active local business presence";
-    const previewBlock = noWebsitePreviewBlock(previewLink);
     return {
       subjects: [
         `Quick preview for ${prospect.businessName}`,
         `Own the online home for ${prospect.businessName}`,
         `Turn ${titleCaseLocation(prospect.city)} searches into direct inquiries`,
       ],
-      concise: `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and noticed I could not find a dedicated website for ${prospect.businessName}.\n\nSo I made you a quick preview showing how a simple site could make it easier for people to see what you do and request a quote.\n\n${previewBlock}\n\nWould you want me to send over what the next steps and pricing would look like if you like the direction?\n\n${complianceFooter}`,
-      detailed: `Hi ${prospect.businessName} team,\n\nI came across ${prospect.businessName} while looking at ${localTradePhrase(prospect)}.\n\nI saw ${activityProof}, so I made a simple website concept around ${playbook.services.join(", ")}, the areas you serve, and a clear "${playbook.primaryCta}" button.\n\n${previewBlock}\n\nIf you like the direction, would you want me to send over next steps and pricing?\n\n${complianceFooter}`,
+      concise: `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and noticed I could not find a dedicated website for ${prospect.businessName}.\n\nSo I put together a quick preview showing how a simple site could make it easier for people to see what you do and request a quote.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+      detailed: `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but the idea is to make the services, trust points, and quote path easier to see.\n\nWould it be worth sending over what a simple version of this would cost?\n\n${complianceFooter}`,
       followUps: [
-        `Hi again,\n\nJust wanted to follow up on the preview I sent for ${prospect.businessName}. It is a simple idea for putting your services and quote path in one place.\n\n${previewBlock}\n\nWould you want me to send over next steps if the direction feels useful?\n\n${complianceFooter}`,
-        `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${previewBlock}\n\n${complianceFooter}`,
+        `Hi again,\n\nJust wanted to follow up on the website preview I mentioned for ${prospect.businessName}. It is a simple idea for putting your services and quote path in one place.\n\nWould you want me to send it over?\n\n${complianceFooter}`,
+        `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
       generatedAt: now(),
     };
   }
   const trade = prospectTrade(prospect);
-  const previewBlock = publicPreviewBlock(previewLink);
   return {
     subjects: [
       `Quick preview for ${prospect.businessName}`,
       `${displayTradeCategory(trade)} website notes for ${titleCaseLocation(prospect.city)}`,
       `A clearer quote path for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\nI came across your business and made you a quick website preview.\n\n${simplePreviewIdea()}\n\n${previewBlock}\n\nWould you want me to send over what the next steps and pricing would look like if you like the direction?\n\n${complianceFooter}`,
-    detailed: `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and put together a quick preview for you.\n\nThe current site already gives people a place to find you online. I kept the idea focused on making the site cleaner and making the quote path easier to find.\n\n${previewBlock}\n\nIf you like the direction, would you want me to send over next steps and pricing?\n\n${complianceFooter}`,
+    concise: `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and put together a quick preview for you.\n\n${simplePreviewIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+    detailed: `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but the idea is to make the services, trust points, and quote path easier to see.\n\nWould it be worth sending over what a simple version of this would cost?\n\n${complianceFooter}`,
     followUps: [
-      `Hi again,\n\nJust wanted to follow up on the preview I sent for ${prospect.businessName}. It was just a quick concept for making the services and quote path easier to see.\n\n${previewBlock}\n\nWould you want me to send over next steps if the direction feels useful?\n\n${complianceFooter}`,
-      `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${previewBlock}\n\n${complianceFooter}`,
+      `Hi again,\n\nJust wanted to follow up on the preview I mentioned for ${prospect.businessName}. It was just a quick concept for making the services and quote path easier to see.\n\nWould you want me to send it over?\n\n${complianceFooter}`,
+      `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
     ],
     approved: false,
     generatedAt: now(),

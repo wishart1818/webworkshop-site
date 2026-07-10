@@ -441,7 +441,10 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick website preview/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /put together a quick preview for you/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you want me to send it over\?/i);
+  assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
+  assert.match(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/engine\/previews/i);
 
   const socialProspect = withAnalysis(structuredClone(seedProspects[2]));
@@ -454,7 +457,7 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
   assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you like to see it\?/);
+  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you want to see it\?/);
   assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//);
   assert.match(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 });
@@ -838,7 +841,8 @@ test("No Website / Social Only prospects receive separate presence scoring and o
   assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
-  assert.match(prepared.prospect.outreach?.detailed ?? "", /simple website concept|dedicated website/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /dedicated website|simple site/i);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.match(prepared.buildPrompt, /first owned/i);
   assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", /licensed|insured|warrant|recent local roofs?/i);
@@ -869,7 +873,10 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.equal(prepared.prospect.outreach?.followUps.length, 2);
   assert.ok(prepared.prospect.preview);
   assert.match(prepared.previewLink, /^https:\/\/webworkshop\.dev\/p\//);
-  assert.match(prepared.prospect.outreach?.concise ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
+  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
+  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /Here's the preview/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you want me to send it over\?/i);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.equal(prepared.emailQuality.ready, true);
   assert.ok(prepared.assessment.salesScores.weightedSalesScore > 0);
   assert.match(prompt, new RegExp(prospect.businessName));
@@ -917,7 +924,8 @@ test("missing sender postal address blocks email send-readiness without adding p
   assert.equal(quality.ready, false);
   assert.equal(quality.readinessLabel, "Needs sender postal address before sending");
   assert.doesNotMatch(allDrafts, /\[Add your business postal address before sending\]/i);
-  assert.match(prepared.prospect.outreach?.concise ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
+  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
   assert.doesNotMatch(allDrafts, /\/engine\/previews\//i);
 });
 
@@ -958,7 +966,7 @@ test("unsupported outreach claim is explainable and safely repairable", () => {
     outreach: {
       ...prepared.prospect.outreach!,
       concise: prepared.prospect.outreach!.concise.replace(
-        /I came across [^\n]+/,
+        /I was looking at [^\n]+/,
         "I reviewed your website while looking at hvac businesses serving Perrysburg.",
       ),
     },

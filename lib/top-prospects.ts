@@ -653,15 +653,16 @@ export function evaluateOutreachEmailQuality(
     || websiteBusinessMismatch(prospect)
     || !hasClearLocalServiceIntent(prospect);
   const socialFirstDm = ["facebook", "instagram", "linkedin"].includes(prospect.bestManualContactMethod || "");
-  const publicLinkReady = socialFirstDm
-    ? isPublicPreviewLink(previewLink)
-      && Boolean(mainEmails[0])
-      && !mainEmails[0].includes(previewLink)
-      && mainEmails.slice(1).every((draft) => draft.includes(previewLink))
-      && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier message|earlier note|earlier email/i.test(draft)))
-    : isPublicPreviewLink(previewLink)
-      && mainEmails.every((draft) => draft.includes(previewLink))
-      && Boolean(outreach?.followUps.every((draft) => draft.includes(previewLink) || /earlier message|earlier note|earlier email/i.test(draft)));
+  const followUpsKeepPermissionFlow = Boolean(outreach?.followUps.every((draft) => (
+    draft.includes(previewLink)
+    || /earlier message|earlier note|earlier email|send it over|send the preview|want to see|last note|close the loop|timing is not right/i.test(draft)
+  )));
+  const publicLinkReady = isPublicPreviewLink(previewLink)
+    && Boolean(mainEmails[0])
+    && !mainEmails[0].includes(previewLink)
+    && Boolean(mainEmails[1])
+    && mainEmails[1].includes(previewLink)
+    && followUpsKeepPermissionFlow;
   const senderPostalAddress = webworkshopPostalAddress(environment);
   const emailNeedsVerification = prospectEmailNeedsManualVerification(prospect)
     && !prospect.quoteFormUrl
@@ -680,12 +681,13 @@ export function evaluateOutreachEmailQuality(
       && /would you like to see it|would you want to see it/i.test(mainEmails[0])
       && /here's the preview|here is the preview/i.test(mainEmails[1])
     : mainEmails.length === 2
-      && mainEmails.every((draft) => /would you be open to a quick 10-minute call|would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send/i.test(draft));
+      && /would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send|would you want me to send it over/i.test(mainEmails[0])
+      && /would it be worth sending over|would you want me to send over|would you like me to send/i.test(mainEmails[1]);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
     {
       key: "public_preview_link",
-      label: "Public preview link exists and is included",
+      label: "Public preview link exists and is included after permission",
       passed: publicLinkReady,
     },
     {
