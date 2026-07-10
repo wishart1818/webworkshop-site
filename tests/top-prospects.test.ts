@@ -937,6 +937,11 @@ test("suspicious theme/admin emails require manual verification instead of send-
   const quality = evaluateOutreachEmailQuality(prepared.prospect, publicLink);
 
   assert.equal(prospectEmailNeedsManualVerification(prospect), true);
+  assert.equal(prospectEmailNeedsManualVerification({
+    businessName: "Ready Pressure Washing",
+    website: "https://readypressurewashing.com",
+    email: "owner@readypressurewashing.com",
+  }), false);
   assert.equal(prospect.recommendedContactMethod, "verify_email_manually");
   assert.equal(quality.ready, false);
   assert.equal(quality.readinessLabel, "Verify email manually");

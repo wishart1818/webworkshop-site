@@ -747,7 +747,7 @@ export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospec
   const businessTokens = identityTokensForContact(input.businessName ?? "");
   const domainTokens = identityTokensForContact(domain.replace(/\.[a-z.]+$/i, ""));
   if (!websiteDomain && businessTokens.length === 0) return false;
-  return !businessTokens.some((token) => domainTokens.includes(token));
+  return !businessTokens.some((token) => domainTokens.some((domainToken) => domainToken === token || domainToken.includes(token)));
 }
 
 function hasUsableEmail(input: Partial<Pick<Prospect, "businessName" | "website" | "email">>) {
