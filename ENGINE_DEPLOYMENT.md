@@ -46,6 +46,12 @@ In **Vercel project settings > Environment Variables**, add:
 | `OUTREACH_NOTIFY_ON_LOOM_NEEDED` | No | Set to `true` to notify internally when a prospect says yes and a Loom task is created |
 | `WEBWORKSHOP_POSTAL_ADDRESS` | Recommended | Prospect Engine sender mailing address inserted into manual email drafts; email packages are not send-ready until this is set |
 | `OUTREACH_POSTAL_ADDRESS` | Auto Email Pilot only | Separate Auto Email Pilot/provider-readiness postal address; this does not replace `WEBWORKSHOP_POSTAL_ADDRESS` for Top Prospects packages |
+| `OUTREACH_AUTO_SEND_ENABLED` | Auto Email Pilot only | Must be exactly `true` before any queued approved email can send |
+| `OUTREACH_SEND_PROVIDER` | Auto Email Pilot only | Must be `resend` for the current email executor |
+| `RESEND_API_KEY` | Auto Email Pilot only | Resend API key used only for approved queued email sending and optional internal Loom notifications |
+| `OUTREACH_FROM_EMAIL` | Auto Email Pilot only | Verified sender used by approved queued email sending |
+| `OUTREACH_REPLY_TO_EMAIL` | Auto Email Pilot only | Reply-to address used by approved queued email sending |
+| `OUTREACH_DAILY_CAP` | Auto Email Pilot only | Hard provider-side daily cap, clamped to 0-25 by the app |
 | `AUTOPILOT_DISABLED` | No | Set to `true` for a hard environment-level kill switch that prevents new Autopilot runs while leaving saved-batch review available |
 
 Apply production secrets to the **Production** environment. Use separate credentials and a separate database for Preview if preview deployments need engine access.
@@ -62,6 +68,8 @@ Postal address variables are intentionally split:
 - If `WEBWORKSHOP_POSTAL_ADDRESS` is missing, email packages can still be reviewed, but they are not considered send-ready and no placeholder address is inserted into copyable final drafts.
 
 Set `AUTOPILOT_DISABLED=true` when you want a hard Production kill switch. It blocks new Autopilot starts, retries, and next-batch handoffs. It does not cancel completed jobs, does not pretend provider jobs were cancelled, and does not block manual review of saved batches or manual Top Prospects searches.
+
+Auto Email Pilot remains off by default. A queued email can send only when all of these are true: Autonomous Growth mode is `Auto Email Pilot`, the in-app kill switch is off, `OUTREACH_AUTO_SEND_ENABLED=true`, Resend sender/reply-to/postal env vars are configured, the item is already `Queued`, the recipient is a public email, the email body uses a public `/p/` preview link, opt-out language and sender postal address are present, no placeholder/internal score/protected `/engine` link exists, daily cap and cooldown allow it, and no matching email/domain suppression or previous send is found. Contact forms, quote forms, social DMs, phone calls, and Looms remain manual-only.
 
 ### Provider Coverage for Real Lead Discovery
 

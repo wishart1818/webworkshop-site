@@ -3,6 +3,7 @@ import {
   autonomousFeedbackLabels,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
+  evaluateQueuedEmailSendReadiness,
   evaluatePreviewQualityGate,
   evaluateSelfReview,
   generateAutonomousRunReview,
@@ -32,6 +33,7 @@ import type { Prospect } from "@/lib/prospect-engine";
 import { getProspectDatabase } from "@/lib/prospect-repository";
 import { getTopProspectJob } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
+import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
 import { evaluateOutreachEmailQuality, type OutreachPreference } from "@/lib/top-prospects";
 import {
   attachAutopilotRunReport,
@@ -575,6 +577,117 @@ async function recordLearningEvent(item: OutreachQueueItem) {
       feedbackLabels: item.feedbackLabels,
     },
   });
+}
+
+export type SendQueuedEmailResult = {
+  item: OutreachQueueItem | null;
+  sent: boolean;
+  blockedReasons: string[];
+  providerMessageId?: string;
+};
+
+async function sendWithResend(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
+  const apiKey = environment.RESEND_API_KEY?.trim();
+  const from = environment.OUTREACH_FROM_EMAIL?.trim();
+  const replyTo = environment.OUTREACH_REPLY_TO_EMAIL?.trim();
+  if (!apiKey || !from || !replyTo) throw new Error("Email provider, sender, or reply-to is not configured.");
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [item.email],
+      reply_to: replyTo,
+      subject: item.subjectLine,
+      text: item.emailBody,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Email provider rejected the message with HTTP ${response.status}.`);
+  }
+  const payload = await response.json().catch(() => ({})) as { id?: string };
+  return payload.id ?? "";
+}
+
+async function markQueueItemSent(item: OutreachQueueItem, providerMessageId: string, now = new Date()) {
+  const sentDate = now.toISOString();
+  const notes = [item.notes, providerMessageId ? `Resend message ID: ${providerMessageId}` : "Sent through Auto Email Pilot."].filter(Boolean).join("\n");
+  if (!hasDatabase) {
+    const existing = memoryQueue().find((entry) => entry.id === item.id);
+    if (!existing) return null;
+    existing.status = "Sent";
+    existing.sentDate = sentDate;
+    existing.notes = notes;
+    existing.updatedAt = sentDate;
+    await recordRunReview(memorySettings(), memoryQueue());
+    return structuredClone(existing);
+  }
+  await ensureTopProspectSchema();
+  const row = await getProspectDatabase().outreachQueueItem.update({
+    where: { id: item.id },
+    data: {
+      status: "Sent",
+      sentDate: now,
+      notes,
+    },
+  });
+  const domain = queueToDomain(row);
+  await recordLearningEvent(domain);
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  return domain;
+}
+
+export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEmailResult> {
+  const settings = await getAutonomousGrowthSettings();
+  const queue = await listOutreachQueueItems();
+  const item = queue.find((entry) => entry.id === id) ?? null;
+  if (!item) return { item: null, sent: false, blockedReasons: ["Queue item was not found."] };
+  const emailsSentToday = queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length;
+  const readiness = evaluateQueuedEmailSendReadiness({ emailSendsToday: emailsSentToday, item, queue, settings });
+  if (!readiness.ready) {
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "rejected",
+      subject: item.email || item.businessName,
+      metadata: { queueItemId: item.id, reasons: readiness.blockedReasons },
+    });
+    return { item, sent: false, blockedReasons: readiness.blockedReasons };
+  }
+  try {
+    await enforceRateLimit({
+      action: "autonomous_email_send",
+      subject: "global",
+      limit: Math.max(0, Math.min(settings.maxEmailsSentPerDay, outreachEnvironment().dailyCap)),
+      windowMs: 24 * 60 * 60 * 1000,
+    });
+    await enforceRateLimit({
+      action: "autonomous_email_send_recipient",
+      subject: item.email.toLowerCase(),
+      limit: 1,
+      windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
+    });
+    const providerMessageId = await sendWithResend(item);
+    const sentItem = await markQueueItemSent(item, providerMessageId);
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "success",
+      subject: item.email,
+      metadata: { queueItemId: item.id, provider: "resend", providerMessageId: providerMessageId || "accepted" },
+    });
+    return { item: sentItem, sent: true, blockedReasons: [], providerMessageId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Email send failed safely.";
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "failure",
+      subject: item.email || item.businessName,
+      metadata: { queueItemId: item.id, reason: message },
+    });
+    return { item, sent: false, blockedReasons: [message] };
+  }
 }
 
 export async function upsertAutonomousQueueItemFromPackage({

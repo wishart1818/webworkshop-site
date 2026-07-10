@@ -5,6 +5,7 @@ import {
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
   evaluatePreviewQualityGate,
+  evaluateQueuedEmailSendReadiness,
   evaluateSelfReview,
   learningSummaryForQueue,
   loomRecommendationForQueueItem,
@@ -21,6 +22,13 @@ import {
   rewriteOutreachWithFixes,
   type OutreachQueueItem,
 } from "../lib/autonomous-growth";
+import {
+  resetAutonomousGrowthMemoryForTests,
+  sendQueuedEmailQueueItem,
+  updateAutonomousGrowthSettings,
+  upsertAutonomousQueueItemFromPackage,
+} from "../lib/autonomous-growth-repository";
+import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
 import {
   autopilotActionLabels,
   autopilotDraftFromRecommendedMarket,
@@ -216,6 +224,121 @@ test("Auto Email Pilot only passes for eligible email leads with all sender gate
     previewGate: evaluatePreviewQualityGate(prospect),
     settings: { ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false },
   }), "Queued");
+});
+
+test("queued email send readiness enforces suppression, public links, compliance, and review state", () => {
+  const item = {
+    id: "queued-email",
+    prospectId: "prospect-1",
+    topProspectResultId: "result-1",
+    businessName: "Ready Pressure Washing",
+    trade: "Pressure Washing",
+    city: "Tampa, FL",
+    website: "https://example.com",
+    email: "owner@readypressurewashing.com",
+    contactSource: "Public email",
+    contactConfidence: 90,
+    previewLink: publicLink,
+    previewQualityScore: 92,
+    subjectLine: "Quick website idea for Ready Pressure Washing",
+    emailBody: `Hi Ready Pressure Washing team,\n\nI made a quick preview.\n\n${publicLink}\n\nWould you be open to taking a look?\n\nThanks,\nBrendan\nWebWorkshop\n123 Main St, Toledo, OH\n\nIf you would rather not receive another note, just reply and I will close the loop.`,
+    dmScript: "",
+    loomTalkingPoints: "",
+    eligibilityReason: "Ready",
+    blockedReason: "",
+    reviewScore: 92,
+    reviewSummary: "",
+    improvementSuggestions: [],
+    detectedIssues: [],
+    recommendedNextAction: "Keep",
+    regenerationPlan: [],
+    rewritePlan: [],
+    feedbackLabels: [],
+    status: "Queued",
+    sourceProvider: "Top Prospects",
+    queuedDate: new Date(0).toISOString(),
+    sentDate: "",
+    followUpDate: "",
+    replyStatus: "",
+    notes: "",
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  } satisfies OutreachQueueItem;
+  const settings = { ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot" as const, killSwitch: false };
+  const ready = evaluateQueuedEmailSendReadiness({ environment: env(), item, queue: [item], settings });
+  assert.equal(ready.ready, true);
+
+  const protectedLink = evaluateQueuedEmailSendReadiness({
+    environment: env(),
+    item: { ...item, previewLink: "https://webworkshop.dev/engine/previews/prospect-1", emailBody: item.emailBody.replace(publicLink, "https://webworkshop.dev/engine/previews/prospect-1") },
+    queue: [item],
+    settings,
+  });
+  assert.equal(protectedLink.ready, false);
+  assert.match(protectedLink.blockedReasons.join(" "), /protected \/engine link/i);
+
+  const suppressed = evaluateQueuedEmailSendReadiness({
+    environment: env(),
+    item,
+    queue: [item, { ...item, id: "opted-out", status: "Opted Out", email: "owner@readypressurewashing.com" }],
+    settings,
+  });
+  assert.equal(suppressed.ready, false);
+  assert.match(suppressed.blockedReasons.join(" "), /suppressed/i);
+
+  const notQueued = evaluateQueuedEmailSendReadiness({ environment: env(), item: { ...item, status: "Eligible" }, queue: [item], settings });
+  assert.equal(notQueued.ready, false);
+  assert.match(notQueued.blockedReasons.join(" "), /Only Queued email items/i);
+});
+
+test("human-approved queued email sends through Resend only after every gate passes", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      providerCalls += 1;
+      const body = JSON.parse(String(init?.body ?? "{}")) as { to?: string[]; text?: string };
+      assert.deepEqual(body.to, ["owner@example.com"]);
+      assert.match(body.text ?? "", /https:\/\/webworkshop\.dev\/p\//);
+      assert.doesNotMatch(body.text ?? "", /\/engine\//);
+      return new Response(JSON.stringify({ id: "resend-message-1" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "send-ready-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    const result = await sendQueuedEmailQueueItem(queued.id);
+    assert.equal(result.sent, true);
+    assert.equal(result.item?.status, "Sent");
+    assert.ok(result.item?.sentDate);
+    assert.equal(providerCalls, 1);
+    assert.ok(memoryAuditEventsForTests().some((event) => event.action === "autonomous_email_send" && event.outcome === "success"));
+
+    const duplicate = await sendQueuedEmailQueueItem(queued.id);
+    assert.equal(duplicate.sent, false);
+    assert.match(duplicate.blockedReasons.join(" "), /Only Queued email items|already has a sent date/i);
+    assert.equal(providerCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
 });
 
 test("phone-only, social-only, contact-form-only, and bad-fit leads never auto-send", () => {

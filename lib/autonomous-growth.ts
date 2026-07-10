@@ -127,6 +127,11 @@ export type AutoSendEligibility = {
   autoSendEnabled: boolean;
 };
 
+export type QueuedEmailSendReadiness = {
+  ready: boolean;
+  blockedReasons: string[];
+};
+
 export type OutreachQueueItem = {
   id: string;
   prospectId: string;
@@ -539,6 +544,80 @@ export function providerConfigured(environment: NodeJS.ProcessEnv = process.env)
     && env.hasFromEmail
     && env.hasReplyToEmail
     && env.hasPostalAddress;
+}
+
+function normalizeEmailAddress(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function emailDomain(value: string) {
+  const email = normalizeEmailAddress(value);
+  return email.includes("@") ? email.split("@").at(-1) ?? "" : "";
+}
+
+function senderPostalAddressForDrafts(environment: NodeJS.ProcessEnv = process.env) {
+  return [
+    environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() ?? "",
+    environment.OUTREACH_POSTAL_ADDRESS?.trim() ?? "",
+  ].filter(Boolean);
+}
+
+function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
+  const combined = `${item.subjectLine}\n${item.emailBody}`;
+  const postalAddresses = senderPostalAddressForDrafts(environment);
+  return [
+    /\/engine(?:\/|$)/i.test(combined) ? "Prospect-facing email contains a protected /engine link." : "",
+    /\[[^\]]*(postal address|before sending|insert|placeholder)[^\]]*\]/i.test(combined) ? "Prospect-facing email still contains placeholder text." : "",
+    /\b(?:website quality|opportunity|conversion readiness|internal|score)\s*(?:is|:)?\s*\d{1,3}\/100\b/i.test(combined) || /\b\d{1,3}\/100\b/.test(combined) ? "Prospect-facing email contains internal score language." : "",
+    !/would rather not receive another note|unsubscribe|opt[- ]?out|close the loop/i.test(combined) ? "Opt-out language is missing." : "",
+    postalAddresses.length && !postalAddresses.some((address) => item.emailBody.includes(address)) ? "Configured sender postal address is missing from the email body." : "",
+    !publicPreviewReady(item.previewLink) || !item.emailBody.includes(item.previewLink) ? "Public /p/ preview link is missing from the email body." : "",
+  ].filter(Boolean);
+}
+
+export function evaluateQueuedEmailSendReadiness({
+  emailSendsToday = 0,
+  environment = process.env,
+  item,
+  queue = [],
+  settings,
+}: {
+  emailSendsToday?: number;
+  environment?: NodeJS.ProcessEnv;
+  item: OutreachQueueItem;
+  queue?: OutreachQueueItem[];
+  settings: AutonomousGrowthSettings;
+}): QueuedEmailSendReadiness {
+  const env = outreachEnvironment(environment);
+  const email = normalizeEmailAddress(item.email);
+  const domain = emailDomain(email);
+  const matchingItems = queue.filter((other) => other.id !== item.id && normalizeEmailAddress(other.email) === email);
+  const matchingDomains = domain ? queue.filter((other) => other.id !== item.id && emailDomain(other.email) === domain) : [];
+  const suppressedStatuses = new Set<OutreachQueueStatus>(["Opted Out", "Never Contact", "Not Interested", "Bad Fit", "Blocked", "Lost"]);
+  const previouslySent = matchingItems.find((other) => other.sentDate || other.status === "Sent");
+  const suppressed = [...matchingItems, ...matchingDomains].find((other) => suppressedStatuses.has(other.status));
+  const cooldownMs = Math.max(1, settings.emailCooldownMinutes) * 60_000;
+  const cooldownHit = matchingItems.find((other) => {
+    if (!other.sentDate) return false;
+    const sentAt = Date.parse(other.sentDate);
+    return Number.isFinite(sentAt) && Date.now() - sentAt < cooldownMs;
+  });
+  const blockedReasons = [
+    settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
+    settings.killSwitch ? "Global kill switch is on." : "",
+    !env.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true." : "",
+    !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
+    item.status !== "Queued" ? "Only Queued email items can be sent by Auto Email Pilot." : "",
+    email ? "" : "Recipient email is missing.",
+    item.contactSource !== "Public email" ? "Only public-email contacts can be sent automatically." : "",
+    emailSendsToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",
+    item.sentDate ? "This queue item already has a sent date." : "",
+    previouslySent ? "This email address was already contacted." : "",
+    suppressed ? "This email address or domain is suppressed." : "",
+    cooldownHit ? "Email cooldown is still active for this address." : "",
+    ...prospectFacingEmailBodySafe(item, environment),
+  ].filter(Boolean);
+  return { ready: blockedReasons.length === 0, blockedReasons };
 }
 
 function publicPreviewReady(value: string) {

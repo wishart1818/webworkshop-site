@@ -52,6 +52,7 @@ type ApiPayload = Partial<DashboardPayload> & {
   settings?: AutonomousGrowthSettings;
   autopilot?: AutopilotDashboard;
   smokeTest?: AutopilotSmokeTestResult;
+  sendResult?: { sent: boolean; blockedReasons: string[] };
   topProspectJobId?: string;
   topProspectJobWarning?: string;
 };
@@ -338,6 +339,29 @@ export function AutonomousGrowthWorkspace() {
     }
   }
 
+  async function sendQueuedEmail(item: OutreachQueueItem) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send_queued_email", queueItemId: item.id }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.item || !payload.sendResult) throw new Error(apiError(payload, "Unable to send queued email."));
+      await loadDashboard();
+      setNotice(payload.sendResult.sent
+        ? "Approved email was sent through Auto Email Pilot and logged. No forms, DMs, calls, or Looms were sent."
+        : `Email was not sent: ${payload.sendResult.blockedReasons.join("; ")}`);
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "Unable to send queued email.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function autopilotSettingsFromForm(form: FormData): Partial<AutopilotCampaignSettings> {
     return {
       campaignName: String(form.get("campaignName") ?? defaultAutopilotCampaignSettings.campaignName),
@@ -525,6 +549,8 @@ export function AutonomousGrowthWorkspace() {
           <Gate label="Provider is configured" passed={env.sendProvider === "resend" && env.hasResendApiKey} detail={env.sendProvider} />
           <Gate label="Sender and reply-to are configured" passed={env.hasFromEmail && env.hasReplyToEmail} />
           <Gate label="Postal address is configured" passed={env.hasPostalAddress} />
+          <Gate label="Only Queued public-email leads can send" passed detail="Forms, DMs, calls, and Looms stay manual." />
+          <Gate label="Daily cap, cooldown, suppression, and audit logs enforced" passed />
           <Gate label="Optional Loom notification configured" passed={env.notifyOnLoomNeeded && env.hasNotifyEmail && env.hasNotifyFromEmail} detail="Internal only" />
         </div>
       </section>
@@ -543,6 +569,7 @@ export function AutonomousGrowthWorkspace() {
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
+        onSendEmail={sendQueuedEmail}
         onStatus={updateStatus}
         title="Dry-run and review queue"
       />
@@ -554,6 +581,7 @@ export function AutonomousGrowthWorkspace() {
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
+        onSendEmail={sendQueuedEmail}
         onStatus={updateStatus}
         title="Blocked queue"
       />
@@ -565,6 +593,7 @@ export function AutonomousGrowthWorkspace() {
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
         onRewrite={rewriteOutreach}
+        onSendEmail={sendQueuedEmail}
         onStatus={updateStatus}
         title="Send queue and sent log"
       />
@@ -1428,6 +1457,7 @@ function QueueSection({
   onRegenerate,
   onFeedback,
   onRewrite,
+  onSendEmail,
   onStatus,
   title,
 }: {
@@ -1438,6 +1468,7 @@ function QueueSection({
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
+  onSendEmail: (item: OutreachQueueItem) => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
   title: string;
 }) {
@@ -1456,6 +1487,7 @@ function QueueSection({
               onFeedback={onFeedback}
               onRegenerate={onRegenerate}
               onRewrite={onRewrite}
+              onSendEmail={onSendEmail}
               onStatus={onStatus}
             />
           ))}
@@ -1472,6 +1504,7 @@ function QueueItemRow({
   onFeedback,
   onRegenerate,
   onRewrite,
+  onSendEmail,
   onStatus,
 }: {
   copied: string;
@@ -1480,6 +1513,7 @@ function QueueItemRow({
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
+  onSendEmail: (item: OutreachQueueItem) => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
 }) {
   const scripts = loomNeededTaskForQueueItem(item).scripts;
@@ -1506,6 +1540,7 @@ function QueueItemRow({
         <button className="engine-button" onClick={() => void onRewrite(item)} type="button">Rewrite Outreach</button>
         <button className="engine-button" onClick={() => void onStatus(item, "DM Draft")} type="button">DM Draft</button>
         <button className="engine-button" onClick={() => void onStatus(item, "First DM Sent")} type="button">First DM Sent</button>
+        {item.status === "Queued" ? <button className="engine-button engine-button--primary" onClick={() => void onSendEmail(item)} type="button">Send approved email</button> : null}
         <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button>
         <button className="engine-button" onClick={() => void onStatus(item, "Eligible")} type="button">Mark reviewed</button>
         <button className="engine-button" onClick={() => void onStatus(item, "Skipped")} type="button">Skip</button>
