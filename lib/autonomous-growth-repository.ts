@@ -685,6 +685,13 @@ async function sendWithResend(item: OutreachQueueItem, environment: NodeJS.Proce
   return payload.id ?? "";
 }
 
+function safeEmailSendFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  return /^Email provider (?:rejected|request failed|sender|provider, sender)/i.test(message)
+    ? message
+    : "Email provider request failed safely.";
+}
+
 async function markQueueItemSent(item: OutreachQueueItem, providerMessageId: string, now = new Date()) {
   const sentDate = now.toISOString();
   const notes = [item.notes, providerMessageId ? `Resend message ID: ${providerMessageId}` : "Sent through Auto Email Pilot."].filter(Boolean).join("\n");
@@ -752,7 +759,7 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
     });
     return { item: sentItem, sent: true, blockedReasons: [], providerMessageId };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Email send failed safely.";
+    const message = safeEmailSendFailureMessage(error);
     await safeRecordAudit({
       action: "autonomous_email_send",
       outcome: "failure",

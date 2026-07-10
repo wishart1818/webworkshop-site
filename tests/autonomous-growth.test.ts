@@ -369,6 +369,46 @@ test("human-approved queued email sends through Resend only after every gate pas
   }
 });
 
+test("email provider failures return secret-safe send errors and audit metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
+  process.env.OUTREACH_SEND_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "secret-resend-key";
+  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
+  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
+  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("Network failure using secret-resend-key");
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "send-failure-secret-safe-result",
+    });
+    assert.equal(queued.status, "Queued");
+
+    const result = await sendQueuedEmailQueueItem(queued.id);
+    assert.equal(result.sent, false);
+    assert.match(result.blockedReasons.join(" "), /Email provider request failed safely/);
+    assert.doesNotMatch(result.blockedReasons.join(" "), /secret-resend-key/);
+    const failureAudit = memoryAuditEventsForTests().find((event) => event.action === "autonomous_email_send" && event.outcome === "failure");
+    assert.ok(failureAudit);
+    assert.doesNotMatch(JSON.stringify(failureAudit), /secret-resend-key/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 test("fully automatic email batches are off by default and require the separate env flag", async () => {
   const originalFetch = globalThis.fetch;
   const originalEnv = { ...process.env };
