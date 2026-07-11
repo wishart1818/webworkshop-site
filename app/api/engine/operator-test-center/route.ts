@@ -1,5 +1,14 @@
 import { NextResponse } from "next/server";
-import { getOperatorTestCenterPayload, generateOneTestOutreachPackage, regenerateOperatorUnsentOutreachCopy, sendOperatorTestNotification, sendOperatorTestSms } from "@/lib/operator-test-center";
+import {
+  getOperatorTestCenterPayload,
+  generateOneTestOutreachPackage,
+  regenerateOperatorUnsentOutreachCopy,
+  runOperatorMarketScoutDryRun,
+  runOperatorSmartAutonomousDryRun,
+  runOperatorSmartBackfillTest,
+  sendOperatorTestNotification,
+  sendOperatorTestSms,
+} from "@/lib/operator-test-center";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +29,15 @@ export async function POST(request: Request) {
     }
     if (payload.action === "regenerate_unsent_outreach_copy") {
       return NextResponse.json(await regenerateOperatorUnsentOutreachCopy());
+    }
+    if (payload.action === "run_smart_backfill_test") {
+      return NextResponse.json(await runOperatorSmartBackfillTest());
+    }
+    if (payload.action === "run_market_scout_dry_run") {
+      return NextResponse.json(await runOperatorMarketScoutDryRun());
+    }
+    if (payload.action === "run_smart_autonomous_dry_run") {
+      return NextResponse.json(await runOperatorSmartAutonomousDryRun());
     }
     if (payload.action === "send_internal_notification") {
       return NextResponse.json(await sendOperatorTestNotification("notification"));

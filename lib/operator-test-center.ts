@@ -12,7 +12,15 @@ import {
 import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
 import { databaseHealth, operationalMode } from "@/lib/operational-controls";
 import { createProspect, generateOutreach, seedProspects, withAnalysis } from "@/lib/prospect-engine";
-import { getAutonomousGrowthDashboard, regenerateUnsentOutreachCopy, type OutreachCopyRegenerationSummary } from "@/lib/autonomous-growth-repository";
+import {
+  getAutonomousGrowthDashboard,
+  processExistingQualifiedProspects,
+  regenerateUnsentOutreachCopy,
+  runMarketScoutDryRunForDashboard,
+  runSmartAutonomousDryRun,
+  type OutreachCopyRegenerationSummary,
+  type SmartGrowthActionResult,
+} from "@/lib/autonomous-growth-repository";
 import { casualDmPlaybook, currentOutreachCopyVersion, outreachCopyRegenerationEligibility, outreachEnvironment, providerConfigured } from "@/lib/autonomous-growth";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
@@ -37,6 +45,7 @@ export type OperatorTestCenterPayload = {
     latestOutreachPackage: string;
     smsNotifications: string;
     regenerationSummary: string;
+    smartRecommendation: string;
     nextDebug: string;
   };
   latest: {
@@ -65,6 +74,7 @@ export type OperatorActionResult = {
   notification?: InternalNotificationResult;
   sms?: InternalSmsResult;
   regeneration?: OutreachCopyRegenerationSummary;
+  smartGrowth?: SmartGrowthActionResult;
   packagePreview?: {
     subject: string;
     firstEmailLinkFree: boolean;
@@ -220,6 +230,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
   const queue = dashboard?.queue ?? [];
   const latestPackage = summarizeLatestOutreachPackage(queue);
   const regenerationReadiness = summarizeRegenerationReadiness(queue);
+  const smartRecommendation = dashboard?.smartGrowth.copySummaries.nextBestMove ?? "Smart recommendation unavailable until Autonomous Growth loads.";
   const next = nextRecommendedTest({
     env,
     internalConfigured: internalEnv.configured,
@@ -272,10 +283,12 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
         `Internal notifications: ${internalEnv.configured ? "configured" : "not configured"}`,
         `SMS notifications: ${smsEnv.configured ? "configured" : "not configured"}`,
         `Next recommended test: ${next}`,
+        `Smart recommendation: ${dashboard?.smartGrowth.recommendation.nextBestMove ?? "not available"}`,
       ].join("\n"),
       emailSafety,
       smsNotifications: smsSafety,
       regenerationSummary: regenerationReadiness,
+      smartRecommendation,
       providerDiagnostics: providerSummary || "Provider diagnostics are not recorded yet.",
       latestTopProspectsRun: latestRun,
       latestOutreachPackage: latestPackage,
@@ -285,6 +298,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
         providerSummary,
         emailSafety,
         regenerationReadiness,
+        smartRecommendation,
         smsSafety,
       ].join("\n\n"),
     },
@@ -374,6 +388,33 @@ export async function regenerateOperatorUnsentOutreachCopy(): Promise<OperatorAc
     ok: true,
     message: `${regeneration.message} Nothing was sent.`,
     regeneration,
+  };
+}
+
+export async function runOperatorSmartBackfillTest(): Promise<OperatorActionResult> {
+  const smartGrowth = await processExistingQualifiedProspects({ dryRun: true });
+  return {
+    ok: smartGrowth.ok,
+    message: `${smartGrowth.message} No email, DM, form, call, or Loom was sent.`,
+    smartGrowth,
+  };
+}
+
+export async function runOperatorMarketScoutDryRun(): Promise<OperatorActionResult> {
+  const smartGrowth = await runMarketScoutDryRunForDashboard();
+  return {
+    ok: smartGrowth.ok,
+    message: `${smartGrowth.message} No email, DM, form, call, or Loom was sent.`,
+    smartGrowth,
+  };
+}
+
+export async function runOperatorSmartAutonomousDryRun(): Promise<OperatorActionResult> {
+  const smartGrowth = await runSmartAutonomousDryRun();
+  return {
+    ok: smartGrowth.ok,
+    message: `${smartGrowth.message} No email, DM, form, call, or Loom was sent.`,
+    smartGrowth,
   };
 }
 

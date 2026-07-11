@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import {
@@ -11,7 +12,13 @@ import {
   sendInternalOperatorNotification,
   sendInternalOperatorSms,
 } from "../lib/internal-notifications";
-import { generateOneTestOutreachPackage, getOperatorTestCenterPayload } from "../lib/operator-test-center";
+import {
+  generateOneTestOutreachPackage,
+  getOperatorTestCenterPayload,
+  runOperatorMarketScoutDryRun,
+  runOperatorSmartAutonomousDryRun,
+  runOperatorSmartBackfillTest,
+} from "../lib/operator-test-center";
 import { OperatorTestCenterWorkspace } from "../components/engine/OperatorTestCenterWorkspace";
 
 test("internal notification test only sends to INTERNAL_NOTIFY_EMAIL", async () => {
@@ -185,6 +192,7 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.match(payload.summaries.regenerationSummary, /Old unsent packages needing regeneration/i);
     assert.match(payload.summaries.smsNotifications, /SMS only sends to INTERNAL_NOTIFY_PHONE/);
     assert.match(payload.summaries.smsNotifications, /\+1\*{5}1234/);
+    assert.match(payload.summaries.smartRecommendation, /Will not do|No outreach|Market Scout|existing qualified/i);
     assert.match(payload.nextRecommendedTest, /Internal alerts|SMS alerts|Internal notifications|Provider coverage|Top Prospects|First-touch|Resend/i);
     assert.doesNotMatch(summaryBlob, /secret-resend-key|secret-twilio-token|DATABASE_URL|postgres:\/\/|operator@example.com|\+14195551234/i);
     assert.ok(payload.statusCards.some((card) => card.label === "Internal notifications"));
@@ -195,6 +203,21 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
   } finally {
     process.env = originalEnv;
   }
+});
+
+test("Operator Test Center smart dry runs render summaries and send nothing", async () => {
+  const backfill = await runOperatorSmartBackfillTest();
+  const scout = await runOperatorMarketScoutDryRun();
+  const smart = await runOperatorSmartAutonomousDryRun();
+
+  for (const result of [backfill, scout, smart]) {
+    assert.equal(result.ok, true);
+    assert.equal(result.smartGrowth?.dryRun, true);
+    assert.match(result.message, /No email, DM, form, call, or Loom was sent/i);
+    assert.match(result.smartGrowth?.summary.summaryText ?? "", /No emails sent|No DMs sent|No contact forms submitted|No calls placed|No Looms/i);
+    assert.doesNotMatch(JSON.stringify(result), /DATABASE_URL|RESEND_API_KEY|TWILIO_AUTH_TOKEN|GOOGLE_PLACES_API_KEY|secret-/i);
+  }
+  assert.match(scout.smartGrowth?.summary.bestMarketTradeRecommendation ?? "", /Pressure Washing|Landscaping|Cleaning|Painting|Concrete|Roofing|HVAC|Plumbing/);
 });
 
 test("Operator Test Center fake package always returns fake scripts without real outreach activity", () => {
@@ -264,4 +287,13 @@ test("Test Center renders a protected loading shell without real provider keys",
 
   assert.match(html, /Loading Operator Test Center/);
   assert.doesNotMatch(html, /RESEND_API_KEY|DATABASE_URL|GOOGLE_PLACES_API_KEY|TWILIO_AUTH_TOKEN|secret/i);
+});
+
+test("Operator Test Center markup includes Smart Growth safe action buttons", async () => {
+  const source = readFileSync("components/engine/OperatorTestCenterWorkspace.tsx", "utf8");
+
+  assert.match(source, /Run Smart Backfill Test/);
+  assert.match(source, /Run Market Scout Dry Run/);
+  assert.match(source, /Run Smart Autonomous Dry Run/);
+  assert.doesNotMatch(source, /auto-DM|auto-submit forms|auto-call/i);
 });

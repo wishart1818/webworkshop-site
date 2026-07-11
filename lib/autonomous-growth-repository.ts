@@ -6,6 +6,9 @@ import {
   evaluateQueuedEmailSendReadiness,
   evaluatePreviewQualityGate,
   evaluateSelfReview,
+  buildMarketScoutDryRun,
+  buildSmartAutonomousGrowthSnapshot,
+  buildSmartRunSummary,
   generateAutonomousRunReview,
   learningSummaryForQueue,
   loomNeededNotificationDraft,
@@ -21,6 +24,7 @@ import {
   previewRegenerationPlan,
   queueStatusForPackage,
   rewriteOutreachWithFixes,
+  smartRecommendationForGrowth,
   type AutonomousFeedbackLabel,
   type AutonomousGrowthDashboard,
   type AutonomousGrowthMetrics,
@@ -28,15 +32,18 @@ import {
   type AutonomousLearningSummary,
   type AutonomousNextAction,
   type AutonomousRunReview,
+  type MarketScoutSettings,
   type OutreachQueueItem,
   type OutreachQueueStatus,
+  type SmartRunSummary,
 } from "@/lib/autonomous-growth";
-import { createProspect, generateOutreach, normalizeTradeCategory, type Prospect } from "@/lib/prospect-engine";
-import { getProspectDatabase } from "@/lib/prospect-repository";
-import { getTopProspectJob } from "@/lib/top-prospect-repository";
+import { createProspect, generateOutreach, normalizeTradeCategory, prospectWrittenContactMethodIsUsable, type Prospect } from "@/lib/prospect-engine";
+import { getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { createPublicPreviewToken } from "@/lib/public-preview-token";
+import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
-import { evaluateOutreachEmailQuality, type OutreachPreference } from "@/lib/top-prospects";
+import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, type OutreachPreference } from "@/lib/top-prospects";
 import {
   attachAutopilotRunReport,
   buildAutopilotDashboard,
@@ -63,6 +70,7 @@ const globalAutonomous = globalThis as typeof globalThis & {
   autonomousRunReviewsMemory?: AutonomousRunReview[];
   autopilotCampaignMemory?: AutopilotCampaign;
   autopilotSmokeTestMemory?: AutopilotSmokeTestResult;
+  smartAutonomousRunSummaryMemory?: SmartRunSummary;
 };
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
@@ -372,13 +380,91 @@ async function sendInternalOperatorNotificationSafely(input: InternalNotificatio
   }
 }
 
+async function listTopProspectJobsSafely() {
+  if (!hasDatabase) return [] as TopProspectJob[];
+  try {
+    return await listTopProspectJobs();
+  } catch (error) {
+    console.warn("[autonomous-growth] Smart snapshot could not read Top Prospects jobs.", { error: error instanceof Error ? error.name : "unknown" });
+    return [] as TopProspectJob[];
+  }
+}
+
+function topProspectHasPublicPreview(previewLink: string) {
+  return /\/p\//i.test(previewLink) && !/\/engine(?:\/|$)/i.test(previewLink);
+}
+
+function topProspectBackfillBlockedReason(result: TopProspectJob["results"][number]) {
+  const text = `${result.rejectionReason ?? ""} ${result.emailQuality.readinessLabel} ${result.prospect.status} ${result.prospect.notes.join(" ")}`;
+  if (result.packageStatus === "SENT" || result.packageSentAt) return "already contacted";
+  if (result.packageStatus === "SKIPPED" || result.packageSkippedAt) return "package skipped";
+  if (/opted out|bounced|complained|suppressed|never contact|not interested/i.test(text)) return "suppressed or closed";
+  if (/phone-only/i.test(text)) return "phone-only";
+  if (result.resultBucket === "blocked") return result.rejectionReason ?? "blocked";
+  if (!result.selected && result.resultBucket !== "reviewable_lower_priority" && result.packageStatus === "NOT_GENERATED") return "not qualified";
+  if (!prospectWrittenContactMethodIsUsable(result.prospect) && result.prospect.recommendedContactMethod !== "verify_email_manually") return "no usable written contact path";
+  return "";
+}
+
+async function syncTopProspectResultIntoQueue(
+  result: TopProspectJob["results"][number],
+  outreachPreference: OutreachPreference,
+) {
+  const previewLink = topProspectHasPublicPreview(result.previewLink)
+    ? result.previewLink
+    : publicProspectPreviewLink(createPublicPreviewToken());
+  const prepared = prepareTopProspectArtifacts(result.prospect, previewLink, outreachPreference);
+  const saved = hasDatabase
+    ? await saveProspect(prepared.prospect)
+    : prepared.prospect;
+  if (hasDatabase) {
+    const scores = prepared.assessment.salesScores;
+    const token = previewLink.split("/p/")[1] ?? null;
+    await getProspectDatabase().topProspectResult.update({
+      where: { id: result.id },
+      data: {
+        opportunityScore: prepared.assessment.opportunityScore,
+        ...scores,
+        onlinePresenceGapScore: prepared.assessment.presenceScores?.onlinePresenceGapScore ?? 0,
+        businessActivityScore: prepared.assessment.presenceScores?.businessActivityScore ?? 0,
+        websiteNeedScore: prepared.assessment.presenceScores?.websiteNeedScore ?? 0,
+        mainWeakness: prepared.assessment.mainWeakness,
+        whyMayBuy: prepared.assessment.whyMayBuy,
+        pitchAngle: prepared.assessment.pitchAngle,
+        buildPrompt: prepared.buildPrompt,
+        previewLink: prepared.previewLink,
+        ...(token ? { publicPreviewToken: token } : {}),
+        packageStatus: "PACKAGE_GENERATED",
+        packageGeneratedAt: new Date(),
+        packageReviewedAt: null,
+        packageApprovedAt: null,
+        packageSentAt: null,
+        packageSkippedAt: null,
+      },
+    });
+  }
+  return upsertAutonomousQueueItemFromPackage({
+    outreachPreference,
+    previewLink: prepared.previewLink,
+    prospect: saved,
+    sourceProvider: "Smart Backfill",
+    topProspectResultId: result.id,
+  });
+}
+
 export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard & { autopilot: AutopilotDashboard }> {
   const settings = await getAutonomousGrowthSettings();
   const queue = await listOutreachQueueItems();
   const runReviews = await listAutonomousRunReviews();
+  const topProspectJobs = await listTopProspectJobsSafely();
   const env = outreachEnvironment();
   globalAutonomous.autopilotCampaignMemory = await refreshAutopilotCampaignFromTopProspects(memoryAutopilotCampaign());
   const autopilot = buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+  const smartGrowth = buildSmartAutonomousGrowthSnapshot({
+    queue,
+    topProspectJobs,
+    lastRunSummary: globalAutonomous.smartAutonomousRunSummaryMemory,
+  });
   return {
     settings,
     env: {
@@ -397,6 +483,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
     metrics: metricsForQueue(queue, settings),
     queue,
     learning: learningSummaryForQueue(queue, runReviews),
+    smartGrowth,
     autopilot,
   };
 }
@@ -461,6 +548,131 @@ export async function runFakeAutopilotSmokeTestForDashboard() {
   return {
     autopilot: buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue),
     smokeTest,
+  };
+}
+
+export type SmartGrowthActionResult = {
+  ok: boolean;
+  dryRun: boolean;
+  message: string;
+  smartGrowth: AutonomousGrowthDashboard["smartGrowth"];
+  summary: SmartRunSummary;
+};
+
+export async function processExistingQualifiedProspects(options: { dryRun?: boolean } = {}): Promise<SmartGrowthActionResult> {
+  const dryRun = options.dryRun ?? false;
+  const initialQueue = await listOutreachQueueItems();
+  const jobs = await listTopProspectJobsSafely();
+  const initialSnapshot = buildSmartAutonomousGrowthSnapshot({ queue: initialQueue, topProspectJobs: jobs });
+  const touchedResultIds = new Set(initialQueue.map((item) => item.topProspectResultId).filter(Boolean));
+  const skippedReasons: Record<string, number> = { ...initialSnapshot.existingQualifiedUnsent.blockedSkippedReasons };
+  let generatedMissingPackages = 0;
+  let refreshedCopyCount = 0;
+
+  if (!dryRun) {
+    const regeneration = await regenerateUnsentOutreachCopy();
+    refreshedCopyCount = regeneration.updated;
+    for (const [reason, count] of Object.entries(regeneration.skippedReasons)) {
+      skippedReasons[reason] = (skippedReasons[reason] ?? 0) + count;
+    }
+    for (const job of jobs) {
+      const candidates = [...job.results, ...(job.reviewableLowerPriority ?? []), ...job.reviewedNotRecommended];
+      const seenInJob = new Set<string>();
+      for (const result of candidates) {
+        if (seenInJob.has(result.id) || touchedResultIds.has(result.id)) continue;
+        seenInJob.add(result.id);
+        const blockedReason = topProspectBackfillBlockedReason(result);
+        if (blockedReason) {
+          skippedReasons[blockedReason] = (skippedReasons[blockedReason] ?? 0) + 1;
+          continue;
+        }
+        try {
+          await syncTopProspectResultIntoQueue(result, job.input.outreachPreference);
+          generatedMissingPackages += 1;
+          touchedResultIds.add(result.id);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "package generation failed";
+          skippedReasons[reason] = (skippedReasons[reason] ?? 0) + 1;
+          console.warn("[autonomous-growth] Smart backfill skipped a Top Prospects result safely.", {
+            resultId: result.id,
+            error: error instanceof Error ? error.name : "unknown",
+          });
+        }
+      }
+    }
+  }
+
+  const queue = await listOutreachQueueItems();
+  const refreshedJobs = await listTopProspectJobsSafely();
+  const snapshot = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: refreshedJobs });
+  const existing = {
+    ...snapshot.existingQualifiedUnsent,
+    generatedMissingPackages,
+    refreshedCopyCount,
+    blockedSkippedReasons: skippedReasons,
+  };
+  const recommendation = smartRecommendationForGrowth({ existing, scout: snapshot.marketScout });
+  const summary = buildSmartRunSummary({
+    existing,
+    scout: snapshot.marketScout,
+    recommendation,
+    actionLabel: dryRun ? "Smart Backfill Dry Run" : "Process Existing Qualified Prospects",
+  });
+  globalAutonomous.smartAutonomousRunSummaryMemory = summary;
+  const smartGrowth = buildSmartAutonomousGrowthSnapshot({
+    queue,
+    topProspectJobs: refreshedJobs,
+    lastRunSummary: summary,
+  });
+  return {
+    ok: true,
+    dryRun,
+    message: dryRun
+      ? "Smart Backfill dry run checked saved queues and Top Prospects results. Nothing was generated or sent."
+      : `Processed existing qualified prospects. Refreshed ${refreshedCopyCount} copy item${refreshedCopyCount === 1 ? "" : "s"} and generated ${generatedMissingPackages} missing package${generatedMissingPackages === 1 ? "" : "s"}. Nothing was sent.`,
+    smartGrowth,
+    summary,
+  };
+}
+
+export async function runMarketScoutDryRunForDashboard(input?: Partial<MarketScoutSettings>): Promise<SmartGrowthActionResult> {
+  const queue = await listOutreachQueueItems();
+  const jobs = await listTopProspectJobsSafely();
+  const existing = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs }).existingQualifiedUnsent;
+  const scout = buildMarketScoutDryRun(input, jobs);
+  const recommendation = smartRecommendationForGrowth({ existing, scout });
+  const summary = buildSmartRunSummary({ existing, scout, recommendation, actionLabel: "Market Scout Dry Run" });
+  globalAutonomous.smartAutonomousRunSummaryMemory = summary;
+  const smartGrowth = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs, marketScoutSettings: input, lastRunSummary: summary });
+  return {
+    ok: true,
+    dryRun: true,
+    message: `${scout.message} This was a bounded dry run. No provider calls or outreach sends happened.`,
+    smartGrowth,
+    summary,
+  };
+}
+
+export async function runSmartAutonomousDryRun(): Promise<SmartGrowthActionResult> {
+  const queue = await listOutreachQueueItems();
+  const jobs = await listTopProspectJobsSafely();
+  const snapshot = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs });
+  const actionLabel = snapshot.existingQualifiedUnsent.total > 0 || snapshot.existingQualifiedUnsent.needsRefreshedCopy > 0
+    ? "Smart Autonomous Dry Run: Use Existing Prospects First"
+    : "Smart Autonomous Dry Run: Scout Next Market";
+  const summary = buildSmartRunSummary({
+    existing: snapshot.existingQualifiedUnsent,
+    scout: snapshot.marketScout,
+    recommendation: snapshot.recommendation,
+    actionLabel,
+  });
+  globalAutonomous.smartAutonomousRunSummaryMemory = summary;
+  return {
+    ok: true,
+    dryRun: true,
+    message: `${snapshot.recommendation.nextBestMove} Dry run only. Nothing was sent or submitted.`,
+    smartGrowth: buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs, lastRunSummary: summary }),
+    summary,
   };
 }
 
@@ -1537,6 +1749,7 @@ export function resetAutonomousGrowthMemoryForTests() {
   globalAutonomous.autonomousRunReviewsMemory = undefined;
   globalAutonomous.autopilotCampaignMemory = undefined;
   globalAutonomous.autopilotSmokeTestMemory = undefined;
+  globalAutonomous.smartAutonomousRunSummaryMemory = undefined;
 }
 
 export function setOutreachQueueMemoryForTests(items: OutreachQueueItem[]) {

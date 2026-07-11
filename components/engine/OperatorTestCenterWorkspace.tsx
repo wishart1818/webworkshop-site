@@ -183,6 +183,9 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runSmallTopProspectsTest()} type="button">Run Small Top Prospects Test</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("generate_test_package")} type="button">Generate One Fake Test Outreach Package</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("regenerate_unsent_outreach_copy")} type="button">Regenerate Unsent Outreach Copy</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("run_smart_backfill_test")} type="button">Run Smart Backfill Test</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("run_market_scout_dry_run")} type="button">Run Market Scout Dry Run</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("run_smart_autonomous_dry_run")} type="button">Run Smart Autonomous Dry Run</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_notification")} type="button">Send Internal Test Notification</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_resend_test")} type="button">Send Internal Test Email Through Resend</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_sms_test")} type="button">Send Internal Test SMS</button>
@@ -261,6 +264,40 @@ export function OperatorTestCenterWorkspace() {
         </section>
       ) : null}
 
+      {lastAction?.smartGrowth ? (
+        <section className="engine-panel engine-operator-package-check" aria-label="Smart Growth test result">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Smart Growth Test Result</h2>
+              <p>Dry-run operator intelligence. It checks stored prospects and recommendations without sending or submitting anything.</p>
+            </div>
+            <span>{lastAction.smartGrowth.dryRun ? "Dry run" : "Manual queue update"}</span>
+          </div>
+          <dl className="engine-operator-check-grid">
+            <div><dt>Existing unsent found</dt><dd>{lastAction.smartGrowth.summary.existingUnsentProspectsFound}</dd></div>
+            <div><dt>Copy refreshed</dt><dd>{lastAction.smartGrowth.summary.copyRefreshedCount}</dd></div>
+            <div><dt>Packages generated</dt><dd>{lastAction.smartGrowth.summary.packagesGeneratedCount}</dd></div>
+            <div><dt>Best market/trade</dt><dd>{lastAction.smartGrowth.summary.bestMarketTradeRecommendation}</dd></div>
+          </dl>
+          <div className="engine-operator-summary-grid">
+            <article>
+              <header>
+                <h3>Smart Recommendation Summary</h3>
+                <button className="engine-button" onClick={() => void copyText("Smart Recommendation Summary", lastAction.smartGrowth?.smartGrowth.copySummaries.nextBestMove ?? "")} type="button">Copy</button>
+              </header>
+              <pre>{lastAction.smartGrowth.smartGrowth.copySummaries.nextBestMove}</pre>
+            </article>
+            <article>
+              <header>
+                <h3>Smart Run Summary</h3>
+                <button className="engine-button" onClick={() => void copyText("Smart Run Summary", lastAction.smartGrowth?.summary.summaryText ?? "")} type="button">Copy</button>
+              </header>
+              <pre>{lastAction.smartGrowth.summary.summaryText}</pre>
+            </article>
+          </div>
+        </section>
+      ) : null}
+
       <section className="engine-panel engine-operator-copy" aria-label="Copy summaries">
         <div className="engine-panel__head">
           <div>
@@ -275,6 +312,7 @@ export function OperatorTestCenterWorkspace() {
             ["Email Safety Summary", payload.summaries.emailSafety],
             ["SMS Notification Summary", payload.summaries.smsNotifications],
             ["Regeneration Summary", payload.summaries.regenerationSummary],
+            ["Smart Recommendation Summary", payload.summaries.smartRecommendation],
             ["Provider Diagnostics Summary", `${payload.summaries.providerDiagnostics}\n${providerSmokeSummary}`.trim()],
             ["Latest Top Prospects Run Summary", payload.summaries.latestTopProspectsRun],
             ["Latest Outreach Package Summary", payload.summaries.latestOutreachPackage],

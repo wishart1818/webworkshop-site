@@ -7,6 +7,7 @@ import {
   failAutopilotCampaignHandoff,
   getAutonomousGrowthDashboard,
   pauseAutopilotCampaign,
+  processExistingQualifiedProspects,
   recordEmailSuppression,
   recordAutonomousFeedback,
   rewriteOutreachQueueItem,
@@ -14,6 +15,8 @@ import {
   runAutopilotNextBatchNow,
   runFakeAutopilotSmokeTestForDashboard,
   runFullAutoEmailBatch,
+  runMarketScoutDryRunForDashboard,
+  runSmartAutonomousDryRun,
   sendQueuedEmailQueueItem,
   startAutopilotCampaign,
   stopAutopilotCampaign,
@@ -194,6 +197,18 @@ export async function POST(request: Request) {
     }
     if (payload.action === "run_fake_autopilot_smoke_test") {
       return NextResponse.json(await runFakeAutopilotSmokeTestForDashboard());
+    }
+    if (payload.action === "process_existing_qualified_prospects") {
+      return NextResponse.json(await processExistingQualifiedProspects({ dryRun: false }));
+    }
+    if (payload.action === "run_smart_backfill_dry_run") {
+      return NextResponse.json(await processExistingQualifiedProspects({ dryRun: true }));
+    }
+    if (payload.action === "run_market_scout_dry_run") {
+      return NextResponse.json(await runMarketScoutDryRunForDashboard());
+    }
+    if (payload.action === "run_smart_autonomous_dry_run") {
+      return NextResponse.json(await runSmartAutonomousDryRun());
     }
     return NextResponse.json({ error: "Select a supported Autonomous Growth action." }, { status: 400 });
   } catch (error) {

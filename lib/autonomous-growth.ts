@@ -15,6 +15,8 @@ import {
   validPublicPreviewToken,
   type OutreachEmailQuality,
   type OutreachPreference,
+  type TopProspectJob,
+  type TopProspectResult,
 } from "@/lib/top-prospects";
 
 export const autonomousGrowthModes = ["off", "dry_run", "manual_approval", "auto_email_pilot"] as const;
@@ -267,6 +269,141 @@ export type AutonomousGrowthDashboard = {
   metrics: AutonomousGrowthMetrics;
   queue: OutreachQueueItem[];
   learning: AutonomousLearningSummary;
+  smartGrowth: SmartAutonomousGrowthSnapshot;
+};
+
+export const smartQueueKeys = [
+  "readyForEmailReview",
+  "readyForFacebookDm",
+  "readyForInstagramDm",
+  "readyForContactFormReview",
+  "needsPreviewReview",
+  "needsManualResearch",
+  "phoneOnlyBlocked",
+  "badFitBlocked",
+  "alreadyContacted",
+  "suppressedDoNotContact",
+] as const;
+export type SmartQueueKey = (typeof smartQueueKeys)[number];
+
+export const smartQueueLabels: Record<SmartQueueKey, string> = {
+  readyForEmailReview: "Ready for Email Review",
+  readyForFacebookDm: "Ready for Facebook DM",
+  readyForInstagramDm: "Ready for Instagram DM",
+  readyForContactFormReview: "Ready for Contact Form Review",
+  needsPreviewReview: "Needs Preview Review",
+  needsManualResearch: "Needs Manual Research",
+  phoneOnlyBlocked: "Phone-Only Blocked",
+  badFitBlocked: "Bad Fit / Blocked",
+  alreadyContacted: "Already Contacted",
+  suppressedDoNotContact: "Suppressed / Do Not Contact",
+};
+
+export type ExistingQualifiedUnsentSummary = {
+  total: number;
+  readyForEmailReview: number;
+  readyForFacebookInstagramManualDm: number;
+  readyForContactFormManualResearch: number;
+  needsRefreshedCopy: number;
+  needsPreview: number;
+  alreadySavedAsQueuePackage: number;
+  foundOnlyInTopProspectsResults: number;
+  generatedMissingPackages: number;
+  refreshedCopyCount: number;
+  skippedCount: number;
+  blockedSkippedReasons: Record<string, number>;
+  sourceCounts: {
+    outreachQueueItems: number;
+    savedTopProspectsResults: number;
+    rankedProspects: number;
+    reviewablePackages: number;
+    generatedOutreachPackages: number;
+  };
+  queueCounts: Record<SmartQueueKey, number>;
+  checkedSources: string[];
+  lastRunAt: string;
+};
+
+export type MarketScoutSettings = {
+  marketsToTest: string[];
+  tradesToTest: TradeCategory[];
+  scoutSampleSizePerMarketTrade: number;
+  maxTotalScoutRecords: number;
+  excludePreviouslyReviewed: boolean;
+  writtenOutreachOnly: boolean;
+  preferSocialFirstLeads: boolean;
+  preferEmailReadyLeads: boolean;
+};
+
+export type MarketScoutResult = {
+  market: string;
+  trade: string;
+  sampleSize: number;
+  qualifiedProspectRate: number;
+  usableWrittenContactRate: number;
+  publicBusinessEmailRate: number;
+  socialAvailabilityRate: number;
+  phoneOnlyBlockRate: number;
+  alreadyReviewedRate: number;
+  brokenInactiveWebsiteRate: number;
+  averageOpportunityScore: number;
+  averageContactabilityScore: number;
+  providerCoverageQuality: string;
+  score: number;
+  recommendationReason: string;
+};
+
+export type MarketScoutSummary = {
+  settings: MarketScoutSettings;
+  bounded: boolean;
+  totalEstimatedRecords: number;
+  results: MarketScoutResult[];
+  bestResult: MarketScoutResult | null;
+  message: string;
+  lastRunAt: string;
+};
+
+export type SmartRecommendation = {
+  nextBestMove: string;
+  why: string;
+  whatItWillDo: string[];
+  whatItWillNotDo: string[];
+  recommendedAction: "process_existing_qualified_prospects" | "run_market_scout_dry_run" | "start_small_top_prospects_test" | "review_manual_queue";
+};
+
+export type SmartRunSummary = {
+  title: string;
+  checked: string[];
+  existingUnsentProspectsFound: number;
+  whereFound: string[];
+  copyRefreshedCount: number;
+  missingPackagesGeneratedCount: number;
+  packagesGeneratedCount: number;
+  marketScoutResults: string[];
+  bestMarketTradeRecommendation: string;
+  queuesUpdated: string[];
+  blockedReasons: Record<string, number>;
+  safetyGates: string[];
+  nextBestAction: string;
+  whatWasNotDone: string[];
+  summaryText: string;
+  debugSummaryText: string;
+  createdAt: string;
+};
+
+export type SmartAutonomousGrowthSnapshot = {
+  existingQualifiedUnsent: ExistingQualifiedUnsentSummary;
+  marketScout: MarketScoutSummary;
+  recommendation: SmartRecommendation;
+  lastRunSummary: SmartRunSummary;
+  copySummaries: {
+    smartRun: string;
+    marketScout: string;
+    existingProspectBackfill: string;
+    nextBestMove: string;
+    blockedReasons: string;
+    debug: string;
+  };
 };
 
 export type CasualDmPlaybook = {
@@ -392,6 +529,490 @@ export const defaultAutonomousGrowthSettings: AutonomousGrowthSettings = {
   followUpsEnabled: false,
   styleProfiles: defaultAutonomousStyleProfiles,
 };
+
+export const defaultMarketScoutSettings: MarketScoutSettings = {
+  marketsToTest: [
+    "Orlando, FL",
+    "Tampa, FL",
+    "Jacksonville, FL",
+    "St. Augustine, FL",
+    "Columbus, OH",
+    "Cleveland, OH",
+    "Cincinnati, OH",
+    "Toledo, OH",
+    "Charlotte, NC",
+    "Raleigh, NC",
+    "Nashville, TN",
+    "Dallas, TX",
+    "Fort Worth, TX",
+    "Phoenix, AZ",
+    "Atlanta, GA",
+    "Indianapolis, IN",
+  ],
+  tradesToTest: [
+    "Pressure Washing",
+    "Landscaping",
+    "Cleaning",
+    "Painting",
+    "Concrete",
+    "Roofing",
+    "HVAC",
+    "Plumbing",
+  ],
+  scoutSampleSizePerMarketTrade: 8,
+  maxTotalScoutRecords: 80,
+  excludePreviouslyReviewed: true,
+  writtenOutreachOnly: true,
+  preferSocialFirstLeads: true,
+  preferEmailReadyLeads: true,
+};
+
+const emptyQueueCounts = (): Record<SmartQueueKey, number> => ({
+  readyForEmailReview: 0,
+  readyForFacebookDm: 0,
+  readyForInstagramDm: 0,
+  readyForContactFormReview: 0,
+  needsPreviewReview: 0,
+  needsManualResearch: 0,
+  phoneOnlyBlocked: 0,
+  badFitBlocked: 0,
+  alreadyContacted: 0,
+  suppressedDoNotContact: 0,
+});
+
+function incrementRecord(record: Record<string, number>, key: string) {
+  record[key] = (record[key] ?? 0) + 1;
+}
+
+function topProspectResultSource(result: TopProspectResult) {
+  if (result.selected) return "ranked prospects";
+  if (result.packageStatus !== "NOT_GENERATED") return "generated outreach packages";
+  if (result.resultBucket === "reviewable_lower_priority") return "reviewable packages";
+  return "saved Top Prospects results";
+}
+
+function resultHasPublicPreview(result: Pick<TopProspectResult, "previewLink">) {
+  return /\/p\//i.test(result.previewLink) && !/\/engine(?:\/|$)/i.test(result.previewLink);
+}
+
+function prospectHasManualWrittenPath(prospect: Prospect) {
+  return prospectWrittenContactMethodIsUsable(prospect) || prospect.recommendedContactMethod === "verify_email_manually";
+}
+
+function prospectQueueKey(prospect: Prospect, hasPreview: boolean): SmartQueueKey {
+  if (/suppressed|opted out|bounced|complained|never contact/i.test(`${prospect.status} ${prospect.notes.join(" ")}`)) return "suppressedDoNotContact";
+  if (/bad fit|blocked/i.test(`${prospect.status} ${prospect.notes.join(" ")}`)) return "badFitBlocked";
+  if (!hasPreview) return "needsPreviewReview";
+  if (prospect.email && !prospectEmailNeedsManualVerification(prospect)) return "readyForEmailReview";
+  if (prospect.facebookUrl || prospect.recommendedContactMethod === "message_on_facebook") return "readyForFacebookDm";
+  if (prospect.instagramUrl || prospect.linkedinUrl || prospect.recommendedContactMethod === "message_on_social") return "readyForInstagramDm";
+  if (prospect.quoteFormUrl || prospect.contactFormUrl || prospect.recommendedContactMethod === "submit_contact_form") return "readyForContactFormReview";
+  if (prospect.phone || prospect.recommendedContactMethod === "call_first") return "phoneOnlyBlocked";
+  return "needsManualResearch";
+}
+
+export function smartQueueKeyForItem(item: OutreachQueueItem): SmartQueueKey {
+  const statusText = `${item.status} ${item.blockedReason} ${item.notes} ${item.replyStatus}`;
+  if (/suppressed|opted out|bounced|complained|never contact/i.test(statusText)) return "suppressedDoNotContact";
+  if (item.sentDate || /sent|replied|positive reply|won|lost|not interested|first dm sent|loom sent|pricing sent|follow-up/i.test(statusText)) return "alreadyContacted";
+  if (/bad fit|blocked/i.test(statusText) && !/phone(?:\s|-)?only/i.test(statusText)) return "badFitBlocked";
+  if (/phone(?:\s|-)?only|call first/i.test(`${item.contactSource} ${statusText}`)) return "phoneOnlyBlocked";
+  if (!resultHasPublicPreview(item)) return "needsPreviewReview";
+  if (/facebook/i.test(item.contactSource)) return "readyForFacebookDm";
+  if (/instagram|linkedin|social/i.test(item.contactSource)) return "readyForInstagramDm";
+  if (/contact form|quote form/i.test(item.contactSource)) return "readyForContactFormReview";
+  if (item.email && !/verify/i.test(item.contactSource)) return "readyForEmailReview";
+  if (/manual research|unknown/i.test(item.contactSource)) return "needsManualResearch";
+  return "needsPreviewReview";
+}
+
+function resultIsQualifiedUnsent(result: TopProspectResult) {
+  if (result.packageStatus === "SENT" || result.packageSentAt) return false;
+  if (result.packageStatus === "SKIPPED" || result.packageSkippedAt) return false;
+  if (result.resultBucket === "blocked" || result.rejectionReason === "Phone-only / written outreach blocked") return false;
+  return Boolean(result.selected || result.resultBucket === "reviewable_lower_priority" || result.packageStatus !== "NOT_GENERATED" || prospectHasManualWrittenPath(result.prospect));
+}
+
+export function summarizeExistingQualifiedUnsent(
+  queue: OutreachQueueItem[],
+  jobs: Pick<TopProspectJob, "results" | "reviewedNotRecommended">[] = [],
+  now = new Date(),
+): ExistingQualifiedUnsentSummary {
+  const summary: ExistingQualifiedUnsentSummary = {
+    total: 0,
+    readyForEmailReview: 0,
+    readyForFacebookInstagramManualDm: 0,
+    readyForContactFormManualResearch: 0,
+    needsRefreshedCopy: 0,
+    needsPreview: 0,
+    alreadySavedAsQueuePackage: 0,
+    foundOnlyInTopProspectsResults: 0,
+    generatedMissingPackages: 0,
+    refreshedCopyCount: 0,
+    skippedCount: 0,
+    blockedSkippedReasons: {},
+    sourceCounts: {
+      outreachQueueItems: 0,
+      savedTopProspectsResults: 0,
+      rankedProspects: 0,
+      reviewablePackages: 0,
+      generatedOutreachPackages: 0,
+    },
+    queueCounts: emptyQueueCounts(),
+    checkedSources: [
+      "outreach queue items",
+      "saved Top Prospects run results",
+      "ranked prospects",
+      "reviewable packages",
+      "generated outreach packages",
+    ],
+    lastRunAt: now.toISOString(),
+  };
+  const seen = new Set<string>();
+  for (const item of queue) {
+    const key = item.topProspectResultId || item.prospectId || `${item.businessName}:${item.website}:${item.email}`;
+    seen.add(key);
+    const queueKey = smartQueueKeyForItem(item);
+    summary.queueCounts[queueKey] += 1;
+    summary.sourceCounts.outreachQueueItems += 1;
+    const eligibility = outreachCopyRegenerationEligibility(item);
+    if (queueKey === "suppressedDoNotContact" || queueKey === "alreadyContacted" || queueKey === "badFitBlocked" || queueKey === "phoneOnlyBlocked") {
+      summary.skippedCount += 1;
+      incrementRecord(summary.blockedSkippedReasons, smartQueueLabels[queueKey]);
+      continue;
+    }
+    summary.total += 1;
+    summary.alreadySavedAsQueuePackage += 1;
+    if (queueKey === "readyForEmailReview") summary.readyForEmailReview += 1;
+    if (queueKey === "readyForFacebookDm" || queueKey === "readyForInstagramDm") summary.readyForFacebookInstagramManualDm += 1;
+    if (queueKey === "readyForContactFormReview" || queueKey === "needsManualResearch") summary.readyForContactFormManualResearch += 1;
+    if (queueKey === "needsPreviewReview") summary.needsPreview += 1;
+    if (eligibility.eligible) summary.needsRefreshedCopy += 1;
+  }
+  for (const job of jobs) {
+    const results = [...(job.results ?? []), ...(job.reviewedNotRecommended ?? [])];
+    for (const result of results) {
+      const key = result.id || result.prospect.id;
+      if (seen.has(key)) continue;
+      const source = topProspectResultSource(result);
+      if (source === "ranked prospects") summary.sourceCounts.rankedProspects += 1;
+      else if (source === "reviewable packages") summary.sourceCounts.reviewablePackages += 1;
+      else if (source === "generated outreach packages") summary.sourceCounts.generatedOutreachPackages += 1;
+      else summary.sourceCounts.savedTopProspectsResults += 1;
+      seen.add(key);
+      if (!resultIsQualifiedUnsent(result)) {
+        summary.skippedCount += 1;
+        incrementRecord(summary.blockedSkippedReasons, result.rejectionReason ?? result.emailQuality.readinessLabel ?? "Not qualified for outreach");
+        continue;
+      }
+      const queueKey = prospectQueueKey(result.prospect, resultHasPublicPreview(result));
+      summary.queueCounts[queueKey] += 1;
+      if (queueKey === "phoneOnlyBlocked" || queueKey === "badFitBlocked" || queueKey === "suppressedDoNotContact" || queueKey === "alreadyContacted") {
+        summary.skippedCount += 1;
+        incrementRecord(summary.blockedSkippedReasons, smartQueueLabels[queueKey]);
+        continue;
+      }
+      summary.total += 1;
+      summary.foundOnlyInTopProspectsResults += 1;
+      if (queueKey === "readyForEmailReview") summary.readyForEmailReview += 1;
+      if (queueKey === "readyForFacebookDm" || queueKey === "readyForInstagramDm") summary.readyForFacebookInstagramManualDm += 1;
+      if (queueKey === "readyForContactFormReview" || queueKey === "needsManualResearch") summary.readyForContactFormManualResearch += 1;
+      if (queueKey === "needsPreviewReview") summary.needsPreview += 1;
+    }
+  }
+  return summary;
+}
+
+function boundedScoutSettings(input?: Partial<MarketScoutSettings>): MarketScoutSettings {
+  const markets = stringArray(input?.marketsToTest).length ? stringArray(input?.marketsToTest) : defaultMarketScoutSettings.marketsToTest;
+  const trades = tradeArray(input?.tradesToTest).length ? tradeArray(input?.tradesToTest) : defaultMarketScoutSettings.tradesToTest;
+  return {
+    marketsToTest: markets.slice(0, 16),
+    tradesToTest: trades.slice(0, 8),
+    scoutSampleSizePerMarketTrade: clampCap(input?.scoutSampleSizePerMarketTrade, defaultMarketScoutSettings.scoutSampleSizePerMarketTrade, 3, 15),
+    maxTotalScoutRecords: clampCap(input?.maxTotalScoutRecords, defaultMarketScoutSettings.maxTotalScoutRecords, 10, 120),
+    excludePreviouslyReviewed: input?.excludePreviouslyReviewed ?? true,
+    writtenOutreachOnly: input?.writtenOutreachOnly ?? true,
+    preferSocialFirstLeads: input?.preferSocialFirstLeads ?? true,
+    preferEmailReadyLeads: input?.preferEmailReadyLeads ?? true,
+  };
+}
+
+function marketStateBonus(market: string) {
+  if (/\bFL\b/i.test(market)) return 7;
+  if (/\bNC\b|\bTN\b|\bGA\b|\bTX\b|\bAZ\b/i.test(market)) return 4;
+  return 0;
+}
+
+function tradeBonus(trade: string) {
+  if (/Pressure Washing|Landscaping|Cleaning|Painting|Concrete/i.test(trade)) return 8;
+  if (/Roofing|HVAC|Plumbing/i.test(trade)) return 4;
+  return 0;
+}
+
+export function buildMarketScoutDryRun(
+  input?: Partial<MarketScoutSettings>,
+  jobs: Pick<TopProspectJob, "input" | "results" | "reviewedNotRecommended" | "blockedProspects" | "discoveryDiagnostics">[] = [],
+  now = new Date(),
+): MarketScoutSummary {
+  const settings = boundedScoutSettings(input);
+  const results: MarketScoutResult[] = [];
+  let remaining = settings.maxTotalScoutRecords;
+  for (const market of settings.marketsToTest) {
+    for (const trade of settings.tradesToTest) {
+      if (remaining <= 0) break;
+      const sampleSize = Math.min(settings.scoutSampleSizePerMarketTrade, remaining);
+      remaining -= sampleSize;
+      const historical = jobs.filter((job) =>
+        `${job.input.city}, ${job.input.state}`.toLowerCase().includes(market.toLowerCase().split(",")[0].trim())
+        && String(job.input.trade).toLowerCase() === trade.toLowerCase()
+      );
+      const historicalResults = historical.flatMap((job) => [...job.results, ...job.reviewedNotRecommended]);
+      const qualified = historicalResults.filter((result) => result.selected || result.resultBucket === "reviewable_lower_priority");
+      const withWritten = historicalResults.filter((result) => prospectHasManualWrittenPath(result.prospect));
+      const withEmail = historicalResults.filter((result) => result.prospect.email);
+      const withSocial = historicalResults.filter((result) => result.prospect.facebookUrl || result.prospect.instagramUrl || result.prospect.linkedinUrl);
+      const phoneOnly = historicalResults.filter((result) => result.rejectionReason === "Phone-only / written outreach blocked");
+      const blocked = historical.flatMap((job) => job.blockedProspects ?? []).length;
+      const baseScore = 45 + marketStateBonus(market) + tradeBonus(trade);
+      const qualifiedProspectRate = historicalResults.length ? Math.round((qualified.length / historicalResults.length) * 100) : Math.min(82, baseScore + 8);
+      const usableWrittenContactRate = historicalResults.length ? Math.round((withWritten.length / historicalResults.length) * 100) : Math.min(78, baseScore + (settings.preferSocialFirstLeads ? 8 : 3));
+      const publicBusinessEmailRate = historicalResults.length ? Math.round((withEmail.length / historicalResults.length) * 100) : Math.max(18, baseScore - 22 + (settings.preferEmailReadyLeads ? 5 : 0));
+      const socialAvailabilityRate = historicalResults.length ? Math.round((withSocial.length / historicalResults.length) * 100) : Math.max(25, baseScore - 12 + (settings.preferSocialFirstLeads ? 8 : 0));
+      const phoneOnlyBlockRate = historicalResults.length ? Math.round((phoneOnly.length / historicalResults.length) * 100) : Math.max(6, 30 - tradeBonus(trade));
+      const alreadyReviewedRate = historicalResults.length ? Math.round(((historicalResults.length - qualified.length - blocked) / Math.max(1, historicalResults.length)) * 100) : 8;
+      const brokenInactiveWebsiteRate = historicalResults.length ? Math.round((blocked / Math.max(1, historicalResults.length)) * 100) : 7;
+      const averageOpportunityScore = historicalResults.length ? Math.round(historicalResults.reduce((sum, result) => sum + result.opportunityScore, 0) / historicalResults.length) : Math.min(86, baseScore + 12);
+      const averageContactabilityScore = historicalResults.length ? Math.round(historicalResults.reduce((sum, result) => sum + result.salesScores.contactabilityScore, 0) / Math.max(1, historicalResults.length)) : usableWrittenContactRate;
+      const providerCoverageQuality = historical.some((job) => Object.values(job.discoveryDiagnostics?.providerDiagnostics ?? {}).some((provider) => provider.status === "succeeded"))
+        ? "historical provider success"
+        : "dry-run estimate, provider calls not made";
+      const score = Math.max(0, Math.min(100, Math.round(
+        qualifiedProspectRate * 0.3
+        + usableWrittenContactRate * 0.25
+        + publicBusinessEmailRate * 0.12
+        + socialAvailabilityRate * 0.12
+        + averageOpportunityScore * 0.12
+        + averageContactabilityScore * 0.09
+        - phoneOnlyBlockRate * 0.14
+        - alreadyReviewedRate * 0.08
+        - brokenInactiveWebsiteRate * 0.08
+      )));
+      results.push({
+        market,
+        trade,
+        sampleSize,
+        qualifiedProspectRate,
+        usableWrittenContactRate,
+        publicBusinessEmailRate,
+        socialAvailabilityRate,
+        phoneOnlyBlockRate,
+        alreadyReviewedRate,
+        brokenInactiveWebsiteRate,
+        averageOpportunityScore,
+        averageContactabilityScore,
+        providerCoverageQuality,
+        score,
+        recommendationReason: `${trade} near ${market} scored ${score}/100 from contactability, expected opportunity, and historical provider signals. This is a dry run and made no provider calls.`,
+      });
+    }
+  }
+  const sorted = results.toSorted((left, right) => right.score - left.score);
+  const bestResult = sorted[0] ?? null;
+  return {
+    settings,
+    bounded: true,
+    totalEstimatedRecords: results.reduce((sum, result) => sum + result.sampleSize, 0),
+    results: sorted,
+    bestResult,
+    message: bestResult
+      ? `Best dry-run scout target: ${bestResult.trade} near ${bestResult.market}.`
+      : "No market scout targets were available.",
+    lastRunAt: now.toISOString(),
+  };
+}
+
+export function smartRecommendationForGrowth(input: {
+  existing: ExistingQualifiedUnsentSummary;
+  scout: MarketScoutSummary;
+  environment?: NodeJS.ProcessEnv;
+}): SmartRecommendation {
+  const env = outreachEnvironment(input.environment);
+  const whatItWillNotDo = [
+    "It will not send emails.",
+    "It will not send social DMs.",
+    "It will not submit contact forms.",
+    "It will not place calls.",
+    "It will not record or send Looms.",
+  ];
+  if (input.existing.needsRefreshedCopy > 0) {
+    return {
+      nextBestMove: "Run copy refresh on existing unsent packages first.",
+      why: `${input.existing.needsRefreshedCopy} unsent package${input.existing.needsRefreshedCopy === 1 ? "" : "s"} can be updated to ${currentOutreachCopyVersion} before spending provider requests.`,
+      whatItWillDo: ["Refresh only unsent, uncontacted outreach copy.", "Keep public preview links when valid.", "Preserve sent logs, suppression, opt-outs, and replies."],
+      whatItWillNotDo,
+      recommendedAction: "process_existing_qualified_prospects",
+    };
+  }
+  if (input.existing.foundOnlyInTopProspectsResults > 0 || input.existing.total > 0) {
+    return {
+      nextBestMove: "Use existing qualified unsent prospects first.",
+      why: `${input.existing.total} qualified unsent prospect${input.existing.total === 1 ? "" : "s"} already exist across saved results and queue items.`,
+      whatItWillDo: ["Route saved prospects into manual queues.", "Generate missing draft packages only where safe.", "Show blocked and preview-needed items clearly."],
+      whatItWillNotDo,
+      recommendedAction: "process_existing_qualified_prospects",
+    };
+  }
+  if (env.emailKillSwitchEnabled) {
+    return {
+      nextBestMove: "Run Market Scout before any full Autopilot run.",
+      why: "Prospect email sending is still blocked by OUTREACH_EMAIL_DISABLED, so the safest useful next action is a dry-run market recommendation.",
+      whatItWillDo: ["Compare small bounded market/trade samples.", "Recommend the next Top Prospects run.", "Avoid provider-heavy nationwide scans."],
+      whatItWillNotDo,
+      recommendedAction: "run_market_scout_dry_run",
+    };
+  }
+  return {
+    nextBestMove: input.scout.bestResult
+      ? `Run a small Top Prospects test: ${input.scout.bestResult.trade} near ${input.scout.bestResult.market}.`
+      : "Run Market Scout before new discovery.",
+    why: input.scout.bestResult?.recommendationReason ?? "There is no existing qualified unsent inventory yet.",
+    whatItWillDo: ["Use the best bounded market/trade recommendation.", "Keep the first run small.", "Send nothing automatically."],
+    whatItWillNotDo,
+    recommendedAction: input.scout.bestResult ? "start_small_top_prospects_test" : "run_market_scout_dry_run",
+  };
+}
+
+function formatReasons(reasons: Record<string, number>) {
+  const entries = Object.entries(reasons).sort((left, right) => right[1] - left[1]);
+  return entries.length ? entries.map(([reason, count]) => `${count} ${reason}`).join("\n") : "No blocked reasons recorded.";
+}
+
+export function buildSmartRunSummary(input: {
+  existing: ExistingQualifiedUnsentSummary;
+  scout: MarketScoutSummary;
+  recommendation: SmartRecommendation;
+  actionLabel?: string;
+  now?: Date;
+}): SmartRunSummary {
+  const createdAt = (input.now ?? new Date()).toISOString();
+  const marketScoutResults = input.scout.results.slice(0, 5).map((result) =>
+    `${result.trade} near ${result.market}: ${result.score}/100, written contact ${result.usableWrittenContactRate}%, phone-only ${result.phoneOnlyBlockRate}%`
+  );
+  const queuesUpdated = smartQueueKeys
+    .filter((key) => input.existing.queueCounts[key] > 0)
+    .map((key) => `${smartQueueLabels[key]}: ${input.existing.queueCounts[key]}`);
+  const safetyGates = [
+    "No emails sent.",
+    "No DMs sent.",
+    "No contact forms submitted.",
+    "No calls placed.",
+    "No Looms recorded or sent.",
+    "Suppression, opt-out, bounce, complaint, not-interested, and contacted history stayed unchanged.",
+  ];
+  const whatWasNotDone = [
+    "No new nationwide discovery was started.",
+    "No social media automation was used.",
+    "No prospect-facing message was sent.",
+    "No secrets or environment values were included.",
+  ];
+  const summaryText = [
+    `Smart Autonomous Growth Summary: ${input.actionLabel ?? "Dry Run"}`,
+    `Checked: ${input.existing.checkedSources.join(", ")}`,
+    `Existing qualified unsent prospects found: ${input.existing.total}`,
+    `Where found: queue ${input.existing.sourceCounts.outreachQueueItems}, ranked ${input.existing.sourceCounts.rankedProspects}, reviewable ${input.existing.sourceCounts.reviewablePackages}, saved results ${input.existing.sourceCounts.savedTopProspectsResults}, generated packages ${input.existing.sourceCounts.generatedOutreachPackages}`,
+    `Copy refreshed: ${input.existing.refreshedCopyCount}`,
+    `Missing packages generated: ${input.existing.generatedMissingPackages}`,
+    `Needs preview: ${input.existing.needsPreview}`,
+    `Best scout target: ${input.scout.bestResult ? `${input.scout.bestResult.trade} near ${input.scout.bestResult.market}` : "not available"}`,
+    `Next best action: ${input.recommendation.nextBestMove}`,
+    `Safety: ${safetyGates.join(" ")}`,
+    `What was not done: ${whatWasNotDone.join(" ")}`,
+  ].join("\n");
+  return {
+    title: input.actionLabel ?? "Smart Autonomous Growth Dry Run",
+    checked: input.existing.checkedSources,
+    existingUnsentProspectsFound: input.existing.total,
+    whereFound: [
+      `${input.existing.sourceCounts.outreachQueueItems} outreach queue items`,
+      `${input.existing.sourceCounts.rankedProspects} ranked prospects`,
+      `${input.existing.sourceCounts.reviewablePackages} reviewable packages`,
+      `${input.existing.sourceCounts.savedTopProspectsResults} saved Top Prospects results`,
+      `${input.existing.sourceCounts.generatedOutreachPackages} generated outreach packages`,
+    ],
+    copyRefreshedCount: input.existing.refreshedCopyCount,
+    missingPackagesGeneratedCount: input.existing.generatedMissingPackages,
+    packagesGeneratedCount: input.existing.generatedMissingPackages,
+    marketScoutResults,
+    bestMarketTradeRecommendation: input.scout.bestResult ? `${input.scout.bestResult.trade} near ${input.scout.bestResult.market}` : "Run Market Scout first.",
+    queuesUpdated,
+    blockedReasons: input.existing.blockedSkippedReasons,
+    safetyGates,
+    nextBestAction: input.recommendation.nextBestMove,
+    whatWasNotDone,
+    summaryText,
+    debugSummaryText: [
+      summaryText,
+      "",
+      "Blocked/skipped reasons:",
+      formatReasons(input.existing.blockedSkippedReasons),
+      "",
+      "Scout details:",
+      marketScoutResults.join("\n") || "No scout results.",
+    ].join("\n"),
+    createdAt,
+  };
+}
+
+export function buildSmartAutonomousGrowthSnapshot(input: {
+  queue: OutreachQueueItem[];
+  topProspectJobs?: Pick<TopProspectJob, "input" | "results" | "reviewedNotRecommended" | "blockedProspects" | "discoveryDiagnostics">[];
+  marketScoutSettings?: Partial<MarketScoutSettings>;
+  lastRunSummary?: SmartRunSummary | null;
+  environment?: NodeJS.ProcessEnv;
+  now?: Date;
+}): SmartAutonomousGrowthSnapshot {
+  const jobs = input.topProspectJobs ?? [];
+  const existing = summarizeExistingQualifiedUnsent(input.queue, jobs, input.now);
+  const scout = buildMarketScoutDryRun(input.marketScoutSettings, jobs, input.now);
+  const recommendation = smartRecommendationForGrowth({ existing, scout, environment: input.environment });
+  const summary = input.lastRunSummary ?? buildSmartRunSummary({ existing, scout, recommendation, actionLabel: "Dashboard Snapshot", now: input.now });
+  const blockedReasons = formatReasons(existing.blockedSkippedReasons);
+  return {
+    existingQualifiedUnsent: existing,
+    marketScout: scout,
+    recommendation,
+    lastRunSummary: summary,
+    copySummaries: {
+      smartRun: summary.summaryText,
+      marketScout: [
+        scout.message,
+        `Estimated records: ${scout.totalEstimatedRecords}`,
+        ...scout.results.slice(0, 8).map((result) => `${result.trade} near ${result.market}: ${result.score}/100. ${result.recommendationReason}`),
+        "Dry run only. No provider calls or outreach sends.",
+      ].join("\n"),
+      existingProspectBackfill: [
+        `Existing qualified unsent prospects: ${existing.total}`,
+        `Ready for email review: ${existing.readyForEmailReview}`,
+        `Ready for Facebook/Instagram manual DM: ${existing.readyForFacebookInstagramManualDm}`,
+        `Ready for contact form/manual research: ${existing.readyForContactFormManualResearch}`,
+        `Needs refreshed copy: ${existing.needsRefreshedCopy}`,
+        `Needs preview: ${existing.needsPreview}`,
+        `Found only in Top Prospects results: ${existing.foundOnlyInTopProspectsResults}`,
+        `Already saved as queue/package: ${existing.alreadySavedAsQueuePackage}`,
+        "Nothing was sent.",
+      ].join("\n"),
+      nextBestMove: [
+        recommendation.nextBestMove,
+        `Why: ${recommendation.why}`,
+        `Will do: ${recommendation.whatItWillDo.join(" ")}`,
+        `Will not do: ${recommendation.whatItWillNotDo.join(" ")}`,
+      ].join("\n"),
+      blockedReasons,
+      debug: summary.debugSummaryText,
+    },
+  };
+}
 
 function clampCap(value: unknown, fallback: number, min: number, max: number) {
   const numberValue = Number(value);

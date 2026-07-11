@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   casualDmPlaybook,
+  buildMarketScoutDryRun,
+  buildSmartAutonomousGrowthSnapshot,
   currentOutreachCopyVersion,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
@@ -21,6 +23,8 @@ import {
   queueStatusAfterManualAction,
   queueStatusForPackage,
   rewriteOutreachWithFixes,
+  smartQueueKeyForItem,
+  summarizeExistingQualifiedUnsent,
   type OutreachQueueItem,
 } from "../lib/autonomous-growth";
 import {
@@ -55,7 +59,7 @@ import {
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
-import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob } from "../lib/top-prospects";
+import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
 import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 
 process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
@@ -147,6 +151,34 @@ function eligibleProspect() {
     classification: "website_redesign",
   } as Prospect);
   return prepareTopProspectArtifacts(prospect, publicLink).prospect;
+}
+
+function topProspectResultFixture(prospect: Prospect, overrides: Partial<TopProspectResult> = {}): TopProspectResult {
+  const prepared = prepareTopProspectArtifacts(prospect, overrides.previewLink ?? publicLink);
+  return {
+    id: "result-smart-1",
+    rank: 1,
+    selected: true,
+    rejectionReason: null,
+    resultBucket: "ranked_top_prospect",
+    opportunityScore: prepared.assessment.opportunityScore,
+    salesScores: prepared.assessment.salesScores,
+    presenceScores: prepared.assessment.presenceScores,
+    mainWeakness: prepared.assessment.mainWeakness,
+    whyMayBuy: prepared.assessment.whyMayBuy,
+    pitchAngle: prepared.assessment.pitchAngle,
+    buildPrompt: prepared.buildPrompt,
+    previewLink: prepared.previewLink,
+    packageStatus: "PACKAGE_GENERATED",
+    packageGeneratedAt: new Date(1).toISOString(),
+    packageReviewedAt: null,
+    packageApprovedAt: null,
+    packageSentAt: null,
+    packageSkippedAt: null,
+    emailQuality: prepared.emailQuality,
+    prospect: prepared.prospect,
+    ...overrides,
+  };
 }
 
 function eligibilityFor(prospect: Prospect, overrides: Partial<Parameters<typeof evaluateAutoSendEligibility>[0]> = {}) {
@@ -1507,6 +1539,100 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
   }
+});
+
+test("Smart Growth summarizes existing qualified unsent prospects across queue items and saved Top Prospects results", () => {
+  const queued = queueItem({
+    id: "queue-smart-old",
+    topProspectResultId: "result-queued",
+    businessName: "Queued Pressure Washing",
+    trade: "Pressure Washing",
+    city: "Tampa, FL",
+    outreachCopyVersion: "old_copy_v0",
+  });
+  const socialProspect = withAnalysis({
+    ...structuredClone(seedProspects[2]),
+    businessName: "Social First Landscaping",
+    trade: "Landscaping",
+    city: "Orlando",
+    state: "FL",
+    email: "",
+    facebookUrl: "https://facebook.com/socialfirstlandscaping",
+    recommendedContactMethod: "message_on_facebook",
+    classification: "website_redesign",
+  } as Prospect);
+  const topResult = topProspectResultFixture(socialProspect, {
+    id: "result-social-only",
+    packageStatus: "PACKAGE_GENERATED",
+    resultBucket: "ranked_top_prospect",
+  });
+  const job = topProspectJobFixture(createAutopilotCampaign(defaultAutopilotCampaignSettings), {
+    results: [topResult],
+    reviewedNotRecommended: [],
+  });
+  const summary = summarizeExistingQualifiedUnsent([queued], [job], new Date(10));
+
+  assert.equal(summary.total, 2);
+  assert.equal(summary.needsRefreshedCopy, 1);
+  assert.equal(summary.alreadySavedAsQueuePackage, 1);
+  assert.equal(summary.foundOnlyInTopProspectsResults, 1);
+  assert.equal(summary.readyForEmailReview, 1);
+  assert.equal(summary.readyForFacebookInstagramManualDm, 1);
+  assert.equal(summary.sourceCounts.outreachQueueItems, 1);
+  assert.equal(summary.sourceCounts.rankedProspects, 1);
+  assert.equal(summary.checkedSources.some((source) => /Top Prospects/i.test(source)), true);
+  assert.equal(smartQueueKeyForItem(queued), "readyForEmailReview");
+});
+
+test("Smart Growth skips contacted, suppressed, bad-fit, and phone-only inventory before recommending new discovery", () => {
+  const sent = queueItem({ id: "sent-smart", status: "Sent", sentDate: new Date(20).toISOString(), outreachCopyVersion: "old_copy_v0" });
+  const suppressed = queueItem({ id: "suppressed-smart", status: "Suppressed", replyStatus: "complaint", notes: "suppressed" });
+  const phoneOnly = queueItem({ id: "phone-smart", contactSource: "Phone", blockedReason: "Phone-only / written outreach blocked" });
+  const badFitProspect = withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Blocked Supplier",
+    email: "owner@example.com",
+    recommendedContactMethod: "send_email",
+  } as Prospect);
+  const badFit = topProspectResultFixture(badFitProspect, {
+    id: "result-bad-fit",
+    selected: false,
+    rejectionReason: "Supplier/distributor",
+    resultBucket: "blocked",
+  });
+  const job = topProspectJobFixture(createAutopilotCampaign(defaultAutopilotCampaignSettings), {
+    results: [],
+    reviewedNotRecommended: [badFit],
+    blockedProspects: [badFit],
+  });
+  const snapshot = buildSmartAutonomousGrowthSnapshot({
+    queue: [sent, suppressed, phoneOnly],
+    topProspectJobs: [job],
+    environment: { OUTREACH_EMAIL_DISABLED: "true" } as NodeJS.ProcessEnv,
+    now: new Date(30),
+  });
+
+  assert.equal(snapshot.existingQualifiedUnsent.total, 0);
+  assert.equal(snapshot.existingQualifiedUnsent.skippedCount, 4);
+  assert.match(snapshot.copySummaries.blockedReasons, /Already Contacted|Suppressed|Phone-Only|Supplier/);
+  assert.match(snapshot.recommendation.nextBestMove, /Market Scout/i);
+  assert.doesNotMatch(snapshot.copySummaries.debug, /DATABASE_URL|RESEND_API_KEY|TWILIO_AUTH_TOKEN|GOOGLE_PLACES_API_KEY|secret-/i);
+});
+
+test("Market Scout dry run stays bounded and recommends a market without provider calls or sends", () => {
+  const scout = buildMarketScoutDryRun({
+    marketsToTest: ["Tampa, FL", "Orlando, FL", "Dallas, TX"],
+    tradesToTest: ["Pressure Washing", "Landscaping", "HVAC"],
+    scoutSampleSizePerMarketTrade: 12,
+    maxTotalScoutRecords: 30,
+  }, [], new Date(40));
+
+  assert.equal(scout.bounded, true);
+  assert.equal(scout.totalEstimatedRecords <= 30, true);
+  assert.ok(scout.results.length > 0);
+  assert.ok(scout.bestResult);
+  assert.match(scout.bestResult?.recommendationReason ?? "", /dry run and made no provider calls/i);
+  assert.doesNotMatch(JSON.stringify(scout), /DATABASE_URL|GOOGLE_PLACES_API_KEY|RESEND_API_KEY|secret-/i);
 });
 
 function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueItem {

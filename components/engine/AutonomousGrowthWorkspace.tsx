@@ -9,12 +9,15 @@ import {
   csvEscape,
   loomNeededTaskForQueueItem,
   outreachQueueStatuses,
+  smartQueueLabels,
   type AutonomousFeedbackLabel,
   type AutonomousGrowthDashboard,
   type AutonomousGrowthMode,
   type AutonomousGrowthSettings,
   type OutreachQueueItem,
   type OutreachQueueStatus,
+  type SmartAutonomousGrowthSnapshot,
+  type SmartRunSummary,
 } from "@/lib/autonomous-growth";
 import { allCoreServiceTradesOption, prospectSearchTypes, tradeCategories, type TradeCategory } from "@/lib/prospect-engine";
 import {
@@ -53,6 +56,8 @@ type ApiPayload = Partial<DashboardPayload> & {
   autopilot?: AutopilotDashboard;
   smokeTest?: AutopilotSmokeTestResult;
   sendResult?: { sent: boolean; blockedReasons: string[] };
+  smartGrowth?: SmartAutonomousGrowthSnapshot;
+  summary?: SmartRunSummary;
   autoEmailBatch?: {
     attempted: number;
     sent: number;
@@ -480,6 +485,27 @@ export function AutonomousGrowthWorkspace() {
     }
   }
 
+  async function runSmartGrowthAction(action: string, successMessage: string) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.smartGrowth) throw new Error(apiError(payload, "Unable to run Smart Growth action."));
+      await loadDashboard();
+      setNotice(payload.summary?.nextBestAction ? `${successMessage} Next: ${payload.summary.nextBestAction}` : successMessage);
+    } catch (smartError) {
+      setError(smartError instanceof Error ? smartError.message : "Unable to run Smart Growth action.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function startAutopilot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await postAutopilot(
@@ -548,6 +574,16 @@ export function AutonomousGrowthWorkspace() {
         onSmokeTest={() => void postAutopilot("run_fake_autopilot_smoke_test")}
         onStart={startAutopilot}
         onStop={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")}
+      />
+
+      <SmartGrowthPanel
+        copied={copied}
+        disabled={saving}
+        smartGrowth={dashboard.smartGrowth}
+        onCopy={copyText}
+        onMarketScout={() => void runSmartGrowthAction("run_market_scout_dry_run", "Market Scout dry run finished. No provider calls or outreach sends happened.")}
+        onProcessExisting={() => void runSmartGrowthAction("process_existing_qualified_prospects", "Existing qualified prospects processed for manual review. Nothing was sent.")}
+        onSmartDryRun={() => void runSmartGrowthAction("run_smart_autonomous_dry_run", "Smart Autonomous dry run finished. Nothing was sent.")}
       />
 
       <section className="engine-panel">
@@ -739,6 +775,113 @@ export function AutonomousGrowthWorkspace() {
         </div>
       </section>
     </div>
+  );
+}
+
+function SmartGrowthPanel({
+  copied,
+  disabled,
+  smartGrowth,
+  onCopy,
+  onMarketScout,
+  onProcessExisting,
+  onSmartDryRun,
+}: {
+  copied: string;
+  disabled: boolean;
+  smartGrowth: SmartAutonomousGrowthSnapshot;
+  onCopy: (key: string, value: string) => void;
+  onMarketScout: () => void;
+  onProcessExisting: () => void;
+  onSmartDryRun: () => void;
+}) {
+  const existing = smartGrowth.existingQualifiedUnsent;
+  const scout = smartGrowth.marketScout;
+  const recommendation = smartGrowth.recommendation;
+  const copyEntries = [
+    ["Smart Run Summary", smartGrowth.copySummaries.smartRun],
+    ["Market Scout Summary", smartGrowth.copySummaries.marketScout],
+    ["Existing Prospect Backfill Summary", smartGrowth.copySummaries.existingProspectBackfill],
+    ["Next Best Move", smartGrowth.copySummaries.nextBestMove],
+    ["Blocked Reasons Summary", smartGrowth.copySummaries.blockedReasons],
+    ["Debug Summary", smartGrowth.copySummaries.debug],
+  ] as const;
+  return (
+    <section className="engine-panel engine-smart-growth" aria-label="Smart Autonomous Growth operator">
+      <div className="engine-panel__head">
+        <div>
+          <h2>Smart Autonomous Growth</h2>
+          <p>Checks existing qualified unsent prospects before spending provider requests. Smart actions create drafts, queues, summaries, and recommendations only.</p>
+        </div>
+        <span>{copied ? `${copied} copied` : "No outreach sent"}</span>
+      </div>
+
+      <div className="engine-smart-growth__grid">
+        <article className="engine-smart-growth__card">
+          <span>Existing Qualified Unsent Prospects</span>
+          <strong>{existing.total}</strong>
+          <p>Found across outreach queue items, ranked prospects, reviewable packages, generated packages, and saved Top Prospects results.</p>
+          <dl>
+            <div><dt>Ready for email review</dt><dd>{existing.readyForEmailReview}</dd></div>
+            <div><dt>Ready for Facebook/Instagram manual DM</dt><dd>{existing.readyForFacebookInstagramManualDm}</dd></div>
+            <div><dt>Ready for contact form/manual research</dt><dd>{existing.readyForContactFormManualResearch}</dd></div>
+            <div><dt>Needs refreshed copy</dt><dd>{existing.needsRefreshedCopy}</dd></div>
+            <div><dt>Needs preview</dt><dd>{existing.needsPreview}</dd></div>
+            <div><dt>Found only in Top Prospects results</dt><dd>{existing.foundOnlyInTopProspectsResults}</dd></div>
+            <div><dt>Already saved as queue/package</dt><dd>{existing.alreadySavedAsQueuePackage}</dd></div>
+            <div><dt>Blocked/skipped</dt><dd>{existing.skippedCount}</dd></div>
+          </dl>
+          <button className="engine-button engine-button--primary" disabled={disabled} onClick={onProcessExisting} type="button">Process Existing Qualified Prospects</button>
+        </article>
+
+        <article className="engine-smart-growth__card">
+          <span>Market Scout</span>
+          <strong>{scout.bestResult ? `${scout.bestResult.trade} near ${scout.bestResult.market}` : "No scout result yet"}</strong>
+          <p>{scout.message} Scout mode is bounded: {scout.totalEstimatedRecords} estimated records, no provider calls from dry run, no sending.</p>
+          <dl>
+            <div><dt>Markets to test</dt><dd>{scout.settings.marketsToTest.length}</dd></div>
+            <div><dt>Trades to test</dt><dd>{scout.settings.tradesToTest.length}</dd></div>
+            <div><dt>Sample size</dt><dd>{scout.settings.scoutSampleSizePerMarketTrade}</dd></div>
+            <div><dt>Max records</dt><dd>{scout.settings.maxTotalScoutRecords}</dd></div>
+            <div><dt>Exclude reviewed</dt><dd>{scout.settings.excludePreviouslyReviewed ? "On" : "Off"}</dd></div>
+            <div><dt>Written outreach only</dt><dd>{scout.settings.writtenOutreachOnly ? "On" : "Off"}</dd></div>
+          </dl>
+          <button className="engine-button" disabled={disabled} onClick={onMarketScout} type="button">Run Market Scout Dry Run</button>
+        </article>
+
+        <article className="engine-smart-growth__card engine-smart-growth__card--recommendation">
+          <span>Next Best Move</span>
+          <strong>{recommendation.nextBestMove}</strong>
+          <p>{recommendation.why}</p>
+          <div className="engine-smart-growth__split">
+            <div><b>What it will do</b><ul>{recommendation.whatItWillDo.map((item) => <li key={item}>{item}</li>)}</ul></div>
+            <div><b>What it will NOT do</b><ul>{recommendation.whatItWillNotDo.map((item) => <li key={item}>{item}</li>)}</ul></div>
+          </div>
+          <button className="engine-button" disabled={disabled} onClick={onSmartDryRun} type="button">Run Smart Autonomous Dry Run</button>
+        </article>
+      </div>
+
+      <div className="engine-smart-queues" aria-label="Smart queue routing">
+        {Object.entries(existing.queueCounts).map(([key, count]) => (
+          <article key={key}>
+            <span>{smartQueueLabels[key as keyof typeof smartQueueLabels]}</span>
+            <strong>{count}</strong>
+          </article>
+        ))}
+      </div>
+
+      <div className="engine-smart-summary-grid">
+        {copyEntries.map(([label, value]) => (
+          <article key={label}>
+            <header>
+              <h3>{label}</h3>
+              <button className="engine-button" disabled={!value.trim()} onClick={() => void onCopy(label, value)} type="button">{copied === label ? "Copied" : "Copy"}</button>
+            </header>
+            <pre>{value}</pre>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
