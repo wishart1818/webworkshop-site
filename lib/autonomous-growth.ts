@@ -768,7 +768,7 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
     plan.add("make it more human");
     plan.add("remove hype and agency-sounding phrases");
   }
-  if (!/would you be open|would you want|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
+  if (!/would you be open|would you want|would you like|want to see it|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
   if (!/would rather not receive another note/i.test(outreachText)) plan.add("preserve opt-out language");
   if (/\bfree audit\b/i.test(outreachText)) plan.add("remove free audit language");
   if (/One thing that already works well:|One missed opportunity:/i.test(outreachText)) plan.add("rewrite audit-style phrases into plain language");
@@ -784,9 +784,9 @@ export function rewriteOutreachWithFixes(emailBody: string) {
     "",
     "I came across your business while looking at local service companies and put together a quick website preview.",
     "",
-    "Nothing crazy - just a cleaner version focused on making it easier for people to see what you do, request a quote, or call.",
+    "It's built to make the page look cleaner and help get you more calls and quote requests.",
     "",
-    "Would you want me to send it over?",
+    "Would you like me to send it over?",
     "",
     optOut,
   ].join("\n");
@@ -863,29 +863,29 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
   return {
     firstDm: noWebsite
       ? [
-          `Hey, how's it going? I noticed ${prospect.businessName} didn't have a website, so I built you a quick preview showing how you could get more calls. Would you want to see it?`,
+          `Hey, how's it going? I noticed ${prospect.businessName} didn't have a website, so I built you a quick preview showing how a cleaner page could help get more calls and quote requests. Want to see it?`,
         ].join("\n")
       : [
-          `Hey, how's it going? I came across ${prospect.businessName} and put together a quick website preview for you. Would you want to see it?`,
+          `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`,
         ].join("\n"),
     softerFirstDm: [
-      `Hey, how's it going? I came across ${prospect.businessName} and made you a quick website preview. It is just a simple idea for making the page cleaner and easier for people to request a quote. Would you want to see it?`,
+      `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and make it easier for people to call or request a quote. Want to see it?`,
     ].join("\n"),
     yesReply: [
       "Sounds good - here's the preview:",
       "",
       previewReference,
       "",
-      "It's just a quick concept, but the idea is to make the services, trust points, and quote path easier to see.",
+      "It's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.",
       "",
-      "Would it be worth sending over what a simple version of this would cost?",
+      "If you like it, I can send over the simple pricing/options.",
     ].join("\n"),
     loomScript: [
       "Hey, I just wanted to walk you through this quick.",
       "",
       `${context} and put together a simple preview for you.`,
       "",
-      "The main idea is giving people one clean place to see what you do and request a quote.",
+      "The main idea is making the page cleaner and helping people call or request a quote.",
       "",
       "This isn't live or anything, just a concept. If you like the direction, I can send over the next steps and pricing.",
     ].join("\n"),
@@ -898,9 +898,9 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
       "Preview:",
       previewReference,
       "",
-      "It's just a quick concept, but the idea is to make the site cleaner and make it easier for people to request a quote.",
+      "It's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.",
     ].join("\n"),
-    websiteExplanation: "It's a simple website concept focused on giving people one clean place to see your services and request a quote.",
+    websiteExplanation: "It's a simple website concept focused on making the page cleaner and helping people call or request a quote.",
     nextStepsReply: "Yeah, if you like the direction, I can finish it out and get it ready to go live for you.",
     pricingReply: [
       "If you like the direction, pricing for this type of site is $1,000 total.",
@@ -980,7 +980,7 @@ export function loomRecommendationForQueueItem(item: OutreachQueueItem): LoomRec
   const recommended = highValue && strongPreview && usableContact && publicPreview && Boolean(visualIssue);
   const currentSiteIssue = visualIssue || "No specific visual website issue has been recorded yet.";
   const previewImprovement = item.improvementSuggestions.find((suggestion) => /preview|quote|contact|layout|service/i.test(suggestion))
-    ?? "Show the public preview's cleaner service layout and quote path.";
+    ?? "Show how the public preview makes services and quote requests easier to find.";
   return {
     recommended,
     title: recommended ? `Loom walkthrough for ${item.businessName}` : "Loom not recommended yet",

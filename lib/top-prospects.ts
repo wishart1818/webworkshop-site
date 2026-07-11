@@ -678,11 +678,11 @@ export function evaluateOutreachEmailQuality(
     : drafts.length >= 4 && drafts.every((draft) => /would rather not receive another note/i.test(draft));
   const clearCtaReady = socialFirstDm
     ? mainEmails.length === 2
-      && /would you like to see it|would you want to see it/i.test(mainEmails[0])
+      && /would you like to see it|would you want to see it|want to see it/i.test(mainEmails[0])
       && /here's the preview|here is the preview/i.test(mainEmails[1])
     : mainEmails.length === 2
       && /would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send|would you want me to send it over/i.test(mainEmails[0])
-      && /would it be worth sending over|would you want me to send over|would you like me to send/i.test(mainEmails[1]);
+      && /would it be worth sending over|would you want me to send over|would you like me to send|i can send over the simple pricing\/options/i.test(mainEmails[1]);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
     {
@@ -703,10 +703,10 @@ export function evaluateOutreachEmailQuality(
     },
     {
       key: "missed_opportunity",
-      label: "Outreach uses natural improvement framing",
+      label: "Outreach uses simple preview wording",
       passed: mainEmails.length === 2
         && !/one missed opportunity:/i.test(combined)
-        && /cleaner|easier|services|trust|quote|call/i.test(combined),
+        && /cleaner|calls|quote requests|easier|services|quote|call/i.test(combined),
     },
     {
       key: "clear_cta",
