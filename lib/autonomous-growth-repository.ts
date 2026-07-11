@@ -52,7 +52,7 @@ import {
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
-import { sendInternalOperatorNotification, type InternalNotificationInput } from "@/lib/internal-notifications";
+import { sendInternalOperatorNotification, sendInternalOperatorSms, type InternalNotificationInput } from "@/lib/internal-notifications";
 import type { TopProspectJob } from "@/lib/top-prospects";
 
 const globalAutonomous = globalThis as typeof globalThis & {
@@ -354,9 +354,15 @@ function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
 }
 
 async function sendInternalOperatorNotificationSafely(input: InternalNotificationInput) {
-  const result = await sendInternalOperatorNotification(input);
-  if (!result.sent && result.configured) {
-    console.warn("[operator-notification] Internal notification failed safely.", { reasons: result.blockedReasons });
+  const [emailResult, smsResult] = await Promise.all([
+    sendInternalOperatorNotification(input),
+    sendInternalOperatorSms(input),
+  ]);
+  if (!emailResult.sent && emailResult.configured) {
+    console.warn("[operator-notification] Internal email notification failed safely.", { reasons: emailResult.blockedReasons });
+  }
+  if (!smsResult.sent && smsResult.configured) {
+    console.warn("[operator-notification] Internal SMS notification failed safely.", { reasons: smsResult.blockedReasons });
   }
 }
 

@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { internalNotificationBody, internalNotificationEnvironment, sendInternalOperatorNotification } from "../lib/internal-notifications";
+import {
+  internalNotificationBody,
+  internalNotificationEnvironment,
+  internalSmsBody,
+  internalSmsEnvironment,
+  maskOperatorPhone,
+  sendInternalOperatorNotification,
+  sendInternalOperatorSms,
+} from "../lib/internal-notifications";
 import { generateOneTestOutreachPackage, getOperatorTestCenterPayload } from "../lib/operator-test-center";
 import { OperatorTestCenterWorkspace } from "../components/engine/OperatorTestCenterWorkspace";
 
@@ -51,6 +59,104 @@ test("internal notification env is separate from prospect email kill switches", 
   assert.equal(env.hasNotifyFromEmail, true);
 });
 
+test("internal SMS test only sends to INTERNAL_NOTIFY_PHONE", async () => {
+  const calls: Array<{ to?: string | null; from?: string | null; body?: string | null; authorization?: string }> = [];
+  const result = await sendInternalOperatorSms({
+    kind: "operator_test",
+    title: "Internal SMS test",
+    marketTrade: "Operator Test Center",
+    resultCount: 1,
+    attention: "Operator needs to verify alerts.",
+    nextAction: "Check the internal phone.",
+    pagePath: "/engine?tab=operator-test-center",
+  }, {
+    SMS_NOTIFICATIONS_ENABLED: "true",
+    INTERNAL_NOTIFY_PHONE: "+14195551234",
+    TWILIO_ACCOUNT_SID: "twilio-account-sid",
+    TWILIO_AUTH_TOKEN: "secret-twilio-token",
+    TWILIO_FROM_PHONE: "+14195550000",
+    NEXT_PUBLIC_SITE_URL: "https://webworkshop.dev",
+  } as NodeJS.ProcessEnv, async (_input, init) => {
+    const body = new URLSearchParams(String(init?.body ?? ""));
+    calls.push({
+      to: body.get("To"),
+      from: body.get("From"),
+      body: body.get("Body"),
+      authorization: String((init?.headers as Record<string, string>).Authorization ?? ""),
+    });
+    return new Response(JSON.stringify({ sid: "sms-test-1" }), { status: 200 });
+  });
+
+  assert.equal(result.sent, true);
+  assert.equal(result.toOperatorOnly, true);
+  assert.deepEqual(calls.map((call) => call.to), ["+14195551234"]);
+  assert.equal(calls[0].from, "+14195550000");
+  assert.match(calls[0].body ?? "", /WebWorkshop: Internal SMS test/);
+  assert.match(calls[0].body ?? "", /https:\/\/webworkshop\.dev\/engine\?tab=operator-test-center/);
+  assert.doesNotMatch(calls[0].body ?? "", /secret-twilio-token|DATABASE_URL|prospect/i);
+  assert.match(calls[0].authorization ?? "", /^Basic /);
+});
+
+test("SMS does not run when disabled and requires Twilio env vars", async () => {
+  let fetchCalled = false;
+  const disabled = await sendInternalOperatorSms({
+    kind: "operator_test",
+    title: "Internal SMS test",
+    attention: "Operator only.",
+    nextAction: "Configure SMS.",
+  }, {
+    SMS_NOTIFICATIONS_ENABLED: "false",
+    INTERNAL_NOTIFY_PHONE: "+14195551234",
+    TWILIO_ACCOUNT_SID: "twilio-account-sid",
+    TWILIO_AUTH_TOKEN: "secret-twilio-token",
+    TWILIO_FROM_PHONE: "+14195550000",
+  } as NodeJS.ProcessEnv, async () => {
+    fetchCalled = true;
+    return new Response("{}", { status: 200 });
+  });
+  const missing = await sendInternalOperatorSms({
+    kind: "operator_test",
+    title: "Internal SMS test",
+    attention: "Operator only.",
+    nextAction: "Configure SMS.",
+  }, {
+    SMS_NOTIFICATIONS_ENABLED: "true",
+    INTERNAL_NOTIFY_PHONE: "",
+    TWILIO_ACCOUNT_SID: "",
+    TWILIO_AUTH_TOKEN: "",
+    TWILIO_FROM_PHONE: "",
+  } as NodeJS.ProcessEnv, async () => {
+    fetchCalled = true;
+    return new Response("{}", { status: 200 });
+  });
+
+  assert.equal(disabled.sent, false);
+  assert.match(disabled.blockedReasons.join(" "), /SMS_NOTIFICATIONS_ENABLED/);
+  assert.equal(missing.sent, false);
+  assert.match(missing.blockedReasons.join(" "), /TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_FROM_PHONE|INTERNAL_NOTIFY_PHONE/);
+  assert.equal(fetchCalled, false);
+});
+
+test("SMS body masks lead phone numbers and uses app links without exposing secrets", () => {
+  const body = internalSmsBody({
+    kind: "phone_only_blocked",
+    title: "Phone-only prospect needs review",
+    marketTrade: "Pressure Washing near Tampa",
+    resultCount: 1,
+    attention: "Lead phone +14195550099 needs manual research.",
+    nextAction: "Open Test Center and review contact paths.",
+    pagePath: "/engine?tab=operator-test-center",
+  }, {
+    NEXT_PUBLIC_APP_URL: "https://webworkshop.dev",
+  } as NodeJS.ProcessEnv);
+
+  assert.match(body, /WebWorkshop: Phone-only prospect needs review/);
+  assert.match(body, /Open: https:\/\/webworkshop\.dev\/engine\?tab=operator-test-center/);
+  assert.match(body, /\[phone redacted\]/);
+  assert.doesNotMatch(body, /\+14195550099|TWILIO_AUTH_TOKEN|secret/i);
+  assert.equal(maskOperatorPhone("+14195551234"), "+1*****1234");
+});
+
 test("Operator Test Center summaries expose gate statuses without secrets", async () => {
   const originalEnv = { ...process.env };
   try {
@@ -63,6 +169,11 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     process.env.OUTREACH_AUTO_SEND_ENABLED = "false";
     process.env.OUTREACH_FULL_AUTO_SEND_ENABLED = "false";
     process.env.INTERNAL_NOTIFICATIONS_ENABLED = "false";
+    process.env.SMS_NOTIFICATIONS_ENABLED = "true";
+    process.env.INTERNAL_NOTIFY_PHONE = "+14195551234";
+    process.env.TWILIO_ACCOUNT_SID = "twilio-account-sid";
+    process.env.TWILIO_AUTH_TOKEN = "secret-twilio-token";
+    process.env.TWILIO_FROM_PHONE = "+14195550000";
 
     const payload = await getOperatorTestCenterPayload();
     const summaryBlob = JSON.stringify(payload.summaries);
@@ -70,9 +181,13 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.match(payload.summaries.emailSafety, /OUTREACH_EMAIL_DISABLED/i);
     assert.match(payload.summaries.emailSafety, /Full auto: blocked/i);
     assert.match(payload.summaries.fullStatus, /Provider coverage/i);
-    assert.match(payload.nextRecommendedTest, /Internal notifications|Provider coverage|Top Prospects|First-touch/i);
-    assert.doesNotMatch(summaryBlob, /secret-resend-key|DATABASE_URL|postgres:\/\/|operator@example.com/i);
+    assert.match(payload.summaries.smsNotifications, /SMS only sends to INTERNAL_NOTIFY_PHONE/);
+    assert.match(payload.summaries.smsNotifications, /\+1\*{5}1234/);
+    assert.match(payload.nextRecommendedTest, /Internal alerts|SMS alerts|Internal notifications|Provider coverage|Top Prospects|First-touch|Resend/i);
+    assert.doesNotMatch(summaryBlob, /secret-resend-key|secret-twilio-token|DATABASE_URL|postgres:\/\/|operator@example.com|\+14195551234/i);
     assert.ok(payload.statusCards.some((card) => card.label === "Internal notifications"));
+    assert.ok(payload.statusCards.some((card) => card.label === "SMS notifications"));
+    assert.ok(payload.statusCards.some((card) => card.label === "Operator phone" && card.value === "+1*****1234"));
   } finally {
     process.env = originalEnv;
   }
@@ -107,9 +222,24 @@ test("operator notification body is short, phone-friendly, and secret-safe", () 
   assert.doesNotMatch(body, /RESEND_API_KEY|DATABASE_URL|secret/i);
 });
 
+test("Operator Test Center SMS env is separate from prospect sending gates", () => {
+  const env = internalSmsEnvironment({
+    SMS_NOTIFICATIONS_ENABLED: "true",
+    INTERNAL_NOTIFY_PHONE: "+14195551234",
+    TWILIO_ACCOUNT_SID: "twilio-account-sid",
+    TWILIO_AUTH_TOKEN: "secret-twilio-token",
+    TWILIO_FROM_PHONE: "+14195550000",
+    OUTREACH_EMAIL_DISABLED: "true",
+    OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(env.configured, true);
+  assert.equal(env.maskedOperatorPhone, "+1*****1234");
+});
+
 test("Test Center renders a protected loading shell without real provider keys", () => {
   const html = renderToStaticMarkup(createElement(OperatorTestCenterWorkspace));
 
   assert.match(html, /Loading Operator Test Center/);
-  assert.doesNotMatch(html, /RESEND_API_KEY|DATABASE_URL|GOOGLE_PLACES_API_KEY|secret/i);
+  assert.doesNotMatch(html, /RESEND_API_KEY|DATABASE_URL|GOOGLE_PLACES_API_KEY|TWILIO_AUTH_TOKEN|secret/i);
 });

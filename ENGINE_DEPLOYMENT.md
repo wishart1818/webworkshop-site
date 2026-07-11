@@ -47,6 +47,11 @@ In **Vercel project settings > Environment Variables**, add:
 | `INTERNAL_NOTIFICATIONS_ENABLED` | No | Set to `true` to enable Operator Test Center/internal operator alerts; never sends to prospects |
 | `INTERNAL_NOTIFY_EMAIL` | No | Operator-only destination for internal test notifications and alerts |
 | `INTERNAL_NOTIFY_FROM_EMAIL` | No | Verified Resend sender for internal operator notifications, such as `WebWorkshop Alerts <hello@webworkshop.dev>` |
+| `SMS_NOTIFICATIONS_ENABLED` | No | Set to `true` to enable Operator Test Center/internal SMS alerts through Twilio; never texts prospects |
+| `INTERNAL_NOTIFY_PHONE` | No | Operator-only destination phone number in E.164 format, such as `+14195551234` |
+| `TWILIO_ACCOUNT_SID` | No | Twilio account SID for internal SMS alerts only |
+| `TWILIO_AUTH_TOKEN` | No | Twilio auth token for internal SMS alerts only |
+| `TWILIO_FROM_PHONE` | No | Twilio sender phone number for internal SMS alerts |
 | `WEBWORKSHOP_POSTAL_ADDRESS` | Recommended | Prospect Engine sender mailing address inserted into manual email drafts; email packages are not send-ready until this is set |
 | `OUTREACH_POSTAL_ADDRESS` | Auto Email Pilot only | Separate Auto Email Pilot/provider-readiness postal address; this does not replace `WEBWORKSHOP_POSTAL_ADDRESS` for Top Prospects packages |
 | `OUTREACH_EMAIL_DISABLED` | Auto Email Pilot emergency stop | Set to exactly `true` to block all human-approved and fully automatic email sends |
@@ -67,6 +72,8 @@ Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-sid
 The optional Loom notification variables are internal only. They never send anything to prospects, and the workflow still requires you to manually record and send the Loom. If the notification variables or `RESEND_API_KEY` are missing, the Loom Needed task still works and no runtime error is raised.
 
 The Operator Test Center internal notification variables are also operator-only. `INTERNAL_NOTIFICATIONS_ENABLED=true`, `INTERNAL_NOTIFY_EMAIL`, `INTERNAL_NOTIFY_FROM_EMAIL`, and `RESEND_API_KEY` allow the app to send short status/test alerts to the operator address only. These alerts are separate from prospect outreach and do not weaken `OUTREACH_EMAIL_DISABLED`, `OUTREACH_AUTO_SEND_ENABLED`, or `OUTREACH_FULL_AUTO_SEND_ENABLED`.
+
+Operator Test Center SMS alerts are also internal only. `SMS_NOTIFICATIONS_ENABLED=true`, `INTERNAL_NOTIFY_PHONE`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_PHONE` allow the app to text the operator when a manual step is needed. SMS alerts never go to prospects, never use prospect or lead phone numbers, never submit forms or DMs, and never weaken email or Autopilot safety gates. The Test Center masks the operator phone number and never displays Twilio credentials.
 
 Postal address variables are intentionally split:
 

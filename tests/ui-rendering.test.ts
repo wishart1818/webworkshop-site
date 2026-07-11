@@ -703,6 +703,9 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /INTERNAL_NOTIFICATIONS_ENABLED.*Operator Test Center/is);
   assert.match(docs, /INTERNAL_NOTIFY_EMAIL.*operator/i);
   assert.match(docs, /These alerts are separate from prospect outreach and do not weaken `OUTREACH_EMAIL_DISABLED`/);
+  assert.match(docs, /SMS_NOTIFICATIONS_ENABLED.*Twilio/is);
+  assert.match(docs, /INTERNAL_NOTIFY_PHONE.*E\.164/is);
+  assert.match(docs, /SMS alerts never go to prospects/i);
   assert.match(docs, /WEBWORKSHOP_POSTAL_ADDRESS.*Prospect Engine uses for Top Prospects/is);
   assert.match(docs, /OUTREACH_POSTAL_ADDRESS.*Auto Email Pilot\/provider readiness/is);
   assert.match(docs, /If both exist, Top Prospects and Prospect Engine email packages use `WEBWORKSHOP_POSTAL_ADDRESS`/);

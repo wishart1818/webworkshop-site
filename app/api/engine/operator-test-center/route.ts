@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOperatorTestCenterPayload, generateOneTestOutreachPackage, sendOperatorTestNotification } from "@/lib/operator-test-center";
+import { getOperatorTestCenterPayload, generateOneTestOutreachPackage, sendOperatorTestNotification, sendOperatorTestSms } from "@/lib/operator-test-center";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +23,9 @@ export async function POST(request: Request) {
     }
     if (payload.action === "send_internal_resend_test") {
       return NextResponse.json(await sendOperatorTestNotification("manual_email"));
+    }
+    if (payload.action === "send_internal_sms_test") {
+      return NextResponse.json(await sendOperatorTestSms());
     }
     if (payload.action === "check_email_safety_gates") {
       const center = await getOperatorTestCenterPayload();

@@ -166,7 +166,7 @@ export function OperatorTestCenterWorkspace() {
         <div className="engine-panel__head">
           <div>
             <h2>Safe test buttons</h2>
-            <p>All tests are operator-only. Provider smoke tests create no packages. Internal emails only go to INTERNAL_NOTIFY_EMAIL.</p>
+            <p>All tests are operator-only. Provider smoke tests create no packages. Internal emails go only to INTERNAL_NOTIFY_EMAIL. Internal texts go only to INTERNAL_NOTIFY_PHONE.</p>
           </div>
           <span>{busy ? "Running" : "Ready"}</span>
         </div>
@@ -177,10 +177,11 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("generate_test_package")} type="button">Generate One Test Outreach Package</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_notification")} type="button">Send Internal Test Notification</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_resend_test")} type="button">Send Internal Test Email Through Resend</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_sms_test")} type="button">Send Internal Test SMS</button>
         </div>
         <div className="engine-operator-safety-note">
           <b>Safety lock</b>
-          <p>Prospect emails still obey OUTREACH_EMAIL_DISABLED, OUTREACH_AUTO_SEND_ENABLED, queue gates, public preview rules, suppression, cooldown, and approval status. Full auto still requires OUTREACH_FULL_AUTO_SEND_ENABLED.</p>
+          <p>Prospect emails still obey OUTREACH_EMAIL_DISABLED, OUTREACH_AUTO_SEND_ENABLED, queue gates, public preview rules, suppression, cooldown, and approval status. SMS never goes to prospects. Full auto still requires OUTREACH_FULL_AUTO_SEND_ENABLED.</p>
         </div>
       </section>
 
@@ -208,6 +209,7 @@ export function OperatorTestCenterWorkspace() {
           {([
             ["Full Status Summary", payload.summaries.fullStatus],
             ["Email Safety Summary", payload.summaries.emailSafety],
+            ["SMS Notification Summary", payload.summaries.smsNotifications],
             ["Provider Diagnostics Summary", `${payload.summaries.providerDiagnostics}\n${providerSmokeSummary}`.trim()],
             ["Latest Top Prospects Run Summary", payload.summaries.latestTopProspectsRun],
             ["Latest Outreach Package Summary", payload.summaries.latestOutreachPackage],
