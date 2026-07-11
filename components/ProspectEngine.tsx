@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { AutonomousGrowthWorkspace } from "@/components/engine/AutonomousGrowthWorkspace";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
+import { OperatorTestCenterWorkspace } from "@/components/engine/OperatorTestCenterWorkspace";
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type ProviderSmokeTestPayload, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
@@ -30,7 +31,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "Autonomous Growth" | "System";
+type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
 
 function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
@@ -124,9 +125,15 @@ export function ProspectEngine() {
   }, [workspaceTab]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "operator-test-center") setWorkspaceTab("Operator Test Center");
+  }, []);
+
+  useEffect(() => {
     function openEngineTab(event: Event) {
       const detail = (event as CustomEvent<{ tab?: string }>).detail;
       if (detail?.tab === "top-prospects") setWorkspaceTab("Top Prospects");
+      if (detail?.tab === "operator-test-center") setWorkspaceTab("Operator Test Center");
     }
     window.addEventListener("webworkshop:open-engine-tab", openEngineTab);
     return () => window.removeEventListener("webworkshop:open-engine-tab", openEngineTab);
@@ -354,9 +361,9 @@ export function ProspectEngine() {
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "Autonomous Growth", "System"] as WorkspaceTab[]).map((tab) => (
+          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "Autonomous Growth", "Operator Test Center", "System"] as WorkspaceTab[]).map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
-              {tab}
+              <span>{tab === "Operator Test Center" ? "Test Center" : tab}</span>
             </button>
           ))}
         </nav>
@@ -397,7 +404,7 @@ export function ProspectEngine() {
           </div>
         )}
 
-        {workspaceTab !== "System" && prospectStateBlocked && (
+        {workspaceTab !== "System" && workspaceTab !== "Operator Test Center" && prospectStateBlocked && (
           <div className="engine-content">
             {syncState === "loading"
               ? <LoadingState title="Loading prospect workspace" body="Retrieving the latest pipeline, analysis, outreach, and activity records." />
@@ -475,6 +482,10 @@ export function ProspectEngine() {
 
         {workspaceTab === "Autonomous Growth" && (
           <AutonomousGrowthWorkspace />
+        )}
+
+        {workspaceTab === "Operator Test Center" && (
+          <OperatorTestCenterWorkspace />
         )}
 
         {workspaceTab === "System" && (

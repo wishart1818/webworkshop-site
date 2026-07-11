@@ -41,7 +41,8 @@ test("engine phone layout removes desktop-width result overflow", () => {
 test("engine phone controls and navigation account for iPhone interaction constraints", () => {
   assert.match(css, /padding-bottom: calc\(var\(--engine-mobile-nav-height\) \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(css, /padding: 0\.4rem 0\.4rem calc\(0\.4rem \+ env\(safe-area-inset-bottom\)\)/);
-  assert.match(css, /grid-template-columns: repeat\(6, 1fr\)/);
+  assert.match(css, /--engine-mobile-nav-height: 7\.6rem/);
+  assert.match(css, /grid-template-columns: repeat\(4, 1fr\)/);
   assert.match(mobileCss, /\.engine-top-prospect-launcher button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /min-height: 2\.75rem;\s*font-size: 1rem;/);
   assert.match(mobileCss, /\.engine-empty__actions \.engine-button\s*{\s*width: 100%;/);

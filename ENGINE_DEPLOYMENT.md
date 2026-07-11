@@ -44,6 +44,9 @@ In **Vercel project settings > Environment Variables**, add:
 | `OUTREACH_NOTIFY_EMAIL` | No | Internal operator email for Loom Needed notifications only |
 | `OUTREACH_NOTIFY_FROM_EMAIL` | No | Verified sender address for internal Loom Needed notifications |
 | `OUTREACH_NOTIFY_ON_LOOM_NEEDED` | No | Set to `true` to notify internally when a prospect says yes and a Loom task is created |
+| `INTERNAL_NOTIFICATIONS_ENABLED` | No | Set to `true` to enable Operator Test Center/internal operator alerts; never sends to prospects |
+| `INTERNAL_NOTIFY_EMAIL` | No | Operator-only destination for internal test notifications and alerts |
+| `INTERNAL_NOTIFY_FROM_EMAIL` | No | Verified Resend sender for internal operator notifications, such as `WebWorkshop Alerts <hello@webworkshop.dev>` |
 | `WEBWORKSHOP_POSTAL_ADDRESS` | Recommended | Prospect Engine sender mailing address inserted into manual email drafts; email packages are not send-ready until this is set |
 | `OUTREACH_POSTAL_ADDRESS` | Auto Email Pilot only | Separate Auto Email Pilot/provider-readiness postal address; this does not replace `WEBWORKSHOP_POSTAL_ADDRESS` for Top Prospects packages |
 | `OUTREACH_EMAIL_DISABLED` | Auto Email Pilot emergency stop | Set to exactly `true` to block all human-approved and fully automatic email sends |
@@ -62,6 +65,8 @@ Apply production secrets to the **Production** environment. Use separate credent
 Do not add `DATABASE_URL`, `ENGINE_USERNAME`, or `ENGINE_PASSWORD` to client-side code, public documentation, screenshots, or variables prefixed with `NEXT_PUBLIC_`.
 
 The optional Loom notification variables are internal only. They never send anything to prospects, and the workflow still requires you to manually record and send the Loom. If the notification variables or `RESEND_API_KEY` are missing, the Loom Needed task still works and no runtime error is raised.
+
+The Operator Test Center internal notification variables are also operator-only. `INTERNAL_NOTIFICATIONS_ENABLED=true`, `INTERNAL_NOTIFY_EMAIL`, `INTERNAL_NOTIFY_FROM_EMAIL`, and `RESEND_API_KEY` allow the app to send short status/test alerts to the operator address only. These alerts are separate from prospect outreach and do not weaken `OUTREACH_EMAIL_DISABLED`, `OUTREACH_AUTO_SEND_ENABLED`, or `OUTREACH_FULL_AUTO_SEND_ENABLED`.
 
 Postal address variables are intentionally split:
 

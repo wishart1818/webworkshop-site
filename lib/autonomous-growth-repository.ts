@@ -52,6 +52,7 @@ import {
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
+import { sendInternalOperatorNotification, type InternalNotificationInput } from "@/lib/internal-notifications";
 import type { TopProspectJob } from "@/lib/top-prospects";
 
 const globalAutonomous = globalThis as typeof globalThis & {
@@ -350,6 +351,13 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
 
 function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
   return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus(), autopilotEnvironmentKillSwitchEnabled());
+}
+
+async function sendInternalOperatorNotificationSafely(input: InternalNotificationInput) {
+  const result = await sendInternalOperatorNotification(input);
+  if (!result.sent && result.configured) {
+    console.warn("[operator-notification] Internal notification failed safely.", { reasons: result.blockedReasons });
+  }
 }
 
 export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDashboard & { autopilot: AutopilotDashboard }> {
@@ -782,6 +790,15 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
       subject: item.email,
       metadata: { queueItemId: item.id, provider: "resend", providerMessageId: providerMessageId || "accepted" },
     });
+    await sendInternalOperatorNotificationSafely({
+      kind: "approved_email_sent",
+      title: "Approved email send succeeded",
+      marketTrade: `${item.trade} in ${item.city}`,
+      resultCount: 1,
+      attention: `${item.businessName} email was accepted by the provider.`,
+      nextAction: "Watch for a reply and keep suppression handling active.",
+      pagePath: "/engine?tab=operator-test-center",
+    });
     return { item: sentItem, sent: true, blockedReasons: [], providerMessageId };
   } catch (error) {
     const message = safeEmailSendFailureMessage(error);
@@ -791,6 +808,15 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
       outcome: "failure",
       subject: item.email || item.businessName,
       metadata: { queueItemId: item.id, reason: message },
+    });
+    await sendInternalOperatorNotificationSafely({
+      kind: "approved_email_failed",
+      title: "Approved email send failed",
+      marketTrade: `${item.trade} in ${item.city}`,
+      resultCount: 1,
+      attention: `${item.businessName} did not send. Reason: ${message}`,
+      nextAction: "Review Resend, sender settings, suppression, and queue status.",
+      pagePath: "/engine?tab=operator-test-center",
     });
     return { item: failedItem, sent: false, blockedReasons: [message] };
   }
@@ -806,6 +832,14 @@ export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult>
       outcome: "rejected",
       subject: "full-auto-email",
       metadata: { reason: "OUTREACH_FULL_AUTO_SEND_ENABLED is not true." },
+    });
+    await sendInternalOperatorNotificationSafely({
+      kind: "auto_email_blocked",
+      title: "Auto Email Pilot blocked",
+      resultCount: 0,
+      attention: "Full automatic batch sending did not run because OUTREACH_FULL_AUTO_SEND_ENABLED is not true.",
+      nextAction: "Keep it disabled unless you intentionally switch to a reviewed Auto Email Pilot setup.",
+      pagePath: "/engine?tab=operator-test-center",
     });
     return {
       attempted: 0,
@@ -910,6 +944,14 @@ export async function recordEmailSuppression(email: string, reason: EmailSuppres
       subject: normalized,
       metadata: { reason, source, matched: matches.length, updated: matches.length || 1, createdSuppressionRecord: matches.length === 0 },
     });
+    await sendInternalOperatorNotificationSafely({
+      kind: "suppression_recorded",
+      title: "Email suppression recorded",
+      resultCount: matches.length || 1,
+      attention: `${normalized} was marked ${status}.`,
+      nextAction: "Review the suppression record before any future outreach.",
+      pagePath: "/engine?tab=operator-test-center",
+    });
     await recordRunReview(memorySettings(), memoryQueue());
     return { matched: matches.length, updated: matches.length || 1, reason };
   }
@@ -965,6 +1007,14 @@ export async function recordEmailSuppression(email: string, reason: EmailSuppres
     outcome: "success",
     subject: normalized,
     metadata: { reason, source, matched: matches.length, updated: update.count || 1, createdSuppressionRecord },
+  });
+  await sendInternalOperatorNotificationSafely({
+    kind: "suppression_recorded",
+    title: "Email suppression recorded",
+    resultCount: update.count || 1,
+    attention: `${normalized} was marked ${status}.`,
+    nextAction: "Review the suppression record before any future outreach.",
+    pagePath: "/engine?tab=operator-test-center",
   });
   await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
   return { matched: matches.length, updated: update.count || 1, reason };
@@ -1054,6 +1104,27 @@ export async function upsertAutonomousQueueItemFromPackage({
     };
     if (existingIndex >= 0) memoryQueue()[existingIndex] = domain;
     else memoryQueue().unshift(domain);
+    if (domain.status === "Blocked" && /phone-only/i.test(domain.blockedReason)) {
+      await sendInternalOperatorNotificationSafely({
+        kind: "phone_only_blocked",
+        title: "Phone-only prospect needs manual research",
+        marketTrade: `${domain.trade} in ${domain.city}`,
+        resultCount: 1,
+        attention: `${domain.businessName} has a preview/package, but written outreach is blocked.`,
+        nextAction: "Find a written contact path or leave it blocked.",
+        pagePath: "/engine?tab=operator-test-center",
+      });
+    } else if (["Eligible", "Needs Review", "Queued"].includes(domain.status)) {
+      await sendInternalOperatorNotificationSafely({
+        kind: "outreach_package_ready",
+        title: "Outreach package ready for review",
+        marketTrade: `${domain.trade} in ${domain.city}`,
+        resultCount: 1,
+        attention: `${domain.businessName} is in the manual review queue.`,
+        nextAction: "Review preview, copy, contact path, and approval gates.",
+        pagePath: "/engine?tab=operator-test-center",
+      });
+    }
     await recordRunReview(settings, memoryQueue());
     return domain;
   }
@@ -1064,6 +1135,27 @@ export async function upsertAutonomousQueueItemFromPackage({
     update: itemData,
   });
   const domain = queueToDomain(row);
+  if (domain.status === "Blocked" && /phone-only/i.test(domain.blockedReason)) {
+    await sendInternalOperatorNotificationSafely({
+      kind: "phone_only_blocked",
+      title: "Phone-only prospect needs manual research",
+      marketTrade: `${domain.trade} in ${domain.city}`,
+      resultCount: 1,
+      attention: `${domain.businessName} has a preview/package, but written outreach is blocked.`,
+      nextAction: "Find a written contact path or leave it blocked.",
+      pagePath: "/engine?tab=operator-test-center",
+    });
+  } else if (["Eligible", "Needs Review", "Queued"].includes(domain.status)) {
+    await sendInternalOperatorNotificationSafely({
+      kind: "outreach_package_ready",
+      title: "Outreach package ready for review",
+      marketTrade: `${domain.trade} in ${domain.city}`,
+      resultCount: 1,
+      attention: `${domain.businessName} is in the manual review queue.`,
+      nextAction: "Review preview, copy, contact path, and approval gates.",
+      pagePath: "/engine?tab=operator-test-center",
+    });
+  }
   await recordLearningEvent(domain);
   await recordRunReview(settings, await listOutreachQueueItems());
   return domain;
@@ -1100,6 +1192,17 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
     item.updatedAt = nowIso;
     await recordRunReview(memorySettings(), memoryQueue());
     await sendLoomNeededNotificationIfConfigured(item, status);
+    if (status === "Prospect Said Yes") {
+      await sendInternalOperatorNotificationSafely({
+        kind: "prospect_interested",
+        title: "Prospect said yes",
+        marketTrade: `${item.trade} in ${item.city}`,
+        resultCount: 1,
+        attention: `${item.businessName} needs the manual preview, Loom, or pricing step.`,
+        nextAction: "Open the queue, send the public preview manually, and prepare Loom if recommended.",
+        pagePath: "/engine?tab=operator-test-center",
+      });
+    }
     return structuredClone(item);
   }
   await ensureTopProspectSchema();
@@ -1147,6 +1250,17 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   });
   const domain = queueToDomain(row);
   await sendLoomNeededNotificationIfConfigured(domain, status);
+  if (status === "Prospect Said Yes") {
+    await sendInternalOperatorNotificationSafely({
+      kind: "prospect_interested",
+      title: "Prospect said yes",
+      marketTrade: `${domain.trade} in ${domain.city}`,
+      resultCount: 1,
+      attention: `${domain.businessName} needs the manual preview, Loom, or pricing step.`,
+      nextAction: "Open the queue, send the public preview manually, and prepare Loom if recommended.",
+      pagePath: "/engine?tab=operator-test-center",
+    });
+  }
   await recordLearningEvent(domain);
   await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
   return domain;
