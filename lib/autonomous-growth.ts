@@ -318,6 +318,7 @@ type CasualDmProspect = {
   businessName: string;
   city: string;
   trade: string;
+  analysis?: Prospect["analysis"];
   classification?: string;
   prospectType?: string;
   website?: string;
@@ -913,18 +914,24 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
     || prospect.classification === "listing_only"
     || prospect.classification === "no_website"
     || !prospect.website;
+  const scores = prospect.analysis?.scores;
+  const weakContactPath = Boolean(scores && (scores.ctaStrength <= 55 || scores.contactAccessibility <= 55 || scores.conversionReadiness <= 55));
   const previewReference = previewLink || "[PUBLIC PREVIEW LINK]";
   return {
     firstDm: noWebsite
       ? [
-          `Hey, how's it going? I noticed ${prospect.businessName} didn't have a website, so I built you a quick preview showing how a cleaner page could help get more calls and quote requests. Want to see it?`,
+          `Hey, how's it going? I came across ${prospect.businessName} and noticed I couldn't find a full website, so I made a quick preview of what one could look like. It's built to help get more calls and quote requests. Want to see it?`,
         ].join("\n")
+      : weakContactPath
+        ? [
+            `Hey, how's it going? I came across ${prospect.businessName} and noticed the call or quote request path could probably be clearer, so I made a quick website preview for you. Want to see it?`,
+          ].join("\n")
       : [
-          `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`,
+          `Hey, how's it going? I came across ${prospect.businessName} and noticed your page could probably make it easier for people to call or request a quote, so I made a quick website preview for you. Want to see it?`,
         ].join("\n"),
-    softerFirstDm: [
-      `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and make it easier for people to call or request a quote. Want to see it?`,
-    ].join("\n"),
+    softerFirstDm: noWebsite
+      ? `Hey, how's it going? I came across ${prospect.businessName} and couldn't find a full website. I made a quick preview of what one could look like. Want to see it?`
+      : `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview showing how the page could be cleaner and make it easier for people to call or request a quote. Want to see it?`,
     yesReply: [
       "Sounds good - here's the preview:",
       "",

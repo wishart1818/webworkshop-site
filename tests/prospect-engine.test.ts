@@ -54,7 +54,7 @@ test("Outreach Package email uses casual human copy and public preview links", (
   const allDrafts = [outreach.concise, outreach.detailed, ...outreach.followUps].join("\n");
 
   assert.equal(outreach.subjects[0], "Quick website preview for MC Pressure Washing FL");
-  assert.match(outreach.concise, /I was looking at pressure washing businesses around Tampa and put together a quick website preview for you/i);
+  assert.match(outreach.concise, /noticed (?:your site could probably do a better job turning visitors into calls and quote requests|the path to call or request a quote could probably be clearer), so I put together a quick website preview for you/i);
   assert.match(outreach.concise, /built to make the page look cleaner and help get you more calls and quote requests/i);
   assert.match(outreach.concise, /Would you like me to send it over\?/i);
   assert.doesNotMatch(outreach.concise, /https:\/\/webworkshop\.dev\/p\//i);
@@ -68,9 +68,11 @@ test("Outreach Package email uses casual human copy and public preview links", (
   assert.match(outreach.concise, /would rather not receive another note/i);
   assert.doesNotMatch(allDrafts, /One missed opportunity:|One thing that already works well:|customer proof you can verify|trust details could be easier/i);
   assert.doesNotMatch(allDrafts, /\b\d{1,3}\s*\/\s*100\b|\bscore\b/i);
-  assert.doesNotMatch(allDrafts, /I reviewed your website|I analyzed your website|free audit|problems|mistakes/i);
+  assert.doesNotMatch(allDrafts, /I reviewed your website|I analyzed your website|free audit|problems|mistakes|your website is bad/i);
   assert.doesNotMatch(allDrafts, /Would it be useful if I sent|happy to send/i);
   assert.doesNotMatch(allDrafts, /\bwill get you more calls/i);
+  assert.match(outreach.followUps[1], /If this isn't useful or timing is off/i);
+  assert.doesNotMatch(outreach.followUps[1], /If the preview is not useful/i);
   assert.doesNotMatch(allDrafts, /you requested|your request|\/engine\//i);
   assert.ok(outreach.followUps.every((followUp) => !followUp.includes(previewLink)));
 });
@@ -83,7 +85,7 @@ test("detailed outreach avoids repeating the business name immediately after gre
   const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
   const outreach = generateOutreach(prospect, previewLink, { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI was looking at pressure washing businesses around St Augustine and put together a quick website preview for you\./);
+  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI was looking at pressure washing businesses around St Augustine and noticed (?:your site could probably do a better job turning visitors into calls and quote requests|the path to call or request a quote could probably be clearer), so I put together a quick website preview for you\./);
   assert.doesNotMatch(outreach.concise, /Hi Styles Power Wash team,\n\nI was looking at[^.]+(?:made you|put together) a quick preview for Styles Power Wash/i);
   assert.doesNotMatch(outreach.concise, /https:\/\/webworkshop\.dev\/p\//i);
   assert.match(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
@@ -109,7 +111,7 @@ test("outreach avoids analytical strength claims for weak websites", () => {
   }
   const outreach = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /put together a quick website preview for you/i);
+  assert.match(outreach.concise, /noticed (?:your site could probably do a better job turning visitors into calls and quote requests|the path to call or request a quote could probably be clearer)/i);
   assert.match(outreach.concise, /help get you more calls and quote requests/i);
   assert.doesNotMatch(outreach.concise, /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(outreach.concise, /already pretty easy|solid technical foundation/i);
@@ -222,9 +224,9 @@ test("no-website prospects still generate dedicated-website outreach", () => {
   }, "no_owned_website", "No owned website detected.");
   const withDraft = withOutreach(noWebsite);
 
-  assert.match(withDraft.outreach?.concise ?? "", /put together a quick website preview/i);
-  assert.match(withDraft.outreach?.concise ?? "", /help get you more calls and quote requests/i);
-  assert.match(withDraft.outreach?.concise ?? "", /dedicated website/i);
+  assert.match(withDraft.outreach?.concise ?? "", /noticed I couldn't find a full website for your business/i);
+  assert.match(withDraft.outreach?.concise ?? "", /quick preview of what one could look like/i);
+  assert.match(withDraft.outreach?.concise ?? "", /make it easier for them to call or request a quote/i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /your website has issues/i);
 });

@@ -869,12 +869,51 @@ function simplePreviewIdea() {
   return "It's built to make the page look cleaner and help get you more calls and quote requests.";
 }
 
+function noWebsiteFirstTouchIdea() {
+  return "It's built to help people quickly see what you do and make it easier for them to call or request a quote.";
+}
+
 function askToSendPreview() {
   return "Would you like me to send it over?";
 }
 
 function socialManualMethod(method: string) {
   return ["facebook", "instagram", "linkedin"].includes(method);
+}
+
+function noOwnedWebsiteProspect(prospect: Prospect) {
+  return prospect.prospectType === "no_website_social_only"
+    || prospect.classification === "no_website"
+    || prospect.classification === "social_only"
+    || prospect.classification === "listing_only"
+    || prospect.websiteStatus === "no_owned_website"
+    || (!prospect.website && Boolean(prospect.profileUrl || prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl));
+}
+
+function contactPathCouldBeClearer(prospect: Prospect) {
+  const scores = prospect.analysis?.scores;
+  if (!scores) return false;
+  return scores.ctaStrength <= 55 || scores.contactAccessibility <= 55 || scores.conversionReadiness <= 55;
+}
+
+function firstTouchEmailReason(prospect: Prospect) {
+  if (noOwnedWebsiteProspect(prospect)) {
+    return `I was looking at ${localTradePhrase(prospect)} and noticed I couldn't find a full website for your business, so I put together a quick preview of what one could look like.`;
+  }
+  if (contactPathCouldBeClearer(prospect)) {
+    return `I was looking at ${localTradePhrase(prospect)} and noticed the path to call or request a quote could probably be clearer, so I put together a quick website preview for you.`;
+  }
+  return `I was looking at ${localTradePhrase(prospect)} and noticed your site could probably do a better job turning visitors into calls and quote requests, so I put together a quick website preview for you.`;
+}
+
+function firstTouchDmReason(prospect: Prospect) {
+  if (noOwnedWebsiteProspect(prospect)) {
+    return `Hey, how's it going? I came across ${prospect.businessName} and noticed I couldn't find a full website, so I made a quick preview of what one could look like. It's built to help get more calls and quote requests. Want to see it?`;
+  }
+  if (contactPathCouldBeClearer(prospect)) {
+    return `Hey, how's it going? I came across ${prospect.businessName} and noticed the call or quote request path could probably be clearer, so I made a quick website preview for you. Want to see it?`;
+  }
+  return `Hey, how's it going? I came across ${prospect.businessName} and noticed your page could probably make it easier for people to call or request a quote, so I made a quick website preview for you. Want to see it?`;
 }
 
 export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {
@@ -896,8 +935,8 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
     const trade = prospectTrade(prospect);
     const isSocial = socialManualMethod(manualMethod);
     const firstDraft = isSocial
-      ? `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`
-      : `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and put together a quick website preview for you.\n\n${simplePreviewIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`;
+      ? firstTouchDmReason(prospect)
+      : `Hi ${prospect.businessName} team,\n\n${firstTouchEmailReason(prospect)}\n\n${simplePreviewIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`;
     const detailedDraft = isSocial
       ? `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.\n\nIf you like it, I can send over the simple pricing/options.\n\n${complianceFooter}`
       : `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.\n\nIf you like it, I can send over the simple pricing/options.\n\n${complianceFooter}`;
@@ -911,7 +950,7 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
       detailed: detailedDraft,
       followUps: [
         `Hi again,\n\nJust following up on the ${draftLabel} note I sent about the website preview for ${prospect.businessName}. It's built to look cleaner and help get more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
-        `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
+        `Hi again,\n\nLast note from me. If this isn't useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
       generatedAt,
@@ -926,11 +965,11 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
         `Own the online home for ${prospect.businessName}`,
         `Turn ${titleCaseLocation(prospect.city)} searches into direct inquiries`,
       ],
-      concise: `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and noticed I could not find a dedicated website for ${prospect.businessName}.\n\nSo I put together a quick website preview for you. It's built to make the page look cleaner and help get you more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+      concise: `Hi ${prospect.businessName} team,\n\n${firstTouchEmailReason(prospect)}\n\n${noWebsiteFirstTouchIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`,
       detailed: `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.\n\nIf you like it, I can send over the simple pricing/options.\n\n${complianceFooter}`,
       followUps: [
         `Hi again,\n\nJust wanted to follow up on the website preview I mentioned for ${prospect.businessName}. It's built to look cleaner and help get more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
-        `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
+        `Hi again,\n\nLast note from me. If this isn't useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
       generatedAt,
@@ -945,11 +984,11 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
       `${displayTradeCategory(trade)} website notes for ${titleCaseLocation(prospect.city)}`,
       `More calls and quote requests for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\nI was looking at ${localTradePhrase(prospect)} and put together a quick website preview for you.\n\n${simplePreviewIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+    concise: `Hi ${prospect.businessName} team,\n\n${firstTouchEmailReason(prospect)}\n\n${simplePreviewIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`,
     detailed: `Sounds good - here's the preview:\n\n${previewLink || "[PUBLIC PREVIEW LINK]"}\n\nIt's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.\n\nIf you like it, I can send over the simple pricing/options.\n\n${complianceFooter}`,
     followUps: [
       `Hi again,\n\nJust wanted to follow up on the preview I mentioned for ${prospect.businessName}. It's built to look cleaner and help get more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
-      `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
+      `Hi again,\n\nLast note from me. If this isn't useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
     ],
     approved: false,
     generatedAt,

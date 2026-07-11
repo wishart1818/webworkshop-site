@@ -1591,7 +1591,8 @@ test("casual DM playbook keeps the first DM link-free and creates Loom-safe scri
 
   assert.match(playbook.firstDm, /help get more calls and quote requests/i);
   assert.match(playbook.firstDm, /Want to see it\?/);
-  assert.match(playbook.firstDm, /built you a quick preview/i);
+  assert.match(playbook.firstDm, /noticed I couldn't find a full website/i);
+  assert.match(playbook.firstDm, /made a quick preview of what one could look like/i);
   assert.doesNotMatch(playbook.firstDm, /https?:\/\/|\/p\//);
   assert.doesNotMatch(playbook.firstDm, /AI website|free audit|One missed opportunity|customer proof/i);
   assert.match(playbook.yesReply, /Sounds good - here's the preview/i);
