@@ -3,6 +3,7 @@ import {
   getOperatorTestCenterPayload,
   generateOneTestOutreachPackage,
   regenerateOperatorUnsentOutreachCopy,
+  runFullAutonomousReadinessTest,
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
@@ -38,6 +39,9 @@ export async function POST(request: Request) {
     }
     if (payload.action === "run_smart_autonomous_dry_run") {
       return NextResponse.json(await runOperatorSmartAutonomousDryRun());
+    }
+    if (payload.action === "run_full_autonomous_readiness_test") {
+      return NextResponse.json(await runFullAutonomousReadinessTest());
     }
     if (payload.action === "send_internal_notification") {
       return NextResponse.json(await sendOperatorTestNotification("notification"));

@@ -15,6 +15,7 @@ import {
 import {
   generateOneTestOutreachPackage,
   getOperatorTestCenterPayload,
+  runFullAutonomousReadinessTest,
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
@@ -250,6 +251,74 @@ test("Operator Test Center fake package always returns fake scripts without real
   assert.doesNotMatch(fake?.fullSummary ?? "", /will get you more calls|DATABASE_URL|RESEND_API_KEY|TWILIO_AUTH_TOKEN|secret/i);
 });
 
+test("Full Autonomous Readiness Test is dry-run and reports OUTREACH_EMAIL_DISABLED", async () => {
+  const result = await runFullAutonomousReadinessTest({
+    OUTREACH_SEND_PROVIDER: "resend",
+    RESEND_API_KEY: "secret-resend-key",
+    OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+    OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+    OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+    OUTREACH_EMAIL_DISABLED: "true",
+    OUTREACH_AUTO_SEND_ENABLED: "false",
+    OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+    INTERNAL_NOTIFICATIONS_ENABLED: "true",
+    INTERNAL_NOTIFY_EMAIL: "operator@example.com",
+    INTERNAL_NOTIFY_FROM_EMAIL: "WebWorkshop Alerts <hello@webworkshop.dev>",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(result.readiness?.manualEmailTest.status, "Blocked");
+  assert.ok(result.readiness?.manualEmailTest.reasons.includes("Manual prospect email send is blocked by OUTREACH_EMAIL_DISABLED."));
+  assert.match(result.message, /Full Autonomous Readiness Test finished/);
+  assert.match(result.readiness?.summaries.full ?? "", /No prospect emails were sent/);
+  assert.match(result.readiness?.summaries.full ?? "", /No DMs were sent/);
+  assert.match(result.readiness?.summaries.full ?? "", /No contact forms were submitted/);
+  assert.match(result.readiness?.summaries.full ?? "", /No phone calls were placed/);
+  assert.match(result.readiness?.summaries.full ?? "", /No Looms were recorded or sent/);
+  assert.doesNotMatch(JSON.stringify(result.readiness?.summaries), /secret-resend-key|operator@example\.com|postgres:\/\/|secret-twilio-token|actual-google-key/i);
+});
+
+test("Full Autonomous Readiness Test blocks full-auto when hard gates are missing", async () => {
+  const result = await runFullAutonomousReadinessTest({
+    OUTREACH_SEND_PROVIDER: "resend",
+    OUTREACH_EMAIL_DISABLED: "false",
+    OUTREACH_AUTO_SEND_ENABLED: "false",
+    OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+    OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+  } as NodeJS.ProcessEnv);
+
+  assert.notEqual(result.readiness?.fullAutoEmail.status, "Ready");
+  assert.match(result.readiness?.fullAutoEmail.reasons.join(" "), /OUTREACH_AUTO_SEND_ENABLED is not true/);
+  assert.match(result.readiness?.fullAutoEmail.reasons.join(" "), /OUTREACH_FULL_AUTO_SEND_ENABLED is not true/);
+  assert.ok(result.readiness?.failed.some((check) => check.label === "Full Auto Email final readiness"));
+  assert.match(result.readiness?.summaries.failedOnly ?? "", /FAILED:/);
+});
+
+test("Full Autonomous Readiness Test checks copy, existing prospects, saved results, and queue items", async () => {
+  const result = await runFullAutonomousReadinessTest({
+    OUTREACH_SEND_PROVIDER: "resend",
+    RESEND_API_KEY: "secret-resend-key",
+    OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+    OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+    OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+    OUTREACH_EMAIL_DISABLED: "false",
+    OUTREACH_AUTO_SEND_ENABLED: "false",
+    OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+    INTERNAL_NOTIFICATIONS_ENABLED: "true",
+    INTERNAL_NOTIFY_EMAIL: "operator@example.com",
+    INTERNAL_NOTIFY_FROM_EMAIL: "WebWorkshop Alerts <hello@webworkshop.dev>",
+  } as NodeJS.ProcessEnv);
+  const labels = result.readiness?.checks.map((check) => check.label).join("\n") ?? "";
+
+  assert.match(labels, /First-touch email has no preview link/);
+  assert.match(labels, /Yes-reply includes public \/p\/ preview link/);
+  assert.match(labels, /Existing qualified unsent prospects checked/);
+  assert.match(labels, /Saved Top Prospects results checked/);
+  assert.match(labels, /Outreach queue items checked/);
+  assert.ok(result.readiness?.checks.find((check) => check.key === "first-email-link-free")?.status === "passed");
+  assert.ok(result.readiness?.checks.find((check) => check.key === "yes-reply-public-preview")?.status === "passed");
+  assert.doesNotMatch(result.readiness?.summaries.debug ?? "", /\/engine\/previews|secret-resend-key|postgres:\/\/|twilio-auth-token|google-places-key/i);
+});
+
 test("operator notification body is short, phone-friendly, and secret-safe", () => {
   const body = internalNotificationBody({
     kind: "provider_issue",
@@ -292,6 +361,12 @@ test("Test Center renders a protected loading shell without real provider keys",
 test("Operator Test Center markup includes Smart Growth safe action buttons", async () => {
   const source = readFileSync("components/engine/OperatorTestCenterWorkspace.tsx", "utf8");
 
+  assert.match(source, /Run Full Autonomous Readiness Test/);
+  assert.match(source, /Copy Full Autonomous Readiness Summary/);
+  assert.match(source, /Copy Failed Checks Only/);
+  assert.match(source, /Copy Next Fix Summary/);
+  assert.match(source, /Copy Safe-To-Test Summary/);
+  assert.match(source, /Copy Debug Summary/);
   assert.match(source, /Run Smart Backfill Test/);
   assert.match(source, /Run Market Scout Dry Run/);
   assert.match(source, /Run Smart Autonomous Dry Run/);

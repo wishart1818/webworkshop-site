@@ -178,6 +178,7 @@ export function OperatorTestCenterWorkspace() {
           <span>{busy ? "Running" : "Ready"}</span>
         </div>
         <div className="engine-operator-button-grid">
+          <button className="engine-button engine-button--primary engine-operator-master-button" disabled={busy} onClick={() => void runOperatorAction("run_full_autonomous_readiness_test")} type="button">Run Full Autonomous Readiness Test</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("check_email_safety_gates")} type="button">Check Email Safety Gates</button>
           <button className="engine-button" disabled={busy} onClick={() => void runProviderSmokeTest()} type="button">Run Provider Smoke Test</button>
           <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runSmallTopProspectsTest()} type="button">Run Small Top Prospects Test</button>
@@ -195,6 +196,64 @@ export function OperatorTestCenterWorkspace() {
           <p>Prospect emails still obey OUTREACH_EMAIL_DISABLED, OUTREACH_AUTO_SEND_ENABLED, queue gates, public preview rules, suppression, cooldown, and approval status. SMS never goes to prospects. Full auto still requires OUTREACH_FULL_AUTO_SEND_ENABLED.</p>
         </div>
       </section>
+
+      {lastAction?.readiness ? (
+        <section className="engine-panel engine-autonomous-readiness" aria-label="Full Autonomous Readiness Test result">
+          <div className="engine-autonomous-readiness__summary">
+            <div>
+              <span>Full Autonomous Readiness Test</span>
+              <h2>{lastAction.readiness.overallStatus}</h2>
+              <p>{lastAction.readiness.nextSafestAction}</p>
+            </div>
+            <div className="engine-autonomous-readiness__badges">
+              <b>Full Auto Email: {lastAction.readiness.fullAutoEmail.status}</b>
+              <b>Manual Email Test: {lastAction.readiness.manualEmailTest.status}</b>
+            </div>
+          </div>
+          <dl className="engine-operator-check-grid">
+            <div><dt>Passed</dt><dd>{lastAction.readiness.passed.length}</dd></div>
+            <div><dt>Failed</dt><dd>{lastAction.readiness.failed.length}</dd></div>
+            <div><dt>Optional / info</dt><dd>{lastAction.readiness.optional.length}</dd></div>
+            <div><dt>Generated</dt><dd>{new Date(lastAction.readiness.generatedAt).toLocaleString()}</dd></div>
+          </dl>
+          <div className="engine-operator-summary-grid engine-autonomous-readiness__copies">
+            {([
+              ["Copy Full Autonomous Readiness Summary", lastAction.readiness.summaries.full],
+              ["Copy Failed Checks Only", lastAction.readiness.summaries.failedOnly],
+              ["Copy Next Fix Summary", lastAction.readiness.summaries.nextFix],
+              ["Copy Safe-To-Test Summary", lastAction.readiness.summaries.safeToTest],
+              ["Copy Debug Summary", lastAction.readiness.summaries.debug],
+            ] as const).map(([label, value]) => (
+              <article key={label}>
+                <header>
+                  <h3>{label.replace("Copy ", "")}</h3>
+                  <button className="engine-button" onClick={() => void copyText(label, value)} type="button">{label}</button>
+                </header>
+                <pre>{value}</pre>
+              </article>
+            ))}
+          </div>
+          <details className="engine-autonomous-readiness__details" open={lastAction.readiness.failed.length > 0}>
+            <summary>View pass/fail details</summary>
+            <div className="engine-autonomous-readiness__check-list">
+              {lastAction.readiness.checks.map((check) => (
+                <article className={`engine-autonomous-readiness__check engine-autonomous-readiness__check--${check.status}`} key={check.key}>
+                  <span>{check.category}</span>
+                  <h3>{check.label}</h3>
+                  <p>{check.detail}</p>
+                  {check.fix ? <p><b>Next:</b> {check.fix}</p> : null}
+                </article>
+              ))}
+            </div>
+          </details>
+          <details className="engine-autonomous-readiness__details">
+            <summary>What this test did not do</summary>
+            <ul>
+              {lastAction.readiness.notDone.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </details>
+        </section>
+      ) : null}
 
       {lastAction?.packagePreview ? (
         <section className="engine-panel engine-operator-package-check" aria-label="Test outreach package checks">
