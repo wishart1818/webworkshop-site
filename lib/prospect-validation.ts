@@ -9,6 +9,7 @@ import {
   classifyProspectPresence,
   displayStateCode,
   normalizeTradeCategory,
+  OUTREACH_COPY_VERSION,
   recommendProspectContactMethod,
   scoreLabels,
   prospectBestManualContactMethod,
@@ -84,13 +85,18 @@ function analysisValue(value: unknown): Analysis | undefined {
 function outreachValue(value: unknown): OutreachDraft | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || typeof value.approved !== "boolean") throw new Error("Outreach draft must be a valid object.");
+  const generatedAt = dateText(value.generatedAt, "Outreach generated date");
   return {
     subjects: stringArray(value.subjects, "Outreach subjects", 10, 300),
     concise: text(value.concise, "Concise outreach", 20_000),
     detailed: text(value.detailed, "Detailed outreach", 40_000),
     followUps: stringArray(value.followUps, "Outreach follow-ups", 10, 20_000),
     approved: value.approved,
-    generatedAt: dateText(value.generatedAt, "Outreach generated date"),
+    generatedAt,
+    outreachCopyVersion: typeof value.outreachCopyVersion === "string" && value.outreachCopyVersion.trim() ? value.outreachCopyVersion.trim() : OUTREACH_COPY_VERSION,
+    outreachCopyGeneratedAt: typeof value.outreachCopyGeneratedAt === "string" && value.outreachCopyGeneratedAt.trim()
+      ? dateText(value.outreachCopyGeneratedAt, "Outreach copy generated date")
+      : generatedAt,
   };
 }
 

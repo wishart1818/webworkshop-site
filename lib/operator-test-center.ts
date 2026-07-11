@@ -12,8 +12,8 @@ import {
 import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
 import { databaseHealth, operationalMode } from "@/lib/operational-controls";
 import { createProspect, generateOutreach, seedProspects, withAnalysis } from "@/lib/prospect-engine";
-import { getAutonomousGrowthDashboard } from "@/lib/autonomous-growth-repository";
-import { outreachEnvironment, providerConfigured } from "@/lib/autonomous-growth";
+import { getAutonomousGrowthDashboard, regenerateUnsentOutreachCopy, type OutreachCopyRegenerationSummary } from "@/lib/autonomous-growth-repository";
+import { casualDmPlaybook, currentOutreachCopyVersion, outreachCopyRegenerationEligibility, outreachEnvironment, providerConfigured } from "@/lib/autonomous-growth";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { publicProspectPreviewLink } from "@/lib/top-prospects";
@@ -36,6 +36,7 @@ export type OperatorTestCenterPayload = {
     latestTopProspectsRun: string;
     latestOutreachPackage: string;
     smsNotifications: string;
+    regenerationSummary: string;
     nextDebug: string;
   };
   latest: {
@@ -63,12 +64,24 @@ export type OperatorActionResult = {
   message: string;
   notification?: InternalNotificationResult;
   sms?: InternalSmsResult;
+  regeneration?: OutreachCopyRegenerationSummary;
   packagePreview?: {
     subject: string;
     firstEmailLinkFree: boolean;
     firstDmLinkFree: boolean;
     yesReplyIncludesPublicPreview: boolean;
     publicPreviewLink: string;
+  };
+  fakePackage?: {
+    label: string;
+    businessName: string;
+    tradeCity: string;
+    recommendedContactPath: string;
+    copyVersion: string;
+    publicPreviewLink: string;
+    scripts: Array<{ label: string; body: string }>;
+    safetySummary: string;
+    fullSummary: string;
   };
 };
 
@@ -107,10 +120,28 @@ function summarizeLatestOutreachPackage(queue: Awaited<ReturnType<typeof getAuto
     `${latest.businessName} (${latest.trade}, ${latest.city})`,
     `Status: ${latest.status}`,
     `Contact source: ${latest.contactSource}`,
+    `Outreach copy version: ${latest.outreachCopyVersion || "not recorded"}`,
     `Preview quality: ${latest.previewQualityScore}`,
     `Recommended next action: ${latest.recommendedNextAction}`,
     `Public preview: ${latest.previewLink.startsWith("https://webworkshop.dev/p/") ? "Yes" : "No"}`,
   ].join("\n");
+}
+
+function summarizeRegenerationReadiness(queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"]) {
+  const reasons = new Map<string, number>();
+  let oldUnsentPackagesNeedingRegeneration = 0;
+  for (const item of queue) {
+    const eligibility = outreachCopyRegenerationEligibility(item);
+    if (eligibility.eligible) oldUnsentPackagesNeedingRegeneration += 1;
+    else reasons.set(eligibility.reason, (reasons.get(eligibility.reason) ?? 0) + 1);
+  }
+  const skipped = [...reasons.entries()].map(([reason, count]) => `${count} skipped because ${reason}`).join("\n");
+  return [
+    `Latest outreach copy version: ${currentOutreachCopyVersion}`,
+    `Old unsent packages needing regeneration: ${oldUnsentPackagesNeedingRegeneration}`,
+    skipped,
+    "Regeneration only rewrites unsent draft copy. It sends nothing and does not change sent logs or suppression records.",
+  ].filter(Boolean).join("\n");
 }
 
 function nextRecommendedTest(input: {
@@ -138,6 +169,7 @@ function buildCards(input: {
   smsEnv: ReturnType<typeof internalSmsEnvironment>;
   latestJob: Awaited<ReturnType<typeof listTopProspectJobs>>[number] | null;
   latestPackage: string;
+  regenerationReadiness: string;
 }) {
   const prospectSending = input.env.emailKillSwitchEnabled
     ? "disabled"
@@ -161,6 +193,8 @@ function buildCards(input: {
     { label: "Operator phone", status: input.smsEnv.hasOperatorPhone ? "configured" : "missing", value: input.smsEnv.maskedOperatorPhone, detail: "Masked INTERNAL_NOTIFY_PHONE." },
     { label: "Latest Top Prospects run", status: input.latestJob ? "ready" : "missing", value: input.latestJob?.status ?? "not recorded", detail: input.latestJob ? `${input.latestJob.input.trade} near ${input.latestJob.input.city}` : "Run a small Top Prospects test." },
     { label: "Latest outreach package", status: input.latestPackage.startsWith("No outreach") ? "missing" : "ready", value: input.latestPackage.split("\n")[0] ?? "not recorded", detail: "Latest queue item summary." },
+    { label: "Latest Outreach Copy Version", status: "ready", value: currentOutreachCopyVersion, detail: "Saved packages can be compared against this version." },
+    { label: "Old unsent packages needing regeneration", status: /Old unsent packages needing regeneration: 0\b/.test(input.regenerationReadiness) ? "ready" : "warning", value: input.regenerationReadiness.match(/Old unsent packages needing regeneration: (\d+)/)?.[1] ?? "0", detail: "Only unsent, uncontacted, written-contact packages are eligible." },
     { label: "Latest internal notification test", status: "warning", value: "not persisted", detail: "Use the test button to verify current env." },
     { label: "Latest manual email test", status: "warning", value: "not persisted", detail: "Use internal Resend test only." },
     { label: "Latest SMS test", status: "warning", value: "not persisted", detail: "Use Send Internal Test SMS to verify Twilio." },
@@ -183,7 +217,9 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
   }
   const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
   const latestJob = jobs[0] ?? null;
-  const latestPackage = summarizeLatestOutreachPackage(dashboard?.queue ?? []);
+  const queue = dashboard?.queue ?? [];
+  const latestPackage = summarizeLatestOutreachPackage(queue);
+  const regenerationReadiness = summarizeRegenerationReadiness(queue);
   const next = nextRecommendedTest({
     env,
     internalConfigured: internalEnv.configured,
@@ -191,7 +227,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
     providerCoverage,
     queueLength: dashboard?.queue.length ?? 0,
   });
-  const statusCards = buildCards({ env, internalEnv, smsEnv, latestJob, latestPackage });
+  const statusCards = buildCards({ env, internalEnv, smsEnv, latestJob, latestPackage, regenerationReadiness });
   const providerSummary = providerHealth.map((provider) =>
     `${provider.label}: enabled ${provider.enabled ? "yes" : "no"}, env present ${provider.envVarPresent === null ? "not required" : provider.envVarPresent ? "yes" : "no"}, status ${provider.lastStatus}${provider.provider === "googlePlaces" ? `, endpoint ${provider.endpointVersion ?? "New"}` : ""}`,
   ).join("\n");
@@ -239,6 +275,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
       ].join("\n"),
       emailSafety,
       smsNotifications: smsSafety,
+      regenerationSummary: regenerationReadiness,
       providerDiagnostics: providerSummary || "Provider diagnostics are not recorded yet.",
       latestTopProspectsRun: latestRun,
       latestOutreachPackage: latestPackage,
@@ -247,6 +284,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
         latestRun,
         providerSummary,
         emailSafety,
+        regenerationReadiness,
         smsSafety,
       ].join("\n\n"),
     },
@@ -264,9 +302,9 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
 export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = process.env): OperatorActionResult {
   const prospect = withAnalysis(createProspect({
     ...seedProspects[0],
-    businessName: "Operator Test Pressure Washing",
+    businessName: "Test Pressure Washing Co.",
     trade: "Pressure Washing",
-    city: "Tampa",
+    city: "Orlando",
     state: "FL",
     email: "owner@operatortest.example",
     website: "https://operatortest.example",
@@ -274,18 +312,68 @@ export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = 
   }));
   const publicPreviewLink = publicProspectPreviewLink(createPublicPreviewToken());
   const outreach = generateOutreach(prospect, publicPreviewLink, environment);
-  const firstDm = outreach.concise.startsWith("Hey") ? outreach.concise : `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`;
-  const firstTouch = `${outreach.concise}\n${firstDm}`;
+  const playbook = casualDmPlaybook(prospect, publicPreviewLink);
+  const scripts = [
+    { label: "First email script", body: outreach.concise },
+    { label: "First Facebook/Instagram DM script", body: playbook.firstDm },
+    { label: "Softer DM script", body: playbook.softerFirstDm },
+    { label: "Yes-reply / preview-send script", body: playbook.yesReply },
+    { label: "Pricing reply", body: playbook.pricingReply },
+    { label: "Follow-up", body: playbook.followUpAfterLoom },
+    { label: "Not interested reply", body: playbook.notInterestedReply },
+  ];
+  const safetySummary = [
+    "TEST / FAKE package only.",
+    "No provider calls.",
+    "No prospect record created.",
+    "No email, DM, form, phone call, or Loom was sent.",
+    "First email and first DM are link-free.",
+    "Yes-reply uses a fake public /p/ preview link.",
+    `Copy version: ${currentOutreachCopyVersion}.`,
+  ].join("\n");
+  const fullSummary = [
+    "TEST / FAKE OUTREACH PACKAGE",
+    `Business: ${prospect.businessName}`,
+    "Trade/city: Pressure Washing near Orlando, FL",
+    "Recommended contact path: Public email for test, manual review only",
+    `Public preview link: ${publicPreviewLink}`,
+    `Copy version: ${currentOutreachCopyVersion}`,
+    "",
+    ...scripts.map((script) => `${script.label}:\n${script.body}`),
+    "",
+    `Safety summary:\n${safetySummary}`,
+  ].join("\n\n");
+  const allFirstTouch = `${outreach.concise}\n${playbook.firstDm}\n${playbook.softerFirstDm}`;
   return {
     ok: true,
     message: "Generated a fake internal outreach package preview. No provider calls, prospects, or outreach sends were created.",
     packagePreview: {
       subject: outreach.subjects[0],
       firstEmailLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(outreach.concise),
-      firstDmLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(firstTouch),
-      yesReplyIncludesPublicPreview: outreach.detailed.includes(publicPreviewLink),
+      firstDmLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(allFirstTouch),
+      yesReplyIncludesPublicPreview: playbook.yesReply.includes(publicPreviewLink),
       publicPreviewLink,
     },
+    fakePackage: {
+      label: "TEST / FAKE",
+      businessName: prospect.businessName,
+      tradeCity: "Pressure Washing near Orlando, FL",
+      recommendedContactPath: "Public email for test, manual review only",
+      copyVersion: currentOutreachCopyVersion,
+      publicPreviewLink,
+      scripts,
+      safetySummary,
+      fullSummary,
+    },
+  };
+}
+
+export async function regenerateOperatorUnsentOutreachCopy(): Promise<OperatorActionResult> {
+  const regeneration = await regenerateUnsentOutreachCopy();
+  return {
+    ok: true,
+    message: `${regeneration.message} Nothing was sent.`,
+    regeneration,
   };
 }
 

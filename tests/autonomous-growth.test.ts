@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   casualDmPlaybook,
+  currentOutreachCopyVersion,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
   evaluatePreviewQualityGate,
@@ -25,8 +26,11 @@ import {
 import {
   resetAutonomousGrowthMemoryForTests,
   recordEmailSuppression,
+  regenerateUnsentOutreachCopy,
+  outreachQueueMemoryForTests,
   runFullAutoEmailBatch,
   sendQueuedEmailQueueItem,
+  setOutreachQueueMemoryForTests,
   updateAutonomousGrowthSettings,
   updateOutreachQueueStatus,
   upsertAutonomousQueueItemFromPackage,
@@ -264,6 +268,10 @@ test("queued email send readiness enforces suppression, public links, compliance
     followUpDate: "",
     replyStatus: "",
     notes: "",
+    outreachCopyVersion: currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: new Date(0).toISOString(),
+    previewVersion: "preview-v1",
+    lastRegeneratedAt: "",
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   } satisfies OutreachQueueItem;
@@ -989,7 +997,7 @@ test("Autopilot dashboard exposes the environment kill switch without blocking s
     website: "https://example.com",
     email: "",
     contactSource: "Contact form",
-    contactConfidence: "medium",
+    contactConfidence: 70,
     previewLink: publicLink,
     previewQualityScore: 88,
     subjectLine: "Quick website idea",
@@ -1013,6 +1021,10 @@ test("Autopilot dashboard exposes the environment kill switch without blocking s
     followUpDate: "",
     replyStatus: "",
     notes: "",
+    outreachCopyVersion: currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: new Date(1).toISOString(),
+    previewVersion: "preview-v1",
+    lastRegeneratedAt: "",
     createdAt: new Date(1).toISOString(),
     updatedAt: new Date(1).toISOString(),
   } satisfies OutreachQueueItem;
@@ -1403,7 +1415,102 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
 });
 
+test("generated autonomous queue packages store the current outreach copy version", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  try {
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "copy-version-result",
+    });
+
+    assert.equal(queued.outreachCopyVersion, currentOutreachCopyVersion);
+    assert.match(queued.outreachCopyGeneratedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(queued.previewVersion, "preview-v1");
+    assert.equal(queued.lastRegeneratedAt, "");
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("regeneration updates only unsent uncontacted packages and preserves sent or suppressed records", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const eligibleOld = queueItem({
+    id: "eligible-old",
+    businessName: "Eligible Pressure Washing",
+    trade: "Pressure Washing",
+    city: "Orlando, FL",
+    outreachCopyVersion: "old_audit_copy_v0",
+    emailBody: "Old audit-style copy with One missed opportunity.",
+  });
+  const missingPreview = queueItem({
+    id: "missing-preview",
+    businessName: "Missing Preview Cleaning",
+    trade: "Cleaning",
+    city: "Tampa, FL",
+    previewLink: "",
+    outreachCopyVersion: "old_audit_copy_v0",
+  });
+  const sent = queueItem({
+    id: "already-sent",
+    businessName: "Already Sent Roofing",
+    status: "Sent",
+    sentDate: new Date(2).toISOString(),
+    outreachCopyVersion: "old_audit_copy_v0",
+  });
+  const suppressed = queueItem({
+    id: "suppressed",
+    businessName: "Suppressed HVAC",
+    status: "Suppressed",
+    replyStatus: "complaint",
+    notes: "suppressed",
+    outreachCopyVersion: "old_audit_copy_v0",
+  });
+  const phoneOnly = queueItem({
+    id: "phone-only",
+    businessName: "Phone Only Plumbing",
+    contactSource: "Phone",
+    blockedReason: "Phone-only / written outreach blocked",
+    outreachCopyVersion: "old_audit_copy_v0",
+  });
+  try {
+    setOutreachQueueMemoryForTests([eligibleOld, missingPreview, sent, suppressed, phoneOnly]);
+    const summary = await regenerateUnsentOutreachCopy();
+    const queue = outreachQueueMemoryForTests();
+    const regenerated = queue.find((item) => item.id === "eligible-old");
+    const regeneratedMissingPreview = queue.find((item) => item.id === "missing-preview");
+    const untouchedSent = queue.find((item) => item.id === "already-sent");
+    const untouchedSuppressed = queue.find((item) => item.id === "suppressed");
+    const untouchedPhoneOnly = queue.find((item) => item.id === "phone-only");
+
+    assert.equal(summary.updated, 2);
+    assert.equal(summary.oldUnsentPackagesNeedingRegeneration, 2);
+    assert.equal(regenerated?.outreachCopyVersion, currentOutreachCopyVersion);
+    assert.match(regenerated?.emailBody ?? "", /help get you more calls and quote requests/i);
+    assert.doesNotMatch(regenerated?.emailBody ?? "", /One missed opportunity|https:\/\/webworkshop\.dev\/p\//i);
+    assert.equal(regeneratedMissingPreview?.outreachCopyVersion, currentOutreachCopyVersion);
+    assert.match(regeneratedMissingPreview?.loomTalkingPoints ?? "", /Preview missing - generate\/review preview before sending yes-reply/);
+    assert.equal(untouchedSent?.outreachCopyVersion, "old_audit_copy_v0");
+    assert.equal(untouchedSent?.sentDate, sent.sentDate);
+    assert.equal(untouchedSuppressed?.outreachCopyVersion, "old_audit_copy_v0");
+    assert.equal(untouchedSuppressed?.replyStatus, "complaint");
+    assert.equal(untouchedPhoneOnly?.outreachCopyVersion, "old_audit_copy_v0");
+    assert.ok((summary.skippedReasons["already contacted"] ?? 0) >= 1);
+    assert.ok((summary.skippedReasons["reply or suppression recorded"] ?? 0) >= 1);
+    assert.ok((summary.skippedReasons["phone-only"] ?? 0) >= 1);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueItem {
+  const now = new Date().toISOString();
   return {
     id: "queue-1",
     prospectId: "prospect-1",
@@ -1438,8 +1545,12 @@ function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueIte
     followUpDate: "",
     replyStatus: "",
     notes: "",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    outreachCopyVersion: currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: now,
+    previewVersion: "preview-v1",
+    lastRegeneratedAt: "",
+    createdAt: now,
+    updatedAt: now,
     ...overrides,
   };
 }

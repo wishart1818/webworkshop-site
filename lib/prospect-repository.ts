@@ -2,6 +2,7 @@ import { PrismaClient, ProspectStatus as PrismaProspectStatus, type Prisma } fro
 import {
   displayStateCode,
   normalizeTradeCategory,
+  OUTREACH_COPY_VERSION,
   seedProspects,
   titleCaseLocation,
   type Activity,
@@ -94,6 +95,8 @@ function toDomain(row: StoredProspect): Prospect {
         followUps: stringArray(outreachRow.followUps),
         approved: Boolean(outreachRow.approvedAt),
         generatedAt: outreachRow.createdAt.toISOString(),
+        outreachCopyVersion: OUTREACH_COPY_VERSION,
+        outreachCopyGeneratedAt: outreachRow.createdAt.toISOString(),
       } satisfies OutreachDraft)
     : undefined;
   const preview = previewRow

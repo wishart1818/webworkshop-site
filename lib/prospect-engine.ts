@@ -147,6 +147,8 @@ export type OutreachDraft = {
   followUps: string[];
   approved: boolean;
   generatedAt: string;
+  outreachCopyVersion: string;
+  outreachCopyGeneratedAt: string;
 };
 
 export type PreviewConcept = {
@@ -791,6 +793,8 @@ export const websiteAvailabilityLabels: Record<WebsiteAvailabilityStatus, string
   inactive_website: "Website appears inactive",
 };
 
+export const OUTREACH_COPY_VERSION = "permission_first_more_calls_v1";
+
 export function prospectHasUnusableWebsite(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
   return prospect.prospectType === "no_website_social_only"
     || !["unknown", "usable"].includes(prospect.websiteStatus);
@@ -875,6 +879,7 @@ function socialManualMethod(method: string) {
 
 export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {
   const complianceFooter = outreachComplianceFooter(environment);
+  const generatedAt = now();
   const manualMethod = prospect.bestManualContactMethod || prospectBestManualContactMethod(prospect);
   const draftLabel = manualMethod === "quote_form"
     ? "quote/request estimate form"
@@ -909,7 +914,9 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
         `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
-      generatedAt: now(),
+      generatedAt,
+      outreachCopyVersion: OUTREACH_COPY_VERSION,
+      outreachCopyGeneratedAt: generatedAt,
     };
   }
   if (prospect.prospectType === "no_website_social_only") {
@@ -926,7 +933,9 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
         `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
-      generatedAt: now(),
+      generatedAt,
+      outreachCopyVersion: OUTREACH_COPY_VERSION,
+      outreachCopyGeneratedAt: generatedAt,
     };
   }
   const trade = prospectTrade(prospect);
@@ -943,7 +952,9 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
       `Hi again,\n\nLast note from me. If the preview is not useful or timing is off, no problem - I will close the loop.\n\n${complianceFooter}`,
     ],
     approved: false,
-    generatedAt: now(),
+    generatedAt,
+    outreachCopyVersion: OUTREACH_COPY_VERSION,
+    outreachCopyGeneratedAt: generatedAt,
   };
 }
 

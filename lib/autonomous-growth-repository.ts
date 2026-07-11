@@ -12,6 +12,8 @@ import {
   loomTalkingPoints,
   manualDmScript,
   normalizeAutonomousGrowthSettings,
+  currentOutreachCopyVersion,
+  outreachCopyRegenerationEligibility,
   outreachQueueStatuses,
   outreachEnvironment,
   queueStatusAfterManualAction,
@@ -29,7 +31,7 @@ import {
   type OutreachQueueItem,
   type OutreachQueueStatus,
 } from "@/lib/autonomous-growth";
-import type { Prospect } from "@/lib/prospect-engine";
+import { createProspect, generateOutreach, normalizeTradeCategory, type Prospect } from "@/lib/prospect-engine";
 import { getProspectDatabase } from "@/lib/prospect-repository";
 import { getTopProspectJob } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
@@ -199,6 +201,10 @@ function queueToDomain(row: QueueRow): OutreachQueueItem {
     followUpDate: row.followUpDate?.toISOString() ?? "",
     replyStatus: row.replyStatus ?? "",
     notes: row.notes ?? "",
+    outreachCopyVersion: row.outreachCopyVersion ?? "",
+    outreachCopyGeneratedAt: row.outreachCopyGeneratedAt?.toISOString() ?? "",
+    previewVersion: row.previewVersion ?? "",
+    lastRegeneratedAt: row.lastRegeneratedAt?.toISOString() ?? "",
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -470,6 +476,55 @@ function blockedReasonText(reasons: string[], previewReasons: string[]) {
   return [...previewReasons, ...reasons].filter(Boolean).join(" ");
 }
 
+function cityStateFromQueueCity(value: string) {
+  const match = value.match(/^(.+?),\s*([A-Z]{2})$/i);
+  return {
+    city: match?.[1]?.trim() || value || "Unknown",
+    state: match?.[2]?.trim().toUpperCase() || "NA",
+  };
+}
+
+function prospectForQueueCopyRegeneration(item: OutreachQueueItem): Prospect {
+  const location = cityStateFromQueueCity(item.city);
+  const contactSource = item.contactSource.toLowerCase();
+  const manualContact: Prospect["bestManualContactMethod"] =
+    /quote/.test(contactSource) ? "quote_form"
+      : /contact form/.test(contactSource) ? "contact_form"
+        : /facebook/.test(contactSource) ? "facebook"
+          : /instagram|social/.test(contactSource) ? "instagram"
+            : /linkedin/.test(contactSource) ? "linkedin"
+              : item.email ? "email" : "unknown";
+  const recommendedContactMethod: Prospect["recommendedContactMethod"] =
+    item.email ? "send_email"
+      : manualContact === "quote_form" || manualContact === "contact_form" ? "submit_contact_form"
+        : manualContact === "facebook" ? "message_on_facebook"
+          : manualContact === "instagram" || manualContact === "linkedin" ? "message_on_social"
+            : "needs_manual_contact_research";
+  return createProspect({
+    businessName: item.businessName,
+    website: item.website,
+    phone: "",
+    email: item.email,
+    city: location.city,
+    state: location.state,
+    trade: normalizeTradeCategory(item.trade) ?? "Pressure Washing",
+    serviceArea: `${location.city} and nearby communities`,
+    sizeIndicator: "Growing",
+    status: "Reviewed",
+    prospectType: item.website ? "redesign" : "no_website_social_only",
+    classification: item.website ? "website_redesign" : "social_only",
+    contactFormUrl: manualContact === "contact_form" ? item.website : "",
+    quoteFormUrl: manualContact === "quote_form" ? item.website : "",
+    facebookUrl: manualContact === "facebook" ? "https://facebook.com/" : "",
+    instagramUrl: manualContact === "instagram" ? "https://instagram.com/" : "",
+    linkedinUrl: manualContact === "linkedin" ? "https://linkedin.com/company/" : "",
+    bestManualContactMethod: manualContact,
+    recommendedContactMethod,
+    contactConfidence: item.contactConfidence >= 70 ? "high" : item.contactConfidence >= 40 ? "medium" : "low",
+    sourceConfidence: item.contactConfidence,
+  });
+}
+
 async function sendLoomNeededNotificationIfConfigured(item: OutreachQueueItem, requestedStatus: OutreachQueueStatus) {
   if (requestedStatus !== "Prospect Said Yes") return;
   const notification = loomNeededNotificationDraft(item);
@@ -622,6 +677,16 @@ export type EmailSuppressionResult = {
   reason: EmailSuppressionReason;
 };
 
+export type OutreachCopyRegenerationSummary = {
+  copyVersion: string;
+  updated: number;
+  skipped: number;
+  oldUnsentPackagesNeedingRegeneration: number;
+  updatedItems: string[];
+  skippedReasons: Record<string, number>;
+  message: string;
+};
+
 function suppressionStatus(reason: EmailSuppressionReason): OutreachQueueStatus {
   if (reason === "bounce") return "Bounced";
   if (reason === "complaint") return "Complained";
@@ -668,6 +733,10 @@ function unknownSuppressionQueueItem(email: string, status: OutreachQueueStatus,
     followUpDate: "",
     replyStatus: reason,
     notes: note,
+    outreachCopyVersion: "",
+    outreachCopyGeneratedAt: "",
+    previewVersion: "",
+    lastRegeneratedAt: "",
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -1056,6 +1125,7 @@ export async function upsertAutonomousQueueItemFromPackage({
   const status = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
   const now = new Date();
   const outreach = prospect.outreach;
+  const outreachGeneratedAt = outreach?.outreachCopyGeneratedAt || outreach?.generatedAt || now.toISOString();
   const itemData = {
     prospectId: prospect.id,
     topProspectResultId,
@@ -1091,6 +1161,10 @@ export async function upsertAutonomousQueueItemFromPackage({
     followUpDate: null,
     replyStatus: null,
     notes: null,
+    outreachCopyVersion: outreach?.outreachCopyVersion ?? currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: new Date(outreachGeneratedAt),
+    previewVersion: prospect.preview?.generatedAt ? "preview-v1" : "",
+    lastRegeneratedAt: null,
   };
   if (!hasDatabase) {
     const existingIndex = memoryQueue().findIndex((item) => item.topProspectResultId === topProspectResultId);
@@ -1105,6 +1179,10 @@ export async function upsertAutonomousQueueItemFromPackage({
       followUpDate: "",
       replyStatus: "",
       notes: "",
+      outreachCopyVersion: itemData.outreachCopyVersion,
+      outreachCopyGeneratedAt: itemData.outreachCopyGeneratedAt.toISOString(),
+      previewVersion: itemData.previewVersion,
+      lastRegeneratedAt: "",
       createdAt: existingIndex >= 0 ? memoryQueue()[existingIndex].createdAt : now.toISOString(),
       updatedAt: now.toISOString(),
     };
@@ -1357,12 +1435,116 @@ export async function rewriteOutreachQueueItem(id: string) {
   return domain;
 }
 
+function incrementReason(summary: OutreachCopyRegenerationSummary, reason: string) {
+  summary.skipped += 1;
+  summary.skippedReasons[reason] = (summary.skippedReasons[reason] ?? 0) + 1;
+}
+
+function summarizeRegeneration(summary: OutreachCopyRegenerationSummary) {
+  const skippedParts = Object.entries(summary.skippedReasons)
+    .map(([reason, count]) => `${count} skipped because ${reason}`)
+    .join("; ");
+  return [
+    `${summary.updated} unsent package${summary.updated === 1 ? "" : "s"} updated to ${summary.copyVersion}`,
+    skippedParts,
+  ].filter(Boolean).join(". ");
+}
+
+function regeneratedQueueCopy(item: OutreachQueueItem, nowIso: string) {
+  const prospect = prospectForQueueCopyRegeneration(item);
+  const previewLink = item.previewLink && /\/p\//i.test(item.previewLink) ? item.previewLink : "";
+  const outreach = generateOutreach(prospect, previewLink);
+  return {
+    subjectLine: outreach.subjects[0],
+    emailBody: outreach.concise,
+    dmScript: manualDmScript(prospect, previewLink),
+    loomTalkingPoints: previewLink
+      ? loomTalkingPoints(prospect, previewLink)
+      : "Preview missing - generate/review preview before sending yes-reply.",
+    outreachCopyVersion: currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: new Date(outreach.outreachCopyGeneratedAt || nowIso),
+    lastRegeneratedAt: new Date(nowIso),
+    rewritePlan: [],
+    recommendedNextAction: "Needs Human Review" as const,
+    reviewSummary: `${item.businessName} outreach copy was regenerated to ${currentOutreachCopyVersion}. Nothing was sent.`,
+    notes: [item.notes, `Outreach copy regenerated to ${currentOutreachCopyVersion}. Nothing was sent.`].filter(Boolean).join("\n"),
+  };
+}
+
+export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegenerationSummary> {
+  const queue = await listOutreachQueueItems();
+  const summary: OutreachCopyRegenerationSummary = {
+    copyVersion: currentOutreachCopyVersion,
+    updated: 0,
+    skipped: 0,
+    oldUnsentPackagesNeedingRegeneration: 0,
+    updatedItems: [],
+    skippedReasons: {},
+    message: "",
+  };
+  const nowIso = new Date().toISOString();
+  const eligible = queue.filter((item) => {
+    const result = outreachCopyRegenerationEligibility(item);
+    if (result.eligible) summary.oldUnsentPackagesNeedingRegeneration += 1;
+    return result.eligible;
+  });
+
+  if (!hasDatabase) {
+    for (const item of memoryQueue()) {
+      const eligibility = outreachCopyRegenerationEligibility(item);
+      if (!eligibility.eligible) {
+        incrementReason(summary, eligibility.reason);
+        continue;
+      }
+      Object.assign(item, {
+        ...regeneratedQueueCopy(item, nowIso),
+        outreachCopyGeneratedAt: nowIso,
+        lastRegeneratedAt: nowIso,
+        updatedAt: nowIso,
+      });
+      summary.updated += 1;
+      summary.updatedItems.push(item.businessName);
+    }
+    await recordRunReview(memorySettings(), memoryQueue());
+    summary.message = summarizeRegeneration(summary);
+    return summary;
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const eligibleIds = new Set(eligible.map((item) => item.id));
+  for (const item of queue) {
+    if (!eligibleIds.has(item.id)) {
+      incrementReason(summary, outreachCopyRegenerationEligibility(item).reason);
+      continue;
+    }
+    const regenerated = regeneratedQueueCopy(item, nowIso);
+    await database.outreachQueueItem.update({
+      where: { id: item.id },
+      data: regenerated,
+    });
+    summary.updated += 1;
+    summary.updatedItems.push(item.businessName);
+  }
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  summary.message = summarizeRegeneration(summary);
+  return summary;
+}
+
 export function resetAutonomousGrowthMemoryForTests() {
   globalAutonomous.autonomousGrowthSettingsMemory = undefined;
   globalAutonomous.outreachQueueMemory = undefined;
   globalAutonomous.autonomousRunReviewsMemory = undefined;
   globalAutonomous.autopilotCampaignMemory = undefined;
   globalAutonomous.autopilotSmokeTestMemory = undefined;
+}
+
+export function setOutreachQueueMemoryForTests(items: OutreachQueueItem[]) {
+  globalAutonomous.outreachQueueMemory = structuredClone(items);
+}
+
+export function outreachQueueMemoryForTests() {
+  return structuredClone(memoryQueue());
 }
 
 export function learningSummaryForAutonomousQueueForTests(queue: OutreachQueueItem[], runReviews: AutonomousRunReview[] = []): AutonomousLearningSummary {

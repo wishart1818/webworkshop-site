@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOperatorTestCenterPayload, generateOneTestOutreachPackage, sendOperatorTestNotification, sendOperatorTestSms } from "@/lib/operator-test-center";
+import { getOperatorTestCenterPayload, generateOneTestOutreachPackage, regenerateOperatorUnsentOutreachCopy, sendOperatorTestNotification, sendOperatorTestSms } from "@/lib/operator-test-center";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,6 +17,9 @@ export async function POST(request: Request) {
     const payload = await request.json() as { action?: string };
     if (payload.action === "generate_test_package") {
       return NextResponse.json(generateOneTestOutreachPackage());
+    }
+    if (payload.action === "regenerate_unsent_outreach_copy") {
+      return NextResponse.json(await regenerateOperatorUnsentOutreachCopy());
     }
     if (payload.action === "send_internal_notification") {
       return NextResponse.json(await sendOperatorTestNotification("notification"));

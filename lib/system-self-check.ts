@@ -1,5 +1,6 @@
 import {
   casualDmPlaybook,
+  currentOutreachCopyVersion,
   csvEscape,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
@@ -111,6 +112,10 @@ function queueItemFromProspect(prospect: Prospect): OutreachQueueItem {
     followUpDate: "",
     replyStatus: "",
     notes: "",
+    outreachCopyVersion: prospect.outreach?.outreachCopyVersion ?? currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: prospect.outreach?.outreachCopyGeneratedAt ?? new Date(0).toISOString(),
+    previewVersion: prospect.preview?.generatedAt ? "preview-v1" : "",
+    lastRegeneratedAt: "",
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   };

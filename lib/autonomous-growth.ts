@@ -1,5 +1,6 @@
 import {
   displayTradeCategory,
+  OUTREACH_COPY_VERSION,
   normalizeTradeCategory,
   outreachComplianceFooter,
   prospectEmailNeedsManualVerification,
@@ -170,9 +171,20 @@ export type OutreachQueueItem = {
   followUpDate: string;
   replyStatus: string;
   notes: string;
+  outreachCopyVersion: string;
+  outreachCopyGeneratedAt: string;
+  previewVersion: string;
+  lastRegeneratedAt: string;
   createdAt: string;
   updatedAt: string;
 };
+
+export type OutreachCopyRegenerationEligibility = {
+  eligible: boolean;
+  reason: string;
+};
+
+export const currentOutreachCopyVersion = OUTREACH_COPY_VERSION;
 
 export type AutonomousGrowthMetrics = {
   prospectsFoundToday: number;
@@ -729,6 +741,48 @@ export function queueStatusForPackage({
   if (settings.mode === "auto_email_pilot" && autoEligibility.eligible) return "Queued";
   if (settings.mode === "auto_email_pilot") return "Blocked";
   return "Eligible";
+}
+
+const contactedOrClosedStatuses = new Set<OutreachQueueStatus>([
+  "First DM Sent",
+  "Prospect Said Yes",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Sent",
+  "Follow-up Needed",
+  "Follow-up Sent",
+  "Replied",
+  "Positive Reply",
+  "Won",
+  "Lost",
+  "No Response",
+  "Not Interested",
+  "Opted Out",
+  "Bounced",
+  "Complained",
+  "Suppressed",
+  "Skipped",
+  "Never Contact",
+  "Bad Fit",
+  "Blocked",
+]);
+
+export function outreachCopyRegenerationEligibility(item: OutreachQueueItem): OutreachCopyRegenerationEligibility {
+  if (item.outreachCopyVersion === currentOutreachCopyVersion) return { eligible: false, reason: "already current" };
+  if (item.sentDate) return { eligible: false, reason: "already contacted" };
+  if (item.replyStatus) return { eligible: false, reason: "reply or suppression recorded" };
+  if (contactedOrClosedStatuses.has(item.status)) return { eligible: false, reason: `status is ${item.status}` };
+  if (/phone(?:\s|-)?only/i.test(`${item.contactSource} ${item.blockedReason}`)) return { eligible: false, reason: "phone-only" };
+  if (/suppressed|opted out|bounced|complained|never contact|bad fit/i.test(`${item.status} ${item.blockedReason} ${item.notes}`)) return { eligible: false, reason: "suppressed or blocked" };
+  if (!item.previewLink) return { eligible: true, reason: "preview missing" };
+  if (/\/engine(?:\/|$)/i.test(item.previewLink)) return { eligible: false, reason: "protected preview link" };
+  if (!/\/p\//i.test(item.previewLink)) return { eligible: true, reason: "preview missing" };
+  if (/phone(?:\s|-)?only|unknown|manual research/i.test(item.contactSource)) return { eligible: false, reason: "no usable written contact path" };
+  return { eligible: true, reason: "safe to regenerate" };
 }
 
 export function queueStatusAfterManualAction(status: OutreachQueueStatus): OutreachQueueStatus {

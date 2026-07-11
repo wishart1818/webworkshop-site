@@ -137,6 +137,13 @@ export function OperatorTestCenterWorkspace() {
   if (loading) return <div className="engine-content"><LoadingState title="Loading Operator Test Center" body="Checking safe test actions, provider coverage, email gates, and the latest prospecting activity." /></div>;
   if (!payload) return <div className="engine-content"><EmptyState title="Operator Test Center unavailable" body={error || "Reload the engine and try again."} action={() => void load()} actionLabel="Retry" /></div>;
   const busy = actionState === "running";
+  const regenerationSummaryText = lastAction?.regeneration ? [
+    lastAction.regeneration.message,
+    `Copy version: ${lastAction.regeneration.copyVersion}`,
+    `Updated: ${lastAction.regeneration.updated}`,
+    `Skipped: ${lastAction.regeneration.skipped}`,
+    Object.entries(lastAction.regeneration.skippedReasons).map(([reason, count]) => `${count} skipped because ${reason}`).join("\n"),
+  ].filter(Boolean).join("\n") : "";
 
   return (
     <div className="engine-content engine-operator-test-center">
@@ -174,7 +181,8 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("check_email_safety_gates")} type="button">Check Email Safety Gates</button>
           <button className="engine-button" disabled={busy} onClick={() => void runProviderSmokeTest()} type="button">Run Provider Smoke Test</button>
           <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runSmallTopProspectsTest()} type="button">Run Small Top Prospects Test</button>
-          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("generate_test_package")} type="button">Generate One Test Outreach Package</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("generate_test_package")} type="button">Generate One Fake Test Outreach Package</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("regenerate_unsent_outreach_copy")} type="button">Regenerate Unsent Outreach Copy</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_notification")} type="button">Send Internal Test Notification</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_resend_test")} type="button">Send Internal Test Email Through Resend</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_sms_test")} type="button">Send Internal Test SMS</button>
@@ -187,13 +195,69 @@ export function OperatorTestCenterWorkspace() {
 
       {lastAction?.packagePreview ? (
         <section className="engine-panel engine-operator-package-check" aria-label="Test outreach package checks">
-          <div className="engine-panel__head"><div><h2>Test Outreach Package</h2><p>Fake internal package, useful for checking copy gates.</p></div><span>{lastAction.packagePreview.subject}</span></div>
+          <div className="engine-panel__head"><div><h2>Fake Test Outreach Package</h2><p>TEST / FAKE package, useful for checking current copy gates. It creates no real outreach activity.</p></div><span>{lastAction.packagePreview.subject}</span></div>
           <dl className="engine-operator-check-grid">
             <div><dt>First email link-free</dt><dd>{lastAction.packagePreview.firstEmailLinkFree ? "Yes" : "No"}</dd></div>
             <div><dt>First DM link-free</dt><dd>{lastAction.packagePreview.firstDmLinkFree ? "Yes" : "No"}</dd></div>
             <div><dt>Yes reply includes public preview</dt><dd>{lastAction.packagePreview.yesReplyIncludesPublicPreview ? "Yes" : "No"}</dd></div>
             <div><dt>Preview link type</dt><dd>{lastAction.packagePreview.publicPreviewLink.includes("/p/") ? "Public /p/" : "Needs review"}</dd></div>
           </dl>
+          {lastAction.fakePackage ? (
+            <div className="engine-operator-summary-grid">
+              <article>
+                <header>
+                  <h3>{lastAction.fakePackage.label}: {lastAction.fakePackage.businessName}</h3>
+                  <button className="engine-button" onClick={() => void copyText("Fake Package Summary", lastAction.fakePackage?.fullSummary ?? "")} type="button">Copy Fake Package Summary</button>
+                </header>
+                <p>{lastAction.fakePackage.tradeCity}</p>
+                <p>Recommended contact path: {lastAction.fakePackage.recommendedContactPath}</p>
+                <p>Copy version: {lastAction.fakePackage.copyVersion}</p>
+              </article>
+              {lastAction.fakePackage.scripts.map((script) => (
+                <article key={script.label}>
+                  <header>
+                    <h3>{script.label}</h3>
+                    <button className="engine-button" onClick={() => void copyText(script.label, script.body)} type="button">Copy</button>
+                  </header>
+                  <pre>{script.body}</pre>
+                </article>
+              ))}
+              <article>
+                <header>
+                  <h3>Safety Summary</h3>
+                  <button className="engine-button" onClick={() => void copyText("Safety Summary", lastAction.fakePackage?.safetySummary ?? "")} type="button">Copy</button>
+                </header>
+                <pre>{lastAction.fakePackage.safetySummary}</pre>
+              </article>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {lastAction?.regeneration ? (
+        <section className="engine-panel engine-operator-package-check" aria-label="Outreach copy regeneration result">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Outreach Copy Regeneration</h2>
+              <p>Only unsent, uncontacted, written-contact packages are eligible. Nothing was sent.</p>
+            </div>
+            <span>{lastAction.regeneration.copyVersion}</span>
+          </div>
+          <dl className="engine-operator-check-grid">
+            <div><dt>Packages regenerated</dt><dd>{lastAction.regeneration.updated}</dd></div>
+            <div><dt>Packages skipped</dt><dd>{lastAction.regeneration.skipped}</dd></div>
+            <div><dt>Old unsent needing regeneration</dt><dd>{lastAction.regeneration.oldUnsentPackagesNeedingRegeneration}</dd></div>
+            <div><dt>Safety</dt><dd>No sends, no log rewrites</dd></div>
+          </dl>
+          <details>
+            <summary>Packages skipped with reasons</summary>
+            <pre>{Object.entries(lastAction.regeneration.skippedReasons).map(([reason, count]) => `${count} skipped because ${reason}`).join("\n") || "No skipped packages."}</pre>
+          </details>
+          <details>
+            <summary>Updated packages</summary>
+            <pre>{lastAction.regeneration.updatedItems.join("\n") || "No packages updated."}</pre>
+          </details>
+          <button className="engine-button" onClick={() => void copyText("Regeneration Summary", regenerationSummaryText)} type="button">Copy Regeneration Summary</button>
         </section>
       ) : null}
 
@@ -210,6 +274,7 @@ export function OperatorTestCenterWorkspace() {
             ["Full Status Summary", payload.summaries.fullStatus],
             ["Email Safety Summary", payload.summaries.emailSafety],
             ["SMS Notification Summary", payload.summaries.smsNotifications],
+            ["Regeneration Summary", payload.summaries.regenerationSummary],
             ["Provider Diagnostics Summary", `${payload.summaries.providerDiagnostics}\n${providerSmokeSummary}`.trim()],
             ["Latest Top Prospects Run Summary", payload.summaries.latestTopProspectsRun],
             ["Latest Outreach Package Summary", payload.summaries.latestOutreachPackage],

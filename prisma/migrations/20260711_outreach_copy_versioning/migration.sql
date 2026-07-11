@@ -1,0 +1,5 @@
+ALTER TABLE "OutreachQueueItem"
+  ADD COLUMN IF NOT EXISTS "outreachCopyVersion" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS "outreachCopyGeneratedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "previewVersion" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS "lastRegeneratedAt" TIMESTAMP(3);

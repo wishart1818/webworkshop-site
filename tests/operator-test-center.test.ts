@@ -181,6 +181,8 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.match(payload.summaries.emailSafety, /OUTREACH_EMAIL_DISABLED/i);
     assert.match(payload.summaries.emailSafety, /Full auto: blocked/i);
     assert.match(payload.summaries.fullStatus, /Provider coverage/i);
+    assert.match(payload.summaries.regenerationSummary, /Latest outreach copy version/i);
+    assert.match(payload.summaries.regenerationSummary, /Old unsent packages needing regeneration/i);
     assert.match(payload.summaries.smsNotifications, /SMS only sends to INTERNAL_NOTIFY_PHONE/);
     assert.match(payload.summaries.smsNotifications, /\+1\*{5}1234/);
     assert.match(payload.nextRecommendedTest, /Internal alerts|SMS alerts|Internal notifications|Provider coverage|Top Prospects|First-touch|Resend/i);
@@ -188,21 +190,41 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.ok(payload.statusCards.some((card) => card.label === "Internal notifications"));
     assert.ok(payload.statusCards.some((card) => card.label === "SMS notifications"));
     assert.ok(payload.statusCards.some((card) => card.label === "Operator phone" && card.value === "+1*****1234"));
+    assert.ok(payload.statusCards.some((card) => card.label === "Latest Outreach Copy Version"));
+    assert.ok(payload.statusCards.some((card) => card.label === "Old unsent packages needing regeneration"));
   } finally {
     process.env = originalEnv;
   }
 });
 
-test("Operator Test Center fake package keeps first touch link-free and yes reply public", () => {
+test("Operator Test Center fake package always returns fake scripts without real outreach activity", () => {
   const result = generateOneTestOutreachPackage({
     WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
   } as NodeJS.ProcessEnv);
+  const fake = result.fakePackage;
 
   assert.equal(result.ok, true);
+  assert.match(result.message, /No provider calls, prospects, or outreach sends were created/);
+  assert.equal(fake?.label, "TEST / FAKE");
+  assert.equal(fake?.businessName, "Test Pressure Washing Co.");
+  assert.match(fake?.tradeCity ?? "", /Pressure Washing near Orlando, FL/);
+  assert.match(fake?.recommendedContactPath ?? "", /manual review only/i);
   assert.equal(result.packagePreview?.firstEmailLinkFree, true);
   assert.equal(result.packagePreview?.firstDmLinkFree, true);
   assert.equal(result.packagePreview?.yesReplyIncludesPublicPreview, true);
   assert.match(result.packagePreview?.publicPreviewLink ?? "", /^https:\/\/webworkshop\.dev\/p\//);
+  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you like me to send it over\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Want to see it\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "Softer DM script"));
+  assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / preview-send script" && /https:\/\/webworkshop\.dev\/p\//i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "Pricing reply"));
+  assert.ok(fake?.scripts.some((script) => script.label === "Follow-up"));
+  assert.ok(fake?.scripts.some((script) => script.label === "Not interested reply"));
+  assert.match(fake?.fullSummary ?? "", /help get you more calls and quote requests/i);
+  assert.match(fake?.fullSummary ?? "", /No email, DM, form, phone call, or Loom was sent/i);
+  assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First email script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
+  assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First Facebook\/Instagram DM script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
+  assert.doesNotMatch(fake?.fullSummary ?? "", /will get you more calls|DATABASE_URL|RESEND_API_KEY|TWILIO_AUTH_TOKEN|secret/i);
 });
 
 test("operator notification body is short, phone-friendly, and secret-safe", () => {

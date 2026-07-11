@@ -23,6 +23,8 @@ export const AUTONOMOUS_LEARNING_MIGRATION_ID = "20260621_autonomous_learning";
 export const AUTONOMOUS_LEARNING_MIGRATION_CHECKSUM = "6b436396a015ec47e43ae39c2ae8a6e6c98f31ae050e0cd25a00191a7cf864b3";
 export const CONTACT_DISCOVERY_MIGRATION_ID = "20260708_contact_discovery_paths";
 export const CONTACT_DISCOVERY_MIGRATION_CHECKSUM = "52f780ce07ef337a11e24f9474e6cb78e5c77a20e3d250b43d7c3847a1821206";
+export const OUTREACH_COPY_VERSIONING_MIGRATION_ID = "20260711_outreach_copy_versioning";
+export const OUTREACH_COPY_VERSIONING_MIGRATION_CHECKSUM = "2c3d1a4bb516a79f78197ba9dd261ae0ce6201a9ecc5bab2589f8d97e7dbae49";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -94,6 +96,9 @@ export const CONTACT_DISCOVERY_MIGRATION_STATEMENTS = [
   `ALTER TABLE "Prospect" ADD COLUMN IF NOT EXISTS "contactPageUrl" TEXT, ADD COLUMN IF NOT EXISTS "quoteFormUrl" TEXT, ADD COLUMN IF NOT EXISTS "contactFormDetected" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "quoteFormDetected" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "facebookUrl" TEXT, ADD COLUMN IF NOT EXISTS "instagramUrl" TEXT, ADD COLUMN IF NOT EXISTS "linkedinUrl" TEXT, ADD COLUMN IF NOT EXISTS "xUrl" TEXT, ADD COLUMN IF NOT EXISTS "youtubeUrl" TEXT, ADD COLUMN IF NOT EXISTS "contactPersonName" TEXT, ADD COLUMN IF NOT EXISTS "contactConfidence" TEXT NOT NULL DEFAULT 'low', ADD COLUMN IF NOT EXISTS "bestManualContactMethod" TEXT NOT NULL DEFAULT 'unknown', ADD COLUMN IF NOT EXISTS "contactDiscoveryNotes" JSONB NOT NULL DEFAULT '[]'::jsonb`,
   `UPDATE "Prospect" SET "contactFormDetected" = true WHERE "contactFormUrl" IS NOT NULL AND "contactFormUrl" <> ''`,
   `UPDATE "Prospect" SET "bestManualContactMethod" = CASE WHEN "publicEmail" IS NOT NULL AND "publicEmail" <> '' THEN 'email' WHEN "contactFormUrl" IS NOT NULL AND "contactFormUrl" <> '' THEN 'contact_form' WHEN "profileUrl" ~* '(facebook|fb)\\.com' THEN 'facebook' WHEN "profileUrl" ~* 'instagram\\.com' THEN 'instagram' WHEN "phone" IS NOT NULL AND "phone" <> '' THEN 'phone_only' ELSE 'unknown' END WHERE "bestManualContactMethod" = 'unknown'`,
+] as const;
+export const OUTREACH_COPY_VERSIONING_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "OutreachQueueItem" ADD COLUMN IF NOT EXISTS "outreachCopyVersion" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "outreachCopyGeneratedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "previewVersion" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "lastRegeneratedAt" TIMESTAMP(3)`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -198,6 +203,13 @@ async function applyContactDiscoveryUpgrade(transaction: SchemaTransaction) {
   await recordMigration(transaction, CONTACT_DISCOVERY_MIGRATION_ID, CONTACT_DISCOVERY_MIGRATION_CHECKSUM, "000000000014");
 }
 
+async function applyOutreachCopyVersioningUpgrade(transaction: SchemaTransaction) {
+  for (const statement of OUTREACH_COPY_VERSIONING_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, OUTREACH_COPY_VERSIONING_MIGRATION_ID, OUTREACH_COPY_VERSIONING_MIGRATION_CHECKSUM, "000000000015");
+}
+
 export class TopProspectSchemaLockUnavailableError extends Error {
   constructor() {
     super("Another Top Prospects schema initialization currently holds the transaction lock.");
@@ -242,6 +254,7 @@ export async function initializeTopProspectSchema(
         await applyAutonomousGrowthUpgrade(transaction);
         await applyAutonomousLearningUpgrade(transaction);
         await applyContactDiscoveryUpgrade(transaction);
+        await applyOutreachCopyVersioningUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -260,6 +273,7 @@ export async function initializeTopProspectSchema(
       await applyAutonomousGrowthUpgrade(transaction);
       await applyAutonomousLearningUpgrade(transaction);
       await applyContactDiscoveryUpgrade(transaction);
+      await applyOutreachCopyVersioningUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

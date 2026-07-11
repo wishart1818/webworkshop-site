@@ -1,5 +1,6 @@
 import {
   casualDmPlaybook,
+  currentOutreachCopyVersion,
   csvEscape,
   type OutreachQueueItem,
 } from "@/lib/autonomous-growth";
@@ -1014,6 +1015,10 @@ function fakeQueueItem(prospect: Prospect, overrides: Partial<OutreachQueueItem>
     followUpDate: "",
     replyStatus: "",
     notes: "",
+    outreachCopyVersion: prepared.outreach?.outreachCopyVersion ?? currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: prepared.outreach?.outreachCopyGeneratedAt ?? now,
+    previewVersion: prepared.preview?.generatedAt ? "preview-v1" : "",
+    lastRegeneratedAt: "",
     createdAt: now,
     updatedAt: now,
     ...overrides,
