@@ -13,6 +13,7 @@ import {
   withPresenceGapReview,
   withPreview,
 } from "../lib/prospect-engine";
+import { buildProspectFunnel, explainProspectBucket, prospectFunnelFilterKeys, prospectMatchesFunnelFilter } from "../lib/prospect-funnel";
 import { classifyWebsiteAnalysisFailure } from "../lib/site-analysis";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
@@ -197,6 +198,63 @@ test("priority scoring accounts for broader service-area reach", () => {
   const regional = calculatePriority(undefined, "Growing", "Findlay and nearby communities");
 
   assert.ok(regional > local);
+});
+
+test("prospect funnel totals reconcile and bucket counts match filtered lists", () => {
+  const emailReady = withAnalysis(structuredClone(seedProspects[0]));
+  emailReady.email = "owner@example.com";
+  emailReady.recommendedContactMethod = "send_email";
+  const facebookReady = withPresenceGapReview({ ...structuredClone(seedProspects[1]), email: "" }, "no_owned_website", "No owned website.");
+  facebookReady.facebookUrl = "https://facebook.com/example";
+  facebookReady.recommendedContactMethod = "message_on_facebook";
+  facebookReady.bestManualContactMethod = "facebook";
+  facebookReady.classification = "social_only";
+  facebookReady.status = "Reviewed";
+  facebookReady.priorityScore = 72;
+  const phoneOnly = { ...structuredClone(seedProspects[2]), email: "", contactFormUrl: "", facebookUrl: "", classification: "phone_only" as const, recommendedContactMethod: "call_first" as const };
+  const duplicate = { ...structuredClone(seedProspects[3]), classification: "duplicate_bad_fit" as const };
+  const contacted = { ...structuredClone(seedProspects[0]), id: "contacted-test", status: "Contacted" as const };
+  const strongWebsite = withAnalysis({ ...structuredClone(seedProspects[1]), id: "strong-site-test" });
+  strongWebsite.analysis!.overallScore = 92;
+  strongWebsite.analysis!.opportunityRating = "Low";
+  strongWebsite.bestManualContactMethod = "unknown";
+  const prospects = [emailReady, facebookReady, phoneOnly, duplicate, contacted, strongWebsite];
+
+  const funnel = buildProspectFunnel(prospects);
+
+  assert.equal(funnel.counts.total, prospects.length);
+  assert.equal(funnel.diagnostics.exclusiveTotal, prospects.length);
+  assert.equal(funnel.diagnostics.reconciles, true);
+  for (const key of prospectFunnelFilterKeys) {
+    const filteredCount = prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, key)).length;
+    assert.equal(funnel.counts[key], filteredCount, `bucket ${key}`);
+  }
+  assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "ready_email")).length, 1);
+  assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "ready_facebook")).length, 1);
+  assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "phone_only")).length, 1);
+  assert.ok(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "duplicate")).length >= 1);
+  assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "already_contacted")).length, 1);
+  assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "website_already_strong")).length, 1);
+});
+
+test("prospect funnel explanations are human-readable and do not change ranking or outreach", () => {
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  prospect.email = "owner@example.com";
+  prospect.recommendedContactMethod = "send_email";
+  const before = JSON.stringify(prospect);
+  const sortedBefore = sortProspects([prospect], "priority").map((item) => item.id);
+  const outreachBefore = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }).concise;
+
+  const explanation = explainProspectBucket(prospect);
+  buildProspectFunnel([prospect]);
+
+  assert.equal(JSON.stringify(prospect), before);
+  assert.deepEqual(sortProspects([prospect], "priority").map((item) => item.id), sortedBefore);
+  assert.equal(generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }).concise, outreachBefore);
+  assert.equal(explanation.currentBucketLabel, "Ready for Email Review");
+  assert.equal(explanation.eligibleFor.email, true);
+  assert.ok(explanation.reasons.some((reason) => /Public business email found|Qualified|Not contacted/i.test(reason)));
+  assert.match(explanation.nextStep, /Review/);
 });
 
 test("website analysis failures classify into persistent presence-gap states", () => {

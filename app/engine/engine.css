@@ -364,6 +364,164 @@ body:has(.engine-shell) {
   line-height: 1.4;
 }
 
+.engine-prospect-funnel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.engine-funnel-flow {
+  display: grid;
+  gap: 0.7rem;
+  justify-items: center;
+  padding: 1rem;
+}
+
+.engine-funnel-flow > i {
+  color: var(--engine-muted);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.engine-funnel-count {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+  border: 1px solid var(--engine-line);
+  background: #fbfdfb;
+  padding: 0.85rem;
+  color: var(--engine-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.engine-funnel-count:hover,
+.engine-funnel-count:focus-visible {
+  border-color: var(--engine-accent);
+  background: #f2fbf7;
+}
+
+.engine-funnel-count span {
+  color: var(--engine-muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.engine-funnel-count strong {
+  font-size: 1.45rem;
+}
+
+.engine-funnel-count small {
+  color: var(--engine-muted);
+  line-height: 1.35;
+}
+
+.engine-funnel-split,
+.engine-funnel-exclusions,
+.engine-current-inventory,
+.engine-funnel-diagnostics dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.engine-funnel-exclusions,
+.engine-current-inventory,
+.engine-funnel-diagnostics {
+  padding: 1rem;
+}
+
+.engine-current-inventory,
+.engine-funnel-diagnostics {
+  border-top: 1px solid var(--engine-line);
+  background: #f8faf8;
+}
+
+.engine-current-inventory h3,
+.engine-funnel-diagnostics h3,
+.engine-funnel-diagnostics p {
+  margin: 0;
+}
+
+.engine-current-inventory div,
+.engine-funnel-diagnostics dl div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--engine-line);
+  background: #fff;
+  padding: 0.65rem;
+}
+
+.engine-current-inventory span,
+.engine-funnel-diagnostics dt {
+  color: var(--engine-muted);
+  font-size: 0.78rem;
+}
+
+.engine-current-inventory b,
+.engine-funnel-diagnostics dd {
+  margin: 0;
+  font-weight: 900;
+}
+
+.engine-contact-explanation {
+  border: 1px solid var(--engine-line);
+  background: #fbfdfb;
+  padding: 0.75rem;
+}
+
+.engine-contact-explanation summary {
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.engine-contact-explanation > div {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.8rem;
+}
+
+.engine-contact-explanation p,
+.engine-contact-explanation h3,
+.engine-contact-explanation ul,
+.engine-contact-explanation dl {
+  margin: 0;
+}
+
+.engine-contact-explanation dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.5rem;
+}
+
+.engine-contact-explanation dl div {
+  border: 1px solid var(--engine-line);
+  background: #fff;
+  padding: 0.55rem;
+}
+
+.engine-contact-explanation dt {
+  color: var(--engine-muted);
+  font-size: 0.72rem;
+}
+
+.engine-contact-explanation dd {
+  margin: 0.2rem 0 0;
+  font-weight: 850;
+}
+
+.engine-contact-explanation ul {
+  padding-left: 1.1rem;
+  color: var(--engine-muted);
+}
+
+.engine-contact-explanation--compact {
+  width: 100%;
+}
+
 .engine-overview-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(18rem, 0.45fr);

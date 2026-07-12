@@ -2,6 +2,7 @@
 
 import React, { useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState } from "@/components/engine/EngineStates";
+import { explainProspectBucket } from "@/lib/prospect-funnel";
 import {
   activity,
   displayStateCode,
@@ -136,6 +137,7 @@ export function ProspectDetail({
         </select>
       </div>
       {presenceLabels.length > 0 && <div className="engine-prospect-labels" aria-label="Prospect presence labels" role="list">{presenceLabels.map((label) => <span key={label} role="listitem">{label}</span>)}</div>}
+      <ContactExplanation prospect={prospect} />
       <nav className="engine-tabs" aria-label="Prospect detail">
         {(["Analysis", "Outreach", "Preview", "Activity"] as DetailTab[]).map((tab) => (
           <button className={detailTab === tab ? "is-active" : ""} key={tab} onClick={() => setDetailTab(tab)} type="button">
@@ -158,6 +160,33 @@ export function ProspectDetail({
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
       </div>
     </aside>
+  );
+}
+
+function ContactExplanation({ prospect }: { prospect: Prospect }) {
+  const explanation = explainProspectBucket(prospect);
+  return (
+    <details className="engine-contact-explanation">
+      <summary>Why isn&apos;t this being contacted?</summary>
+      <div>
+        <p><b>Current bucket:</b> {explanation.currentBucketLabel}</p>
+        <dl>
+          <div><dt>Email</dt><dd>{explanation.eligibleFor.email ? "Yes" : "No"}</dd></div>
+          <div><dt>Facebook</dt><dd>{explanation.eligibleFor.facebook ? "Yes" : "No"}</dd></div>
+          <div><dt>Instagram</dt><dd>{explanation.eligibleFor.instagram ? "Yes" : "No"}</dd></div>
+          <div><dt>Contact Form</dt><dd>{explanation.eligibleFor.contactForm ? "Yes" : "No"}</dd></div>
+        </dl>
+        <section>
+          <h3>Why this bucket</h3>
+          <ul>{explanation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+        </section>
+        <section>
+          <h3>Blocked because</h3>
+          <ul>{explanation.blockedBecause.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+        </section>
+        <p><b>Next step:</b> {explanation.nextStep}</p>
+      </div>
+    </details>
   );
 }
 

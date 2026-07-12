@@ -855,9 +855,18 @@ export function smartRecommendationForGrowth(input: {
     };
   }
   if (input.existing.foundOnlyInTopProspectsResults > 0 || input.existing.total > 0) {
+    const inventorySummary = [
+      `You currently have ${input.existing.total} qualified unsent prospect${input.existing.total === 1 ? "" : "s"}.`,
+      `${input.existing.readyForEmailReview} email-ready.`,
+      `${input.existing.queueCounts.readyForFacebookDm} Facebook-ready.`,
+      `${input.existing.queueCounts.readyForInstagramDm} Instagram-ready.`,
+      `${input.existing.queueCounts.readyForContactFormReview} contact-form-ready.`,
+      `${input.existing.needsPreview} need preview/package work.`,
+      `${input.existing.skippedCount} are blocked or not currently actionable.`,
+    ].join(" ");
     return {
       nextBestMove: "Use existing qualified unsent prospects first.",
-      why: `${input.existing.total} qualified unsent prospect${input.existing.total === 1 ? "" : "s"} already exist across saved results and queue items.`,
+      why: `${inventorySummary} Because qualified inventory already exists across saved results and queue items, work these before running another market scan.`,
       whatItWillDo: ["Route saved prospects into manual queues.", "Generate missing draft packages only where safe.", "Show blocked and preview-needed items clearly."],
       whatItWillNotDo,
       recommendedAction: "process_existing_qualified_prospects",

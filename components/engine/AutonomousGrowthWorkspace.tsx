@@ -166,6 +166,34 @@ function readinessLabel(item: OutreachQueueItem) {
   return item.status;
 }
 
+function queueContactExplanation(item: OutreachQueueItem) {
+  const eligibleFor = {
+    email: item.contactSource === "Public email" && Boolean(item.email),
+    facebook: /facebook/i.test(item.contactSource) || /facebook/i.test(item.dmScript),
+    instagram: /instagram/i.test(item.contactSource) || /instagram/i.test(item.dmScript),
+    contactForm: /form/i.test(item.contactSource),
+  };
+  const blockedBecause = [
+    item.blockedReason,
+    item.status === "Blocked" ? "This package is blocked until the listed issue is fixed." : "",
+    item.contactSource !== "Public email" && item.status === "Queued" ? "Only public-email contacts can enter automatic email sending." : "",
+    !item.email && !eligibleFor.facebook && !eligibleFor.instagram && !eligibleFor.contactForm ? "No written contact path is recorded." : "",
+  ].filter(Boolean);
+  const currentBucket =
+    item.status === "Blocked" ? "Blocked"
+      : item.status === "Queued" ? "Queued public-email review"
+        : item.status === "Needs Review" ? "Needs Review"
+          : item.status === "DM Draft" ? "Manual DM Review"
+            : readinessLabel(item);
+  const nextStep =
+    item.status === "Queued" ? "Send only after human approval and all email gates pass."
+      : eligibleFor.email ? "Review the email draft and verify the public email before manual approval."
+        : eligibleFor.facebook || eligibleFor.instagram ? "Review the DM draft and send manually only if it is accurate."
+          : eligibleFor.contactForm ? "Review the contact-form draft and submit manually only if appropriate."
+            : "Find a written contact path or leave this package blocked.";
+  return { currentBucket, eligibleFor, blockedBecause, nextStep };
+}
+
 function formatList(values: string[], empty = "Not enough data yet") {
   return values.length ? values.join(", ") : empty;
 }
@@ -1769,6 +1797,7 @@ function QueueItemRow({
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
 }) {
   const scripts = loomNeededTaskForQueueItem(item).scripts;
+  const explanation = queueContactExplanation(item);
   return (
     <article key={item.id} role="row">
       <div><b>{item.businessName}</b><span>{item.trade} in {item.city}</span><small>{item.sourceProvider}</small></div>
@@ -1817,6 +1846,20 @@ function QueueItemRow({
         </div>
         {item.regenerationPlan.length ? <small>Regeneration plan: {item.regenerationPlan.join("; ")}</small> : null}
         {item.rewritePlan.length ? <small>Rewrite plan: {item.rewritePlan.join("; ")}</small> : null}
+        <details className="engine-contact-explanation engine-contact-explanation--compact">
+          <summary>Why isn&apos;t this being contacted?</summary>
+          <div>
+            <p><b>Current bucket:</b> {explanation.currentBucket}</p>
+            <dl>
+              <div><dt>Email</dt><dd>{explanation.eligibleFor.email ? "Yes" : "No"}</dd></div>
+              <div><dt>Facebook</dt><dd>{explanation.eligibleFor.facebook ? "Yes" : "No"}</dd></div>
+              <div><dt>Instagram</dt><dd>{explanation.eligibleFor.instagram ? "Yes" : "No"}</dd></div>
+              <div><dt>Contact Form</dt><dd>{explanation.eligibleFor.contactForm ? "Yes" : "No"}</dd></div>
+            </dl>
+            <p><b>Blocked because:</b> {explanation.blockedBecause.length ? explanation.blockedBecause.join(" ") : "Human review is still required before outreach."}</p>
+            <p><b>Next step:</b> {explanation.nextStep}</p>
+          </div>
+        </details>
         <select aria-label={`Change status for ${item.businessName}`} onChange={(event) => void onStatus(item, event.target.value as OutreachQueueStatus)} value={item.status}>
           {outreachQueueStatuses.map((status) => <option key={status}>{status}</option>)}
         </select>

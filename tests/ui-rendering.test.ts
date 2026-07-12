@@ -53,6 +53,8 @@ test("prospect details explain missing public contact data", () => {
   assert.match(html, /No public phone/);
   assert.match(html, /No public email/);
   assert.match(html, /Website not analyzed yet/);
+  assert.match(html, /Why isn&#x27;t this being contacted\?/);
+  assert.match(html, /Current bucket/);
 });
 
 test("no-website prospect detail shows presence-gap guidance without a website analysis action", () => {
@@ -125,9 +127,30 @@ test("phone-only outreach drafts show written-outreach block before approval", (
   const html = renderDetail(prospect, "Outreach");
 
   assert.match(html, /Written outreach is blocked/);
+  assert.match(html, /No written contact path is available/);
   assert.match(html, /Needs manual contact research/);
   assert.match(html, /Approve personal draft/);
   assert.match(html, /disabled=""/);
+});
+
+test("Prospect Engine overview renders clickable funnel diagnostics", () => {
+  const source = readFileSync("components/ProspectEngine.tsx", "utf8");
+
+  assert.match(source, /Prospect Funnel/);
+  assert.match(source, /Current Inventory/);
+  assert.match(source, /Explain Prospect Counts/);
+  assert.match(source, /engine-funnel-count/);
+  assert.match(source, /onOpenFilter/);
+  assert.match(source, /Filter by prospect funnel bucket/);
+});
+
+test("Autonomous Growth packages expose why-not-contacted diagnostics", () => {
+  const source = readFileSync("components/engine/AutonomousGrowthWorkspace.tsx", "utf8");
+
+  assert.match(source, /Why isn&apos;t this being contacted\?/);
+  assert.match(source, /Current bucket/);
+  assert.match(source, /Blocked because/);
+  assert.match(source, /Next step/);
 });
 
 test("preview workspace renders the complete contractor strategy", () => {
