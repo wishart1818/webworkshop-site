@@ -61,6 +61,7 @@ import {
 } from "../lib/autopilot-campaign";
 import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
 import { seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
+import { prospectCurrentBucket } from "../lib/prospect-funnel";
 
 process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
 
@@ -1578,6 +1579,8 @@ test("Smart Growth summarizes existing qualified unsent prospects across queue i
   assert.equal(summary.foundOnlyInTopProspectsResults, 1);
   assert.equal(summary.readyForEmailReview, 1);
   assert.equal(summary.readyForFacebookInstagramManualDm, 1);
+  assert.equal(prospectCurrentBucket(socialProspect), "ready_facebook");
+  assert.equal(summary.queueCounts.readyForFacebookDm, 1);
   assert.equal(summary.sourceCounts.outreachQueueItems, 1);
   assert.equal(summary.sourceCounts.rankedProspects, 1);
   assert.equal(summary.checkedSources.some((source) => /Top Prospects/i.test(source)), true);

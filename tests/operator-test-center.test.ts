@@ -191,14 +191,13 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.match(payload.summaries.fullStatus, /Provider coverage/i);
     assert.match(payload.summaries.regenerationSummary, /Latest outreach copy version/i);
     assert.match(payload.summaries.regenerationSummary, /Old unsent packages needing regeneration/i);
-    assert.match(payload.summaries.smsNotifications, /SMS only sends to INTERNAL_NOTIFY_PHONE/);
-    assert.match(payload.summaries.smsNotifications, /\+1\*{5}1234/);
+    assert.match(payload.summaries.smsNotifications, /optional and hidden from primary readiness guidance/i);
     assert.match(payload.summaries.smartRecommendation, /Will not do|No outreach|Market Scout|existing qualified/i);
-    assert.match(payload.nextRecommendedTest, /Internal alerts|SMS alerts|Internal notifications|Provider coverage|Top Prospects|First-touch|Resend/i);
+    assert.match(payload.nextRecommendedTest, /Internal alerts|Internal email notifications|Internal notifications|Provider coverage|Top Prospects|First-touch|Resend/i);
+    assert.doesNotMatch(payload.nextRecommendedTest, /SMS|Twilio/i);
     assert.doesNotMatch(summaryBlob, /secret-resend-key|secret-twilio-token|DATABASE_URL|postgres:\/\/|operator@example.com|\+14195551234/i);
     assert.ok(payload.statusCards.some((card) => card.label === "Internal notifications"));
-    assert.ok(payload.statusCards.some((card) => card.label === "SMS notifications"));
-    assert.ok(payload.statusCards.some((card) => card.label === "Operator phone" && card.value === "+1*****1234"));
+    assert.equal(payload.statusCards.some((card) => /SMS|Twilio|Operator phone/i.test(card.label)), false);
     assert.ok(payload.statusCards.some((card) => card.label === "Latest Outreach Copy Version"));
     assert.ok(payload.statusCards.some((card) => card.label === "Old unsent packages needing regeneration"));
   } finally {
@@ -367,6 +366,7 @@ test("Operator Test Center markup includes Smart Growth safe action buttons", as
   assert.match(source, /Copy Next Fix Summary/);
   assert.match(source, /Copy Safe-To-Test Summary/);
   assert.match(source, /Copy Debug Summary/);
+  assert.doesNotMatch(source, /Send Internal Test SMS|Copy SMS Notification Summary/);
   assert.match(source, /Run Smart Backfill Test/);
   assert.match(source, /Run Market Scout Dry Run/);
   assert.match(source, /Run Smart Autonomous Dry Run/);

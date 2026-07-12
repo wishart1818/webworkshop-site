@@ -11,6 +11,8 @@ import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   buildProspectFunnel,
+  prospectAttributeKeys,
+  prospectExclusiveBucketKeys,
   prospectFunnelLabels,
   prospectMatchesFunnelFilter,
   type ProspectFunnelFilterKey,
@@ -177,6 +179,10 @@ export function ProspectEngine() {
 
   function openFunnelFilter(filter: ProspectFunnelFilterKey) {
     setFunnelFilter(filter);
+    setTrade("All");
+    setStatus("All");
+    setContactFilter("all");
+    setQuery("");
     setWorkspaceTab("Prospects");
   }
 
@@ -468,7 +474,15 @@ export function ProspectEngine() {
               <select aria-label="Filter by trade" onChange={(event) => setTrade(event.target.value as "All" | TradeCategory)} value={trade}><option>All</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select>
               <select aria-label="Filter by status" onChange={(event) => setStatus(event.target.value as "All" | ProspectStatus)} value={status}><option>All</option>{prospectStatuses.map((item) => <option key={item}>{item}</option>)}</select>
               <select aria-label="Filter by contact method" onChange={(event) => setContactFilter(event.target.value as ContactFilter)} value={contactFilter}><option value="all">All contacts</option><option value="email">Email available</option><option value="form">Contact form available</option><option value="social">Social message available</option><option value="hide_phone_only">Hide phone-only leads</option><option value="send_ready">Send-ready only</option><option value="needs_research">Needs contact research</option></select>
-              <select aria-label="Filter by prospect funnel bucket" onChange={(event) => setFunnelFilter(event.target.value as ProspectFunnelFilterKey | "all")} value={funnelFilter}><option value="all">All funnel buckets</option>{Object.entries(prospectFunnelLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+              <select aria-label="Filter by prospect funnel bucket" onChange={(event) => setFunnelFilter(event.target.value as ProspectFunnelFilterKey | "all")} value={funnelFilter}>
+                <option value="all">All prospects</option>
+                <optgroup label="Exclusive current disposition">
+                  {prospectExclusiveBucketKeys.map((key) => <option key={key} value={key}>{prospectFunnelLabels[key]}</option>)}
+                </optgroup>
+                <optgroup label="Overlapping attributes">
+                  {prospectAttributeKeys.map((key) => <option key={key} value={key}>{prospectFunnelLabels[key]}</option>)}
+                </optgroup>
+              </select>
               <select aria-label="Sort prospects" onChange={(event) => setSort(event.target.value as ProspectSort)} value={sort}>{prospectSortOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
               <span>{filtered.length} matching prospects</span>
               {funnelFilter !== "all" ? <button className="engine-button" onClick={() => setFunnelFilter("all")} type="button">Clear funnel filter</button> : null}
@@ -544,15 +558,29 @@ function ProspectFunnelCard({
   onToggleDiagnostics: () => void;
   showDiagnostics: boolean;
 }) {
-  const CountButton = ({ filter, detail }: { filter: ProspectFunnelFilterKey; detail?: string }) => (
-    <button className="engine-funnel-count" onClick={() => onOpenFilter(filter)} type="button">
-      <span>{prospectFunnelLabels[filter]}</span>
-      <strong>{funnel.counts[filter]}</strong>
+  const CountButton = ({ count, detail, filter, label }: { count: number; detail?: string; filter: ProspectFunnelFilterKey | "all"; label: string }) => (
+    <button className="engine-funnel-count" onClick={() => filter === "all" ? onOpenFilter("ready_email") : onOpenFilter(filter)} type="button">
+      <span>{label}</span>
+      <strong>{count}</strong>
       {detail ? <small>{detail}</small> : null}
     </button>
   );
   const inventory = funnel.currentInventory;
   const removed = funnel.diagnostics.removedAtEachStage;
+  const dispositionOrder = [
+    "ready_email",
+    "ready_facebook",
+    "ready_instagram",
+    "ready_contact_form",
+    "needs_manual_research",
+    "phone_only",
+    "website_already_strong",
+    "bad_fit",
+    "suppressed_do_not_contact",
+    "already_contacted",
+    "duplicate",
+    "other_not_actionable",
+  ] as const;
   return (
     <section className="engine-panel engine-prospect-funnel" aria-label="Prospect Funnel">
       <div className="engine-panel__head">
@@ -562,21 +590,28 @@ function ProspectFunnelCard({
         </div>
         <button className="engine-button" onClick={onToggleDiagnostics} type="button">Explain Prospect Counts</button>
       </div>
-      <div className="engine-funnel-flow">
-        <CountButton detail="All stored prospect records" filter="total" />
-        <i aria-hidden="true">↓</i>
-        <CountButton detail="Good enough fit to keep reviewing" filter="qualified" />
-        <i aria-hidden="true">↓</i>
-        <CountButton detail="Qualified and not contacted yet" filter="qualified_unsent" />
-        <i aria-hidden="true">↓</i>
-        <div className="engine-funnel-split">
-          <CountButton filter="ready_email" />
-          <CountButton filter="ready_facebook" />
-          <CountButton filter="ready_instagram" />
-          <CountButton filter="ready_contact_form" />
+      <div className="engine-funnel-flow" aria-label="Exclusive Current-Disposition Funnel">
+        <div className="engine-funnel-section-head">
+          <h3>Exclusive Current-Disposition Funnel</h3>
+          <p>Every prospect appears in exactly one primary bucket. These counts reconcile to total prospects.</p>
         </div>
-        <i aria-hidden="true">↓</i>
-        <CountButton detail="Qualified unsent prospects with priority 70+" filter="high_priority" />
+        <div className="engine-funnel-reconciliation" role="status">
+          <div><span>Total prospects</span><b>{funnel.diagnostics.totalProspects}</b></div>
+          <div><span>Sum of exclusive buckets</span><b>{funnel.diagnostics.exclusiveTotal}</b></div>
+          <div><span>Difference</span><b>{funnel.diagnostics.difference}</b></div>
+          <p>{funnel.diagnostics.reconciles ? "Difference = 0. Funnel reconciles." : "Difference is not zero. Review the classifier before trusting this funnel."}</p>
+        </div>
+        <div className="engine-funnel-split">
+          {dispositionOrder.map((filter) => (
+            <CountButton
+              count={funnel.exclusiveBuckets[filter]}
+              detail="Primary bucket"
+              filter={filter}
+              key={filter}
+              label={prospectFunnelLabels[filter]}
+            />
+          ))}
+        </div>
       </div>
       <div className="engine-current-inventory" aria-label="Current Inventory">
         <h3>Current Inventory</h3>
@@ -587,6 +622,7 @@ function ProspectFunnelCard({
           ["Email ready", inventory.emailReady],
           ["Facebook ready", inventory.facebookReady],
           ["Instagram ready", inventory.instagramReady],
+          ["Contact form ready", inventory.contactFormReady],
           ["Needs manual research", inventory.needsManualResearch],
           ["Already contacted", inventory.alreadyContacted],
           ["Blocked", inventory.blocked],
@@ -594,19 +630,23 @@ function ProspectFunnelCard({
           ["High priority", inventory.highPriority],
         ].map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}
       </div>
-      <div className="engine-funnel-exclusions" aria-label="Prospect exclusion buckets">
-        {(["already_contacted", "suppressed_do_not_contact", "bad_fit", "phone_only", "duplicate", "missing_contact_path", "website_already_strong", "other_not_actionable"] as ProspectFunnelFilterKey[]).map((filter) => (
-          <CountButton key={filter} filter={filter} />
+      <div className="engine-funnel-exclusions" aria-label="Overlapping prospect attributes">
+        <div className="engine-funnel-section-head">
+          <h3>Overlapping Attributes</h3>
+          <p>These counts can overlap. They explain traits, not funnel stages, so do not add them together.</p>
+        </div>
+        {prospectAttributeKeys.map((filter) => (
+          <CountButton count={funnel.attributes[filter]} key={filter} filter={filter} label={prospectFunnelLabels[filter]} />
         ))}
       </div>
       {showDiagnostics ? (
         <div className="engine-funnel-diagnostics">
           <h3>Explain Prospect Counts</h3>
-          <p>Exclusive current buckets reconcile to <b>{funnel.diagnostics.exclusiveTotal}</b> of <b>{funnel.counts.total}</b> total prospects: {funnel.diagnostics.reconciles ? "counts match" : "needs review"}.</p>
+          <p>Total prospects <b>{funnel.diagnostics.totalProspects}</b>. Sum of exclusive primary buckets <b>{funnel.diagnostics.exclusiveTotal}</b>. Difference <b>{funnel.diagnostics.difference}</b>: {funnel.diagnostics.reconciles ? "counts match" : "needs review"}.</p>
           <dl>
             <div><dt>Duplicate</dt><dd>{removed.duplicate}</dd></div>
             <div><dt>Bad fit</dt><dd>{removed.badFit}</dd></div>
-            <div><dt>Missing contact</dt><dd>{removed.missingContact}</dd></div>
+            <div><dt>Needs manual research</dt><dd>{removed.needsManualResearch}</dd></div>
             <div><dt>Strong website</dt><dd>{removed.strongWebsite}</dd></div>
             <div><dt>Suppressed</dt><dd>{removed.suppressed}</dd></div>
             <div><dt>Contacted</dt><dd>{removed.contacted}</dd></div>

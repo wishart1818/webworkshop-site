@@ -13,7 +13,14 @@ import {
   withPresenceGapReview,
   withPreview,
 } from "../lib/prospect-engine";
-import { buildProspectFunnel, explainProspectBucket, prospectFunnelFilterKeys, prospectMatchesFunnelFilter } from "../lib/prospect-funnel";
+import {
+  buildProspectFunnel,
+  explainProspectBucket,
+  prospectCurrentBucket,
+  prospectExclusiveBucketKeys,
+  prospectFunnelFilterKeys,
+  prospectMatchesFunnelFilter,
+} from "../lib/prospect-funnel";
 import { classifyWebsiteAnalysisFailure } from "../lib/site-analysis";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
@@ -225,6 +232,17 @@ test("prospect funnel totals reconcile and bucket counts match filtered lists", 
   assert.equal(funnel.counts.total, prospects.length);
   assert.equal(funnel.diagnostics.exclusiveTotal, prospects.length);
   assert.equal(funnel.diagnostics.reconciles, true);
+  assert.equal(funnel.diagnostics.difference, 0);
+  assert.equal(Object.values(funnel.exclusiveBuckets).reduce((sum, count) => sum + count, 0), prospects.length);
+  for (const prospect of prospects) {
+    const matchingExclusiveBuckets = prospectExclusiveBucketKeys.filter((key) => prospectMatchesFunnelFilter(prospect, key));
+    assert.deepEqual(matchingExclusiveBuckets, [prospectCurrentBucket(prospect)]);
+  }
+  for (const key of prospectExclusiveBucketKeys) {
+    const ids = prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, key)).map((prospect) => prospect.id);
+    assert.equal(new Set(ids).size, ids.length, `unique ids for ${key}`);
+    assert.equal(funnel.exclusiveBuckets[key], ids.length, `exclusive count for ${key}`);
+  }
   for (const key of prospectFunnelFilterKeys) {
     const filteredCount = prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, key)).length;
     assert.equal(funnel.counts[key], filteredCount, `bucket ${key}`);
@@ -235,6 +253,16 @@ test("prospect funnel totals reconcile and bucket counts match filtered lists", 
   assert.ok(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "duplicate")).length >= 1);
   assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "already_contacted")).length, 1);
   assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "website_already_strong")).length, 1);
+});
+
+test("Phone Only requires a phone and no usable written contact path", () => {
+  const phoneOnly = { ...structuredClone(seedProspects[1]), phone: "(419) 555-0100", email: "", facebookUrl: "", instagramUrl: "", contactFormUrl: "", quoteFormUrl: "", recommendedContactMethod: "call_first" as const };
+  const emailPlusPhone = { ...phoneOnly, id: "email-plus-phone", email: "owner@example.com", recommendedContactMethod: "send_email" as const };
+  const facebookPlusPhone = { ...phoneOnly, id: "facebook-plus-phone", facebookUrl: "https://facebook.com/example", recommendedContactMethod: "message_on_facebook" as const };
+
+  assert.equal(prospectCurrentBucket(phoneOnly), "phone_only");
+  assert.notEqual(prospectCurrentBucket(emailPlusPhone), "phone_only");
+  assert.notEqual(prospectCurrentBucket(facebookPlusPhone), "phone_only");
 });
 
 test("prospect funnel explanations are human-readable and do not change ranking or outreach", () => {

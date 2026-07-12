@@ -1,9 +1,6 @@
 import {
   internalNotificationConfiguredLabel,
   internalNotificationEnvironment,
-  internalSmsConfiguredLabel,
-  internalSmsEnvironment,
-  maskOperatorPhone,
   sendInternalOperatorNotification,
   sendInternalOperatorSms,
   type InternalNotificationResult,
@@ -203,12 +200,10 @@ function summarizeRegenerationReadiness(queue: Awaited<ReturnType<typeof getAuto
 function nextRecommendedTest(input: {
   env: ReturnType<typeof outreachEnvironment>;
   internalConfigured: boolean;
-  smsConfigured: boolean;
   providerCoverage: ReturnType<typeof discoveryProviderCoverageStatus>;
   queueLength: number;
 }) {
-  if (!input.internalConfigured && !input.smsConfigured) return "Internal alerts are missing. Add internal email or SMS settings before relying on phone alerts.";
-  if (!input.smsConfigured) return "SMS alerts are missing. Add Twilio and INTERNAL_NOTIFY_PHONE if you want text-message step-in alerts.";
+  if (!input.internalConfigured) return "Internal email notifications are missing. Add INTERNAL_NOTIFY_EMAIL and INTERNAL_NOTIFY_FROM_EMAIL before relying on operator alerts.";
   if (input.env.sendProvider === "resend" && input.env.hasResendApiKey && input.env.emailKillSwitchEnabled) {
     return "Resend is configured, but prospect email sending is still blocked. Next: send an internal test notification.";
   }
@@ -222,7 +217,6 @@ function nextRecommendedTest(input: {
 function buildCards(input: {
   env: ReturnType<typeof outreachEnvironment>;
   internalEnv: ReturnType<typeof internalNotificationEnvironment>;
-  smsEnv: ReturnType<typeof internalSmsEnvironment>;
   latestJob: Awaited<ReturnType<typeof listTopProspectJobs>>[number] | null;
   latestPackage: string;
   regenerationReadiness: string;
@@ -243,17 +237,12 @@ function buildCards(input: {
     { label: "OUTREACH_AUTO_SEND_ENABLED", status: input.env.autoSendEnabled ? "warning" : "disabled", value: String(input.env.autoSendEnabled), detail: "Still requires queue gates." },
     { label: "OUTREACH_FULL_AUTO_SEND_ENABLED", status: input.env.fullAutoSendEnabled ? "warning" : "disabled", value: String(input.env.fullAutoSendEnabled), detail: "Required for full automatic email batches." },
     { label: "Internal notifications", status: input.internalEnv.configured ? "configured" : "missing", value: internalNotificationConfiguredLabel(), detail: "Uses INTERNAL_NOTIFY_EMAIL only." },
-    { label: "SMS notifications", status: input.smsEnv.configured ? "configured" : input.smsEnv.enabled ? "warning" : "disabled", value: internalSmsConfiguredLabel(), detail: "Internal-only texts. Never prospects." },
-    { label: "SMS enabled", status: input.smsEnv.enabled ? "configured" : "disabled", value: String(input.smsEnv.enabled), detail: "SMS_NOTIFICATIONS_ENABLED." },
-    { label: "Twilio provider", status: input.smsEnv.hasTwilioAccountSid && input.smsEnv.hasTwilioAuthToken && input.smsEnv.hasTwilioFromPhone ? "configured" : "missing", value: input.smsEnv.hasTwilioAccountSid && input.smsEnv.hasTwilioAuthToken && input.smsEnv.hasTwilioFromPhone ? "configured" : "not configured", detail: "SID, token, and from number presence only." },
-    { label: "Operator phone", status: input.smsEnv.hasOperatorPhone ? "configured" : "missing", value: input.smsEnv.maskedOperatorPhone, detail: "Masked INTERNAL_NOTIFY_PHONE." },
     { label: "Latest Top Prospects run", status: input.latestJob ? "ready" : "missing", value: input.latestJob?.status ?? "not recorded", detail: input.latestJob ? `${input.latestJob.input.trade} near ${input.latestJob.input.city}` : "Run a small Top Prospects test." },
     { label: "Latest outreach package", status: input.latestPackage.startsWith("No outreach") ? "missing" : "ready", value: input.latestPackage.split("\n")[0] ?? "not recorded", detail: "Latest queue item summary." },
     { label: "Latest Outreach Copy Version", status: "ready", value: currentOutreachCopyVersion, detail: "Saved packages can be compared against this version." },
     { label: "Old unsent packages needing regeneration", status: /Old unsent packages needing regeneration: 0\b/.test(input.regenerationReadiness) ? "ready" : "warning", value: input.regenerationReadiness.match(/Old unsent packages needing regeneration: (\d+)/)?.[1] ?? "0", detail: "Only unsent, uncontacted, written-contact packages are eligible." },
     { label: "Latest internal notification test", status: "warning", value: "not persisted", detail: "Use the test button to verify current env." },
     { label: "Latest manual email test", status: "warning", value: "not persisted", detail: "Use internal Resend test only." },
-    { label: "Latest SMS test", status: "warning", value: "not persisted", detail: "Use Send Internal Test SMS to verify Twilio." },
     { label: "Provider coverage", status: discoveryProviderCoverageStatus().level === "strong" ? "ready" : "warning", value: discoveryProviderCoverageStatus().label, detail: providerLabel() },
   ] satisfies OperatorStatusCard[];
 }
@@ -262,7 +251,6 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
   const database = await databaseHealth();
   const env = outreachEnvironment();
   const internalEnv = internalNotificationEnvironment();
-  const smsEnv = internalSmsEnvironment();
   const providerCoverage = discoveryProviderCoverageStatus();
   const providerHealth = discoveryProviderHealth();
   let jobs: Awaited<ReturnType<typeof listTopProspectJobs>> = [];
@@ -280,11 +268,10 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
   const next = nextRecommendedTest({
     env,
     internalConfigured: internalEnv.configured,
-    smsConfigured: smsEnv.configured,
     providerCoverage,
     queueLength: dashboard?.queue.length ?? 0,
   });
-  const statusCards = buildCards({ env, internalEnv, smsEnv, latestJob, latestPackage, regenerationReadiness });
+  const statusCards = buildCards({ env, internalEnv, latestJob, latestPackage, regenerationReadiness });
   const providerSummary = providerHealth.map((provider) =>
     `${provider.label}: enabled ${provider.enabled ? "yes" : "no"}, env present ${provider.envVarPresent === null ? "not required" : provider.envVarPresent ? "yes" : "no"}, status ${provider.lastStatus}${provider.provider === "googlePlaces" ? `, endpoint ${provider.endpointVersion ?? "New"}` : ""}`,
   ).join("\n");
@@ -298,15 +285,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
     `Full auto: ${env.fullAutoSendEnabled ? "enabled but still gated" : "blocked"}`,
     "No auto-DM, contact forms, calls, or Loom sends are enabled by this Test Center.",
   ].join("\n");
-  const smsSafety = [
-    `SMS notifications: ${smsEnv.configured ? "configured" : smsEnv.enabled ? "enabled but incomplete" : "disabled"}`,
-    `SMS enabled: ${smsEnv.enabled ? "true" : "false"}`,
-    `Twilio configured: ${smsEnv.hasTwilioAccountSid && smsEnv.hasTwilioAuthToken && smsEnv.hasTwilioFromPhone ? "yes" : "no"}`,
-    `Operator phone: ${smsEnv.hasOperatorPhone ? maskOperatorPhone(process.env.INTERNAL_NOTIFY_PHONE) : "missing"}`,
-    "SMS only sends to INTERNAL_NOTIFY_PHONE.",
-    "SMS never sends to prospects, lead phones, DMs, contact forms, calls, or Looms.",
-    "SMS does not change OUTREACH_EMAIL_DISABLED, OUTREACH_AUTO_SEND_ENABLED, or OUTREACH_FULL_AUTO_SEND_ENABLED.",
-  ].join("\n");
+  const smsSafety = "SMS/Twilio is optional and hidden from primary readiness guidance. Internal email notifications remain the recommended operator alert path.";
   const latestRun = summarizeLatestTopProspectsRun(latestJob);
   return {
     statusCards,
@@ -327,7 +306,6 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
         `Database: ${database.reachable ? "reachable" : "not reachable"} (${operationalMode()})`,
         `Provider coverage: ${providerCoverage.label}`,
         `Internal notifications: ${internalEnv.configured ? "configured" : "not configured"}`,
-        `SMS notifications: ${smsEnv.configured ? "configured" : "not configured"}`,
         `Next recommended test: ${next}`,
         `Smart recommendation: ${dashboard?.smartGrowth.recommendation.nextBestMove ?? "not available"}`,
       ].join("\n"),
@@ -345,7 +323,6 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
         emailSafety,
         regenerationReadiness,
         smartRecommendation,
-        smsSafety,
       ].join("\n\n"),
     },
     safeTestInput: {

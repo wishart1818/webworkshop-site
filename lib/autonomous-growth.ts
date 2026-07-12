@@ -18,6 +18,11 @@ import {
   type TopProspectJob,
   type TopProspectResult,
 } from "@/lib/top-prospects";
+import {
+  prospectCurrentBucket,
+  prospectFunnelLabels,
+  type ProspectExclusiveBucketKey,
+} from "@/lib/prospect-funnel";
 
 export const autonomousGrowthModes = ["off", "dry_run", "manual_approval", "auto_email_pilot"] as const;
 export type AutonomousGrowthMode = (typeof autonomousGrowthModes)[number];
@@ -599,16 +604,20 @@ function prospectHasManualWrittenPath(prospect: Prospect) {
   return prospectWrittenContactMethodIsUsable(prospect) || prospect.recommendedContactMethod === "verify_email_manually";
 }
 
-function prospectQueueKey(prospect: Prospect, hasPreview: boolean): SmartQueueKey {
-  if (/suppressed|opted out|bounced|complained|never contact/i.test(`${prospect.status} ${prospect.notes.join(" ")}`)) return "suppressedDoNotContact";
-  if (/bad fit|blocked/i.test(`${prospect.status} ${prospect.notes.join(" ")}`)) return "badFitBlocked";
-  if (!hasPreview) return "needsPreviewReview";
-  if (prospect.email && !prospectEmailNeedsManualVerification(prospect)) return "readyForEmailReview";
-  if (prospect.facebookUrl || prospect.recommendedContactMethod === "message_on_facebook") return "readyForFacebookDm";
-  if (prospect.instagramUrl || prospect.linkedinUrl || prospect.recommendedContactMethod === "message_on_social") return "readyForInstagramDm";
-  if (prospect.quoteFormUrl || prospect.contactFormUrl || prospect.recommendedContactMethod === "submit_contact_form") return "readyForContactFormReview";
-  if (prospect.phone || prospect.recommendedContactMethod === "call_first") return "phoneOnlyBlocked";
-  return "needsManualResearch";
+function smartQueueKeyForProspectBucket(bucket: ProspectExclusiveBucketKey): SmartQueueKey {
+  if (bucket === "ready_email") return "readyForEmailReview";
+  if (bucket === "ready_facebook") return "readyForFacebookDm";
+  if (bucket === "ready_instagram") return "readyForInstagramDm";
+  if (bucket === "ready_contact_form") return "readyForContactFormReview";
+  if (bucket === "phone_only") return "phoneOnlyBlocked";
+  if (bucket === "needs_manual_research") return "needsManualResearch";
+  if (bucket === "already_contacted") return "alreadyContacted";
+  if (bucket === "suppressed_do_not_contact") return "suppressedDoNotContact";
+  return "badFitBlocked";
+}
+
+function prospectQueueKey(prospect: Prospect): SmartQueueKey {
+  return smartQueueKeyForProspectBucket(prospectCurrentBucket(prospect));
 }
 
 export function smartQueueKeyForItem(item: OutreachQueueItem): SmartQueueKey {
@@ -705,11 +714,12 @@ export function summarizeExistingQualifiedUnsent(
         incrementRecord(summary.blockedSkippedReasons, result.rejectionReason ?? result.emailQuality.readinessLabel ?? "Not qualified for outreach");
         continue;
       }
-      const queueKey = prospectQueueKey(result.prospect, resultHasPublicPreview(result));
+      const prospectBucket = prospectCurrentBucket(result.prospect);
+      const queueKey = prospectQueueKey(result.prospect);
       summary.queueCounts[queueKey] += 1;
       if (queueKey === "phoneOnlyBlocked" || queueKey === "badFitBlocked" || queueKey === "suppressedDoNotContact" || queueKey === "alreadyContacted") {
         summary.skippedCount += 1;
-        incrementRecord(summary.blockedSkippedReasons, smartQueueLabels[queueKey]);
+        incrementRecord(summary.blockedSkippedReasons, prospectFunnelLabels[prospectBucket] ?? smartQueueLabels[queueKey]);
         continue;
       }
       summary.total += 1;
@@ -717,7 +727,7 @@ export function summarizeExistingQualifiedUnsent(
       if (queueKey === "readyForEmailReview") summary.readyForEmailReview += 1;
       if (queueKey === "readyForFacebookDm" || queueKey === "readyForInstagramDm") summary.readyForFacebookInstagramManualDm += 1;
       if (queueKey === "readyForContactFormReview" || queueKey === "needsManualResearch") summary.readyForContactFormManualResearch += 1;
-      if (queueKey === "needsPreviewReview") summary.needsPreview += 1;
+      if (!resultHasPublicPreview(result)) summary.needsPreview += 1;
     }
   }
   return summary;
@@ -857,10 +867,7 @@ export function smartRecommendationForGrowth(input: {
   if (input.existing.foundOnlyInTopProspectsResults > 0 || input.existing.total > 0) {
     const inventorySummary = [
       `You currently have ${input.existing.total} qualified unsent prospect${input.existing.total === 1 ? "" : "s"}.`,
-      `${input.existing.readyForEmailReview} email-ready.`,
-      `${input.existing.queueCounts.readyForFacebookDm} Facebook-ready.`,
-      `${input.existing.queueCounts.readyForInstagramDm} Instagram-ready.`,
-      `${input.existing.queueCounts.readyForContactFormReview} contact-form-ready.`,
+      `Exclusive actionable buckets: ${input.existing.readyForEmailReview} email-review, ${input.existing.queueCounts.readyForFacebookDm} Facebook-DM, ${input.existing.queueCounts.readyForInstagramDm} Instagram-DM, and ${input.existing.queueCounts.readyForContactFormReview} contact-form-review.`,
       `${input.existing.needsPreview} need preview/package work.`,
       `${input.existing.skippedCount} are blocked or not currently actionable.`,
     ].join(" ");

@@ -177,9 +177,31 @@ function ContactExplanation({ prospect }: { prospect: Prospect }) {
           <div><dt>Contact Form</dt><dd>{explanation.eligibleFor.contactForm ? "Yes" : "No"}</dd></div>
         </dl>
         <section>
-          <h3>Why this bucket</h3>
-          <ul>{explanation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+          <h3>Contact paths found</h3>
+          <ul>
+            <li>Email: {explanation.contactPaths.email ? "Yes" : "No"}</li>
+            <li>Facebook: {explanation.contactPaths.facebook ? "Yes" : "No"}</li>
+            <li>Instagram: {explanation.contactPaths.instagram ? "Yes" : "No"}</li>
+            <li>LinkedIn: {explanation.contactPaths.linkedin ? "Yes" : "No"}</li>
+            <li>Contact form: {explanation.contactPaths.contactForm ? "Yes" : "No"}</li>
+            <li>Quote form: {explanation.contactPaths.quoteForm ? "Yes" : "No"}</li>
+            <li>Phone: {explanation.contactPaths.phone ? "Yes" : "No"}</li>
+          </ul>
         </section>
+        <section>
+          <h3>Status checks</h3>
+          <ul>
+            <li>Qualified: {explanation.qualification.qualified ? "Yes" : "No"}</li>
+            <li>Unsent: {explanation.qualification.unsent ? "Yes" : "No"}</li>
+            <li>Already contacted: {explanation.qualification.contacted ? "Yes" : "No"}</li>
+            <li>Suppressed: {explanation.qualification.suppressed ? "Yes" : "No"}</li>
+          </ul>
+        </section>
+        <section>
+          <h3>Why this bucket</h3>
+          <ul><li>{explanation.primaryReason}</li>{explanation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+        </section>
+        {explanation.otherAttributes.length ? <p><b>Other attributes:</b> {explanation.otherAttributes.join(", ")}</p> : null}
         <section>
           <h3>Blocked because</h3>
           <ul>{explanation.blockedBecause.map((reason) => <li key={reason}>{reason}</li>)}</ul>

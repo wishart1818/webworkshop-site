@@ -373,8 +373,54 @@ body:has(.engine-shell) {
 .engine-funnel-flow {
   display: grid;
   gap: 0.7rem;
-  justify-items: center;
   padding: 1rem;
+}
+
+.engine-funnel-section-head {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+}
+
+.engine-funnel-section-head h3,
+.engine-funnel-section-head p {
+  margin: 0;
+}
+
+.engine-funnel-section-head p {
+  color: var(--engine-muted);
+  line-height: 1.45;
+}
+
+.engine-funnel-reconciliation {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.65rem;
+  width: 100%;
+  border: 1px solid var(--engine-line);
+  background: #f8faf8;
+  padding: 0.75rem;
+}
+
+.engine-funnel-reconciliation div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.engine-funnel-reconciliation span {
+  color: var(--engine-muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.engine-funnel-reconciliation b {
+  font-size: 1.25rem;
+}
+
+.engine-funnel-reconciliation p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--engine-muted);
 }
 
 .engine-funnel-flow > i {

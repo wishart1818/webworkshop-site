@@ -127,7 +127,7 @@ test("phone-only outreach drafts show written-outreach block before approval", (
   const html = renderDetail(prospect, "Outreach");
 
   assert.match(html, /Written outreach is blocked/);
-  assert.match(html, /No written contact path is available/);
+  assert.match(html, /no email, contact form, or social message path is available/i);
   assert.match(html, /Needs manual contact research/);
   assert.match(html, /Approve personal draft/);
   assert.match(html, /disabled=""/);
@@ -137,8 +137,11 @@ test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   const source = readFileSync("components/ProspectEngine.tsx", "utf8");
 
   assert.match(source, /Prospect Funnel/);
+  assert.match(source, /Exclusive Current-Disposition Funnel/);
+  assert.match(source, /Overlapping Attributes/);
   assert.match(source, /Current Inventory/);
   assert.match(source, /Explain Prospect Counts/);
+  assert.match(source, /Difference = 0/);
   assert.match(source, /engine-funnel-count/);
   assert.match(source, /onOpenFilter/);
   assert.match(source, /Filter by prospect funnel bucket/);
