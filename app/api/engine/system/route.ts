@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { engineAuthState } from "@/lib/engine-auth";
 import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
+import { latestOperatorSafeTestResults } from "@/lib/operator-test-history";
 import { databaseHealth, operationalMode, safeListAuditEvents } from "@/lib/operational-controls";
 import { latestSystemSelfCheckReport } from "@/lib/system-self-check";
 import { topProspectBuildVersion } from "@/lib/top-prospect-list-route";
@@ -12,6 +13,8 @@ export async function GET() {
   const database = await databaseHealth();
   const authentication = engineAuthState();
   const auditEvents = await safeListAuditEvents(database);
+  const latestSafeTests = await latestOperatorSafeTestResults();
+  const latestProviderDiagnostics = latestSafeTests.provider_smoke?.diagnostics?.providerDiagnostics ?? null;
   const production = process.env.NODE_ENV === "production";
   const ready = database.reachable && authentication.configured;
 
@@ -47,8 +50,8 @@ export async function GET() {
     auditEvents,
     selfCheck: latestSystemSelfCheckReport(),
     buildVersion: topProspectBuildVersion(),
-    providerCoverage: discoveryProviderCoverageStatus(),
-    providerHealth: discoveryProviderHealth(),
+    providerCoverage: discoveryProviderCoverageStatus(latestProviderDiagnostics),
+    providerHealth: discoveryProviderHealth(latestProviderDiagnostics),
     autopilotEnvironmentKillSwitchEnabled: process.env.AUTOPILOT_DISABLED === "true",
   });
 }

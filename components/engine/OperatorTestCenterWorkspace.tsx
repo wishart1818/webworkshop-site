@@ -169,6 +169,32 @@ export function OperatorTestCenterWorkspace() {
         ))}
       </section>
 
+      <section className="engine-panel engine-operator-copy" aria-label="Latest Safe Test Results">
+        <div className="engine-panel__head">
+          <div>
+            <h2>Latest Safe Test Results</h2>
+            <p>Persisted, secret-safe results loaded on Refresh. Provider smoke tests create no packages and send nothing.</p>
+          </div>
+          <span>Persisted audit</span>
+        </div>
+        <div className="engine-operator-summary-grid">
+          {([
+            ["Provider Smoke Test", payload.latestSafeTestResults.providerSmokeTest],
+            ["Internal Notification Test", payload.latestSafeTestResults.internalNotificationTest],
+            ["Internal Resend Test", payload.latestSafeTestResults.internalResendTest],
+            ["Full Readiness Test", payload.latestSafeTestResults.fullReadinessTest],
+          ] as const).map(([label, value]) => (
+            <article key={label}>
+              <header>
+                <h3>{label}</h3>
+                <button className="engine-button" onClick={() => void copyText(label, value)} type="button">Copy</button>
+              </header>
+              <pre>{value}</pre>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="engine-panel engine-operator-actions" aria-label="Safe test actions">
         <div className="engine-panel__head">
           <div>
@@ -205,8 +231,10 @@ export function OperatorTestCenterWorkspace() {
               <p>{lastAction.readiness.nextSafestAction}</p>
             </div>
             <div className="engine-autonomous-readiness__badges">
+              <b>Dry Run: {lastAction.readiness.dryRunManualRouting.status}</b>
               <b>Full Auto Email: {lastAction.readiness.fullAutoEmail.status}</b>
               <b>Manual Email Test: {lastAction.readiness.manualEmailTest.status}</b>
+              <b>Auto Email Pilot: {lastAction.readiness.autoEmailPilot.status}</b>
             </div>
           </div>
           <dl className="engine-operator-check-grid">

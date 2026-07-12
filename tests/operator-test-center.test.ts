@@ -13,6 +13,12 @@ import {
   sendInternalOperatorSms,
 } from "../lib/internal-notifications";
 import {
+  buildProviderSmokeTestRecord,
+  latestOperatorSafeTestResults,
+  recordOperatorSafeTestResult,
+} from "../lib/operator-test-history";
+import { resetOperationalMemoryForTests } from "../lib/operational-controls";
+import {
   generateOneTestOutreachPackage,
   getOperatorTestCenterPayload,
   runFullAutonomousReadinessTest,
@@ -21,6 +27,26 @@ import {
   runOperatorSmartBackfillTest,
 } from "../lib/operator-test-center";
 import { OperatorTestCenterWorkspace } from "../components/engine/OperatorTestCenterWorkspace";
+
+function successfulGoogleProviderDiagnostics() {
+  return {
+    rawProviderCount: 1,
+    afterDistanceFilteringCount: 1,
+    afterDuplicateFilteringCount: 1,
+    afterQualificationFilteringCount: 1,
+    returnedCount: 1,
+    radiusKm: 10,
+    categorySignals: [],
+    sourceCounts: { osm: 0, google: 1, bing: 0, yelp: 0, yellowPages: 0 },
+    finalMergedCount: 1,
+    providerDiagnostics: {
+      osm: { configured: true, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      azureMaps: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+      googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 1, withinRadiusCount: 1, afterDeduplicationCount: 1, usableWebsiteCount: 1, envVarPresent: true, endpointVersion: "New", safeErrorMessage: "" },
+      yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+    },
+  } as const;
+}
 
 test("internal notification test only sends to INTERNAL_NOTIFY_EMAIL", async () => {
   const calls: Array<{ to?: string[]; subject?: string; text?: string; authorization?: string }> = [];
@@ -205,6 +231,118 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
   }
 });
 
+test("Provider Smoke Test history persists successful Google Places results and refresh uses them", async () => {
+  resetOperationalMemoryForTests();
+  const originalEnv = { ...process.env };
+  try {
+    process.env.GOOGLE_PLACES_API_KEY = "actual-google-key";
+    const record = buildProviderSmokeTestRecord({
+      startedAt: new Date(1).toISOString(),
+      completedAt: new Date().toISOString(),
+      diagnostics: successfulGoogleProviderDiagnostics(),
+      sampleCount: 1,
+      createdOutreachPackages: false,
+      sentOutreach: false,
+    });
+    await recordOperatorSafeTestResult(record);
+
+    const latest = await latestOperatorSafeTestResults();
+    const payload = await getOperatorTestCenterPayload();
+    const google = payload.providerHealth.find((provider) => provider.provider === "googlePlaces");
+
+    assert.equal(latest.provider_smoke?.outcome, "success");
+    assert.equal(latest.provider_smoke?.providerResults?.find((provider) => provider.provider === "googlePlaces")?.outcome, "success");
+    assert.equal(google?.lastStatus, "succeeded");
+    assert.notEqual(google?.lastStatus, "not_run");
+    assert.match(payload.latestSafeTestResults.providerSmokeTest, /Status: success|Provider smoke test passed/i);
+    assert.match(payload.latestSafeTestResults.providerSmokeTest, /Packages created: no/);
+    assert.match(payload.latestSafeTestResults.providerSmokeTest, /Outreach sent: no/);
+    assert.doesNotMatch(JSON.stringify(payload), /actual-google-key|DATABASE_URL|postgres:\/\//i);
+  } finally {
+    process.env = originalEnv;
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("Full Readiness consumes persisted provider success and separates missing key from untested provider", async () => {
+  resetOperationalMemoryForTests();
+  const originalEnv = { ...process.env };
+  try {
+    process.env.GOOGLE_PLACES_API_KEY = "actual-google-key";
+    await recordOperatorSafeTestResult(buildProviderSmokeTestRecord({
+      startedAt: new Date(1).toISOString(),
+      completedAt: new Date().toISOString(),
+      diagnostics: successfulGoogleProviderDiagnostics(),
+      sampleCount: 1,
+      createdOutreachPackages: false,
+      sentOutreach: false,
+    }));
+    const success = await runFullAutonomousReadinessTest({
+      GOOGLE_PLACES_API_KEY: "actual-google-key",
+      OUTREACH_SEND_PROVIDER: "resend",
+      RESEND_API_KEY: "secret-resend-key",
+      OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+      OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+      OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+      OUTREACH_EMAIL_DISABLED: "true",
+      OUTREACH_AUTO_SEND_ENABLED: "false",
+      OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+      INTERNAL_NOTIFICATIONS_ENABLED: "true",
+      INTERNAL_NOTIFY_EMAIL: "operator@example.com",
+      INTERNAL_NOTIFY_FROM_EMAIL: "WebWorkshop Alerts <hello@webworkshop.dev>",
+    } as NodeJS.ProcessEnv);
+    assert.equal(success.readiness?.checks.find((check) => check.key === "google-provider")?.status, "passed");
+    assert.doesNotMatch(success.readiness?.summaries.debug ?? "", /Configure Google Places/i);
+
+    resetOperationalMemoryForTests();
+    const untested = await runFullAutonomousReadinessTest({
+      GOOGLE_PLACES_API_KEY: "actual-google-key",
+      OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+    } as NodeJS.ProcessEnv);
+    assert.match(untested.readiness?.checks.find((check) => check.key === "google-provider")?.detail ?? "", /no persisted Provider Smoke Test/i);
+    assert.match(untested.readiness?.checks.find((check) => check.key === "google-provider")?.fix ?? "", /Run Provider Smoke Test/i);
+
+    delete process.env.GOOGLE_PLACES_API_KEY;
+    const missing = await runFullAutonomousReadinessTest({
+      OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+    } as NodeJS.ProcessEnv);
+    assert.match(missing.readiness?.checks.find((check) => check.key === "google-provider")?.fix ?? "", /Add GOOGLE_PLACES_API_KEY/i);
+  } finally {
+    process.env = originalEnv;
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("Internal notification and Resend test results persist with masked recipients", async () => {
+  resetOperationalMemoryForTests();
+  await recordOperatorSafeTestResult({
+    testType: "internal_notification",
+    startedAt: new Date(1).toISOString(),
+    completedAt: new Date(2).toISOString(),
+    outcome: "success",
+    summary: "Internal test message sent only to the configured operator email.",
+    maskedDestination: "o***@example.com",
+    providerMessageId: "safe-message-id",
+  });
+  await recordOperatorSafeTestResult({
+    testType: "internal_resend",
+    startedAt: new Date(3).toISOString(),
+    completedAt: new Date(4).toISOString(),
+    outcome: "success",
+    summary: "Internal Resend test sent only to the configured operator email.",
+    maskedDestination: "o***@example.com",
+    providerMessageId: "safe-message-id-2",
+  });
+
+  const payload = await getOperatorTestCenterPayload();
+
+  assert.match(payload.latestSafeTestResults.internalNotificationTest, /Status: success/);
+  assert.match(payload.latestSafeTestResults.internalNotificationTest, /Recipient: o\*\*\*@example\.com/);
+  assert.match(payload.latestSafeTestResults.internalResendTest, /Status: success/);
+  assert.doesNotMatch(JSON.stringify(payload.latestSafeTestResults), /operator@example\.com|secret|RESEND_API_KEY|DATABASE_URL/i);
+  resetOperationalMemoryForTests();
+});
+
 test("Operator Test Center smart dry runs render summaries and send nothing", async () => {
   const backfill = await runOperatorSmartBackfillTest();
   const scout = await runOperatorMarketScoutDryRun();
@@ -288,8 +426,8 @@ test("Full Autonomous Readiness Test blocks full-auto when hard gates are missin
   assert.notEqual(result.readiness?.fullAutoEmail.status, "Ready");
   assert.match(result.readiness?.fullAutoEmail.reasons.join(" "), /OUTREACH_AUTO_SEND_ENABLED is not true/);
   assert.match(result.readiness?.fullAutoEmail.reasons.join(" "), /OUTREACH_FULL_AUTO_SEND_ENABLED is not true/);
-  assert.ok(result.readiness?.failed.some((check) => check.label === "Full Auto Email final readiness"));
-  assert.match(result.readiness?.summaries.failedOnly ?? "", /FAILED:/);
+  assert.ok(result.readiness?.optional.some((check) => check.label === "Full Auto Email final readiness"));
+  assert.match(result.readiness?.summaries.safeToTest ?? "", /Full Auto Email: Not recommended yet/);
 });
 
 test("Full Autonomous Readiness Test checks copy, existing prospects, saved results, and queue items", async () => {
