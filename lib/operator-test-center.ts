@@ -162,6 +162,10 @@ export type FullAutonomousReadinessFailedRecord = {
   openAction: "prospect_outreach" | "prospect_preview" | "top_prospects" | "queue_review";
 };
 
+export type FullAutonomousReadinessExcludedRecord = FullAutonomousReadinessFailedRecord & {
+  excludedReason: string;
+};
+
 export type FullAutonomousReadinessResult = {
   overallStatus: "Ready for safe dry runs" | "Ready for reviewed manual email test" | "Ready for Auto Email Pilot" | "Not ready for full-auto email" | "Needs setup";
   finalReadinessStatus: "READY FOR SAFE DRY RUNS" | "READY FOR ONE MANUAL EMAIL TEST" | "READY FOR AUTO EMAIL PILOT" | "BLOCKED - RECORDS NEED ATTENTION" | "NEEDS SETUP";
@@ -185,6 +189,7 @@ export type FullAutonomousReadinessResult = {
   passed: FullAutonomousReadinessCheck[];
   failed: FullAutonomousReadinessCheck[];
   failedRecords: FullAutonomousReadinessFailedRecord[];
+  excludedRecords: FullAutonomousReadinessExcludedRecord[];
   optional: FullAutonomousReadinessCheck[];
   notDone: string[];
   checks: FullAutonomousReadinessCheck[];
@@ -266,8 +271,42 @@ function summarizeRegenerationReadiness(queue: Awaited<ReturnType<typeof getAuto
   ].filter(Boolean).join("\n");
 }
 
-function readinessFailedRecords(queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"], env: ReturnType<typeof outreachEnvironment>) {
+const readinessHistoricalStatuses = new Set([
+  "Sent",
+  "Follow-up Sent",
+  "Replied",
+  "Positive Reply",
+  "Won",
+  "Lost",
+  "No Response",
+  "Not Interested",
+  "Opted Out",
+  "Bounced",
+  "Complained",
+  "Suppressed",
+  "Skipped",
+  "Never Contact",
+  "Bad Fit",
+  "Blocked",
+  "Loom Sent",
+  "Pricing Sent",
+]);
+
+function readinessExcludedReason(item: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"][number]) {
+  if (item.status === "Queued" && item.contactSource !== "Public email") return "";
+  if (item.sentDate) return "Already sent or contacted.";
+  if (item.replyStatus) return "Reply, bounce, complaint, opt-out, or suppression history is recorded.";
+  if (readinessHistoricalStatuses.has(item.status)) return `${item.status} records are historical/non-actionable for pilot sending.`;
+  if (item.contactSource !== "Public email") return `${item.contactSource || "Non-public"} contact path is manual-only, not part of the reviewed public-email pilot workflow.`;
+  if (/\b(opted out|do not contact|never contact|not interested|bad fit|suppressed|bounced|complained|phone-only)\b/i.test(`${item.blockedReason}\n${item.notes}`)) {
+    return "Blocked, suppressed, phone-only, or do-not-contact history is recorded.";
+  }
+  return "";
+}
+
+function readinessRecordsForQueue(queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"], env: ReturnType<typeof outreachEnvironment>) {
   const records: FullAutonomousReadinessFailedRecord[] = [];
+  const excludedRecords: FullAutonomousReadinessExcludedRecord[] = [];
   const seenProspectIds = new Set<string>();
   const seenResultIds = new Set<string>();
   const add = (item: (typeof queue)[number], category: string, reason: string, correction: string, openAction: FullAutonomousReadinessFailedRecord["openAction"] = "prospect_outreach") => {
@@ -283,8 +322,27 @@ function readinessFailedRecords(queue: Awaited<ReturnType<typeof getAutonomousGr
       openAction,
     });
   };
+  const exclude = (item: (typeof queue)[number], excludedReason: string) => {
+    excludedRecords.push({
+      id: `${item.id}:excluded:${excludedRecords.length}`,
+      prospectId: item.prospectId,
+      packageId: item.id,
+      topProspectResultId: item.topProspectResultId,
+      businessName: item.businessName || "Unnamed prospect",
+      category: "Excluded historical record",
+      reason: "This record is not evaluated for Manual Email Test or Auto Email Pilot readiness.",
+      correction: "No readiness correction is required unless the operator manually reopens this record.",
+      openAction: "queue_review",
+      excludedReason,
+    });
+  };
 
   for (const item of queue) {
+    const excludedReason = readinessExcludedReason(item);
+    if (excludedReason) {
+      exclude(item, excludedReason);
+      continue;
+    }
     const emailBody = item.emailBody || "";
     const copy = `${item.subjectLine}\n${item.emailBody}\n${item.dmScript}\n${item.loomTalkingPoints}`;
     if (!item.businessName || !item.city || !item.trade) add(item, "Missing business context", "Business name, city, or trade is missing.", "Open the prospect and fill in the missing public business context.");
@@ -308,7 +366,7 @@ function readinessFailedRecords(queue: Awaited<ReturnType<typeof getAutonomousGr
       seenResultIds.add(item.topProspectResultId);
     }
   }
-  return records;
+  return { failedRecords: records, excludedRecords };
 }
 
 function nextRecommendedTest(input: {
@@ -735,7 +793,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
   const jobs = await listTopProspectJobs().catch(() => []);
   const queue = dashboard?.queue ?? [];
-  const failedRecords = readinessFailedRecords(queue, env);
+  const { failedRecords, excludedRecords } = readinessRecordsForQueue(queue, env);
   const smartSnapshot = dashboard?.smartGrowth ?? null;
   const fakeEnvironment = {
     ...environment,
@@ -748,6 +806,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const softerDm = fakeScripts.find((script) => script.label === "Softer DM script")?.body ?? "";
   const yesReply = fakeScripts.find((script) => script.label === "Yes-reply / preview-send script")?.body ?? "";
   const fakeCopyBlob = `${firstEmail}\n${firstDm}\n${softerDm}\n${yesReply}`;
+  const firstEmailHasApprovedReason = /I was looking at .+ businesses around the .+ area and came across your business\.[\s\S]+(?:I noticed you don't have a website|I put together a quick preview showing what your website could look like)/i.test(firstEmail);
   const configuredPostalAddress = environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
   const smartBackfill = await processExistingQualifiedProspects({ dryRun: true }).catch((error) => ({
     ok: false,
@@ -770,6 +829,10 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     && item.contactSource === "Public email"
     && !["Sent", "Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact", "Not Interested", "Bad Fit", "Blocked"].includes(item.status),
   );
+  const manualEmailCandidateIds = new Set(manualEmailCandidates.map((item) => item.id));
+  const queuedPublicEmailIds = new Set(publicEmailQueued.map((item) => item.id));
+  const manualBlockingFailedRecords = failedRecords.filter((record) => manualEmailCandidateIds.has(record.packageId));
+  const autoPilotBlockingFailedRecords = failedRecords.filter((record) => queuedPublicEmailIds.has(record.packageId));
   const existing = smartSnapshot?.existingQualifiedUnsent;
   const sourceCounts = existing?.sourceCounts;
   const queueCounts = existing?.queueCounts;
@@ -876,7 +939,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "no-engine-links", category: "Outreach copy quality", label: "No internal Prospect Engine links", passed: !/\/engine(?:\/|$|\?)/i.test(fakeCopyBlob), detail: "Prospect-facing fake copy contains no protected engine links." });
   check(checks, { key: "no-guarantees", category: "Outreach copy quality", label: "No guaranteed-result claims", passed: !/\bwill get you more calls|guarantee|guaranteed\b/i.test(fakeCopyBlob), detail: "Fake copy uses help/get wording, not guarantees." });
   check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses more calls and quote requests wording", passed: /help get (?:you )?more calls and quote requests/i.test(fakeCopyBlob), detail: "Fake copy uses the current direct, casual wording." });
-  check(checks, { key: "why-reaching-out", category: "Outreach copy quality", label: "First-touch email explains why I am reaching out", passed: /noticed|could probably|couldn.t find|so I/i.test(firstEmail), detail: "Fake first email includes a simple reason before asking permission." });
+  check(checks, { key: "why-reaching-out", category: "Outreach copy quality", label: "First-touch email explains why I am reaching out", passed: firstEmailHasApprovedReason, detail: firstEmailHasApprovedReason ? "Current generated fake package includes the approved reason sentence before the CTA." : "Current generated fake package is missing the approved reason sentence before the CTA.", fix: "Regenerate the fake package with the current outreach style guide." });
 
   check(checks, { key: "existing-qualified", category: "Existing prospect readiness", label: "Existing qualified unsent prospects checked", passed: Boolean(existing), detail: existing ? `${existing.total} existing qualified unsent prospect(s) checked.` : "Smart snapshot was unavailable.", fix: "Open Autonomous Growth or rerun the readiness test after database health is restored." });
   check(checks, { key: "saved-results", category: "Existing prospect readiness", label: "Saved Top Prospects results checked", passed: Boolean(sourceCounts), detail: sourceCounts ? `${sourceCounts.savedTopProspectsResults} saved result(s), ${sourceCounts.rankedProspects} ranked, ${sourceCounts.reviewablePackages} reviewable.` : `${jobs.length} Top Prospects job(s) available.` });
@@ -887,12 +950,21 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, {
     key: "exact-failed-records",
     category: "Existing prospect readiness",
-    label: "Exact failed records identified",
+    label: "Eligible records needing attention",
     passed: failedRecords.length === 0,
     detail: failedRecords.length
-      ? `${failedRecords.length} saved package/prospect record(s) need operator attention.`
-      : "No exact package/prospect record failures were found.",
-    fix: "Open the failed records list in Operator Test Center and correct each item before scaling.",
+      ? `${failedRecords.length} eligible public-email package/prospect record(s) need operator attention.`
+      : "No eligible package/prospect record failures were found.",
+    fix: "Open the eligible failed records list in Operator Test Center and correct each item before scaling.",
+  });
+  check(checks, {
+    key: "excluded-historical-records",
+    category: "Existing prospect readiness",
+    label: "Excluded non-actionable historical records",
+    info: true,
+    detail: excludedRecords.length
+      ? `${excludedRecords.length} blocked, suppressed, contacted, sent, replied, non-public-contact, or otherwise non-actionable record(s) were excluded from pilot readiness.`
+      : "No historical/non-actionable records needed exclusion.",
   });
 
   check(checks, { key: "smart-backfill", category: "Smart backfill readiness", label: "Can process existing qualified unsent prospects first", passed: smartBackfill.ok, detail: smartBackfill.message, fix: "Fix smart backfill dry-run errors before scaling." });
@@ -918,6 +990,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     queuedReadyCount <= 0 ? "No eligible queued public-email leads are ready." : "",
     unsafeQueued.length ? "One or more queued leads are not public-email leads." : "",
     checks.some((item) => item.category === "Outreach copy quality" && item.status === "failed") ? "Outreach copy quality checks failed." : "",
+    autoPilotBlockingFailedRecords.length ? `${autoPilotBlockingFailedRecords.length} queued public-email record(s) need copy/safety fixes.` : "",
   ].filter(Boolean);
   const fullAutoStatus = fullAutoReasons.length === 0 ? "Ready" : !env.fullAutoSendEnabled || !env.autoSendEnabled ? "Not recommended yet" : "Blocked";
   const autoEmailPilotReasons = [
@@ -931,6 +1004,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     settings.mode !== "auto_email_pilot" ? "Autonomous Growth mode is not Auto Email Pilot." : "",
     queuedReadyCount <= 0 ? "No eligible queued public-email leads are ready." : "",
     unsafeQueued.length ? "One or more queued leads are not public-email leads." : "",
+    autoPilotBlockingFailedRecords.length ? `${autoPilotBlockingFailedRecords.length} queued public-email record(s) need copy/safety fixes.` : "",
   ].filter(Boolean);
   const autoEmailPilotStatus: FullAutonomousReadinessResult["autoEmailPilot"]["status"] = autoEmailPilotReasons.length === 0
     ? "Ready"
@@ -944,6 +1018,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     /https:\/\/webworkshop\.dev\/p\//i.test(firstEmail) ? "First-touch email contains a preview link." : "",
     !webworkshopOptOutPattern().test(firstEmail) ? "Opt-out language is missing." : "",
     /\bwill get you more calls|guarantee|guaranteed\b/i.test(firstEmail) ? "Unsupported or guaranteed-result claim detected." : "",
+    manualBlockingFailedRecords.length ? `${manualBlockingFailedRecords.length} eligible reviewed public-email record(s) need copy/safety fixes.` : "",
   ].filter(Boolean);
   const manualStatus = manualReasons.length === 0 ? "Ready" : "Blocked";
   check(checks, { key: "auto-email-pilot-final", category: "Auto Email Pilot readiness", label: "Auto Email Pilot final readiness", info: autoEmailPilotStatus !== "Ready", passed: autoEmailPilotStatus === "Ready", detail: autoEmailPilotStatus === "Ready" ? `${queuedReadyCount} queued public-email lead(s) pass Auto Email Pilot gates.` : autoEmailPilotReasons.join(" ") });
@@ -959,6 +1034,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     !database.reachable ? "Database health check is not reachable." : "",
     !providerOrInventoryReady ? "Run Provider Smoke Test or use existing qualified unsent inventory before broad discovery." : "",
     checks.some((item) => item.category === "Outreach copy quality" && item.status === "failed") ? "Outreach copy quality checks failed." : "",
+    failedRecords.length ? "Eligible public-email records need attention before scaling." : "",
     !smartBackfill.ok ? "Smart Backfill dry run failed." : "",
     !smartAutonomous.ok ? "Smart Autonomous dry run failed." : "",
   ].filter(Boolean);
@@ -1007,12 +1083,18 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     ...autoEmailPilotReasons.map((reason) => `- ${reason}`),
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
-    `Failed records needing attention: ${failedRecords.length}`,
+    `Eligible records needing attention: ${failedRecords.length}`,
+    `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Optional/info: ${optional.length}`,
     `Not done: ${notDone.join(" ")}`,
   ]);
   const failedRecordSummary = failedRecords.map((record) => `- ${record.businessName}: ${record.category}. ${record.reason} Next: ${record.correction}`);
-  const failedOnly = safeTextLines([formatChecks("Failed checks only", failed), failedRecordSummary.length ? `Failed records:\n${failedRecordSummary.join("\n")}` : "Failed records: none"]);
+  const excludedRecordSummary = excludedRecords.map((record) => `- ${record.businessName}: ${record.excludedReason}`);
+  const failedOnly = safeTextLines([
+    formatChecks("Failed checks only", failed),
+    failedRecordSummary.length ? `Eligible records needing attention:\n${failedRecordSummary.join("\n")}` : "Eligible records needing attention: none",
+    excludedRecordSummary.length ? `Excluded historical/non-actionable records:\n${excludedRecordSummary.join("\n")}` : "Excluded historical/non-actionable records: none",
+  ]);
   const nextFix = safeTextLines([`Next safest action: ${nextSafestAction}`, failed[0] ? `${failed[0].label}: ${failed[0].detail}` : "No failed checks."]);
   const safeToTest = safeTextLines([
     `Dry-run / Manual Routing: ${dryRunStatus}`,
@@ -1032,6 +1114,8 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     `Queued public-email leads: ${publicEmailQueued.length}`,
     `Queued public-email leads passing readiness: ${queuedReadyCount}`,
     `Existing qualified unsent: ${existing?.total ?? 0}`,
+    `Eligible failed records: ${failedRecords.length}`,
+    `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Smart backfill: ${smartBackfill.message}`,
     `Market scout: ${marketScout.message}`,
   ]);
@@ -1046,6 +1130,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     passed,
     failed,
     failedRecords,
+    excludedRecords,
     optional,
     notDone,
     checks,

@@ -254,6 +254,7 @@ export function OperatorTestCenterWorkspace() {
             <div><dt>Passed</dt><dd>{lastAction.readiness.passed.length}</dd></div>
             <div><dt>Failed</dt><dd>{lastAction.readiness.failed.length}</dd></div>
             <div><dt>Failed records</dt><dd>{lastAction.readiness.failedRecords.length}</dd></div>
+            <div><dt>Excluded records</dt><dd>{lastAction.readiness.excludedRecords.length}</dd></div>
             <div><dt>Optional / info</dt><dd>{lastAction.readiness.optional.length}</dd></div>
             <div><dt>Generated</dt><dd>{new Date(lastAction.readiness.generatedAt).toLocaleString()}</dd></div>
           </dl>
@@ -278,6 +279,21 @@ export function OperatorTestCenterWorkspace() {
                 ))}
               </div>
             </section>
+          ) : null}
+          {lastAction.readiness.excludedRecords.length ? (
+            <details className="engine-autonomous-readiness__details">
+              <summary>Excluded historical/non-actionable records</summary>
+              <div className="engine-autonomous-readiness__check-list">
+                {lastAction.readiness.excludedRecords.map((record) => (
+                  <article className="engine-autonomous-readiness__check engine-autonomous-readiness__check--info" key={record.id}>
+                    <span>{record.category}</span>
+                    <h3>{record.businessName}</h3>
+                    <p>{record.excludedReason}</p>
+                    <p>Not evaluated for Manual Email Test or Auto Email Pilot readiness.</p>
+                  </article>
+                ))}
+              </div>
+            </details>
           ) : null}
           <div className="engine-operator-summary-grid engine-autonomous-readiness__copies">
             {([

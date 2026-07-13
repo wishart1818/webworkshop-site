@@ -4,6 +4,17 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import {
+  currentOutreachCopyVersion,
+  defaultAutonomousGrowthSettings,
+  type OutreachQueueItem,
+} from "../lib/autonomous-growth";
+import {
+  outreachQueueMemoryForTests,
+  resetAutonomousGrowthMemoryForTests,
+  setOutreachQueueMemoryForTests,
+  updateAutonomousGrowthSettings,
+} from "../lib/autonomous-growth-repository";
+import {
   internalNotificationBody,
   internalNotificationEnvironment,
   internalSmsBody,
@@ -47,6 +58,89 @@ function successfulGoogleProviderDiagnostics() {
       yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
     },
   } as const;
+}
+
+const readinessPreviewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
+
+function readinessEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    GOOGLE_PLACES_API_KEY: "actual-google-key",
+    OUTREACH_SEND_PROVIDER: "resend",
+    RESEND_API_KEY: "secret-resend-key",
+    OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+    OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+    OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+    OUTREACH_EMAIL_DISABLED: "false",
+    OUTREACH_AUTO_SEND_ENABLED: "true",
+    OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+    INTERNAL_NOTIFICATIONS_ENABLED: "true",
+    INTERNAL_NOTIFY_EMAIL: "operator@example.com",
+    INTERNAL_NOTIFY_FROM_EMAIL: "WebWorkshop Alerts <hello@webworkshop.dev>",
+    ...overrides,
+  } as NodeJS.ProcessEnv;
+}
+
+function readinessQueueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueItem {
+  const now = new Date().toISOString();
+  return {
+    id: "queue-readiness",
+    prospectId: "prospect-readiness",
+    topProspectResultId: "result-readiness",
+    businessName: "Ready Pressure Washing",
+    trade: "Pressure Washing",
+    city: "Tampa, FL",
+    website: "https://readypressurewashing.com",
+    email: "owner@readypressurewashing.com",
+    contactSource: "Public email",
+    contactConfidence: 90,
+    previewLink: readinessPreviewLink,
+    previewQualityScore: 91,
+    subjectLine: "Quick website preview for Ready Pressure Washing",
+    emailBody: [
+      "Hi Ready Pressure Washing team,",
+      "",
+      "I was looking at pressure washing businesses around the Tampa area and came across your business.",
+      "",
+      "I put together a quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests.",
+      "",
+      "Want me to send it over?",
+      "",
+      "Thanks,",
+      "",
+      "Brendan",
+      "WebWorkshop",
+      "",
+      "147 George St, Findlay, OH 45840",
+      "",
+      "If you'd rather not hear from me again, just let me know.",
+    ].join("\n"),
+    dmScript: "",
+    loomTalkingPoints: "",
+    eligibilityReason: "Public email package is ready for review.",
+    blockedReason: "",
+    reviewScore: 86,
+    reviewSummary: "Keep.",
+    improvementSuggestions: [],
+    detectedIssues: [],
+    recommendedNextAction: "Keep",
+    regenerationPlan: [],
+    rewritePlan: [],
+    feedbackLabels: [],
+    status: "Queued",
+    sourceProvider: "Google Places",
+    queuedDate: now,
+    sentDate: "",
+    followUpDate: "",
+    replyStatus: "",
+    notes: "",
+    outreachCopyVersion: currentOutreachCopyVersion,
+    outreachCopyGeneratedAt: now,
+    previewVersion: "preview-v1",
+    lastRegeneratedAt: "",
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
 }
 
 test("internal notification test only sends to INTERNAL_NOTIFY_EMAIL", async () => {
@@ -466,6 +560,111 @@ test("Full Autonomous Readiness Test checks copy, existing prospects, saved resu
   assert.ok(result.readiness?.checks.find((check) => check.key === "first-email-link-free")?.status === "passed");
   assert.ok(result.readiness?.checks.find((check) => check.key === "yes-reply-public-preview")?.status === "passed");
   assert.doesNotMatch(result.readiness?.summaries.debug ?? "", /\/engine\/previews|secret-resend-key|postgres:\/\/|twilio-auth-token|google-places-key/i);
+});
+
+test("Full Readiness excludes blocked old-copy records from pilot-blocking failures", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const originalEnv = { ...process.env };
+  try {
+    process.env.GOOGLE_PLACES_API_KEY = "actual-google-key";
+    await recordOperatorSafeTestResult(buildProviderSmokeTestRecord({
+      startedAt: new Date(1).toISOString(),
+      completedAt: new Date().toISOString(),
+      diagnostics: successfulGoogleProviderDiagnostics(),
+      sampleCount: 1,
+      createdOutreachPackages: false,
+      sentOutreach: false,
+    }));
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const queuedReady = readinessQueueItem({ id: "queued-ready", prospectId: "prospect-ready", topProspectResultId: "result-ready" });
+    const blockedOldCopy = readinessQueueItem({
+      id: "blocked-old-copy",
+      prospectId: "prospect-blocked",
+      topProspectResultId: "result-blocked",
+      businessName: "Blocked Old Copy",
+      email: "owner@blockedoldcopy.example",
+      website: "https://blockedoldcopy.example",
+      status: "Blocked",
+      queuedDate: "",
+      blockedReason: "Bad fit / do not contact.",
+      outreachCopyVersion: "old_audit_copy_v0",
+      emailBody: "Old audit copy with One missed opportunity.",
+    });
+    setOutreachQueueMemoryForTests([queuedReady, blockedOldCopy]);
+    const before = JSON.stringify(outreachQueueMemoryForTests());
+
+    const result = await runFullAutonomousReadinessTest(readinessEnv());
+    const after = JSON.stringify(outreachQueueMemoryForTests());
+
+    assert.equal(after, before);
+    assert.equal(result.readiness?.autoEmailPilot.status, "Ready");
+    assert.equal(result.readiness?.failedRecords.some((record) => record.packageId === "blocked-old-copy"), false);
+    assert.ok(result.readiness?.excludedRecords.some((record) => record.packageId === "blocked-old-copy" && /Blocked records are historical/i.test(record.excludedReason)));
+    assert.doesNotMatch(result.readiness?.autoEmailPilot.reasons.join(" "), /blocked-old-copy|copy\/safety fixes/i);
+    assert.match(result.readiness?.summaries.failedOnly ?? "", /Excluded historical\/non-actionable records/);
+  } finally {
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("Full Readiness blocks queued eligible old-copy records but not stale persisted readiness results", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const originalEnv = { ...process.env };
+  try {
+    process.env.GOOGLE_PLACES_API_KEY = "actual-google-key";
+    await recordOperatorSafeTestResult({
+      testType: "full_readiness",
+      startedAt: new Date(1).toISOString(),
+      completedAt: new Date(1).toISOString(),
+      outcome: "failed",
+      summary: "Old persisted run said first-touch email explains why I am reaching out failed.",
+      modeStatuses: {
+        dryRunManualRouting: "Needs attention",
+        manualEmailTest: "Blocked",
+        autoEmailPilot: "Blocked",
+        fullAutoEmail: "Blocked",
+      },
+      safeErrorMessage: "stale old-copy failure",
+    });
+    await recordOperatorSafeTestResult(buildProviderSmokeTestRecord({
+      startedAt: new Date(2).toISOString(),
+      completedAt: new Date().toISOString(),
+      diagnostics: successfulGoogleProviderDiagnostics(),
+      sampleCount: 1,
+      createdOutreachPackages: false,
+      sentOutreach: false,
+    }));
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const oldQueued = readinessQueueItem({
+      id: "queued-old-copy",
+      prospectId: "prospect-old-copy",
+      topProspectResultId: "result-old-copy",
+      outreachCopyVersion: "old_audit_copy_v0",
+      emailBody: "Old audit-style copy with One missed opportunity.",
+    });
+    setOutreachQueueMemoryForTests([oldQueued]);
+    const before = JSON.stringify(outreachQueueMemoryForTests());
+
+    const result = await runFullAutonomousReadinessTest(readinessEnv());
+    const after = JSON.stringify(outreachQueueMemoryForTests());
+    const whyChecks = result.readiness?.checks.filter((check) => check.key === "why-reaching-out") ?? [];
+
+    assert.equal(after, before);
+    assert.equal(whyChecks.length, 1);
+    assert.equal(whyChecks[0]?.status, "passed");
+    assert.ok(result.readiness?.failedRecords.some((record) => record.packageId === "queued-old-copy" && record.category === "Outdated outreach copy"));
+    assert.equal(result.readiness?.autoEmailPilot.status, "Blocked");
+    assert.match(result.readiness?.autoEmailPilot.reasons.join(" "), /queued public-email record\(s\) need copy\/safety fixes/);
+    assert.notEqual(result.readiness?.finalReadinessStatus, "READY FOR AUTO EMAIL PILOT");
+  } finally {
+    process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
 });
 
 test("operator notification body is short, phone-friendly, and secret-safe", () => {
