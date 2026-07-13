@@ -3,8 +3,9 @@ import { runFullAutonomousReadinessTest, runOperatorMarketScoutDryRun, runOperat
 import { buildProviderSmokeTestRecord, recordOperatorSafeTestResult, safeOperatorText } from "@/lib/operator-test-history";
 import { listAuditEvents, safeRecordAudit, type AuditEventView } from "@/lib/operational-controls";
 import { discoverContractorsWithDiagnostics } from "@/lib/lead-discovery";
-import { getAutonomousGrowthDashboard, processExistingQualifiedProspects, updateAutonomousGrowthSettings } from "@/lib/autonomous-growth-repository";
+import { createOrRefreshAutonomousReviewPackageForProspect, getAutonomousGrowthDashboard, processExistingQualifiedProspects, regenerateProspectOutreachWithCurrentScript, updateAutonomousGrowthSettings } from "@/lib/autonomous-growth-repository";
 import { autonomousGrowthModes, type AutonomousGrowthMode, type AutonomousGrowthSettings } from "@/lib/autonomous-growth";
+import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { listProspects } from "@/lib/prospect-repository";
 
 export const operatorCommandTypes = [
@@ -47,6 +48,10 @@ export const operatorCommandTypes = [
   "PROCESS_EXISTING_QUALIFIED_PROSPECTS",
   "SHOW_ELIGIBLE_EMAIL_QUEUE",
   "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE",
+  "PREVIEW_LEGACY_OUTREACH_BACKFILL",
+  "APPLY_LEGACY_OUTREACH_BACKFILL",
+  "REGENERATE_PROSPECT_OUTREACH",
+  "CREATE_AUTONOMOUS_REVIEW_PACKAGE",
 ] as const;
 
 export type OperatorCommandType = (typeof operatorCommandTypes)[number];
@@ -254,6 +259,21 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
     if (parsed.fields.DAILY_EMAIL_CAP) preview.plannedActions.push(`Set daily email cap to ${parsed.fields.DAILY_EMAIL_CAP}.`);
     if (parsed.fields.PROCESS_EXISTING_FIRST) preview.plannedActions.push("Process existing qualified prospects first.");
     preview.plannedActions.push("Keep full-auto email disabled.");
+  } else if (command === "PREVIEW_LEGACY_OUTREACH_BACKFILL") {
+    preview.plannedActions.push("Preview legacy Prospect and queue outreach copy updates.");
+    preview.plannedActions.push("Report counts and samples without changing data.");
+  } else if (command === "APPLY_LEGACY_OUTREACH_BACKFILL") {
+    preview.plannedActions.push("Regenerate eligible unsent Prospect drafts with the current script.");
+    preview.plannedActions.push("Refresh eligible unsent queue packages and create missing review-only packages.");
+    preview.plannedActions.push("Require operator confirmation and send nothing.");
+  } else if (command === "REGENERATE_PROSPECT_OUTREACH") {
+    preview.plannedActions.push(`Regenerate current outreach draft for prospect ${safeOperatorText(parsed.fields.PROSPECT_ID ?? "")}.`);
+    preview.plannedActions.push("Remove approval and send nothing.");
+    if (!parsed.fields.PROSPECT_ID) preview.validationErrors.push("PROSPECT_ID is required.");
+  } else if (command === "CREATE_AUTONOMOUS_REVIEW_PACKAGE") {
+    preview.plannedActions.push(`Create or refresh a review-only Autonomous Growth package for prospect ${safeOperatorText(parsed.fields.PROSPECT_ID ?? "")}.`);
+    preview.plannedActions.push("Keep the package out of automatic sending.");
+    if (!parsed.fields.PROSPECT_ID) preview.validationErrors.push("PROSPECT_ID is required.");
   } else {
     preview.plannedActions.push(`Run ${commandLabel(command)}.`);
   }
@@ -262,7 +282,7 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
 }
 
 function commandLevel(type: OperatorCommandType): OperatorCommandLevel {
-  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE"].includes(type)) return 2;
+  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL"].includes(type)) return 2;
   return 1;
 }
 
@@ -697,6 +717,71 @@ export async function executeOperatorCommand(commandText: string, options: { mod
         testsTriggered: [],
         nextRecommendedAction: result.summary?.nextBestAction ?? "Review Autonomous Growth queues.",
         relatedPage: "Autonomous Growth",
+      });
+    } else if (preview.commandType === "PREVIEW_LEGACY_OUTREACH_BACKFILL") {
+      const result = await previewLegacyOutreachBackfill();
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: "completed",
+        plannedActions: preview.plannedActions,
+        whatChanged: ["Legacy outreach backfill preview completed."],
+        whatDidNotChange: ["No Prospect drafts changed.", "No queue packages changed.", "No outreach was sent."],
+        recordsAffected: result.updated.prospectDrafts + result.updated.queuePackages + result.updated.newReviewPackagesCreated,
+        testsTriggered: ["Legacy Outreach Backfill Preview"],
+        nextRecommendedAction: "Review the preview counts, then run APPLY_LEGACY_OUTREACH_BACKFILL with confirmation if it looks right.",
+        relatedPage: "Command Activity",
+      });
+      receipt.copyForChatGPT = result.copyForChatGPT;
+    } else if (preview.commandType === "APPLY_LEGACY_OUTREACH_BACKFILL") {
+      const result = await applyLegacyOutreachBackfill({ confirmed: true });
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: result.status === "completed" ? "completed" : "blocked",
+        plannedActions: preview.plannedActions,
+        whatChanged: result.status === "completed"
+          ? [`Updated ${result.updated.prospectDrafts} Prospect draft(s).`, `Updated ${result.updated.queuePackages} queue package(s).`, `Created ${result.updated.newReviewPackagesCreated} review-only package(s).`]
+          : [],
+        whatDidNotChange: ["No sent/contacted/suppressed records were rewritten.", "No outreach was sent."],
+        recordsAffected: result.updated.prospectDrafts + result.updated.queuePackages + result.updated.newReviewPackagesCreated,
+        testsTriggered: ["Legacy Outreach Backfill Apply"],
+        nextRecommendedAction: "Open Prospects or Autonomous Growth and review refreshed drafts.",
+        relatedPage: "Command Activity",
+      });
+      receipt.copyForChatGPT = result.copyForChatGPT;
+    } else if (preview.commandType === "REGENERATE_PROSPECT_OUTREACH") {
+      const prospectId = String(preview.parsedParameters.PROSPECT_ID ?? "");
+      const result = await regenerateProspectOutreachWithCurrentScript(prospectId, { previewOnly: String(preview.parsedParameters.ACTION ?? "").toLowerCase() === "preview_only" });
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: result ? "completed" : "blocked",
+        plannedActions: preview.plannedActions,
+        whatChanged: result ? [String(preview.parsedParameters.ACTION ?? "").toLowerCase() === "preview_only" ? "Previewed current Prospect draft regeneration." : "Regenerated Prospect outreach with current script."] : [],
+        whatDidNotChange: ["Approval was not preserved for regenerated copy.", "No outreach was sent."],
+        recordsAffected: result ? 1 : 0,
+        testsTriggered: [],
+        nextRecommendedAction: result ? "Review the Prospect Outreach tab." : "Check the Prospect ID and try again.",
+        relatedPage: "Prospects",
+        relatedProspectIds: prospectId ? [prospectId] : [],
+      });
+    } else if (preview.commandType === "CREATE_AUTONOMOUS_REVIEW_PACKAGE") {
+      const prospectId = String(preview.parsedParameters.PROSPECT_ID ?? "");
+      const previewOnly = String(preview.parsedParameters.ACTION ?? "").toLowerCase() === "preview_only";
+      const item = previewOnly ? null : await createOrRefreshAutonomousReviewPackageForProspect(prospectId);
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: previewOnly || item ? "completed" : "blocked",
+        plannedActions: preview.plannedActions,
+        whatChanged: previewOnly ? ["Previewed review-only package creation."] : item ? [`Created/refreshed review-only package ${item.id}.`] : [],
+        whatDidNotChange: ["No package was sent.", "No queue item was moved directly to sent outreach."],
+        recordsAffected: previewOnly || item ? 1 : 0,
+        testsTriggered: [],
+        nextRecommendedAction: "Open Autonomous Growth and review the package.",
+        relatedPage: "Autonomous Growth",
+        relatedProspectIds: prospectId ? [prospectId] : [],
       });
     } else if (preview.confirmationLevel === 2) {
       const patch = settingsPatchFromPreview(preview);

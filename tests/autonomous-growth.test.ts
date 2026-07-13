@@ -280,8 +280,8 @@ test("queued email send readiness enforces suppression, public links, compliance
     contactConfidence: 90,
     previewLink: publicLink,
     previewQualityScore: 92,
-    subjectLine: "Quick website idea for Ready Pressure Washing",
-    emailBody: `Hi Ready Pressure Washing team,\n\nI made a quick preview.\n\n${publicLink}\n\nWould you be open to taking a look?\n\nThanks,\nBrendan\nWebWorkshop\n123 Main St, Toledo, OH\n\nIf you would rather not receive another note, just reply and I will close the loop.`,
+    subjectLine: "Quick website preview for Ready Pressure Washing",
+    emailBody: "Hi Ready Pressure Washing team,\n\nI was looking at pressure washing businesses around Tampa and noticed the path to call or request a quote could probably be clearer, so I put together a quick website preview for you.\n\nIt's built to make the page look cleaner and help get you more calls and quote requests.\n\nWould you like me to send it over?\n\nThanks,\nBrendan\nWebWorkshop\n123 Main St, Toledo, OH\n\nIf you would rather not receive another note, just reply and I will close the loop.",
     dmScript: "",
     loomTalkingPoints: "",
     eligibilityReason: "Ready",
@@ -319,7 +319,7 @@ test("queued email send readiness enforces suppression, public links, compliance
     settings,
   });
   assert.equal(protectedLink.ready, false);
-  assert.match(protectedLink.blockedReasons.join(" "), /protected \/engine link/i);
+  assert.match(protectedLink.blockedReasons.join(" "), /protected \/engine preview links/i);
 
   const suppressed = evaluateQueuedEmailSendReadiness({
     environment: env(),

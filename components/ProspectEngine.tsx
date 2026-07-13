@@ -398,6 +398,46 @@ export function ProspectEngine() {
     setDetailTab("Analysis");
   }
 
+  async function regenerateSelectedOutreach() {
+    if (!selected) return;
+    setSyncState("saving");
+    setSyncError("");
+    try {
+      const response = await fetch("/api/engine/outreach-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "regenerate_prospect_outreach", prospectId: selected.id }),
+      });
+      const payload = (await response.json()) as { updatedProspect?: Prospect; error?: string };
+      if (!response.ok || !payload.updatedProspect) throw new Error(payload.error || "Unable to regenerate outreach.");
+      setProspects((current) => current.map((prospect) => prospect.id === payload.updatedProspect!.id ? payload.updatedProspect! : prospect));
+      setSyncState("saved");
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "Unable to regenerate outreach.");
+      setSyncState("error");
+    }
+  }
+
+  async function createSelectedReviewPackage() {
+    if (!selected) return;
+    setSyncState("saving");
+    setSyncError("");
+    try {
+      const response = await fetch("/api/engine/outreach-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create_autonomous_review_package", prospectId: selected.id }),
+      });
+      const payload = (await response.json()) as { queueItem?: unknown; error?: string };
+      if (!response.ok) throw new Error(payload.error || "Unable to create review package.");
+      await loadProspects();
+      setSyncState("saved");
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "Unable to create review package.");
+      setSyncState("error");
+    }
+  }
+
   return (
     <div className="engine-shell">
       <aside className="engine-sidebar">
@@ -517,7 +557,7 @@ export function ProspectEngine() {
                 <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
             </div>
           </div>
         )}

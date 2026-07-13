@@ -3,6 +3,8 @@ import {
   displayStateCode,
   normalizeTradeCategory,
   OUTREACH_COPY_VERSION,
+  inferOutreachCopyVersion,
+  outreachDraftLooksCurrent,
   seedProspects,
   titleCaseLocation,
   type Activity,
@@ -88,7 +90,8 @@ function toDomain(row: StoredProspect): Prospect {
       } satisfies Analysis)
     : undefined;
   const outreach = outreachRow
-    ? ({
+    ? (() => {
+      const draft = {
         subjects: stringArray(outreachRow.subjectLines),
         concise: outreachRow.conciseBody,
         detailed: outreachRow.detailedBody,
@@ -97,7 +100,13 @@ function toDomain(row: StoredProspect): Prospect {
         generatedAt: outreachRow.createdAt.toISOString(),
         outreachCopyVersion: OUTREACH_COPY_VERSION,
         outreachCopyGeneratedAt: outreachRow.createdAt.toISOString(),
-      } satisfies OutreachDraft)
+      } satisfies OutreachDraft;
+      return {
+        ...draft,
+        outreachCopyVersion: inferOutreachCopyVersion(draft),
+        approved: outreachDraftLooksCurrent({ ...draft, outreachCopyVersion: inferOutreachCopyVersion(draft) }) ? draft.approved : false,
+      } satisfies OutreachDraft;
+    })()
     : undefined;
   const preview = previewRow
     ? ({ ...(previewRow.content as PreviewConcept), generatedAt: previewRow.createdAt.toISOString() } satisfies PreviewConcept)
@@ -406,4 +415,8 @@ export function persistenceMode() {
 
 export function resetProspectMemoryForTests() {
   globalStore.prospectMemory = structuredClone(seedProspects);
+}
+
+export function setProspectMemoryForTests(prospects: Prospect[]) {
+  globalStore.prospectMemory = structuredClone(prospects);
 }

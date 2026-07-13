@@ -8,6 +8,8 @@ import {
   displayStateCode,
   displayTradeCategory,
   previewStyleProfile,
+  OUTREACH_COPY_VERSION,
+  outreachDraftLooksCurrent,
   priorityRationale,
   prospectHasUnusableWebsite,
   prospectPresenceLabels,
@@ -55,6 +57,8 @@ type ProspectDetailProps = {
   onAnalyze: () => void;
   onPresenceGap: () => void;
   onOutreach: () => void;
+  onRegenerateOutreach: () => Promise<void>;
+  onCreateReviewPackage: () => Promise<void>;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
   note: string;
@@ -100,6 +104,8 @@ export function ProspectDetail({
   onAnalyze,
   onPresenceGap,
   onOutreach,
+  onRegenerateOutreach,
+  onCreateReviewPackage,
   onPreview,
   onStatus,
   note,
@@ -152,7 +158,7 @@ export function ProspectDetail({
           ? <AnalysisView prospect={prospect} onAnalyze={onAnalyze} />
           : <UnanalyzedWebsiteView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} />)}
         {detailTab === "Outreach" && (prospect.outreach
-          ? <OutreachView prospect={prospect} updateSelected={updateSelected} />
+          ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
           ? <PreviewView prospect={prospect} />
@@ -289,11 +295,13 @@ function AnalysisView({ prospect, onAnalyze }: { prospect: Prospect; onAnalyze: 
   );
 }
 
-function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "prospect" | "updateSelected">) {
+function OutreachView({ prospect, updateSelected, onRegenerateOutreach, onCreateReviewPackage }: Pick<ProspectDetailProps, "prospect" | "updateSelected" | "onRegenerateOutreach" | "onCreateReviewPackage">) {
   const outreach = prospect.outreach!;
   const [complianceConfirmed, setComplianceConfirmed] = useState(false);
   const [copied, setCopied] = useState("");
   const writtenContactReady = prospectWrittenContactMethodIsUsable(prospect);
+  const copyIsCurrent = outreachDraftLooksCurrent(outreach);
+  const generatedDate = outreach.outreachCopyGeneratedAt || outreach.generatedAt;
 
   async function copyDraft(label: string, value: string) {
     try {
@@ -323,7 +331,14 @@ function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "p
         <div>
           <b>{outreach.approved ? "Approved for personal sending" : "Human review required"}</b>
           <p>{outreach.approved ? "This draft has been reviewed. Copy it into your normal email workflow after the sender postal address is configured." : "Review facts, tone, recipient details, sender identity, and opt-out handling before approving."}</p>
+          <p><b>Exact email Auto Email Pilot would send.</b> Regenerated Prospect drafts and linked Autonomous Growth packages use this same current script.</p>
+          <p>
+            Copy version: <b>{outreach.outreachCopyVersion || "missing"}</b>{" "}
+            <span className={`engine-status-pill ${copyIsCurrent ? "is-positive" : "is-warning"}`}>{copyIsCurrent ? "Current" : "Outdated"}</span>
+            {" "}Generated: {generatedDate ? new Date(generatedDate).toLocaleString() : "Not recorded"}
+          </p>
           {!writtenContactReady && <p className="engine-copy-warning">Written outreach is blocked for this prospect because no email, contact form, or social message path is available. Treat it as Needs manual contact research.</p>}
+          {!copyIsCurrent && <p className="engine-copy-warning">This draft cannot be approved or queued until it is regenerated with {OUTREACH_COPY_VERSION}.</p>}
           {!outreach.approved && (
             <label className="engine-compliance-check">
               <input checked={complianceConfirmed} onChange={(event) => setComplianceConfirmed(event.target.checked)} type="checkbox" />
@@ -331,13 +346,18 @@ function OutreachView({ prospect, updateSelected }: Pick<ProspectDetailProps, "p
             </label>
           )}
         </div>
-        <button className="engine-button engine-button--primary" disabled={!writtenContactReady || (!outreach.approved && !complianceConfirmed)} onClick={toggleApproval} type="button">
+        <button className="engine-button engine-button--primary" disabled={!copyIsCurrent || !writtenContactReady || (!outreach.approved && !complianceConfirmed)} onClick={toggleApproval} type="button">
           {outreach.approved ? "Remove approval" : "Approve personal draft"}
         </button>
       </div>
+      <div className="engine-result-actions">
+        <button className="engine-button" onClick={() => void onRegenerateOutreach()} type="button">Regenerate with Current Script</button>
+        <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Create/Refresh Autonomous Review Package</button>
+        <a className="engine-button" href="/engine?tab=autonomous-growth">Open linked Autonomous Growth package</a>
+      </div>
       <section><h3>Subject options</h3><ul>{outreach.subjects.map((item) => <li key={item}>{item}</li>)}</ul></section>
-      <DraftSection approved={outreach.approved} copied={copied} label="Concise" onCopy={copyDraft} value={outreach.concise} />
-      <DraftSection approved={outreach.approved} copied={copied} label="Detailed" onCopy={copyDraft} value={outreach.detailed} />
+      <DraftSection approved={outreach.approved && copyIsCurrent} copied={copied} label="Exact first email" onCopy={copyDraft} value={outreach.concise} />
+      <DraftSection approved={outreach.approved && copyIsCurrent} copied={copied} label="Yes reply with preview link" onCopy={copyDraft} value={outreach.detailed} />
       <section>
         <h3>Follow-up sequence</h3>
         {outreach.followUps.map((item, index) => (

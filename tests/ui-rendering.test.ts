@@ -111,7 +111,8 @@ test("unapproved outreach renders compliance review and disabled copy controls",
   assert.match(html, /Human review required/);
   assert.match(html, /postal address/i);
   assert.match(html, /Approve personal draft/);
-  assert.match(html, /Copy concise draft/);
+  assert.match(html, /Exact email Auto Email Pilot would send/);
+  assert.match(html, /Copy exact first email draft/);
   assert.match(html, /disabled=""/);
 });
 

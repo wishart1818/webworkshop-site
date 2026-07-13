@@ -37,8 +37,8 @@ import {
   type OutreachQueueStatus,
   type SmartRunSummary,
 } from "@/lib/autonomous-growth";
-import { createProspect, generateOutreach, normalizeTradeCategory, prospectWrittenContactMethodIsUsable, type Prospect } from "@/lib/prospect-engine";
-import { getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { activity, createProspect, generateOutreach, normalizeTradeCategory, prospectWrittenContactMethodIsUsable, withPreview, type Prospect } from "@/lib/prospect-engine";
+import { getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
@@ -302,6 +302,34 @@ async function listOutreachQueueItems() {
     take: 100,
   });
   return rows.map(queueToDomain);
+}
+
+export async function listOutreachQueueItemsForBackfill() {
+  return listOutreachQueueItems();
+}
+
+async function findExistingQueueItemForProspect(prospectId: string) {
+  const queue = await listOutreachQueueItems();
+  return queue.find((item) => item.prospectId === prospectId) ?? null;
+}
+
+async function publicPreviewForProspect(prospectId: string) {
+  const existing = await findExistingQueueItemForProspect(prospectId);
+  if (existing?.previewLink && /\/p\//i.test(existing.previewLink) && !/\/engine(?:\/|$)/i.test(existing.previewLink)) {
+    return { previewLink: existing.previewLink, topProspectResultId: existing.topProspectResultId || `manual-prospect-${prospectId}` };
+  }
+  if (!hasDatabase) return { previewLink: "", topProspectResultId: existing?.topProspectResultId || `manual-prospect-${prospectId}` };
+  await ensureTopProspectSchema();
+  const result = await getProspectDatabase().topProspectResult.findFirst({
+    where: { prospectId, publicPreviewToken: { not: null } },
+    orderBy: [{ packageGeneratedAt: "desc" }, { createdAt: "desc" }],
+    select: { id: true, previewLink: true, publicPreviewToken: true },
+  });
+  if (!result?.publicPreviewToken) return { previewLink: "", topProspectResultId: existing?.topProspectResultId || `manual-prospect-${prospectId}` };
+  return {
+    previewLink: result.previewLink && /\/p\//i.test(result.previewLink) ? result.previewLink : publicProspectPreviewLink(result.publicPreviewToken),
+    topProspectResultId: existing?.topProspectResultId || result.id,
+  };
 }
 
 async function listAutonomousRunReviews() {
@@ -1308,12 +1336,14 @@ export async function recordEmailSuppression(email: string, reason: EmailSuppres
 }
 
 export async function upsertAutonomousQueueItemFromPackage({
+  forceReviewOnly = false,
   outreachPreference,
   previewLink,
   prospect,
   sourceProvider = "Top Prospects",
   topProspectResultId,
 }: {
+  forceReviewOnly?: boolean;
   outreachPreference: OutreachPreference;
   previewLink: string;
   prospect: Prospect;
@@ -1334,7 +1364,8 @@ export async function upsertAutonomousQueueItemFromPackage({
     settings,
   });
   const selfReview = evaluateSelfReview({ emailQuality, previewGate, prospect });
-  const status = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
+  const computedStatus = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
+  const status = forceReviewOnly && computedStatus === "Queued" ? "Eligible" : computedStatus;
   const now = new Date();
   const outreach = prospect.outreach;
   const outreachGeneratedAt = outreach?.outreachCopyGeneratedAt || outreach?.generatedAt || now.toISOString();
@@ -1560,6 +1591,103 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   await recordLearningEvent(domain);
   await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
   return domain;
+}
+
+export async function regenerateProspectOutreachWithCurrentScript(prospectId: string, options: { previewOnly?: boolean } = {}) {
+  const prospect = await getProspect(prospectId);
+  if (!prospect) return null;
+  const previewInfo = await publicPreviewForProspect(prospectId);
+  const nowIso = new Date().toISOString();
+  const outreach = {
+    ...generateOutreach(prospect, previewInfo.previewLink),
+    approved: false,
+    lastRegeneratedAt: nowIso,
+  };
+  const updated = {
+    ...prospect,
+    outreach,
+    activities: [
+      activity("outreach", `Outreach regenerated with ${currentOutreachCopyVersion}. Approval removed. Nothing was sent.`),
+      ...prospect.activities,
+    ],
+  };
+  const queueItem = await findExistingQueueItemForProspect(prospectId);
+  if (options.previewOnly) {
+    return {
+      prospect,
+      updatedProspect: updated,
+      queueItem,
+      previewLink: previewInfo.previewLink,
+      wouldUpdateQueue: Boolean(queueItem),
+    };
+  }
+  const saved = await saveProspect(updated);
+  let refreshedQueueItem: OutreachQueueItem | null = null;
+  if (queueItem) {
+    refreshedQueueItem = await createOrRefreshAutonomousReviewPackageForProspect(saved.id);
+  }
+  return {
+    prospect,
+    updatedProspect: saved,
+    queueItem: refreshedQueueItem ?? queueItem,
+    previewLink: previewInfo.previewLink,
+    wouldUpdateQueue: Boolean(queueItem),
+  };
+}
+
+export async function createOrRefreshAutonomousReviewPackageForProspect(prospectOrId: Prospect | string) {
+  const prospect = typeof prospectOrId === "string" ? await getProspect(prospectOrId) : prospectOrId;
+  if (!prospect) return null;
+  const previewInfo = await publicPreviewForProspect(prospect.id);
+  const nowIso = new Date().toISOString();
+  const prospectWithPreview = prospect.preview ? prospect : withPreview(prospect);
+  const outreach = {
+    ...generateOutreach(prospectWithPreview, previewInfo.previewLink),
+    approved: false,
+    lastRegeneratedAt: nowIso,
+  };
+  const saved = await saveProspect({
+    ...prospectWithPreview,
+    outreach,
+    activities: [
+      activity("outreach", "Current Autonomous Growth review package created or refreshed. Nothing was sent."),
+      ...prospectWithPreview.activities,
+    ],
+  });
+  const queueItem = await upsertAutonomousQueueItemFromPackage({
+    forceReviewOnly: true,
+    outreachPreference: "written_only",
+    previewLink: previewInfo.previewLink,
+    prospect: saved,
+    sourceProvider: "Legacy Outreach Backfill",
+    topProspectResultId: previewInfo.topProspectResultId,
+  });
+  if (!previewInfo.previewLink) {
+    const note = "No valid public /p/ preview link was found. Generate/review a public preview before send-ready approval.";
+    if (!hasDatabase) {
+      const memory = memoryQueue().find((item) => item.id === queueItem.id);
+      if (memory) {
+        memory.status = "Needs Review";
+        memory.blockedReason = [memory.blockedReason, note].filter(Boolean).join(" ");
+        memory.recommendedNextAction = "Regenerate Preview";
+        memory.notes = [memory.notes, note].filter(Boolean).join("\n");
+        memory.updatedAt = new Date().toISOString();
+        return structuredClone(memory);
+      }
+    } else {
+      const row = await getProspectDatabase().outreachQueueItem.update({
+        where: { id: queueItem.id },
+        data: {
+          status: "Needs Review",
+          blockedReason: [queueItem.blockedReason, note].filter(Boolean).join(" "),
+          recommendedNextAction: "Regenerate Preview",
+          notes: [queueItem.notes, note].filter(Boolean).join("\n") || null,
+        },
+      });
+      return queueToDomain(row);
+    }
+  }
+  return queueItem;
 }
 
 export async function recordAutonomousFeedback(id: string, feedbackLabel: AutonomousFeedbackLabel, note = "") {

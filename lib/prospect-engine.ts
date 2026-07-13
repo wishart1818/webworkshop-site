@@ -149,6 +149,7 @@ export type OutreachDraft = {
   generatedAt: string;
   outreachCopyVersion: string;
   outreachCopyGeneratedAt: string;
+  lastRegeneratedAt?: string;
 };
 
 export type PreviewConcept = {
@@ -794,6 +795,29 @@ export const websiteAvailabilityLabels: Record<WebsiteAvailabilityStatus, string
 };
 
 export const OUTREACH_COPY_VERSION = "permission_first_more_calls_v1";
+export const LEGACY_OUTREACH_COPY_VERSION = "legacy_unversioned";
+
+export function outreachDraftLooksCurrent(outreach: Pick<OutreachDraft, "concise" | "detailed" | "followUps" | "outreachCopyVersion">, environment: NodeJS.ProcessEnv = process.env) {
+  const firstTouch = outreach.concise ?? "";
+  const combined = [firstTouch, outreach.detailed, ...(outreach.followUps ?? [])].join("\n");
+  const address = webworkshopPostalAddress(environment);
+  return outreach.outreachCopyVersion === OUTREACH_COPY_VERSION
+    && !/https?:\/\/|\/p\/|\/engine(?:\/|$)/i.test(firstTouch)
+    && !/\b10[-\s]?minute call\b/i.test(combined)
+    && !/\[[^\]]*(postal address|before sending|placeholder|insert)[^\]]*\]/i.test(combined)
+    && !/\bwill get you more calls\b/i.test(combined)
+    && /would you like me to send it over|would you want me to send it over|want to see it/i.test(firstTouch)
+    && /would rather not receive another note|close the loop/i.test(combined)
+    && (!address || combined.includes(address));
+}
+
+export function inferOutreachCopyVersion(outreach: Pick<OutreachDraft, "concise" | "detailed" | "followUps"> & Partial<Pick<OutreachDraft, "outreachCopyVersion">>, environment: NodeJS.ProcessEnv = process.env) {
+  const candidate = {
+    ...outreach,
+    outreachCopyVersion: outreach.outreachCopyVersion || LEGACY_OUTREACH_COPY_VERSION,
+  };
+  return outreachDraftLooksCurrent(candidate, environment) ? OUTREACH_COPY_VERSION : candidate.outreachCopyVersion === OUTREACH_COPY_VERSION ? OUTREACH_COPY_VERSION : LEGACY_OUTREACH_COPY_VERSION;
+}
 
 export function prospectHasUnusableWebsite(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
   return prospect.prospectType === "no_website_social_only"
@@ -846,7 +870,7 @@ export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "reco
 }
 
 export function webworkshopPostalAddress(environment: NodeJS.ProcessEnv = process.env) {
-  return environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() ?? "";
+  return environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
 }
 
 export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = process.env) {

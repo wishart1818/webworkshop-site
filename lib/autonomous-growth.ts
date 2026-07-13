@@ -1243,11 +1243,16 @@ function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJ
   const combined = `${item.subjectLine}\n${item.emailBody}`;
   const postalAddresses = senderPostalAddressForDrafts(environment);
   return [
+    item.outreachCopyVersion !== currentOutreachCopyVersion ? `Outreach copy is outdated. Regenerate with ${currentOutreachCopyVersion}.` : "",
+    /https?:\/\/|\/p\//i.test(item.emailBody) ? "First-touch email must ask permission before sending the public preview link." : "",
     /\/engine(?:\/|$)/i.test(combined) ? "Prospect-facing email contains a protected /engine link." : "",
     /\[[^\]]*(postal address|before sending|insert|placeholder)[^\]]*\]/i.test(combined) ? "Prospect-facing email still contains placeholder text." : "",
+    /\b10[-\s]?minute call\b/i.test(combined) ? "First-touch email still asks for a 10-minute call." : "",
+    /\bwill get you more calls\b/i.test(combined) ? "Prospect-facing email contains a guaranteed-results claim." : "",
     /\b(?:website quality|opportunity|conversion readiness|internal|score)\s*(?:is|:)?\s*\d{1,3}\/100\b/i.test(combined) || /\b\d{1,3}\/100\b/.test(combined) ? "Prospect-facing email contains internal score language." : "",
     !/would rather not receive another note|unsubscribe|opt[- ]?out|close the loop/i.test(combined) ? "Opt-out language is missing." : "",
     postalAddresses.length && !postalAddresses.some((address) => item.emailBody.includes(address)) ? "Configured sender postal address is missing from the email body." : "",
+    !postalAddresses.length ? "Configured sender postal address is missing." : "",
     /\/engine(?:\/|$)/i.test(item.previewLink) ? "Protected /engine preview links are blocked." : "",
     !publicPreviewReady(item.previewLink) ? "Public /p/ preview link is missing from the outreach package." : "",
   ].filter(Boolean);
