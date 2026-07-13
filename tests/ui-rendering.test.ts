@@ -779,6 +779,26 @@ test("deployment docs explain provider setup and no-send safety", () => {
   assert.match(docs, /records suppression only and never sends outreach/i);
 });
 
+test("Prospect Engine exposes a manual Calls queue without SMS or auto-call behavior", () => {
+  const source = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
+  const callsBlock = source.slice(source.indexOf("function CallsWorkspace"), source.indexOf("function ProspectFunnelCard"));
+
+  assert.match(source, /type WorkspaceTab = .*"Calls"/);
+  assert.match(source, /pendingManualCallsCount/);
+  assert.match(source, /CallsWorkspace/);
+  assert.match(source, /Copy Call Script/);
+  assert.match(source, /Mark Call Back/);
+  assert.match(source, /Mark Do Not Contact/);
+  assert.match(source, /tel:\$\{prospect\.phone\}/);
+  assert.match(source, /engine-nav-badge/);
+  assert.match(callsBlock, /never texts prospects/);
+  assert.match(callsBlock, /never treats a phone number as SMS permission/);
+  assert.doesNotMatch(callsBlock, /sendText|sendSms/i);
+  assert.match(css, /engine-calls-workspace/);
+  assert.match(css, /engine-call-actions/);
+});
+
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {
   const legacy = {
     rawProviderCount: 7,

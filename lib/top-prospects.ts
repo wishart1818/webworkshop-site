@@ -1,4 +1,5 @@
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
+import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 import { siteUrl } from "@/lib/site";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
 import {
@@ -653,6 +654,7 @@ export function evaluateOutreachEmailQuality(
     || websiteBusinessMismatch(prospect)
     || !hasClearLocalServiceIntent(prospect);
   const socialFirstDm = ["facebook", "instagram", "linkedin"].includes(prospect.bestManualContactMethod || "");
+  const optOutPattern = webworkshopOptOutPattern();
   const followUpsKeepPermissionFlow = Boolean(outreach?.followUps.every((draft) => (
     draft.includes(previewLink)
     || /earlier message|earlier note|earlier email|send it over|send the preview|want to see|last note|close the loop|timing is not right/i.test(draft)
@@ -674,14 +676,14 @@ export function evaluateOutreachEmailQuality(
     ? true
     : Boolean(senderPostalAddress) && drafts.every((draft) => draft.includes(senderPostalAddress));
   const optOutReady = socialFirstDm
-    ? drafts.length >= 4 && drafts.slice(1).every((draft) => /would rather not receive another note/i.test(draft))
-    : drafts.length >= 4 && drafts.every((draft) => /would rather not receive another note/i.test(draft));
+    ? drafts.length >= 4 && drafts.slice(1).every((draft) => optOutPattern.test(draft))
+    : drafts.length >= 4 && drafts.every((draft) => optOutPattern.test(draft));
   const clearCtaReady = socialFirstDm
     ? mainEmails.length === 2
       && /would you like to see it|would you want to see it|want to see it/i.test(mainEmails[0])
       && /here's the preview|here is the preview/i.test(mainEmails[1])
     : mainEmails.length === 2
-      && /would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send|would you want me to send it over/i.test(mainEmails[0])
+      && /would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send|would you want me to send it over|want me to send it over/i.test(mainEmails[0])
       && /would it be worth sending over|would you want me to send over|would you like me to send|i can send over the simple pricing\/options/i.test(mainEmails[1]);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [

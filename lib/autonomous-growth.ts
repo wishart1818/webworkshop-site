@@ -23,6 +23,7 @@ import {
   prospectFunnelLabels,
   type ProspectExclusiveBucketKey,
 } from "@/lib/prospect-funnel";
+import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 
 export const autonomousGrowthModes = ["off", "dry_run", "manual_approval", "auto_email_pilot"] as const;
 export type AutonomousGrowthMode = (typeof autonomousGrowthModes)[number];
@@ -1250,7 +1251,7 @@ function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJ
     /\b10[-\s]?minute call\b/i.test(combined) ? "First-touch email still asks for a 10-minute call." : "",
     /\bwill get you more calls\b/i.test(combined) ? "Prospect-facing email contains a guaranteed-results claim." : "",
     /\b(?:website quality|opportunity|conversion readiness|internal|score)\s*(?:is|:)?\s*\d{1,3}\/100\b/i.test(combined) || /\b\d{1,3}\/100\b/.test(combined) ? "Prospect-facing email contains internal score language." : "",
-    !/would rather not receive another note|unsubscribe|opt[- ]?out|close the loop/i.test(combined) ? "Opt-out language is missing." : "",
+    !webworkshopOptOutPattern().test(combined) ? "Opt-out language is missing." : "",
     postalAddresses.length && !postalAddresses.some((address) => item.emailBody.includes(address)) ? "Configured sender postal address is missing from the email body." : "",
     !postalAddresses.length ? "Configured sender postal address is missing." : "",
     /\/engine(?:\/|$)/i.test(item.previewLink) ? "Protected /engine preview links are blocked." : "",
@@ -1466,14 +1467,14 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
     plan.add("remove hype and agency-sounding phrases");
   }
   if (!/would you be open|would you want|would you like|want to see it|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
-  if (!/would rather not receive another note/i.test(outreachText)) plan.add("preserve opt-out language");
+  if (!webworkshopOptOutPattern().test(outreachText)) plan.add("preserve opt-out language");
   if (/\bfree audit\b/i.test(outreachText)) plan.add("remove free audit language");
   if (/One thing that already works well:|One missed opportunity:/i.test(outreachText)) plan.add("rewrite audit-style phrases into plain language");
   return [...plan];
 }
 
 export function rewriteOutreachWithFixes(emailBody: string) {
-  const optOut = emailBody.match(/Thanks,[\s\S]*?If you would rather not receive another note, just reply and I will close the loop\./i)?.[0]
+  const optOut = emailBody.match(/Thanks,[\s\S]*?(?:If you would rather not receive another note, just reply and I will close the loop\.|If you'd rather not hear from me again, just let me know\.)/i)?.[0]
     ?? outreachComplianceFooter();
   const greeting = emailBody.split("\n").find((line) => /^Hi\b/i.test(line.trim()))?.trim() ?? "Hi there,";
   return [
@@ -1483,7 +1484,7 @@ export function rewriteOutreachWithFixes(emailBody: string) {
     "",
     "It's built to make the page look cleaner and help get you more calls and quote requests.",
     "",
-    "Would you like me to send it over?",
+    "Want me to send it over?",
     "",
     optOut,
   ].join("\n");
@@ -1562,14 +1563,14 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
   return {
     firstDm: noWebsite
       ? [
-          `Hey, how's it going? I came across ${prospect.businessName} and noticed I couldn't find a full website, so I made a quick preview of what one could look like. It's built to help get more calls and quote requests. Want to see it?`,
+          `Hey, how's it going? I came across ${prospect.businessName} and noticed I couldn't find a full website, so I made a quick preview of what one could look like. It's built to help get you more calls and quote requests. Want to see it?`,
         ].join("\n")
       : weakContactPath
         ? [
-            `Hey, how's it going? I came across ${prospect.businessName} and noticed the call or quote request path could probably be clearer, so I made a quick website preview for you. Want to see it?`,
+            `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`,
           ].join("\n")
       : [
-          `Hey, how's it going? I came across ${prospect.businessName} and noticed your page could probably make it easier for people to call or request a quote, so I made a quick website preview for you. Want to see it?`,
+          `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`,
         ].join("\n"),
     softerFirstDm: noWebsite
       ? `Hey, how's it going? I came across ${prospect.businessName} and couldn't find a full website. I made a quick preview of what one could look like. Want to see it?`

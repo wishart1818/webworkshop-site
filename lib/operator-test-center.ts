@@ -21,6 +21,7 @@ import {
 } from "@/lib/autonomous-growth-repository";
 import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendReadiness, outreachCopyRegenerationEligibility, outreachEnvironment, providerConfigured } from "@/lib/autonomous-growth";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
+import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { publicProspectPreviewLink } from "@/lib/top-prospects";
 import { topProspectBuildVersion } from "@/lib/top-prospect-list-route";
@@ -89,6 +90,7 @@ export type OperatorActionResult = {
   regeneration?: OutreachCopyRegenerationSummary;
   smartGrowth?: SmartGrowthActionResult;
   readiness?: FullAutonomousReadinessResult;
+  simulation?: Next24HourSimulationResult;
   packagePreview?: {
     subject: string;
     firstEmailLinkFree: boolean;
@@ -109,6 +111,30 @@ export type OperatorActionResult = {
   };
 };
 
+export type Next24HourSimulationResult = {
+  status: "dry_run_only";
+  timeline: string[];
+  wouldDo: string[];
+  wouldRequireOperatorAction: string[];
+  wouldNotDo: string[];
+  blockedBySafetyGates: string[];
+  counts: {
+    existingProspectsCheckedFirst: number;
+    emailReview: number;
+    socialDmReview: number;
+    contactFormReview: number;
+    phoneCallQueue: number;
+    manualResearch: number;
+    blocked: number;
+    suppressed: number;
+    packagesCreated: number;
+    copyRefreshed: number;
+    providerCallsEstimated: number;
+    emailSendsAllowedByCurrentGates: number;
+  };
+  summary: string;
+};
+
 export type FullAutonomousReadinessCheck = {
   key: string;
   category: string;
@@ -120,6 +146,7 @@ export type FullAutonomousReadinessCheck = {
 
 export type FullAutonomousReadinessResult = {
   overallStatus: "Ready for safe dry runs" | "Ready for reviewed manual email test" | "Ready for Auto Email Pilot" | "Not ready for full-auto email" | "Needs setup";
+  finalReadinessStatus: "READY FOR SAFE DRY RUNS" | "READY FOR ONE MANUAL EMAIL TEST" | "READY FOR AUTO EMAIL PILOT" | "BLOCKED - RECORDS NEED ATTENTION" | "NEEDS SETUP";
   nextSafestAction: string;
   dryRunManualRouting: {
     status: "Ready for safe dry runs" | "Needs attention";
@@ -487,6 +514,108 @@ export async function runOperatorSmartAutonomousDryRun(): Promise<OperatorAction
   };
 }
 
+export async function simulateNext24Hours(): Promise<OperatorActionResult> {
+  const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
+  const settings = await getAutonomousGrowthSettings();
+  const env = outreachEnvironment();
+  const queue = dashboard?.queue ?? [];
+  const smart = dashboard?.smartGrowth ?? null;
+  const queueCounts = smart?.existingQualifiedUnsent.queueCounts;
+  const existing = smart?.existingQualifiedUnsent.total ?? queue.length;
+  const emailReview = queueCounts?.readyForEmailReview ?? queue.filter((item) => item.email && item.contactSource === "Public email" && !item.sentDate).length;
+  const socialReview = ((queueCounts?.readyForFacebookDm ?? 0) + (queueCounts?.readyForInstagramDm ?? 0))
+    || queue.filter((item) => /facebook|instagram|social/i.test(item.contactSource) && !item.sentDate).length;
+  const contactFormReview = queueCounts?.readyForContactFormReview ?? queue.filter((item) => /form/i.test(item.contactSource)).length;
+  const phoneCallQueue = queueCounts?.phoneOnlyBlocked ?? queue.filter((item) => /phone/i.test(`${item.contactSource} ${item.blockedReason}`)).length;
+  const manualResearch = queueCounts?.needsManualResearch ?? queue.filter((item) => /manual research|unknown/i.test(item.contactSource)).length;
+  const blocked = (queueCounts?.badFitBlocked ?? 0) + queue.filter((item) => item.status === "Blocked" || item.status === "Bad Fit").length;
+  const suppressed = queueCounts?.suppressedDoNotContact ?? queue.filter((item) => /suppressed|opted out|complained|bounced/i.test(`${item.status} ${item.blockedReason}`)).length;
+  const emailSendsAllowedByCurrentGates = env.emailKillSwitchEnabled || !env.autoSendEnabled
+    ? 0
+    : queue.filter((item) => item.status === "Queued" && item.contactSource === "Public email").length;
+  const providerCallsEstimated = settings.targetCities.length * Math.max(1, settings.targetTrades.length);
+  const counts = {
+    existingProspectsCheckedFirst: existing,
+    emailReview,
+    socialDmReview: socialReview,
+    contactFormReview,
+    phoneCallQueue,
+    manualResearch,
+    blocked,
+    suppressed,
+    packagesCreated: smart?.existingQualifiedUnsent.needsPreview ?? 0,
+    copyRefreshed: smart?.existingQualifiedUnsent.needsRefreshedCopy ?? 0,
+    providerCallsEstimated,
+    emailSendsAllowedByCurrentGates,
+  };
+  const wouldDo = [
+    `Check ${counts.existingProspectsCheckedFirst} existing qualified unsent prospects before new discovery.`,
+    `Route ${counts.emailReview} to Email Review, ${counts.socialDmReview} to manual social DM review, and ${counts.contactFormReview} to manual contact-form review.`,
+    `Refresh ${counts.copyRefreshed} outdated unsent copy draft(s) only after operator confirmation.`,
+    `Prepare ${counts.packagesCreated} missing preview/package item(s) if the existing queue processor is run.`,
+    providerCallsEstimated > 0 ? `Estimate ${providerCallsEstimated} provider request group(s) only if the operator starts discovery.` : "Use existing inventory first. No provider calls are needed in this dry-run simulation.",
+  ];
+  const wouldRequireOperatorAction = [
+    "Review every package before outreach.",
+    "Send Facebook and Instagram DMs manually only.",
+    "Submit contact forms manually only.",
+    "Place phone calls manually only from the Calls queue.",
+    "Record Looms manually only when a high-value prospect has said yes.",
+  ];
+  const wouldNotDo = [
+    "No prospect email sent by this simulation.",
+    "No social DMs sent.",
+    "No contact forms submitted.",
+    "No phone calls placed.",
+    "No prospect SMS sent.",
+    "No Looms recorded or sent.",
+    "No environment variables or safety flags changed.",
+    "No contact or suppression history changed.",
+  ];
+  const blockedBySafetyGates = [
+    env.emailKillSwitchEnabled ? "OUTREACH_EMAIL_DISABLED blocks prospect email sending." : "",
+    !env.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true, so Auto Email Pilot cannot send." : "",
+    !env.fullAutoSendEnabled ? "OUTREACH_FULL_AUTO_SEND_ENABLED is not true, so full-auto email batches are blocked." : "",
+    "Social DMs, contact forms, phone calls, prospect SMS, and Looms are manual-only.",
+  ].filter(Boolean);
+  const timeline = [
+    "Hour 0: inspect existing qualified unsent prospects first.",
+    "Hour 1: route saved packages into email, social, contact-form, manual research, blocked, and calls queues.",
+    "Hour 2: identify outdated copy and missing packages for operator-approved refresh.",
+    "Hour 3: recommend review work before new discovery.",
+    providerCallsEstimated > 0 ? "Later: only estimate provider calls if the operator starts a market run." : "Later: keep working existing inventory.",
+    "End of simulation: no outreach sent and no records changed.",
+  ];
+  const summary = safeTextLines([
+    "Simulate Next 24 Hours",
+    "Status: dry run only",
+    `Existing prospects checked first: ${counts.existingProspectsCheckedFirst}`,
+    `Email review: ${counts.emailReview}`,
+    `Social DM review: ${counts.socialDmReview}`,
+    `Contact form review: ${counts.contactFormReview}`,
+    `Phone-call queue: ${counts.phoneCallQueue}`,
+    `Manual research: ${counts.manualResearch}`,
+    `Blocked: ${counts.blocked}`,
+    `Suppressed: ${counts.suppressed}`,
+    `Email sends allowed by current gates: ${counts.emailSendsAllowedByCurrentGates}`,
+    `Would not do: ${wouldNotDo.join(" ")}`,
+  ]);
+  return {
+    ok: true,
+    message: "24-hour autonomous simulation finished as a dry run. No outreach was sent and no records were changed.",
+    simulation: {
+      status: "dry_run_only",
+      timeline,
+      wouldDo,
+      wouldRequireOperatorAction,
+      wouldNotDo,
+      blockedBySafetyGates,
+      counts,
+      summary,
+    },
+  };
+}
+
 function check(
   checks: FullAutonomousReadinessCheck[],
   input: Omit<FullAutonomousReadinessCheck, "status"> & { passed?: boolean; optional?: boolean; info?: boolean },
@@ -669,7 +798,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "first-email-link-free", category: "Outreach copy quality", label: "First-touch email has no preview link", passed: fakePackage.packagePreview?.firstEmailLinkFree === true && !/https:\/\/webworkshop\.dev\/p\//i.test(firstEmail), detail: "Fake first email asks permission before sending the preview." });
   check(checks, { key: "first-dm-link-free", category: "Outreach copy quality", label: "First-touch social DM has no preview link", passed: fakePackage.packagePreview?.firstDmLinkFree === true && !/https:\/\/webworkshop\.dev\/p\//i.test(`${firstDm}\n${softerDm}`), detail: "Fake first DM asks permission before sending the preview." });
   check(checks, { key: "yes-reply-public-preview", category: "Outreach copy quality", label: "Yes-reply includes public /p/ preview link", passed: fakePackage.packagePreview?.yesReplyIncludesPublicPreview === true && /https:\/\/webworkshop\.dev\/p\//i.test(yesReply), detail: "Preview link appears only in the yes-reply / preview-send script." });
-  check(checks, { key: "email-opt-out", category: "Outreach copy quality", label: "Email includes opt-out language", passed: /would rather not receive another note|close the loop/i.test(firstEmail), detail: "Fake first email includes a simple opt-out line." });
+  check(checks, { key: "email-opt-out", category: "Outreach copy quality", label: "Email includes opt-out language", passed: webworkshopOptOutPattern().test(firstEmail), detail: "Fake first email includes a simple opt-out line." });
   check(checks, { key: "email-postal", category: "Outreach copy quality", label: "Email includes postal address", passed: env.hasPostalAddress && Boolean(configuredPostalAddress) && firstEmail.includes(configuredPostalAddress), detail: env.hasPostalAddress ? "Fake first email includes the configured postal address line." : "Postal address is missing, so final email cannot be send-ready.", fix: "Add OUTREACH_POSTAL_ADDRESS before any real email test." });
   check(checks, { key: "no-scores", category: "Outreach copy quality", label: "No internal score language", passed: !/\b\d{1,3}\/100\b|website quality score|opportunity score|internal score/i.test(fakeCopyBlob), detail: "Fake copy does not expose scoring language." });
   check(checks, { key: "no-engine-links", category: "Outreach copy quality", label: "No internal Prospect Engine links", passed: !/\/engine(?:\/|$|\?)/i.test(fakeCopyBlob), detail: "Prospect-facing fake copy contains no protected engine links." });
@@ -731,7 +860,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     !env.hasPostalAddress ? "Postal address is missing." : "",
     manualEmailCandidates.length <= 0 ? "No reviewed public-email package is available for a manual send test." : "",
     /https:\/\/webworkshop\.dev\/p\//i.test(firstEmail) ? "First-touch email contains a preview link." : "",
-    !/would rather not receive another note|close the loop/i.test(firstEmail) ? "Opt-out language is missing." : "",
+    !webworkshopOptOutPattern().test(firstEmail) ? "Opt-out language is missing." : "",
     /\bwill get you more calls|guarantee|guaranteed\b/i.test(firstEmail) ? "Unsupported or guaranteed-result claim detected." : "",
   ].filter(Boolean);
   const manualStatus = manualReasons.length === 0 ? "Ready" : "Blocked";
@@ -757,6 +886,17 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     : setupFailures.length
       ? "Needs setup"
       : "Not ready for full-auto email";
+  const finalReadinessStatus: FullAutonomousReadinessResult["finalReadinessStatus"] = setupFailures.length
+    ? "NEEDS SETUP"
+    : fullAutoStatus === "Ready"
+      ? "READY FOR AUTO EMAIL PILOT"
+      : autoEmailPilotStatus === "Ready"
+        ? "READY FOR AUTO EMAIL PILOT"
+        : manualStatus === "Ready"
+          ? "READY FOR ONE MANUAL EMAIL TEST"
+          : dryRunStatus === "Ready for safe dry runs"
+            ? "READY FOR SAFE DRY RUNS"
+            : "BLOCKED - RECORDS NEED ATTENTION";
   const notDone = [
     "No prospect emails were sent.",
     "No DMs were sent.",
@@ -772,6 +912,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     : firstFix(failed);
   const full = safeTextLines([
     `Full Autonomous Readiness Test (${generatedAt})`,
+    `Final readiness: ${finalReadinessStatus}`,
     `Overall status: ${overallStatus}`,
     `Dry-run / manual routing readiness: ${dryRunStatus}`,
     ...dryRunReasons.map((reason) => `- ${reason}`),
@@ -812,6 +953,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   ]);
   const readiness: FullAutonomousReadinessResult = {
     overallStatus,
+    finalReadinessStatus,
     nextSafestAction,
     fullAutoEmail: { status: fullAutoStatus, reasons: fullAutoReasons },
     dryRunManualRouting: { status: dryRunStatus, reasons: dryRunReasons },

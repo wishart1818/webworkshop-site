@@ -441,9 +441,9 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /noticed (?:the path to call or request a quote could probably be clearer|your site could probably do a better job turning visitors into calls and quote requests)/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick preview showing how the page could look cleaner and help get you more calls and quote requests/i);
   assert.match(formPackage.prospect.outreach?.concise ?? "", /help get you more calls and quote requests/i);
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you like me to send it over\?/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /Want me to send it over\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.match(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/engine\/previews/i);
@@ -458,7 +458,7 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
   assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(socialPackage.prospect.outreach?.concise ?? "", /noticed your page could probably make it easier for people to call or request a quote|noticed the call or quote request path could probably be clearer/i);
+  assert.match(socialPackage.prospect.outreach?.concise ?? "", /built to look cleaner and help get you more calls and quote requests|made a quick website preview/i);
   assert.match(socialPackage.prospect.outreach?.concise ?? "", /Want to see it\?/);
   assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//);
   assert.match(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
@@ -843,7 +843,7 @@ test("No Website / Social Only prospects receive separate presence scoring and o
   assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /couldn't find a full website|quick preview of what one could look like/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /noticed you don't have a website|what yours could look like/i);
   assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.match(prepared.buildPrompt, /first owned/i);
   assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
@@ -877,7 +877,7 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.match(prepared.previewLink, /^https:\/\/webworkshop\.dev\/p\//);
   assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /Here's the preview/i);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to send it over\?/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Want me to send it over\?/i);
   assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.equal(prepared.emailQuality.ready, true);
   assert.ok(prepared.assessment.salesScores.weightedSalesScore > 0);

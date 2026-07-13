@@ -9,6 +9,7 @@ import {
   runOperatorSmartBackfillTest,
   sendOperatorTestNotification,
   sendOperatorTestSms,
+  simulateNext24Hours,
 } from "@/lib/operator-test-center";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
     }
     if (payload.action === "run_smart_autonomous_dry_run") {
       return NextResponse.json(await runOperatorSmartAutonomousDryRun());
+    }
+    if (payload.action === "simulate_next_24_hours") {
+      return NextResponse.json(await simulateNext24Hours());
     }
     if (payload.action === "run_full_autonomous_readiness_test") {
       return NextResponse.json(await runFullAutonomousReadinessTest());

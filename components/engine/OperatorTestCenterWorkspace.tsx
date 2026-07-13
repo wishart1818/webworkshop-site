@@ -213,6 +213,7 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("run_smart_backfill_test")} type="button">Run Smart Backfill Test</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("run_market_scout_dry_run")} type="button">Run Market Scout Dry Run</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("run_smart_autonomous_dry_run")} type="button">Run Smart Autonomous Dry Run</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("simulate_next_24_hours")} type="button">Simulate Next 24 Hours</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_notification")} type="button">Send Internal Test Notification</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_resend_test")} type="button">Send Internal Test Email Through Resend</button>
         </div>
@@ -227,7 +228,8 @@ export function OperatorTestCenterWorkspace() {
           <div className="engine-autonomous-readiness__summary">
             <div>
               <span>Full Autonomous Readiness Test</span>
-              <h2>{lastAction.readiness.overallStatus}</h2>
+              <h2>{lastAction.readiness.finalReadinessStatus}</h2>
+              <p>{lastAction.readiness.overallStatus}</p>
               <p>{lastAction.readiness.nextSafestAction}</p>
             </div>
             <div className="engine-autonomous-readiness__badges">
@@ -320,6 +322,42 @@ export function OperatorTestCenterWorkspace() {
               </article>
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {lastAction?.simulation ? (
+        <section className="engine-panel engine-operator-package-check" aria-label="24-hour autonomous simulation">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Simulate Next 24 Hours</h2>
+              <p>Dry run only. It does not send, submit, call, text prospects, record Looms, change env flags, or modify contact history.</p>
+            </div>
+            <button className="engine-button" onClick={() => void copyText("24-hour simulation", lastAction.simulation?.summary ?? "")} type="button">Copy Simulation Summary</button>
+          </div>
+          <dl className="engine-operator-check-grid">
+            <div><dt>Existing first</dt><dd>{lastAction.simulation.counts.existingProspectsCheckedFirst}</dd></div>
+            <div><dt>Email review</dt><dd>{lastAction.simulation.counts.emailReview}</dd></div>
+            <div><dt>Social DM review</dt><dd>{lastAction.simulation.counts.socialDmReview}</dd></div>
+            <div><dt>Contact form review</dt><dd>{lastAction.simulation.counts.contactFormReview}</dd></div>
+            <div><dt>Phone-call queue</dt><dd>{lastAction.simulation.counts.phoneCallQueue}</dd></div>
+            <div><dt>Manual research</dt><dd>{lastAction.simulation.counts.manualResearch}</dd></div>
+            <div><dt>Blocked</dt><dd>{lastAction.simulation.counts.blocked}</dd></div>
+            <div><dt>Suppressed</dt><dd>{lastAction.simulation.counts.suppressed}</dd></div>
+          </dl>
+          <div className="engine-operator-summary-grid">
+            {([
+              ["Timeline", lastAction.simulation.timeline],
+              ["Would do", lastAction.simulation.wouldDo],
+              ["Would require operator action", lastAction.simulation.wouldRequireOperatorAction],
+              ["Would not do", lastAction.simulation.wouldNotDo],
+              ["Blocked by safety gates", lastAction.simulation.blockedBySafetyGates],
+            ] as const).map(([label, values]) => (
+              <article key={label}>
+                <header><h3>{label}</h3></header>
+                <ul>{values.map((value) => <li key={value}>{value}</li>)}</ul>
+              </article>
+            ))}
+          </div>
         </section>
       ) : null}
 

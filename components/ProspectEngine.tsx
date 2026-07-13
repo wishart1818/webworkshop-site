@@ -9,6 +9,7 @@ import { OperatorTestCenterWorkspace } from "@/components/engine/OperatorTestCen
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type ProviderSmokeTestPayload, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
+import { buildManualCallsQueue, callQueueResolutionState, callQueueSummaryLabels, pendingManualCallsCount, type ManualCallQueueItem } from "@/lib/calls-queue";
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   buildProspectFunnel,
@@ -40,7 +41,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System" | "Command Activity";
+type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Calls" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System" | "Command Activity";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
 
 function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
@@ -168,6 +169,8 @@ export function ProspectEngine() {
   );
 
   const prospectFunnel = useMemo(() => buildProspectFunnel(prospects), [prospects]);
+  const callsQueue = useMemo(() => buildManualCallsQueue(prospects), [prospects]);
+  const pendingCalls = useMemo(() => pendingManualCallsCount(prospects), [prospects]);
 
   const metrics = useMemo(
     () => ({
@@ -240,6 +243,17 @@ export function ProspectEngine() {
     setProspects((current) =>
       current.map((prospect) => {
         if (prospect.id !== selectedId) return prospect;
+        const updated = updater(prospect);
+        queueMicrotask(() => void queuePersist(updated));
+        return updated;
+      }),
+    );
+  }
+
+  function updateProspectById(id: string, updater: (prospect: Prospect) => Prospect) {
+    setProspects((current) =>
+      current.map((prospect) => {
+        if (prospect.id !== id) return prospect;
         const updated = updater(prospect);
         queueMicrotask(() => void queuePersist(updated));
         return updated;
@@ -443,9 +457,10 @@ export function ProspectEngine() {
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"] as WorkspaceTab[]).map((tab) => (
+          {(["Overview", "Top Prospects", "Prospects", "Calls", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"] as WorkspaceTab[]).map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
               <span>{tab === "Operator Test Center" ? "Test Center" : tab}</span>
+              {tab === "Calls" && pendingCalls > 0 ? <b className="engine-nav-badge" aria-label={`${pendingCalls} pending manual calls`}>{pendingCalls}</b> : null}
             </button>
           ))}
         </nav>
@@ -583,6 +598,14 @@ export function ProspectEngine() {
           </div>
         )}
 
+        {workspaceTab === "Calls" && !prospectStateBlocked && (
+          <CallsWorkspace
+            calls={callsQueue}
+            onOpenProspect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); setDetailTab("Activity"); }}
+            onUpdateProspect={updateProspectById}
+          />
+        )}
+
         {workspaceTab === "Autonomous Growth" && (
           <AutonomousGrowthWorkspace />
         )}
@@ -612,6 +635,105 @@ export function ProspectEngine() {
 
       {showDiscovery && <DiscoveryDialog onClose={() => setShowDiscovery(false)} onSubmit={addProspect} />}
       {showLeadSearch && <LeadSearchDialog diagnostics={discoveryDiagnostics} existingWebsites={new Set(prospects.map((prospect) => prospect.website))} leads={discoveredLeads} state={discoveryState} error={discoveryError} onClose={() => setShowLeadSearch(false)} onDiscover={discoverLeads} onImport={importLead} />}
+    </div>
+  );
+}
+
+function CallsWorkspace({
+  calls,
+  onOpenProspect,
+  onUpdateProspect,
+}: {
+  calls: ManualCallQueueItem[];
+  onOpenProspect: (id: string) => void;
+  onUpdateProspect: (id: string, updater: (prospect: Prospect) => Prospect) => void;
+}) {
+  function recordCallAction(item: ManualCallQueueItem, label: string, status?: ProspectStatus) {
+    onUpdateProspect(item.prospect.id, (prospect) => ({
+      ...prospect,
+      status: status ?? prospect.status,
+      activities: [activity("status", label), ...prospect.activities],
+      notes: label === "Manual call note added." ? prospect.notes : [`Calls queue: ${label}`, ...prospect.notes],
+    }));
+  }
+
+  const pending = calls.filter((item) => item.pending);
+  return (
+    <div className="engine-content engine-calls-workspace">
+      <section className="engine-panel engine-calls-hero">
+        <div>
+          <span>Manual phone queue</span>
+          <h2>Calls</h2>
+          <p>This is a last-resort queue for unusually strong phone-only prospects. It never auto-calls, never texts prospects, and never treats a phone number as SMS permission.</p>
+        </div>
+        <dl>
+          <div><dt>Pending high-priority calls</dt><dd>{pending.length}</dd></div>
+          <div><dt>Total call candidates</dt><dd>{calls.length}</dd></div>
+          <div><dt>Resolved or future follow-up</dt><dd>{calls.length - pending.length}</dd></div>
+        </dl>
+      </section>
+      {calls.length === 0 ? (
+        <EmptyState title="No high-priority manual calls" body="Ordinary phone-only prospects stay blocked. A prospect appears here only when opportunity, activity, and phone-only criteria are unusually strong." />
+      ) : (
+        <div className="engine-calls-grid">
+          {calls.map((item) => {
+            const prospect = item.prospect;
+            const resolutionState = callQueueResolutionState(prospect);
+            const labels = callQueueSummaryLabels(prospect);
+            return (
+              <article className={`engine-call-card engine-call-card--${resolutionState}`} key={prospect.id}>
+                <header>
+                  <div>
+                    <span>{prospectLocationLine(prospect)}</span>
+                    <h3>{prospect.businessName}</h3>
+                  </div>
+                  <b>{item.pending ? "Pending" : "Resolved"}</b>
+                </header>
+                <div className="engine-call-card__labels">
+                  {labels.map((label) => <span key={label}>{label}</span>)}
+                </div>
+                <dl className="engine-call-card__facts">
+                  <div><dt>Phone</dt><dd>{prospect.phone}</dd></div>
+                  <div><dt>Reviews</dt><dd>{prospect.reviewCount || "Not recorded"}</dd></div>
+                  <div><dt>Rating</dt><dd>{prospect.rating || "Not recorded"}</dd></div>
+                  <div><dt>Website status</dt><dd>{prospect.websiteStatusDetail || prospect.websiteStatus.replaceAll("_", " ")}</dd></div>
+                  <div><dt>Opportunity score</dt><dd>{prospect.priorityScore}</dd></div>
+                  <div><dt>Service area</dt><dd>{prospect.serviceArea || "Not recorded"}</dd></div>
+                </dl>
+                <section>
+                  <h4>Why this is worth calling</h4>
+                  <ul>{item.worthCallingReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                </section>
+                <section>
+                  <h4>Why no written path is available</h4>
+                  <ul>{item.noWrittenPathReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                </section>
+                <section>
+                  <h4>Recommended pitch angle</h4>
+                  <p>{item.recommendedPitchAngle}</p>
+                </section>
+                <section>
+                  <h4>Call script</h4>
+                  <pre>{item.callScript}</pre>
+                </section>
+                <footer className="engine-call-actions">
+                  <a className="engine-button engine-button--primary" href={`tel:${prospect.phone}`}>Call</a>
+                  <button className="engine-button" onClick={() => void navigator.clipboard.writeText(item.callScript)} type="button">Copy Call Script</button>
+                  {prospect.profileUrl ? <a className="engine-button" href={prospect.profileUrl} rel="noreferrer" target="_blank">Open Google Business profile</a> : null}
+                  {prospect.website ? <a className="engine-button" href={prospect.website} rel="noreferrer" target="_blank">Open Website</a> : null}
+                  <button className="engine-button" onClick={() => onOpenProspect(prospect.id)} type="button">Add Notes</button>
+                  <button className="engine-button" onClick={() => recordCallAction(item, "Marked interested after manual call.", "Interested")} type="button">Mark Interested</button>
+                  <button className="engine-button" onClick={() => recordCallAction(item, "Marked called manually.", "Contacted")} type="button">Mark Called</button>
+                  <button className="engine-button" onClick={() => recordCallAction(item, "Call Back requested or due.")} type="button">Mark Call Back</button>
+                  <button className="engine-button" onClick={() => recordCallAction(item, "No Answer. Follow-up call due.")} type="button">Mark No Answer</button>
+                  <button className="engine-button" onClick={() => recordCallAction(item, "Marked not interested after manual call.", "Closed Lost")} type="button">Mark Not Interested</button>
+                  <button className="engine-button" onClick={() => recordCallAction(item, "Marked Do Not Contact. Manual suppression required.", "Closed Lost")} type="button">Mark Do Not Contact</button>
+                </footer>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

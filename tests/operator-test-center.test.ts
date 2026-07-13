@@ -25,6 +25,7 @@ import {
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
+  simulateNext24Hours,
 } from "../lib/operator-test-center";
 import { OperatorTestCenterWorkspace } from "../components/engine/OperatorTestCenterWorkspace";
 
@@ -358,6 +359,17 @@ test("Operator Test Center smart dry runs render summaries and send nothing", as
   assert.match(scout.smartGrowth?.summary.bestMarketTradeRecommendation ?? "", /Pressure Washing|Landscaping|Cleaning|Painting|Concrete|Roofing|HVAC|Plumbing/);
 });
 
+test("Simulate Next 24 Hours is a no-send dry run with operator queue counts", async () => {
+  const result = await simulateNext24Hours();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.simulation?.wouldNotDo.some((line) => /No prospect email sent/i.test(line)), true);
+  assert.equal(result.simulation?.wouldNotDo.some((line) => /No social DMs sent/i.test(line)), true);
+  assert.equal(result.simulation?.wouldNotDo.some((line) => /No contact forms submitted/i.test(line)), true);
+  assert.ok((result.simulation?.counts.phoneCallQueue ?? 0) >= 0);
+  assert.match(result.simulation?.summary ?? "", /Simulate Next 24 Hours/i);
+});
+
 test("Operator Test Center fake package always returns fake scripts without real outreach activity", () => {
   const result = generateOneTestOutreachPackage({
     WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
@@ -374,7 +386,7 @@ test("Operator Test Center fake package always returns fake scripts without real
   assert.equal(result.packagePreview?.firstDmLinkFree, true);
   assert.equal(result.packagePreview?.yesReplyIncludesPublicPreview, true);
   assert.match(result.packagePreview?.publicPreviewLink ?? "", /^https:\/\/webworkshop\.dev\/p\//);
-  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you like me to send it over\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Want me to send it over\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Want to see it\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "Softer DM script"));
   assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / preview-send script" && /https:\/\/webworkshop\.dev\/p\//i.test(script.body)));
@@ -504,9 +516,11 @@ test("Operator Test Center markup includes Smart Growth safe action buttons", as
   assert.match(source, /Copy Next Fix Summary/);
   assert.match(source, /Copy Safe-To-Test Summary/);
   assert.match(source, /Copy Debug Summary/);
+  assert.match(source, /finalReadinessStatus/);
   assert.doesNotMatch(source, /Send Internal Test SMS|Copy SMS Notification Summary/);
   assert.match(source, /Run Smart Backfill Test/);
   assert.match(source, /Run Market Scout Dry Run/);
   assert.match(source, /Run Smart Autonomous Dry Run/);
+  assert.match(source, /Simulate Next 24 Hours/);
   assert.doesNotMatch(source, /auto-DM|auto-submit forms|auto-call/i);
 });

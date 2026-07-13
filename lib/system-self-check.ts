@@ -40,6 +40,7 @@ import {
   transitionAutopilotCampaign,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderHealth } from "@/lib/lead-discovery";
+import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 
 export type SystemSelfCheckStatus = "passed" | "warning" | "failed";
 export type SystemSelfCheckOverallStatus = "Healthy" | "Needs attention" | "Blocking issue";
@@ -165,7 +166,7 @@ function previewAndOutreachChecks() {
     check("casual_dm_scripts", "Casual first DM scripts exist", Boolean(playbook.firstDm && playbook.softerFirstDm), "First DM and softer first DM scripts are available.", "Review casualDmPlaybook."),
     check("pricing_copy", "Pricing uses approved offer structure", /\$1,000/.test(playbook.pricingReply) && /\$500/.test(playbook.pricingReply) && /\$49\/month/.test(playbook.pricingReply) && /\$79\/month/.test(playbook.higherSupportReply), "Pricing script uses $1,000 total, $500 start, $500 completion, $49/month default, and $79/month optional higher support.", "Review pricing playbook copy."),
     check("starter_page_script", "$500 starter page script exists", /\$500/.test(playbook.starterPageReply), "Starter page script is available.", "Review starterPageReply."),
-    check("opt_out_preserved", "Email outreach preserves opt-out line", /rather not receive/i.test(emailText), "Email outreach includes opt-out language.", "Review compliance footer."),
+    check("opt_out_preserved", "Email outreach preserves opt-out line", webworkshopOptOutPattern().test(emailText), "Email outreach includes opt-out language.", "Review compliance footer."),
     check("spammy_claims_blocked", "Spammy outreach phrases are absent", !/\bAI website\b|\bfree audit\b|\bI analyzed your website\b/i.test(emailText), "Outreach avoids AI/free-audit/audit-claim language.", "Review generateOutreach."),
   ];
 }

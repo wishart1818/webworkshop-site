@@ -379,7 +379,7 @@ test("human-approved queued email sends through Resend only after every gate pas
       providerCalls += 1;
       const body = JSON.parse(String(init?.body ?? "{}")) as { to?: string[]; text?: string };
       assert.deepEqual(body.to, ["owner@example.com"]);
-      assert.match(body.text ?? "", /Would you like me to send it over\?/);
+      assert.match(body.text ?? "", /Want me to send it over\?/);
       assert.doesNotMatch(body.text ?? "", /https:\/\/webworkshop\.dev\/p\//);
       assert.doesNotMatch(body.text ?? "", /\/engine\//);
       return new Response(JSON.stringify({ id: "resend-message-1" }), { status: 200 });
@@ -597,7 +597,7 @@ test("fully automatic email batch sends only queued public-email items through e
       providerCalls += 1;
       const body = JSON.parse(String(init?.body ?? "{}")) as { to?: string[]; text?: string };
       assert.deepEqual(body.to, ["owner@example.com"]);
-      assert.match(body.text ?? "", /Would you like me to send it over\?/);
+      assert.match(body.text ?? "", /Want me to send it over\?/);
       assert.doesNotMatch(body.text ?? "", /https:\/\/webworkshop\.dev\/p\//);
       assert.doesNotMatch(body.text ?? "", /\/engine\//);
       return new Response(JSON.stringify({ id: "resend-full-auto-1" }), { status: 200 });
@@ -1441,9 +1441,9 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
     "If you would rather not receive another note, reply and I will close the loop.",
   ].join("\n"));
 
-  assert.match(rewritten, /If you would rather not receive another note/);
+  assert.match(rewritten, /rather not hear from me again/);
   assert.match(rewritten, /help get you more calls and quote requests/i);
-  assert.match(rewritten, /Would you like me to send it over\?/);
+  assert.match(rewritten, /Want me to send it over\?/);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
 });
@@ -1718,7 +1718,7 @@ test("casual DM playbook keeps the first DM link-free and creates Loom-safe scri
   } as Prospect;
   const playbook = casualDmPlaybook(prospect, publicLink);
 
-  assert.match(playbook.firstDm, /help get more calls and quote requests/i);
+  assert.match(playbook.firstDm, /help get you more calls and quote requests/i);
   assert.match(playbook.firstDm, /Want to see it\?/);
   assert.match(playbook.firstDm, /noticed I couldn't find a full website/i);
   assert.match(playbook.firstDm, /made a quick preview of what one could look like/i);
