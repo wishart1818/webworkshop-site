@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { AutonomousGrowthWorkspace } from "@/components/engine/AutonomousGrowthWorkspace";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
+import { CommandActivityWorkspace, OperatorCommandBar } from "@/components/engine/OperatorCommandBar";
 import { OperatorTestCenterWorkspace } from "@/components/engine/OperatorTestCenterWorkspace";
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type ProviderSmokeTestPayload, type SystemPayload } from "@/components/engine/SystemWorkspace";
@@ -39,7 +40,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 
-type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System";
+type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System" | "Command Activity";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
 
 function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
@@ -85,6 +86,7 @@ export function ProspectEngine() {
   const [selfCheckRunning, setSelfCheckRunning] = useState(false);
   const [providerSmokeTestRunning, setProviderSmokeTestRunning] = useState(false);
   const [providerSmokeTest, setProviderSmokeTest] = useState<ProviderSmokeTestPayload | null>(null);
+  const [commandActivityVersion, setCommandActivityVersion] = useState(0);
   const saveQueue = useRef<Promise<Prospect | null>>(Promise.resolve(null));
 
   const loadProspects = useCallback(async () => {
@@ -184,6 +186,24 @@ export function ProspectEngine() {
     setContactFilter("all");
     setQuery("");
     setWorkspaceTab("Prospects");
+  }
+
+  function applyCommandNavigation(navigation: {
+    tab?: WorkspaceTab;
+    query?: string;
+    contactFilter?: ContactFilter;
+    funnelFilter?: ProspectFunnelFilterKey | string;
+    prospectId?: string;
+  }) {
+    if (navigation.tab) setWorkspaceTab(navigation.tab);
+    if (navigation.query !== undefined) setQuery(navigation.query);
+    if (navigation.contactFilter) setContactFilter(navigation.contactFilter);
+    if (navigation.funnelFilter) setFunnelFilter(navigation.funnelFilter as ProspectFunnelFilterKey);
+    if (navigation.prospectId) setSelectedId(navigation.prospectId);
+    if (navigation.tab === "Prospects") {
+      setTrade("All");
+      setStatus("All");
+    }
   }
 
   async function persistProspect(prospect: Prospect, method: "POST" | "PUT" = "PUT") {
@@ -383,7 +403,7 @@ export function ProspectEngine() {
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "Autonomous Growth", "Operator Test Center", "System"] as WorkspaceTab[]).map((tab) => (
+          {(["Overview", "Top Prospects", "Prospects", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"] as WorkspaceTab[]).map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
               <span>{tab === "Operator Test Center" ? "Test Center" : tab}</span>
             </button>
@@ -418,6 +438,11 @@ export function ProspectEngine() {
             <button className="engine-button engine-button--primary" onClick={() => setShowDiscovery(true)} type="button">Add prospect</button>
           </div>
         </header>
+
+        <OperatorCommandBar
+          onNavigate={applyCommandNavigation}
+          onReceiptsChanged={() => setCommandActivityVersion((current) => current + 1)}
+        />
 
         {syncState === "error" && prospects.length > 0 && (
           <div className="engine-error-banner" role="alert">
@@ -524,6 +549,10 @@ export function ProspectEngine() {
 
         {workspaceTab === "Operator Test Center" && (
           <OperatorTestCenterWorkspace />
+        )}
+
+        {workspaceTab === "Command Activity" && (
+          <CommandActivityWorkspace key={commandActivityVersion} />
         )}
 
         {workspaceTab === "System" && (

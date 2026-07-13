@@ -214,6 +214,7 @@ export function AutonomousGrowthWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState("");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -223,6 +224,7 @@ export function AutonomousGrowthWorkspace() {
         throw new Error(apiError(payload, "Unable to load Autonomous Growth."));
       }
       setDashboard(payload as DashboardPayload);
+      setHasUnsavedChanges(false);
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load Autonomous Growth.");
@@ -283,6 +285,7 @@ export function AutonomousGrowthWorkspace() {
       const payload = await response.json() as ApiPayload;
       if (!response.ok || !payload.settings) throw new Error(apiError(payload, "Unable to save Autonomous Growth settings."));
       setDashboard({ ...dashboard, settings: payload.settings });
+      setHasUnsavedChanges(false);
       setNotice("Autonomous Growth settings saved. Sending remains gated by mode, kill switch, caps, and environment.");
       await loadDashboard();
     } catch (saveError) {
@@ -554,6 +557,16 @@ export function AutonomousGrowthWorkspace() {
     };
   }, [dashboard?.queue]);
 
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    function warnBeforeLeave(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", warnBeforeLeave);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeave);
+  }, [hasUnsavedChanges]);
+
   if (loading) return <div className="engine-content"><LoadingState title="Loading Autonomous Growth" body="Checking settings, safety gates, and saved outreach queue items." /></div>;
   if (!dashboard) return <div className="engine-content"><EmptyState title="Autonomous Growth unavailable" body={error || "Reload the engine and try again."} action={() => void loadDashboard()} actionLabel="Retry" /></div>;
 
@@ -590,6 +603,41 @@ export function AutonomousGrowthWorkspace() {
         </div>
       )}
 
+      <section className="engine-panel engine-autonomous-control-center" aria-label="Autonomous Growth Control Center">
+        <div className="engine-panel__head">
+          <div>
+            <h2>Autonomous Growth Control Center</h2>
+            <p>No outreach will be sent automatically. Emails are manual/review only unless the dedicated email gates are explicitly configured.</p>
+          </div>
+          <span>{autoPilotBlocked ? "Blocked" : autopilot.activity.status === "running" ? "Running" : settings.killSwitch ? "Paused" : "Ready"}</span>
+        </div>
+        <div className="engine-control-grid">
+          <article><span>Current mode</span><strong>{autonomousGrowthModeLabels[settings.mode]}</strong></article>
+          <article><span>Global kill switch</span><strong>{settings.killSwitch ? "On" : "Off"}</strong></article>
+          <article><span>Prospect email sending</span><strong>{env.emailKillSwitchEnabled ? "Disabled" : "Enabled by env"}</strong></article>
+          <article><span>Daily email cap</span><strong>{settings.maxEmailsSentPerDay}</strong></article>
+          <article><span>Emails sent today</span><strong>{metrics.emailsSentToday}</strong></article>
+          <article><span>Eligible email leads</span><strong>{metrics.emailReadyLeads}</strong></article>
+          <article><span>Existing qualified unsent</span><strong>{dashboard.smartGrowth.existingQualifiedUnsent.total}</strong></article>
+          <article><span>Next recommended action</span><strong>{dashboard.smartGrowth.recommendation.recommendedAction.replaceAll("_", " ")}</strong></article>
+        </div>
+        <div className="engine-autonomous-safety-strip">
+          <span>Emails: manual/review only</span>
+          <span>Social DMs: manual only</span>
+          <span>Contact forms: never automated</span>
+          <span>Phone calls: never automated</span>
+          <span>Looms: manual only</span>
+        </div>
+        <div className="engine-action-row">
+          <button className="engine-button engine-button--primary" disabled={saving} form="autonomous-growth-settings-form" type="submit">{saving ? "Saving" : "Save Changes"}</button>
+          <button className="engine-button" disabled={saving} onClick={() => void postAutopilot(autopilot.activity.status === "paused" ? "resume_autopilot" : "run_autopilot_batch", {}, "Autopilot refreshed. Nothing was sent.")} type="button">{autopilot.activity.status === "paused" ? "Resume" : "Start / Resume"}</button>
+          <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")} type="button">Pause</button>
+          <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")} type="button">Stop</button>
+          <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("run_fake_autopilot_smoke_test")} type="button">Run Dry Test</button>
+          <button className="engine-button" onClick={() => document.getElementById("eligible-leads")?.scrollIntoView({ behavior: "smooth", block: "start" })} type="button">Open Eligible Leads</button>
+        </div>
+      </section>
+
       <AutopilotCampaignPanel
         autopilot={autopilot}
         disabled={saving}
@@ -619,37 +667,53 @@ export function AutonomousGrowthWorkspace() {
           <div><h2>Mode and safety settings</h2><p>Default mode is Off. Dry Run and Manual Approval generate work but never send automatically.</p></div>
           <button className="engine-button" onClick={() => downloadCsv(queue)} type="button">Export CSV</button>
         </div>
-        <form className="engine-autonomous-settings" onSubmit={saveSettings}>
+        <form className="engine-autonomous-settings" id="autonomous-growth-settings-form" onChange={() => setHasUnsavedChanges(true)} onSubmit={saveSettings}>
           <label>Outreach mode<select defaultValue={settings.mode} name="mode">{autonomousGrowthModes.map((mode) => <option key={mode} value={mode}>{autonomousGrowthModeLabels[mode]}</option>)}</select></label>
           <label className="engine-toggle"><input defaultChecked={settings.killSwitch} name="killSwitch" type="checkbox" />Global kill switch</label>
-          <label>Target cities<textarea defaultValue={textareaValue(settings.targetCities)} name="targetCities" placeholder="Toledo&#10;Sylvania&#10;Perrysburg" /></label>
-          <label>Target service areas<textarea defaultValue={textareaValue(settings.targetServiceAreas)} name="targetServiceAreas" placeholder="Northwest Ohio&#10;Lucas County" /></label>
-          <label>Target trades<textarea defaultValue={textareaValue(settings.targetTrades)} name="targetTrades" placeholder={tradeCategories.join("\n")} /></label>
-          <label>Excluded trades<textarea defaultValue={textareaValue(settings.excludedTrades)} name="excludedTrades" placeholder="Suppliers&#10;Distributors" /></label>
-          <label>Prospects scanned/day<input defaultValue={settings.maxProspectsScannedPerDay} min="0" name="maxProspectsScannedPerDay" type="number" /></label>
-          <label>Previews/day<input defaultValue={settings.maxPreviewsGeneratedPerDay} min="0" name="maxPreviewsGeneratedPerDay" type="number" /></label>
-          <label>Emails queued/day<input defaultValue={settings.maxEmailsQueuedPerDay} min="0" name="maxEmailsQueuedPerDay" type="number" /></label>
           <label>Emails sent/day<input defaultValue={settings.maxEmailsSentPerDay} max="25" min="0" name="maxEmailsSentPerDay" type="number" /></label>
-          <label>Cooldown minutes<input defaultValue={settings.emailCooldownMinutes} min="5" name="emailCooldownMinutes" type="number" /></label>
-          <label className="engine-toggle"><input defaultChecked={settings.followUpsEnabled} name="followUpsEnabled" type="checkbox" />Enable conservative follow-ups</label>
-          <div className="engine-style-profile-editor engine-form-wide">
-            <div>
-              <b>Editable trade style profiles</b>
-              <p>These guide future preview direction. The learning engine can recommend changes, but it will not change profiles on its own.</p>
+          <details className="engine-advanced-settings engine-form-wide">
+            <summary>
+              <span>Advanced Settings</span>
+              <small>{settings.targetCities.length} target cities, {settings.targetTrades.length} trades, {settings.maxProspectsScannedPerDay} scans/day, {settings.maxPreviewsGeneratedPerDay} previews/day, {settings.emailCooldownMinutes}-minute cooldown.</small>
+            </summary>
+            <div className="engine-autonomous-settings__advanced">
+              <label>Target cities<textarea defaultValue={textareaValue(settings.targetCities)} name="targetCities" placeholder="Toledo&#10;Sylvania&#10;Perrysburg" /></label>
+              <label>Target service areas<textarea defaultValue={textareaValue(settings.targetServiceAreas)} name="targetServiceAreas" placeholder="Northwest Ohio&#10;Lucas County" /></label>
+              <label>Target trades<textarea defaultValue={textareaValue(settings.targetTrades)} name="targetTrades" placeholder={tradeCategories.join("\n")} /></label>
+              <label>Excluded trades<textarea defaultValue={textareaValue(settings.excludedTrades)} name="excludedTrades" placeholder="Suppliers&#10;Distributors" /></label>
+              <label>Prospects scanned/day<input defaultValue={settings.maxProspectsScannedPerDay} min="0" name="maxProspectsScannedPerDay" type="number" /></label>
+              <label>Previews/day<input defaultValue={settings.maxPreviewsGeneratedPerDay} min="0" name="maxPreviewsGeneratedPerDay" type="number" /></label>
+              <label>Emails queued/day<input defaultValue={settings.maxEmailsQueuedPerDay} min="0" name="maxEmailsQueuedPerDay" type="number" /></label>
+              <label>Cooldown minutes<input defaultValue={settings.emailCooldownMinutes} min="5" name="emailCooldownMinutes" type="number" /></label>
+              <label className="engine-toggle"><input defaultChecked={settings.followUpsEnabled} name="followUpsEnabled" type="checkbox" />Enable conservative follow-ups</label>
+              <div className="engine-style-profile-editor engine-form-wide">
+                <div>
+                  <b>Editable trade style profiles</b>
+                  <p>These guide future preview direction. The learning engine can recommend changes, but it will not change profiles on its own.</p>
+                </div>
+                {Object.entries(settings.styleProfiles).map(([trade, profile]) => (
+                  <fieldset key={trade}>
+                    <legend>{trade}</legend>
+                    <label>Profile name<input defaultValue={profile.name} name={profileFieldName(trade, "name")} /></label>
+                    <label>Direction<textarea defaultValue={profile.direction} name={profileFieldName(trade, "direction")} /></label>
+                    <label>Strengths<textarea defaultValue={textareaValue(profile.strengths)} name={profileFieldName(trade, "strengths")} /></label>
+                    <label>Cautions<textarea defaultValue={textareaValue(profile.cautions)} name={profileFieldName(trade, "cautions")} /></label>
+                  </fieldset>
+                ))}
+              </div>
             </div>
-            {Object.entries(settings.styleProfiles).map(([trade, profile]) => (
-              <fieldset key={trade}>
-                <legend>{trade}</legend>
-                <label>Profile name<input defaultValue={profile.name} name={profileFieldName(trade, "name")} /></label>
-                <label>Direction<textarea defaultValue={profile.direction} name={profileFieldName(trade, "direction")} /></label>
-                <label>Strengths<textarea defaultValue={textareaValue(profile.strengths)} name={profileFieldName(trade, "strengths")} /></label>
-                <label>Cautions<textarea defaultValue={textareaValue(profile.cautions)} name={profileFieldName(trade, "cautions")} /></label>
-              </fieldset>
-            ))}
-          </div>
+          </details>
           <footer><button className="engine-button engine-button--primary" disabled={saving} type="submit">{saving ? "Saving" : "Save Autonomous Growth settings"}</button></footer>
         </form>
       </section>
+
+      {hasUnsavedChanges ? (
+        <div className="engine-sticky-save-bar" role="status">
+          <span>Unsaved changes</span>
+          <button className="engine-button engine-button--primary" disabled={saving} form="autonomous-growth-settings-form" type="submit">Save</button>
+          <button className="engine-button" disabled={saving} onClick={() => void loadDashboard()} type="button">Discard</button>
+        </div>
+      ) : null}
 
       <section className="engine-metrics" aria-label="Autonomous Growth metrics">
         {[
@@ -726,6 +790,7 @@ export function AutonomousGrowthWorkspace() {
         onCopy={copyText}
         onStatus={updateStatus}
       />
+      <div id="eligible-leads" />
       <QueueSection
         copied={copied}
         description="Generated packages waiting for review, copy, edit, or manual approval."

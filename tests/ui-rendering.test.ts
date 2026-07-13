@@ -136,6 +136,9 @@ test("phone-only outreach drafts show written-outreach block before approval", (
 test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   const source = readFileSync("components/ProspectEngine.tsx", "utf8");
 
+  assert.match(source, /OperatorCommandBar/);
+  assert.match(source, /Command Activity/);
+  assert.match(source, /CommandActivityWorkspace/);
   assert.match(source, /Prospect Funnel/);
   assert.match(source, /Exclusive Current-Disposition Funnel/);
   assert.match(source, /Overlapping Attributes/);
@@ -145,6 +148,32 @@ test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   assert.match(source, /engine-funnel-count/);
   assert.match(source, /onOpenFilter/);
   assert.match(source, /Filter by prospect funnel bucket/);
+});
+
+test("global operator command bar exposes search, command help, previews, and safe receipts", () => {
+  const source = readFileSync("components/engine/OperatorCommandBar.tsx", "utf8");
+
+  assert.match(source, /Search prospects or paste a WebWorkshop command/);
+  assert.match(source, /Auto detect/);
+  assert.match(source, /Command understood/);
+  assert.match(source, /Confirm and Apply/);
+  assert.match(source, /Copy Result for ChatGPT/);
+  assert.match(source, /Command Activity/);
+  assert.match(source, /Outreach sent/);
+  assert.doesNotMatch(source, /eval\(|new Function|child_process|shell_command|runSql|runJavaScript/i);
+});
+
+test("Autonomous Growth keeps important controls visible before advanced settings", () => {
+  const source = readFileSync("components/engine/AutonomousGrowthWorkspace.tsx", "utf8");
+
+  assert.match(source, /Autonomous Growth Control Center/);
+  assert.match(source, /Save Changes/);
+  assert.match(source, /Advanced Settings/);
+  assert.match(source, /Unsaved changes/);
+  assert.match(source, /beforeunload/);
+  assert.match(source, /Contact forms: never automated/);
+  assert.match(source, /Phone calls: never automated/);
+  assert.match(source, /Looms: manual only/);
 });
 
 test("Autonomous Growth packages expose why-not-contacted diagnostics", () => {
