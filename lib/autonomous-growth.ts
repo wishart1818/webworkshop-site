@@ -23,7 +23,19 @@ import {
   prospectFunnelLabels,
   type ProspectExclusiveBucketKey,
 } from "@/lib/prospect-funnel";
-import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
+import {
+  webworkshopFirstDm,
+  webworkshopFollowUpAfterLoom,
+  webworkshopHigherSupportReply,
+  webworkshopLoomScript,
+  webworkshopLoomSendMessage,
+  webworkshopNotInterestedReply,
+  webworkshopOptOutPattern,
+  webworkshopPricingReply,
+  webworkshopSofterFirstDm,
+  webworkshopStarterPageReply,
+  webworkshopYesReply,
+} from "@/lib/outreach-style-guide";
 
 export const autonomousGrowthModes = ["off", "dry_run", "manual_approval", "auto_email_pilot"] as const;
 export type AutonomousGrowthMode = (typeof autonomousGrowthModes)[number];
@@ -1482,7 +1494,7 @@ export function rewriteOutreachWithFixes(emailBody: string) {
     "",
     "I came across your business while looking at local service companies and put together a quick website preview.",
     "",
-    "It's built to make the page look cleaner and help get you more calls and quote requests.",
+    "It's built to make the page look cleaner and help you get more calls and quote requests.",
     "",
     "Want me to send it over?",
     "",
@@ -1557,70 +1569,21 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
     || prospect.classification === "listing_only"
     || prospect.classification === "no_website"
     || !prospect.website;
-  const scores = prospect.analysis?.scores;
-  const weakContactPath = Boolean(scores && (scores.ctaStrength <= 55 || scores.contactAccessibility <= 55 || scores.conversionReadiness <= 55));
   const previewReference = previewLink || "[PUBLIC PREVIEW LINK]";
+  const kind = noWebsite ? "no_website" : "has_website";
   return {
-    firstDm: noWebsite
-      ? [
-          `Hey, how's it going? I came across ${prospect.businessName} and noticed I couldn't find a full website, so I made a quick preview of what one could look like. It's built to help get you more calls and quote requests. Want to see it?`,
-        ].join("\n")
-      : weakContactPath
-        ? [
-            `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`,
-          ].join("\n")
-      : [
-          `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview for you. It's built to look cleaner and help get you more calls and quote requests. Want to see it?`,
-        ].join("\n"),
-    softerFirstDm: noWebsite
-      ? `Hey, how's it going? I came across ${prospect.businessName} and couldn't find a full website. I made a quick preview of what one could look like. Want to see it?`
-      : `Hey, how's it going? I came across ${prospect.businessName} and made a quick website preview showing how the page could be cleaner and make it easier for people to call or request a quote. Want to see it?`,
-    yesReply: [
-      "Sounds good - here's the preview:",
-      "",
-      previewReference,
-      "",
-      "It's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.",
-      "",
-      "If you like it, I can send over the simple pricing/options.",
-    ].join("\n"),
-    loomScript: [
-      "Hey, I just wanted to walk you through this quick.",
-      "",
-      `${context} and put together a simple preview for you.`,
-      "",
-      "The main idea is making the page cleaner and helping people call or request a quote.",
-      "",
-      "This isn't live or anything, just a concept. If you like the direction, I can send over the next steps and pricing.",
-    ].join("\n"),
-    sendAfterLoom: [
-      "Sounds good - here's the Loom and preview:",
-      "",
-      "Loom walkthrough:",
-      "[LOOM LINK]",
-      "",
-      "Preview:",
-      previewReference,
-      "",
-      "It's just a quick concept, but I built it around making the page look cleaner and helping get more calls and quote requests.",
-    ].join("\n"),
+    firstDm: webworkshopFirstDm(prospect.businessName, kind),
+    softerFirstDm: webworkshopSofterFirstDm(prospect.businessName, kind),
+    yesReply: webworkshopYesReply(previewReference),
+    loomScript: webworkshopLoomScript(context),
+    sendAfterLoom: webworkshopLoomSendMessage(previewReference),
     websiteExplanation: "It's a simple website concept focused on making the page cleaner and helping people call or request a quote.",
     nextStepsReply: "Yeah, if you like the direction, I can finish it out and get it ready to go live for you.",
-    pricingReply: [
-      "If you like the direction, pricing for this type of site is $1,000 total.",
-      "",
-      "$500 to start, then $500 once it's finished and ready to go live.",
-      "",
-      "After that, hosting and small updates are $49/month.",
-    ].join("\n"),
-    higherSupportReply: "If you want a little more ongoing help with changes and support, I can also do $79/month.",
-    starterPageReply: "If you want to start smaller, I can also do a simple starter page for $500.",
-    followUpAfterLoom: [
-      "Hey, just wanted to follow up on that preview I sent over.",
-      "",
-      "No worries either way. Just figured I'd check.",
-    ].join("\n"),
-    notInterestedReply: "No worries at all, appreciate you checking it out.",
+    pricingReply: webworkshopPricingReply(),
+    higherSupportReply: webworkshopHigherSupportReply(),
+    starterPageReply: webworkshopStarterPageReply(),
+    followUpAfterLoom: webworkshopFollowUpAfterLoom(),
+    notInterestedReply: webworkshopNotInterestedReply(),
   };
 }
 

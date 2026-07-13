@@ -331,7 +331,7 @@ export function parseOperatorCommand(commandText: string, forcedMode?: "search" 
   if (/instagram/.test(lower)) return exact("SHOW_INSTAGRAM_READY", ["Open Instagram-ready prospects."], { tab: "Prospects", contactFilter: "social" });
   if (/contact form/.test(lower)) return exact("SHOW_CONTACT_FORM_READY", ["Open contact-form-ready prospects."], { tab: "Prospects", contactFilter: "form" });
   if (/phone[-\s]?only/.test(lower)) return exact("SHOW_PHONE_ONLY", ["Open phone-only prospects."], { tab: "Prospects", contactFilter: "needs_research" });
-  if (/high priority/.test(lower)) return exact("SHOW_HIGH_PRIORITY", ["Open high-priority prospects."], { tab: "Prospects", funnelFilter: "high_priority" });
+  if (/\b(high|higher|highest) priority\b|\b(best|top) (?:prospects|leads)\b/.test(lower)) return exact("SHOW_HIGH_PRIORITY", ["Open high-priority prospects."], { tab: "Prospects", funnelFilter: "high_priority" });
   if (/blocked/.test(lower)) return exact("SHOW_BLOCKED", ["Open blocked prospects."], { tab: "Prospects", funnelFilter: "bad_fit" });
   if (/suppressed|do not contact/.test(lower)) return exact("SHOW_SUPPRESSED", ["Open suppressed prospects."], { tab: "Prospects", funnelFilter: "suppressed_do_not_contact" });
   if (/latest failed test|latest test/.test(lower)) return exact("SHOW_LATEST_TEST_RESULT", ["Open latest safe test results."], { tab: "Operator Test Center" });

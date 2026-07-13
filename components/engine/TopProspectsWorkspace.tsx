@@ -249,6 +249,18 @@ function packageReviewStatusText(result: TopProspectResult) {
   return result.emailQuality.readinessLabel;
 }
 
+function openResultCard(event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>, result: TopProspectResult, onOpenProspect: (id: string) => void) {
+  const target = event.target as HTMLElement;
+  if (target.closest("button,a,input,select,textarea")) return;
+  onOpenProspect(result.prospect.id);
+}
+
+function resultCardKeyDown(event: React.KeyboardEvent<HTMLElement>, result: TopProspectResult, onOpenProspect: (id: string) => void) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  openResultCard(event, result, onOpenProspect);
+}
+
 function mainSkippedBucketEntries(skipSummary: Record<string, number>) {
   return Object.entries(skipSummary)
     .filter(([, count]) => count > 0)
@@ -876,7 +888,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-top-table" role="table" aria-label="Top prospects">
             <div className="engine-top-table__head" role="row"><span>Rank / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredResults.map((result) => (
-              <article key={result.id} role="row">
+              <article className="engine-top-result-card" key={result.id} onClick={(event) => openResultCard(event, result, onOpenProspect)} onKeyDown={(event) => resultCardKeyDown(event, result, onOpenProspect)} role="row" tabIndex={0}>
                 <div><strong>#{result.rank ?? "Pending"} {result.prospect.businessName}</strong><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
@@ -904,7 +916,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-top-table" role="table" aria-label="Reviewable lower-priority prospects">
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredReviewableLowerPriority.map((result) => (
-              <article key={result.id} role="row">
+              <article className="engine-top-result-card" key={result.id} onClick={(event) => openResultCard(event, result, onOpenProspect)} onKeyDown={(event) => resultCardKeyDown(event, result, onOpenProspect)} role="row" tabIndex={0}>
                 <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
@@ -925,7 +937,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-top-table" role="table" aria-label="Blocked prospects">
             <div className="engine-top-table__head" role="row"><span>Block reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredBlockedProspects.map((result) => (
-              <article key={result.id} role="row">
+              <article className="engine-top-result-card" key={result.id} onClick={(event) => openResultCard(event, result, onOpenProspect)} onKeyDown={(event) => resultCardKeyDown(event, result, onOpenProspect)} role="row" tabIndex={0}>
                 <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
@@ -945,7 +957,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <div className="engine-top-table" role="table" aria-label="Reviewed but not recommended prospects">
             <div className="engine-top-table__head" role="row"><span>Reason / Business</span><span>Contact</span><span>Scores</span><span>Opportunity</span><span>Status</span><span>Actions</span></div>
             {filteredReviewedNotRecommended.map((result) => (
-              <article key={result.id} role="row">
+              <article className="engine-top-result-card" key={result.id} onClick={(event) => openResultCard(event, result, onOpenProspect)} onKeyDown={(event) => resultCardKeyDown(event, result, onOpenProspect)} role="row" tabIndex={0}>
                 <div><strong>{result.rejectionReason}</strong><span>{result.prospect.businessName}</span><span>{prospectLocationLine(result.prospect)}</span><ProspectPresenceLink result={result} /></div>
                 <ContactPaths prospect={result.prospect} />
                 <SalesScoreBreakdown result={result} />
@@ -1169,3 +1181,4 @@ function ProspectPresenceLink({ result }: { result: TopProspectResult }) {
     </div>
   );
 }
+

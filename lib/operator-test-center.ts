@@ -63,6 +63,12 @@ export type OperatorTestCenterPayload = {
     manualEmailTest: string;
     smsTest: string;
   };
+  latestLinks: {
+    topProspectsRunJobId: string;
+    outreachPackageProspectId: string;
+    outreachPackageResultId: string;
+    latestQueueItemId: string;
+  };
   latestSafeTestResults: {
     providerSmokeTest: string;
     internalNotificationTest: string;
@@ -144,6 +150,18 @@ export type FullAutonomousReadinessCheck = {
   fix?: string;
 };
 
+export type FullAutonomousReadinessFailedRecord = {
+  id: string;
+  prospectId: string;
+  packageId: string;
+  topProspectResultId: string;
+  businessName: string;
+  category: string;
+  reason: string;
+  correction: string;
+  openAction: "prospect_outreach" | "prospect_preview" | "top_prospects" | "queue_review";
+};
+
 export type FullAutonomousReadinessResult = {
   overallStatus: "Ready for safe dry runs" | "Ready for reviewed manual email test" | "Ready for Auto Email Pilot" | "Not ready for full-auto email" | "Needs setup";
   finalReadinessStatus: "READY FOR SAFE DRY RUNS" | "READY FOR ONE MANUAL EMAIL TEST" | "READY FOR AUTO EMAIL PILOT" | "BLOCKED - RECORDS NEED ATTENTION" | "NEEDS SETUP";
@@ -166,6 +184,7 @@ export type FullAutonomousReadinessResult = {
   };
   passed: FullAutonomousReadinessCheck[];
   failed: FullAutonomousReadinessCheck[];
+  failedRecords: FullAutonomousReadinessFailedRecord[];
   optional: FullAutonomousReadinessCheck[];
   notDone: string[];
   checks: FullAutonomousReadinessCheck[];
@@ -245,6 +264,51 @@ function summarizeRegenerationReadiness(queue: Awaited<ReturnType<typeof getAuto
     skipped,
     "Regeneration only rewrites unsent draft copy. It sends nothing and does not change sent logs or suppression records.",
   ].filter(Boolean).join("\n");
+}
+
+function readinessFailedRecords(queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"], env: ReturnType<typeof outreachEnvironment>) {
+  const records: FullAutonomousReadinessFailedRecord[] = [];
+  const seenProspectIds = new Set<string>();
+  const seenResultIds = new Set<string>();
+  const add = (item: (typeof queue)[number], category: string, reason: string, correction: string, openAction: FullAutonomousReadinessFailedRecord["openAction"] = "prospect_outreach") => {
+    records.push({
+      id: `${item.id}:${category}:${records.length}`,
+      prospectId: item.prospectId,
+      packageId: item.id,
+      topProspectResultId: item.topProspectResultId,
+      businessName: item.businessName || "Unnamed prospect",
+      category,
+      reason,
+      correction,
+      openAction,
+    });
+  };
+
+  for (const item of queue) {
+    const emailBody = item.emailBody || "";
+    const copy = `${item.subjectLine}\n${item.emailBody}\n${item.dmScript}\n${item.loomTalkingPoints}`;
+    if (!item.businessName || !item.city || !item.trade) add(item, "Missing business context", "Business name, city, or trade is missing.", "Open the prospect and fill in the missing public business context.");
+    if (item.outreachCopyVersion !== currentOutreachCopyVersion && !item.sentDate && !/sent|replied|not interested|lost|won/i.test(item.status)) add(item, "Outdated outreach copy", `Package uses ${item.outreachCopyVersion || "no recorded version"}.`, `Regenerate unsent outreach copy to ${currentOutreachCopyVersion}.`);
+    if (!item.previewLink) add(item, "Missing preview", "No public preview link is stored.", "Regenerate the Outreach Package so a public /p/ preview is created.", "prospect_preview");
+    if (item.previewLink && (!/\/p\//i.test(item.previewLink) || /\/engine(?:\/|$|\?)/i.test(item.previewLink))) add(item, "Invalid public preview", "Preview link is missing or points to a protected engine route.", "Regenerate the package and verify the prospect-facing link starts with /p/.", "prospect_preview");
+    if (/https?:\/\/[^\s]+\/p\//i.test(emailBody)) add(item, "First-touch preview-link violation", "The first-touch email includes a public preview link.", "Regenerate the draft so the first email asks permission before sending the preview.");
+    if (!webworkshopOptOutPattern().test(emailBody)) add(item, "Missing opt-out wording", "The first-touch email does not include the approved opt-out line.", "Regenerate the draft with the current WebWorkshop script.");
+    if (!env.hasPostalAddress && item.contactSource === "Public email") add(item, "Missing postal address", "Postal address is not configured for email readiness.", "Add the approved sender postal address before any real email test.");
+    if (/\/engine(?:\/|$|\?)/i.test(copy)) add(item, "Internal engine link", "Prospect-facing copy contains a protected /engine link.", "Regenerate the package and use only public /p/ links after permission.");
+    if (/\b\d{1,3}\/100\b|website quality score|opportunity score|internal score/i.test(copy)) add(item, "Internal score language", "Prospect-facing copy includes internal score language.", "Regenerate the draft with plain-language copy.");
+    if (/\bwill get you more calls|guarantee|guaranteed|losing customers|costing you leads\b/i.test(copy)) add(item, "Unsupported claim", "Copy appears to make a guaranteed or unsupported claim.", "Rewrite with softer 'help get' language.");
+    if (/phone/i.test(item.blockedReason) && item.status === "Queued") add(item, "Phone-only routed to email", "A phone-only blocked lead is queued for email review.", "Move it to manual research or Calls, not email.");
+    if (item.blockedReason && ["Queued", "Sent"].includes(item.status)) add(item, "Package/status conflict", "A blocked package is in a send-oriented status.", "Return it to Needs Review or Blocked before testing sends.");
+    if (item.prospectId) {
+      if (seenProspectIds.has(item.prospectId)) add(item, "Duplicate package", "Another queue item already uses this prospect.", "Keep one package and skip the duplicate.");
+      seenProspectIds.add(item.prospectId);
+    }
+    if (item.topProspectResultId) {
+      if (seenResultIds.has(item.topProspectResultId)) add(item, "Duplicate package", "Another queue item already uses this Top Prospects result.", "Keep one package and skip the duplicate.");
+      seenResultIds.add(item.topProspectResultId);
+    }
+  }
+  return records;
 }
 
 function nextRecommendedTest(input: {
@@ -329,6 +393,7 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
   const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
   const latestJob = jobs[0] ?? null;
   const queue = dashboard?.queue ?? [];
+  const latestQueueItem = queue[0] ?? null;
   const latestPackage = summarizeLatestOutreachPackage(queue);
   const regenerationReadiness = summarizeRegenerationReadiness(queue);
   const smartRecommendation = dashboard?.smartGrowth.copySummaries.nextBestMove ?? "Smart recommendation unavailable until Autonomous Growth loads.";
@@ -366,6 +431,12 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
       internalNotificationTest: formatOperatorSafeTestRecord(latestSafeTests.internal_notification, "No internal notification test has been recorded yet."),
       manualEmailTest: formatOperatorSafeTestRecord(latestSafeTests.internal_resend, "No internal Resend test has been recorded yet."),
       smsTest: "Not persisted. Internal SMS test sends only to INTERNAL_NOTIFY_PHONE.",
+    },
+    latestLinks: {
+      topProspectsRunJobId: latestJob?.id ?? "",
+      outreachPackageProspectId: latestQueueItem?.prospectId ?? "",
+      outreachPackageResultId: latestQueueItem?.topProspectResultId ?? "",
+      latestQueueItemId: latestQueueItem?.id ?? "",
     },
     latestSafeTestResults: {
       providerSmokeTest: formatOperatorSafeTestRecord(latestSafeTests.provider_smoke, "No Provider Smoke Test has been recorded yet."),
@@ -664,6 +735,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
   const jobs = await listTopProspectJobs().catch(() => []);
   const queue = dashboard?.queue ?? [];
+  const failedRecords = readinessFailedRecords(queue, env);
   const smartSnapshot = dashboard?.smartGrowth ?? null;
   const fakeEnvironment = {
     ...environment,
@@ -812,6 +884,16 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "outdated-copy", category: "Existing prospect readiness", label: "Outdated unsent copy detected", info: true, detail: `${existing?.needsRefreshedCopy ?? 0} package(s) need refreshed copy.` });
   check(checks, { key: "missing-packages", category: "Existing prospect readiness", label: "Missing packages detected", info: true, detail: `${existing?.needsPreview ?? 0} prospect(s) need preview/package work.` });
   check(checks, { key: "queue-counts", category: "Existing prospect readiness", label: "Queue bucket counts checked", passed: Boolean(queueCounts), detail: queueCounts ? `Email ${queueCounts.readyForEmailReview}, Facebook DM ${queueCounts.readyForFacebookDm}, Instagram DM ${queueCounts.readyForInstagramDm}, manual research ${queueCounts.needsManualResearch}, bad-fit ${queueCounts.badFitBlocked}, suppressed ${queueCounts.suppressedDoNotContact}, contacted ${queueCounts.alreadyContacted}.` : "Queue counts unavailable." });
+  check(checks, {
+    key: "exact-failed-records",
+    category: "Existing prospect readiness",
+    label: "Exact failed records identified",
+    passed: failedRecords.length === 0,
+    detail: failedRecords.length
+      ? `${failedRecords.length} saved package/prospect record(s) need operator attention.`
+      : "No exact package/prospect record failures were found.",
+    fix: "Open the failed records list in Operator Test Center and correct each item before scaling.",
+  });
 
   check(checks, { key: "smart-backfill", category: "Smart backfill readiness", label: "Can process existing qualified unsent prospects first", passed: smartBackfill.ok, detail: smartBackfill.message, fix: "Fix smart backfill dry-run errors before scaling." });
   check(checks, { key: "smart-backfill-routing", category: "Smart backfill readiness", label: "Can refresh copy, generate missing packages, and route queues", passed: smartBackfill.ok, detail: smartBackfill.summary?.summaryText ?? "Smart backfill returned no summary." });
@@ -925,10 +1007,12 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     ...autoEmailPilotReasons.map((reason) => `- ${reason}`),
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
+    `Failed records needing attention: ${failedRecords.length}`,
     `Optional/info: ${optional.length}`,
     `Not done: ${notDone.join(" ")}`,
   ]);
-  const failedOnly = safeTextLines([formatChecks("Failed checks only", failed)]);
+  const failedRecordSummary = failedRecords.map((record) => `- ${record.businessName}: ${record.category}. ${record.reason} Next: ${record.correction}`);
+  const failedOnly = safeTextLines([formatChecks("Failed checks only", failed), failedRecordSummary.length ? `Failed records:\n${failedRecordSummary.join("\n")}` : "Failed records: none"]);
   const nextFix = safeTextLines([`Next safest action: ${nextSafestAction}`, failed[0] ? `${failed[0].label}: ${failed[0].detail}` : "No failed checks."]);
   const safeToTest = safeTextLines([
     `Dry-run / Manual Routing: ${dryRunStatus}`,
@@ -961,6 +1045,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     autoEmailPilot: { status: autoEmailPilotStatus, reasons: autoEmailPilotReasons },
     passed,
     failed,
+    failedRecords,
     optional,
     notDone,
     checks,

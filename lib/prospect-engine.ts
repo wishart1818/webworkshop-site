@@ -1,5 +1,7 @@
 import {
   WEBWORKSHOP_OUTREACH_COPY_VERSION,
+  webworkshopFirstDm,
+  webworkshopFirstEmail,
   webworkshopOptOutLine,
   webworkshopPreviewValueLine,
   webworkshopYesReply,
@@ -884,16 +886,20 @@ export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = proces
   const address = webworkshopPostalAddress(environment);
   return [
     "Thanks,",
+    "",
     "Brendan",
     "WebWorkshop",
-    ...(address ? [address] : []),
+    ...(address ? ["", address] : []),
     "",
     webworkshopOptOutLine(),
   ].join("\n");
 }
 
 function localTradePhrase(prospect: Prospect) {
-  return `${displayTradeCategory(prospectTrade(prospect)).toLowerCase()} businesses around ${titleCaseLocation(prospect.city)}`;
+  return {
+    trade: displayTradeCategory(prospectTrade(prospect)).toLowerCase(),
+    city: titleCaseLocation(prospect.city),
+  };
 }
 
 function simplePreviewIdea() {
@@ -928,31 +934,29 @@ function contactPathCouldBeClearer(prospect: Prospect) {
 }
 
 function firstTouchEmailReason(prospect: Prospect) {
-  if (noOwnedWebsiteProspect(prospect)) {
-    return `I was looking at ${localTradePhrase(prospect)} and came across your business.`;
-  }
-  if (contactPathCouldBeClearer(prospect)) {
-    return `I was looking at ${localTradePhrase(prospect)} and came across your business.`;
-  }
-  return `I was looking at ${localTradePhrase(prospect)} and came across your business.`;
+  return localTradePhrase(prospect);
 }
 
 function firstTouchMiddleLine(prospect: Prospect) {
   if (noOwnedWebsiteProspect(prospect)) return noWebsiteFirstTouchIdea();
-  if (contactPathCouldBeClearer(prospect)) {
-  return "I noticed the call or quote request path could probably be clearer, so I put together a quick preview showing how the page could look cleaner and help get you more calls and quote requests.";
-  }
+  if (contactPathCouldBeClearer(prospect)) return simplePreviewIdea();
   return simplePreviewIdea();
 }
 
 function firstTouchDmReason(prospect: Prospect) {
-  if (noOwnedWebsiteProspect(prospect)) {
-    return `Hey, how's it going? I came across ${prospect.businessName} and noticed I couldn't find a full website, so I made a quick preview of what one could look like. It's built to help get you more calls and quote requests. Want to see it?`;
-  }
-  if (contactPathCouldBeClearer(prospect)) {
-    return `Hey, how's it going? I came across ${prospect.businessName} and noticed the call or quote request path could probably be clearer, so I made a quick website preview for you. Want to see it?`;
-  }
-  return `Hey, how's it going? I came across ${prospect.businessName} and noticed your page could probably make it easier for people to call or request a quote, so I made a quick website preview for you. Want to see it?`;
+  return webworkshopFirstDm(prospect.businessName, noOwnedWebsiteProspect(prospect) ? "no_website" : "has_website");
+}
+
+export function firstTouchEmailDraft(prospect: Prospect, footer: string) {
+  const { trade, city } = firstTouchEmailReason(prospect);
+  return webworkshopFirstEmail({
+    businessName: prospect.businessName,
+    trade,
+    city,
+    kind: noOwnedWebsiteProspect(prospect) ? "no_website" : "has_website",
+    footer,
+    factualMiddleLine: firstTouchMiddleLine(prospect),
+  });
 }
 
 export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {
@@ -975,7 +979,7 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
     const isSocial = socialManualMethod(manualMethod);
     const firstDraft = isSocial
       ? firstTouchDmReason(prospect)
-      : `Hi ${prospect.businessName} team,\n\n${firstTouchEmailReason(prospect)}\n\n${firstTouchMiddleLine(prospect)}\n\n${askToSendPreview()}\n\n${complianceFooter}`;
+      : firstTouchEmailDraft(prospect, complianceFooter);
     const detailedDraft = `${webworkshopYesReply(previewLink)}\n\n${complianceFooter}`;
     return {
       subjects: [
@@ -1002,7 +1006,7 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
         `Own the online home for ${prospect.businessName}`,
         `Turn ${titleCaseLocation(prospect.city)} searches into direct inquiries`,
       ],
-      concise: `Hi ${prospect.businessName} team,\n\n${firstTouchEmailReason(prospect)}\n\n${noWebsiteFirstTouchIdea()}\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+      concise: firstTouchEmailDraft(prospect, complianceFooter),
       detailed: `${webworkshopYesReply(previewLink)}\n\n${complianceFooter}`,
       followUps: [
         `Hi again,\n\nJust wanted to follow up on the website preview I mentioned. It's built to look cleaner and help get you more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
@@ -1021,7 +1025,7 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
       `${displayTradeCategory(trade)} website notes for ${titleCaseLocation(prospect.city)}`,
       `More calls and quote requests for ${prospect.businessName}`,
     ],
-    concise: `Hi ${prospect.businessName} team,\n\n${firstTouchEmailReason(prospect)}\n\n${firstTouchMiddleLine(prospect)}\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+    concise: firstTouchEmailDraft(prospect, complianceFooter),
     detailed: `${webworkshopYesReply(previewLink)}\n\n${complianceFooter}`,
     followUps: [
       `Hi again,\n\nJust wanted to follow up on the preview I mentioned. It's built to look cleaner and help get you more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,

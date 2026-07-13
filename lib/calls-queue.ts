@@ -1,4 +1,5 @@
 import {
+  activity,
   displayStateCode,
   displayTradeCategory,
   prospectPresenceLabels,
@@ -19,13 +20,15 @@ import {
 export type ManualCallQueueItem = {
   prospect: Prospect;
   pending: boolean;
+  valueTier: "High" | "Medium" | "Watch";
   worthCallingReasons: string[];
   noWrittenPathReasons: string[];
+  nextCallAction: string;
   recommendedPitchAngle: string;
   callScript: string;
 };
 
-const resolvedCallPattern = /\b(marked called|call completed|not interested|do not contact|manual call resolved|called\b|interested\b)/i;
+const resolvedCallPattern = /\b(marked called|call completed|not interested|do not contact|manual call resolved|called\b|interested\b|no further action)\b/i;
 const pendingFollowUpPattern = /\b(call back|callback|no answer|try again|follow up call due)\b/i;
 
 function prospectCallHistoryText(prospect: Prospect) {
@@ -39,9 +42,34 @@ function prospectCallHistoryText(prospect: Prospect) {
 export function callQueueResolutionState(prospect: Prospect) {
   const text = prospectCallHistoryText(prospect);
   if (prospectIsSuppressed(prospect) || prospect.status === "Closed Lost" || /\b(do not contact|never contact|opted out|not interested)\b/i.test(text)) return "resolved";
-  if (pendingFollowUpPattern.test(text)) return "pending";
   if (resolvedCallPattern.test(text) || prospect.status === "Contacted" || prospect.status === "Interested") return "resolved";
+  if (pendingFollowUpPattern.test(text)) return "pending";
   return "new";
+}
+
+export function manualCallValueTier(prospect: Prospect): ManualCallQueueItem["valueTier"] {
+  if (prospect.priorityScore >= 92 || prospect.reviewCount >= 75 || prospect.rating >= 4.7) return "High";
+  if (prospect.priorityScore >= 88 || prospect.reviewCount >= 35 || prospect.rating >= 4.5) return "Medium";
+  return "Watch";
+}
+
+export function manualCallNextAction(prospect: Prospect) {
+  const state = callQueueResolutionState(prospect);
+  const text = prospectCallHistoryText(prospect);
+  if (state === "resolved") return "No call action needed unless the operator manually reopens this record.";
+  if (/\b(call back|callback)\b/i.test(text)) return "Call back manually at the agreed time, then record the outcome.";
+  if (/\b(no answer|try again|follow up call due)\b/i.test(text)) return "Retry manually once if still worth calling, then close or move to research.";
+  return "Call once manually and ask for the best written contact path. Do not text the prospect.";
+}
+
+export function applyManualCallSuppression(prospect: Prospect): Prospect {
+  return {
+    ...prospect,
+    status: "Closed Lost",
+    recommendedContactMethod: "do_not_contact",
+    activities: [activity("status", "Marked Do Not Contact from Calls queue."), ...prospect.activities],
+    notes: ["Calls queue: Marked Do Not Contact. Suppressed from future outreach.", ...prospect.notes],
+  };
 }
 
 export function prospectCallQueueEligibility(prospect: Prospect) {
@@ -89,8 +117,10 @@ export function manualCallQueueItem(prospect: Prospect): ManualCallQueueItem | n
   return {
     prospect,
     pending: callQueueResolutionState(prospect) !== "resolved",
+    valueTier: manualCallValueTier(prospect),
     worthCallingReasons: eligibility.worthCallingReasons,
     noWrittenPathReasons: eligibility.noWrittenPathReasons,
+    nextCallAction: manualCallNextAction(prospect),
     recommendedPitchAngle: pitch,
     callScript: [
       `Hi, is this ${prospect.businessName}? This is Brendan with WebWorkshop.`,

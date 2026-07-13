@@ -21,6 +21,7 @@ export const prospectExclusiveBucketKeys = [
 
 export const prospectAttributeKeys = [
   "qualified",
+  "qualified_unsent",
   "unsent",
   "high_priority",
   "has_public_email",
@@ -54,6 +55,7 @@ export const prospectFunnelLabels: Record<ProspectFunnelFilterKey, string> = {
   duplicate: "Duplicate",
   other_not_actionable: "Other / Not Currently Actionable",
   qualified: "Qualified",
+  qualified_unsent: "Qualified & Unsent",
   unsent: "Unsent",
   high_priority: "High Priority",
   has_public_email: "Has Public Email",
@@ -163,6 +165,7 @@ export function prospectIsQualifiedUnsent(prospect: Prospect) {
 
 export function prospectAttributeMatches(prospect: Prospect, attribute: ProspectAttributeKey) {
   if (attribute === "qualified") return prospectIsQualified(prospect);
+  if (attribute === "qualified_unsent") return prospectIsQualifiedUnsent(prospect);
   if (attribute === "unsent") return prospectIsUnsent(prospect);
   if (attribute === "high_priority") return prospect.priorityScore >= 70;
   if (attribute === "has_public_email") return prospectHasUsablePublicEmail(prospect);

@@ -15,6 +15,13 @@ function apiError(payload: { error?: string; message?: string }, fallback: strin
   return payload.error || payload.message || fallback;
 }
 
+function failedRecordOpenDetail(record: NonNullable<OperatorActionResult["readiness"]>["failedRecords"][number]) {
+  if (record.openAction === "top_prospects") return { tab: "top-prospects" };
+  if (record.openAction === "prospect_preview") return { tab: "prospects", prospectId: record.prospectId, detailTab: "Preview" };
+  if (record.openAction === "queue_review") return { tab: "prospects", prospectId: record.prospectId, detailTab: "Activity" };
+  return { tab: "prospects", prospectId: record.prospectId, detailTab: "Outreach" };
+}
+
 export function OperatorTestCenterWorkspace() {
   const [payload, setPayload] = useState<OperatorTestCenterPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -134,6 +141,10 @@ export function OperatorTestCenterWorkspace() {
     }
   }
 
+  function openEngineRecord(detail: { tab?: string; prospectId?: string; detailTab?: string }) {
+    window.dispatchEvent(new CustomEvent("webworkshop:open-engine-record", { detail }));
+  }
+
   if (loading) return <div className="engine-content"><LoadingState title="Loading Operator Test Center" body="Checking safe test actions, provider coverage, email gates, and the latest prospecting activity." /></div>;
   if (!payload) return <div className="engine-content"><EmptyState title="Operator Test Center unavailable" body={error || "Reload the engine and try again."} action={() => void load()} actionLabel="Retry" /></div>;
   const busy = actionState === "running";
@@ -242,9 +253,32 @@ export function OperatorTestCenterWorkspace() {
           <dl className="engine-operator-check-grid">
             <div><dt>Passed</dt><dd>{lastAction.readiness.passed.length}</dd></div>
             <div><dt>Failed</dt><dd>{lastAction.readiness.failed.length}</dd></div>
+            <div><dt>Failed records</dt><dd>{lastAction.readiness.failedRecords.length}</dd></div>
             <div><dt>Optional / info</dt><dd>{lastAction.readiness.optional.length}</dd></div>
             <div><dt>Generated</dt><dd>{new Date(lastAction.readiness.generatedAt).toLocaleString()}</dd></div>
           </dl>
+          {lastAction.readiness.failedRecords.length ? (
+            <section className="engine-readiness-failed-records" aria-label="Failed records needing attention">
+              <header>
+                <div>
+                  <span>Exact failed records</span>
+                  <h3>Records needing attention</h3>
+                </div>
+                <b>{lastAction.readiness.failedRecords.length}</b>
+              </header>
+              <div>
+                {lastAction.readiness.failedRecords.map((record) => (
+                  <article key={record.id}>
+                    <span>{record.category}</span>
+                    <h4>{record.businessName}</h4>
+                    <p>{record.reason}</p>
+                    <p><b>Next:</b> {record.correction}</p>
+                    <button className="engine-button" onClick={() => openEngineRecord(failedRecordOpenDetail(record))} type="button">Open record</button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
           <div className="engine-operator-summary-grid engine-autonomous-readiness__copies">
             {([
               ["Copy Full Autonomous Readiness Summary", lastAction.readiness.summaries.full],
@@ -442,7 +476,15 @@ export function OperatorTestCenterWorkspace() {
             ["Next Debug Summary", payload.summaries.nextDebug],
           ] as const).map(([label, value]) => (
             <article key={label}>
-              <header><h3>{label}</h3><button className="engine-button" onClick={() => void copyText(label, value)} type="button">Copy</button></header>
+              <header>
+                <h3>{label}</h3>
+                <div className="engine-operator-summary-actions">
+                  {label === "Latest Top Prospects Run Summary" ? <button className="engine-button" disabled={!payload.latestLinks.topProspectsRunJobId} onClick={() => openEngineRecord({ tab: "top-prospects" })} type="button">Open run</button> : null}
+                  {label === "Latest Outreach Package Summary" ? <button className="engine-button" disabled={!payload.latestLinks.outreachPackageProspectId} onClick={() => openEngineRecord({ tab: "prospects", prospectId: payload.latestLinks.outreachPackageProspectId, detailTab: "Outreach" })} type="button">Open package</button> : null}
+                  {label === "Latest Outreach Package Summary" ? <button className="engine-button" disabled={!payload.latestLinks.outreachPackageProspectId} onClick={() => openEngineRecord({ tab: "prospects", prospectId: payload.latestLinks.outreachPackageProspectId, detailTab: "Preview" })} type="button">Open prospect preview</button> : null}
+                  <button className="engine-button" onClick={() => void copyText(label, value)} type="button">Copy</button>
+                </div>
+              </header>
               <pre>{value}</pre>
             </article>
           ))}

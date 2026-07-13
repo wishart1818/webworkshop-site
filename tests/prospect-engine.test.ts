@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculatePriority,
+  firstTouchEmailDraft,
   generateOutreach,
   generatePreview,
   generateProspectStyleProfile,
@@ -22,13 +23,25 @@ import {
   prospectMatchesFunnelFilter,
 } from "../lib/prospect-funnel";
 import {
+  applyManualCallSuppression,
   buildManualCallsQueue,
+  callQueueResolutionState,
   pendingManualCallsCount,
   prospectCallQueueEligibility,
 } from "../lib/calls-queue";
 import { classifyWebsiteAnalysisFailure } from "../lib/site-analysis";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
+const testFooter = [
+  "Thanks,",
+  "",
+  "Brendan",
+  "WebWorkshop",
+  "",
+  testPostalAddress,
+  "",
+  "If you'd rather not hear from me again, just let me know.",
+].join("\n");
 
 test("analysis prioritizes weaker websites and moves new leads to reviewed", () => {
   const analyzed = withAnalysis(structuredClone(seedProspects[0]));
@@ -46,7 +59,7 @@ test("outreach remains unapproved and references the prospect", () => {
 
   assert.equal(outreach.approved, false);
   assert.match(outreach.concise, new RegExp(prospect.businessName));
-  assert.match(outreach.concise, /Thanks,\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.concise, /Thanks,\n\nBrendan\nWebWorkshop/i);
   assert.match(outreach.concise, new RegExp(testPostalAddress));
   assert.doesNotMatch(outreach.concise, /\[Add your business postal address before sending\]/i);
   assert.match(outreach.concise, /rather not hear from me again/i);
@@ -68,7 +81,7 @@ test("Outreach Package email uses casual human permission-first copy and stores 
 
   assert.equal(outreach.subjects[0], "Quick website preview for MC Pressure Washing FL");
   assert.match(outreach.concise, /came across your business/i);
-  assert.match(outreach.concise, /quick preview showing how the page could look cleaner and help get you more calls and quote requests/i);
+  assert.match(outreach.concise, /quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests/i);
   assert.match(outreach.concise, /Want me to send it over\?/i);
   assert.doesNotMatch(outreach.concise, /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(outreach.concise, /Here's the preview/i);
@@ -76,7 +89,7 @@ test("Outreach Package email uses casual human permission-first copy and stores 
   assert.match(outreach.detailed, /Sounds good - here's the preview/i);
   assert.match(outreach.detailed, /helping get more calls and quote requests/i);
   assert.match(outreach.detailed, /simple pricing\/options/i);
-  assert.match(outreach.concise, /Thanks,\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.concise, /Thanks,\n\nBrendan\nWebWorkshop/i);
   assert.match(outreach.concise, new RegExp(testPostalAddress));
   assert.match(outreach.concise, /rather not hear from me again/i);
   assert.doesNotMatch(allDrafts, /One missed opportunity:|One thing that already works well:|customer proof you can verify|trust details could be easier/i);
@@ -90,6 +103,38 @@ test("Outreach Package email uses casual human permission-first copy and stores 
   assert.ok(outreach.followUps.every((followUp) => !followUp.includes(previewLink)));
 });
 
+test("first-touch email wording matches the approved has-website and no-website templates", () => {
+  const hasWebsite = withAnalysis(structuredClone(seedProspects[0]));
+  hasWebsite.businessName = "Styles Power Wash";
+  hasWebsite.trade = "Pressure Washing";
+  hasWebsite.city = "St Augustine";
+
+  assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
+    "Hi Styles Power Wash team,",
+    "",
+    "I was looking at pressure washing businesses around the St Augustine area and came across your business.",
+    "",
+    "I put together a quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests.",
+    "",
+    "Want me to send it over?",
+    "",
+    testFooter,
+  ].join("\n"));
+
+  const noWebsite = withPresenceGapReview({ ...structuredClone(seedProspects[0]), businessName: "ClearFlow Plumbing", trade: "Plumbing", city: "Toledo", website: "" }, "no_owned_website");
+  assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
+    "Hi ClearFlow Plumbing team,",
+    "",
+    "I was looking at plumbing businesses around the Toledo area and came across your business.",
+    "",
+    "I noticed you don't have a website, so I put together a quick preview showing what yours could look like and how it could help you get more calls and quote requests.",
+    "",
+    "Want me to send it over?",
+    "",
+    testFooter,
+  ].join("\n"));
+});
+
 test("detailed outreach avoids repeating the business name immediately after greeting", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.businessName = "Styles Power Wash";
@@ -98,11 +143,11 @@ test("detailed outreach avoids repeating the business name immediately after gre
   const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
   const outreach = generateOutreach(prospect, previewLink, { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI was looking at pressure washing businesses around St Augustine and came across your business\./);
+  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI was looking at pressure washing businesses around the St Augustine area and came across your business\./);
   assert.doesNotMatch(outreach.concise, /Hi Styles Power Wash team,\n\nI was looking at[^.]+(?:made you|put together) a quick preview for Styles Power Wash/i);
   assert.doesNotMatch(outreach.concise, /https:\/\/webworkshop\.dev\/p\//i);
   assert.match(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
-  assert.match(outreach.detailed, /Thanks,\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.detailed, /Thanks,\n\nBrendan\nWebWorkshop/i);
   assert.match(outreach.detailed, new RegExp(testPostalAddress));
   assert.match(outreach.detailed, /rather not hear from me again/i);
 });
@@ -113,7 +158,7 @@ test("outreach drafts omit postal-address placeholders when sender address is mi
   const allDrafts = [outreach.concise, outreach.detailed, ...outreach.followUps].join("\n");
 
   assert.doesNotMatch(allDrafts, /\[Add your business postal address before sending\]/i);
-  assert.match(outreach.concise, /Thanks,\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.concise, /Thanks,\n\nBrendan\nWebWorkshop/i);
   assert.match(outreach.concise, /If you'd rather not hear from me again/i);
 });
 
@@ -124,8 +169,8 @@ test("outreach avoids analytical strength claims for weak websites", () => {
   }
   const outreach = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /quick preview showing how the page could look cleaner and help get you more calls and quote requests/i);
-  assert.match(outreach.concise, /help get you more calls and quote requests/i);
+  assert.match(outreach.concise, /quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests/i);
+  assert.match(outreach.concise, /help you get more calls and quote requests/i);
   assert.doesNotMatch(outreach.concise, /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(outreach.concise, /already pretty easy|solid technical foundation/i);
   assert.doesNotMatch(outreach.concise, /One thing that already works well|One missed opportunity/i);
@@ -306,6 +351,38 @@ test("manual Calls queue only includes high-priority phone-only prospects needin
   assert.equal(pendingManualCallsCount([phoneOnly, emailReady, lowPriorityPhone, contactedPhone]), 1);
 });
 
+test("manual Calls queue badge states resolve or stay pending by call outcome", () => {
+  const phoneOnly = {
+    ...structuredClone(seedProspects[1]),
+    id: "phone-only-call-status",
+    phone: "(419) 555-0100",
+    email: "",
+    contactFormUrl: "",
+    quoteFormUrl: "",
+    facebookUrl: "",
+    instagramUrl: "",
+    linkedinUrl: "",
+    classification: "phone_only" as const,
+    recommendedContactMethod: "call_first" as const,
+    bestManualContactMethod: "phone_only" as const,
+    priorityScore: 91,
+    rating: 4.8,
+    reviewCount: 44,
+    status: "Reviewed" as const,
+  };
+
+  assert.equal(callQueueResolutionState(phoneOnly), "new");
+  assert.equal(callQueueResolutionState({ ...phoneOnly, status: "Contacted" as const, notes: ["Calls queue: Marked called manually."] }), "resolved");
+  assert.equal(callQueueResolutionState({ ...phoneOnly, status: "Interested" as const, notes: ["Calls queue: Marked interested after manual call."] }), "resolved");
+  assert.equal(callQueueResolutionState({ ...phoneOnly, notes: ["Calls queue: Call Back requested or due."] }), "pending");
+  assert.equal(callQueueResolutionState({ ...phoneOnly, notes: ["Calls queue: No Answer. Follow-up call due."] }), "pending");
+  assert.equal(callQueueResolutionState({ ...phoneOnly, notes: ["Calls queue: No Answer. No further action."] }), "resolved");
+  assert.equal(callQueueResolutionState({ ...phoneOnly, status: "Closed Lost" as const, notes: ["Calls queue: Marked not interested after manual call."] }), "resolved");
+  assert.equal(callQueueResolutionState(applyManualCallSuppression(phoneOnly)), "resolved");
+  assert.equal(pendingManualCallsCount([phoneOnly]), 1);
+  assert.equal(pendingManualCallsCount([applyManualCallSuppression(phoneOnly)]), 0);
+});
+
 test("prospect funnel explanations are human-readable and do not change ranking or outreach", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.email = "owner@example.com";
@@ -353,7 +430,7 @@ test("no-website prospects still generate dedicated-website outreach", () => {
 
   assert.match(withDraft.outreach?.concise ?? "", /noticed you don't have a website/i);
   assert.match(withDraft.outreach?.concise ?? "", /what yours could look like/i);
-  assert.match(withDraft.outreach?.concise ?? "", /help get you more calls and quote requests/i);
+  assert.match(withDraft.outreach?.concise ?? "", /help you get more calls and quote requests/i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /your website has issues/i);
 });

@@ -799,6 +799,29 @@ test("Prospect Engine exposes a manual Calls queue without SMS or auto-call beha
   assert.match(css, /engine-call-actions/);
 });
 
+test("Prospect review UI exposes tappable cards, visible filters, and direct-open actions", () => {
+  const engineSource = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
+  const topProspectsSource = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
+  const testCenterSource = readFileSync(new URL("../components/engine/OperatorTestCenterWorkspace.tsx", import.meta.url), "utf8");
+  const detailSource = readFileSync(new URL("../components/engine/ProspectDetail.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../app/engine/engine.css", import.meta.url), "utf8");
+
+  assert.match(engineSource, /webworkshop:open-engine-record/);
+  assert.match(engineSource, /engine-filter-summary/);
+  assert.match(engineSource, /No record is open because the current filters have no matching prospects/);
+  assert.match(engineSource, /Qualified unsent/);
+  assert.match(engineSource, /Calls queue/);
+  assert.match(detailSource, /Close record/);
+  assert.match(topProspectsSource, /engine-top-result-card/);
+  assert.match(topProspectsSource, /openResultCard/);
+  assert.match(testCenterSource, /Open package/);
+  assert.match(testCenterSource, /Open prospect preview/);
+  assert.match(testCenterSource, /Records needing attention/);
+  assert.match(css, /engine-top-result-card:focus-visible/);
+  assert.match(css, /engine-readiness-failed-records/);
+  assert.match(css, /engine-operator-summary-actions/);
+});
+
 test("provider diagnostics remain visible for legacy jobs without provider details", () => {
   const legacy = {
     rawProviderCount: 7,

@@ -912,6 +912,12 @@ body:has(.engine-shell) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.engine-call-card__facts dd,
+.engine-call-card li,
+.engine-call-card p {
+  overflow-wrap: anywhere;
+}
+
 .engine-call-card section {
   display: grid;
   gap: 0.45rem;
@@ -939,6 +945,41 @@ body:has(.engine-shell) {
   flex: 1 1 10rem;
   justify-content: center;
   text-align: center;
+}
+
+.engine-detail__close {
+  border: 1px solid var(--engine-line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--engine-ink);
+  padding: 0.45rem 0.75rem;
+  font-weight: 850;
+}
+
+.engine-filter-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
+.engine-filter-summary span {
+  border: 1px solid var(--engine-line);
+  background: #f7faf8;
+  color: var(--engine-muted);
+  padding: 0.35rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.engine-top-result-card {
+  cursor: pointer;
+}
+
+.engine-top-result-card:focus-visible {
+  outline: 3px solid rgba(13, 105, 86, 0.35);
+  outline-offset: 3px;
 }
 
 .engine-overview-grid {
@@ -2666,6 +2707,13 @@ body:has(.engine-shell) {
   font-size: 0.95rem;
 }
 
+.engine-operator-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
 .engine-operator-summary-grid pre {
   max-height: 15rem;
   overflow: auto;
@@ -2729,6 +2777,62 @@ body:has(.engine-shell) {
   background: #fff;
   padding: 0.55rem 0.7rem;
   font-size: 0.82rem;
+}
+
+.engine-readiness-failed-records {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid #e7c1ba;
+  background: #fff7f5;
+  padding: 0.9rem;
+}
+
+.engine-readiness-failed-records > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.engine-readiness-failed-records > header span,
+.engine-readiness-failed-records article span {
+  color: #8a3c2e;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.engine-readiness-failed-records h3,
+.engine-readiness-failed-records h4,
+.engine-readiness-failed-records p {
+  margin: 0;
+}
+
+.engine-readiness-failed-records > header b {
+  border-radius: 999px;
+  background: #8a3c2e;
+  color: #fff;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.8rem;
+}
+
+.engine-readiness-failed-records > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+
+.engine-readiness-failed-records article {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid #e7c1ba;
+  background: #fff;
+  padding: 0.85rem;
+}
+
+.engine-readiness-failed-records article p {
+  color: var(--engine-muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .engine-autonomous-readiness__copies article:first-child {
@@ -7000,10 +7104,13 @@ body:has(.engine-shell) {
 
   .engine-operator-sticky .engine-button,
   .engine-operator-summary-grid header .engine-button,
+  .engine-operator-summary-actions,
+  .engine-operator-summary-actions .engine-button,
   .engine-autonomous-readiness__copies .engine-button {
     width: 100%;
   }
 
+  .engine-readiness-failed-records > header,
   .engine-operator-summary-grid header {
     align-items: stretch;
     flex-direction: column;

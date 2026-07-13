@@ -1442,7 +1442,7 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
   ].join("\n"));
 
   assert.match(rewritten, /rather not hear from me again/);
-  assert.match(rewritten, /help get you more calls and quote requests/i);
+  assert.match(rewritten, /help you get more calls and quote requests/i);
   assert.match(rewritten, /Want me to send it over\?/);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
@@ -1524,7 +1524,7 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     assert.equal(summary.updated, 2);
     assert.equal(summary.oldUnsentPackagesNeedingRegeneration, 2);
     assert.equal(regenerated?.outreachCopyVersion, currentOutreachCopyVersion);
-    assert.match(regenerated?.emailBody ?? "", /help get you more calls and quote requests/i);
+    assert.match(regenerated?.emailBody ?? "", /help you get more calls and quote requests/i);
     assert.doesNotMatch(regenerated?.emailBody ?? "", /One missed opportunity|https:\/\/webworkshop\.dev\/p\//i);
     assert.equal(regeneratedMissingPreview?.outreachCopyVersion, currentOutreachCopyVersion);
     assert.match(regeneratedMissingPreview?.loomTalkingPoints ?? "", /Preview missing - generate\/review preview before sending yes-reply/);

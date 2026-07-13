@@ -441,8 +441,8 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick preview showing how the page could look cleaner and help get you more calls and quote requests/i);
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /help get you more calls and quote requests/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /help you get more calls and quote requests/i);
   assert.match(formPackage.prospect.outreach?.concise ?? "", /Want me to send it over\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.match(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
@@ -458,7 +458,7 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
   assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(socialPackage.prospect.outreach?.concise ?? "", /built to look cleaner and help get you more calls and quote requests|made a quick website preview/i);
+  assert.match(socialPackage.prospect.outreach?.concise ?? "", /help you get more calls and quote requests|made a quick website preview/i);
   assert.match(socialPackage.prospect.outreach?.concise ?? "", /Want to see it\?/);
   assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//);
   assert.match(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));

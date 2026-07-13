@@ -61,6 +61,7 @@ type ProspectDetailProps = {
   onCreateReviewPackage: () => Promise<void>;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
+  onClose?: () => void;
   note: string;
   setNote: (value: string) => void;
   addNote: (event: FormEvent) => void;
@@ -108,6 +109,7 @@ export function ProspectDetail({
   onCreateReviewPackage,
   onPreview,
   onStatus,
+  onClose,
   note,
   setNote,
   addNote,
@@ -127,6 +129,7 @@ export function ProspectDetail({
           </div>
         </div>
         <ScoreRing value={prospect.priorityScore} />
+        {onClose ? <button className="engine-detail__close" onClick={onClose} type="button">Close record</button> : null}
       </header>
       <div className="engine-detail__meta">
         {prospect.website

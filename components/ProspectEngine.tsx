@@ -9,7 +9,7 @@ import { OperatorTestCenterWorkspace } from "@/components/engine/OperatorTestCen
 import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type ProviderSmokeTestPayload, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
-import { buildManualCallsQueue, callQueueResolutionState, callQueueSummaryLabels, pendingManualCallsCount, type ManualCallQueueItem } from "@/lib/calls-queue";
+import { applyManualCallSuppression, buildManualCallsQueue, callQueueResolutionState, callQueueSummaryLabels, pendingManualCallsCount, type ManualCallQueueItem } from "@/lib/calls-queue";
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import {
   buildProspectFunnel,
@@ -148,11 +148,28 @@ export function ProspectEngine() {
       if (detail?.tab === "top-prospects") setWorkspaceTab("Top Prospects");
       if (detail?.tab === "operator-test-center") setWorkspaceTab("Operator Test Center");
     }
+    function openEngineRecord(event: Event) {
+      const detail = (event as CustomEvent<{ tab?: string; prospectId?: string; detailTab?: DetailTab }>).detail;
+      if (detail?.tab === "top-prospects") setWorkspaceTab("Top Prospects");
+      if (detail?.tab === "prospects") setWorkspaceTab("Prospects");
+      if (detail?.prospectId) {
+        setTrade("All");
+        setStatus("All");
+        setContactFilter("all");
+        setFunnelFilter("all");
+        setQuery("");
+        setSelectedId(detail.prospectId);
+      }
+      if (detail?.detailTab) setDetailTab(detail.detailTab);
+    }
     window.addEventListener("webworkshop:open-engine-tab", openEngineTab);
-    return () => window.removeEventListener("webworkshop:open-engine-tab", openEngineTab);
+    window.addEventListener("webworkshop:open-engine-record", openEngineRecord);
+    return () => {
+      window.removeEventListener("webworkshop:open-engine-tab", openEngineTab);
+      window.removeEventListener("webworkshop:open-engine-record", openEngineRecord);
+    };
   }, []);
 
-  const selected = prospects.find((prospect) => prospect.id === selectedId) ?? prospects[0];
   const prospectStateBlocked = prospects.length === 0 && (syncState === "loading" || syncState === "error");
   const filtered = useMemo(
     () =>
@@ -171,6 +188,14 @@ export function ProspectEngine() {
   const prospectFunnel = useMemo(() => buildProspectFunnel(prospects), [prospects]);
   const callsQueue = useMemo(() => buildManualCallsQueue(prospects), [prospects]);
   const pendingCalls = useMemo(() => pendingManualCallsCount(prospects), [prospects]);
+  const selected = filtered.find((prospect) => prospect.id === selectedId) ?? null;
+  const activeFilterLabels = [
+    query ? `Search: ${query}` : "",
+    trade !== "All" ? `Trade: ${displayTradeCategory(trade)}` : "",
+    status !== "All" ? `Status: ${status}` : "",
+    contactFilter !== "all" ? `Contact: ${contactFilter.replaceAll("_", " ")}` : "",
+    funnelFilter !== "all" ? `${prospectFunnelLabels[funnelFilter]}` : "",
+  ].filter(Boolean);
 
   const metrics = useMemo(
     () => ({
@@ -190,6 +215,30 @@ export function ProspectEngine() {
     setQuery("");
     setWorkspaceTab("Prospects");
   }
+
+  function openAllProspects() {
+    setFunnelFilter("all");
+    setTrade("All");
+    setStatus("All");
+    setContactFilter("all");
+    setQuery("");
+    setWorkspaceTab("Prospects");
+  }
+
+  function clearAllProspectFilters() {
+    setTrade("All");
+    setStatus("All");
+    setContactFilter("all");
+    setFunnelFilter("all");
+    setQuery("");
+  }
+
+  useEffect(() => {
+    if (workspaceTab !== "Prospects") return;
+    if (!selectedId) return;
+    if (filtered.some((prospect) => prospect.id === selectedId)) return;
+    setSelectedId("");
+  }, [filtered, selectedId, workspaceTab]);
 
   function applyCommandNavigation(navigation: {
     tab?: WorkspaceTab;
@@ -526,6 +575,9 @@ export function ProspectEngine() {
             </section>
             <ProspectFunnelCard
               funnel={prospectFunnel}
+              pendingCalls={pendingCalls}
+              onOpenAll={openAllProspects}
+              onOpenCalls={() => setWorkspaceTab("Calls")}
               onOpenFilter={openFunnelFilter}
               onToggleDiagnostics={() => setShowFunnelDiagnostics((current) => !current)}
               showDiagnostics={showFunnelDiagnostics}
@@ -565,14 +617,19 @@ export function ProspectEngine() {
               </select>
               <select aria-label="Sort prospects" onChange={(event) => setSort(event.target.value as ProspectSort)} value={sort}>{prospectSortOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
               <span>{filtered.length} matching prospects</span>
-              {funnelFilter !== "all" ? <button className="engine-button" onClick={() => setFunnelFilter("all")} type="button">Clear funnel filter</button> : null}
+              {activeFilterLabels.length ? (
+                <div className="engine-filter-summary" aria-label="Active prospect filters">
+                  {activeFilterLabels.map((label) => <span key={label}>{label}</span>)}
+                </div>
+              ) : null}
+              {activeFilterLabels.length ? <button className="engine-button" onClick={clearAllProspectFilters} type="button">Clear filters</button> : null}
             </div>
             <div className="engine-workspace">
               <section className="engine-panel engine-list-panel">
                 <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} /> : <EmptyState title="Select a prospect" body="Choose a lead to review its analysis and outreach work." />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
             </div>
           </div>
         )}
@@ -657,6 +714,10 @@ function CallsWorkspace({
     }));
   }
 
+  function markDoNotContact(item: ManualCallQueueItem) {
+    onUpdateProspect(item.prospect.id, applyManualCallSuppression);
+  }
+
   const pending = calls.filter((item) => item.pending);
   return (
     <div className="engine-content engine-calls-workspace">
@@ -693,6 +754,8 @@ function CallsWorkspace({
                   {labels.map((label) => <span key={label}>{label}</span>)}
                 </div>
                 <dl className="engine-call-card__facts">
+                  <div><dt>Call value tier</dt><dd>{item.valueTier}</dd></div>
+                  <div><dt>Call state</dt><dd>{resolutionState}</dd></div>
                   <div><dt>Phone</dt><dd>{prospect.phone}</dd></div>
                   <div><dt>Reviews</dt><dd>{prospect.reviewCount || "Not recorded"}</dd></div>
                   <div><dt>Rating</dt><dd>{prospect.rating || "Not recorded"}</dd></div>
@@ -709,8 +772,16 @@ function CallsWorkspace({
                   <ul>{item.noWrittenPathReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
                 </section>
                 <section>
+                  <h4>Next manual action</h4>
+                  <p>{item.nextCallAction}</p>
+                </section>
+                <section>
                   <h4>Recommended pitch angle</h4>
                   <p>{item.recommendedPitchAngle}</p>
+                </section>
+                <section>
+                  <h4>Recent call activity</h4>
+                  <ul>{[...prospect.notes, ...prospect.activities.map((entry) => entry.label)].slice(0, 4).map((entry) => <li key={entry}>{entry}</li>)}</ul>
                 </section>
                 <section>
                   <h4>Call script</h4>
@@ -727,7 +798,7 @@ function CallsWorkspace({
                   <button className="engine-button" onClick={() => recordCallAction(item, "Call Back requested or due.")} type="button">Mark Call Back</button>
                   <button className="engine-button" onClick={() => recordCallAction(item, "No Answer. Follow-up call due.")} type="button">Mark No Answer</button>
                   <button className="engine-button" onClick={() => recordCallAction(item, "Marked not interested after manual call.", "Closed Lost")} type="button">Mark Not Interested</button>
-                  <button className="engine-button" onClick={() => recordCallAction(item, "Marked Do Not Contact. Manual suppression required.", "Closed Lost")} type="button">Mark Do Not Contact</button>
+                  <button className="engine-button" onClick={() => markDoNotContact(item)} type="button">Mark Do Not Contact</button>
                 </footer>
               </article>
             );
@@ -740,17 +811,23 @@ function CallsWorkspace({
 
 function ProspectFunnelCard({
   funnel,
+  pendingCalls,
+  onOpenAll,
+  onOpenCalls,
   onOpenFilter,
   onToggleDiagnostics,
   showDiagnostics,
 }: {
   funnel: ReturnType<typeof buildProspectFunnel>;
+  pendingCalls: number;
+  onOpenAll: () => void;
+  onOpenCalls: () => void;
   onOpenFilter: (filter: ProspectFunnelFilterKey) => void;
   onToggleDiagnostics: () => void;
   showDiagnostics: boolean;
 }) {
-  const CountButton = ({ count, detail, filter, label }: { count: number; detail?: string; filter: ProspectFunnelFilterKey | "all"; label: string }) => (
-    <button className="engine-funnel-count" onClick={() => filter === "all" ? onOpenFilter("ready_email") : onOpenFilter(filter)} type="button">
+  const CountButton = ({ count, detail, filter, label, onClick }: { count: number; detail?: string; filter?: ProspectFunnelFilterKey; label: string; onClick?: () => void }) => (
+    <button className="engine-funnel-count" onClick={onClick || (() => filter ? onOpenFilter(filter) : onOpenAll())} type="button">
       <span>{label}</span>
       <strong>{count}</strong>
       {detail ? <small>{detail}</small> : null}
@@ -807,19 +884,20 @@ function ProspectFunnelCard({
       <div className="engine-current-inventory" aria-label="Current Inventory">
         <h3>Current Inventory</h3>
         {[
-          ["Total prospects", inventory.totalProspects],
-          ["Qualified prospects", inventory.qualifiedProspects],
-          ["Qualified unsent", inventory.qualifiedUnsent],
-          ["Email ready", inventory.emailReady],
-          ["Facebook ready", inventory.facebookReady],
-          ["Instagram ready", inventory.instagramReady],
-          ["Contact form ready", inventory.contactFormReady],
-          ["Needs manual research", inventory.needsManualResearch],
-          ["Already contacted", inventory.alreadyContacted],
-          ["Blocked", inventory.blocked],
-          ["Suppressed", inventory.suppressed],
-          ["High priority", inventory.highPriority],
-        ].map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}
+          { label: "Total prospects", value: inventory.totalProspects, onClick: onOpenAll },
+          { label: "Qualified prospects", value: inventory.qualifiedProspects, filter: "qualified" as const },
+          { label: "Qualified unsent", value: inventory.qualifiedUnsent, filter: "qualified_unsent" as const },
+          { label: "Email ready", value: inventory.emailReady, filter: "ready_email" as const },
+          { label: "Facebook ready", value: inventory.facebookReady, filter: "ready_facebook" as const },
+          { label: "Instagram ready", value: inventory.instagramReady, filter: "ready_instagram" as const },
+          { label: "Contact form ready", value: inventory.contactFormReady, filter: "ready_contact_form" as const },
+          { label: "Calls queue", value: pendingCalls, onClick: onOpenCalls },
+          { label: "Needs manual research", value: inventory.needsManualResearch, filter: "needs_manual_research" as const },
+          { label: "Already contacted", value: inventory.alreadyContacted, filter: "already_contacted" as const },
+          { label: "Bad fit / blocked", value: funnel.exclusiveBuckets.bad_fit, filter: "bad_fit" as const },
+          { label: "Suppressed", value: inventory.suppressed, filter: "suppressed_do_not_contact" as const },
+          { label: "High priority", value: inventory.highPriority, filter: "high_priority" as const },
+        ].map((item) => <CountButton count={item.value} detail="Open matching records" filter={"filter" in item ? item.filter : undefined} key={item.label} label={item.label} onClick={"onClick" in item ? item.onClick : undefined} />)}
       </div>
       <div className="engine-funnel-exclusions" aria-label="Overlapping prospect attributes">
         <div className="engine-funnel-section-head">
