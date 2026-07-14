@@ -1727,6 +1727,60 @@ body:has(.engine-shell) {
   line-height: 1.45;
 }
 
+.engine-preview-art-direction {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid #cedbd9;
+  background: #f7fbfb;
+}
+
+.engine-preview-art-direction > div:first-child > span {
+  color: var(--engine-accent-dark);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.engine-preview-art-direction h3 {
+  margin: 0.35rem 0;
+}
+
+.engine-preview-art-direction dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.engine-preview-art-direction dl div {
+  border-top: 2px solid var(--engine-line);
+  padding-top: 0.6rem;
+}
+
+.engine-preview-art-direction dt {
+  color: var(--engine-muted);
+  font-size: 0.64rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.engine-preview-art-direction dd {
+  margin: 0.2rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.engine-preview-art-direction ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--engine-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .engine-note {
   display: grid;
   gap: 0.5rem;
@@ -6124,6 +6178,7 @@ body:has(.engine-shell) {
 .prospect-preview-site {
   background:
     radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--prospect-accent) 10%, transparent), transparent 28rem),
+    linear-gradient(135deg, color-mix(in srgb, var(--prospect-primary) 6%, transparent), transparent 34rem),
     var(--prospect-surface);
 }
 
@@ -6171,6 +6226,15 @@ body:has(.engine-shell) {
   background: transparent;
 }
 
+.prospect-preview-site[data-hero-treatment="proof-forward"] .prospect-preview-hero,
+.prospect-preview-site[data-hero-treatment="service-command"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 1.05fr) minmax(22rem, 0.95fr);
+}
+
+.prospect-preview-site[data-hero-treatment="photo-led-overlap"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 0.82fr) minmax(24rem, 1.18fr);
+}
+
 .prospect-preview-hero__content h1 {
   max-width: 13ch;
   font-size: clamp(2.8rem, 5vw, 4.7rem);
@@ -6200,11 +6264,60 @@ body:has(.engine-shell) {
   min-width: 0;
 }
 
+.prospect-preview-site[data-hero-treatment="photo-led-overlap"] .prospect-preview-hero__visual {
+  transform: translateY(1.25rem);
+}
+
+.prospect-preview-site[data-hero-treatment="proof-forward"] .prospect-preview-hero__visual {
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--prospect-primary) 12%, transparent), transparent),
+    var(--prospect-soft);
+  padding: clamp(0.7rem, 1.5vw, 1rem);
+}
+
+.prospect-preview-site[data-hero-treatment="proof-forward"] .prospect-preview-image--hero {
+  border-radius: 16px;
+}
+
+.prospect-preview-hero__proof-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: clamp(1.4rem, 3vw, 2.2rem);
+}
+
+.prospect-preview-hero__proof-strip span {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--prospect-line) 78%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--prospect-soft) 78%, white);
+  padding: 0.9rem;
+}
+
+.prospect-preview-hero__proof-strip b {
+  overflow: hidden;
+  color: var(--prospect-ink);
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prospect-preview-hero__proof-strip i {
+  color: color-mix(in srgb, var(--prospect-ink) 68%, var(--prospect-surface));
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
 .prospect-preview-visual-caption {
   display: grid;
   gap: 0.35rem;
   border-radius: 14px;
-  background: var(--prospect-soft);
+  border: 1px solid color-mix(in srgb, var(--prospect-line) 72%, transparent);
+  background: color-mix(in srgb, var(--prospect-soft) 86%, white);
   padding: 1rem;
 }
 
@@ -6375,9 +6488,35 @@ body:has(.engine-shell) {
   padding: 0;
 }
 
-.prospect-preview-service-list article:first-child {
-  grid-column: auto;
-  grid-template-columns: 1fr;
+.prospect-preview-site[data-card-style="layered-photo-cards"] .prospect-preview-service-list article:first-child,
+.prospect-preview-site[data-card-style="material-sample-cards"] .prospect-preview-service-list article:first-child {
+  grid-column: span 2;
+}
+
+.prospect-preview-site[data-card-style="layered-photo-cards"] .prospect-preview-service-list article:first-child {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.78fr);
+}
+
+.prospect-preview-site[data-card-style="layered-photo-cards"] .prospect-preview-service-list article:first-child .prospect-preview-image--service {
+  min-height: 100%;
+  aspect-ratio: auto;
+}
+
+.prospect-preview-site[data-card-style="technical-service-panels"] .prospect-preview-service-list article {
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--prospect-primary) 5%, transparent), transparent),
+    var(--prospect-surface);
+}
+
+.prospect-preview-site[data-card-style="material-sample-cards"] .prospect-preview-service-list article {
+  border: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--prospect-line) 76%, transparent);
+}
+
+.prospect-preview-site[data-card-style="clean-proof-tiles"] .prospect-preview-service-list article {
+  border-radius: 0;
+  border-inline: 0;
 }
 
 .prospect-preview-service-list article > div {
@@ -6452,6 +6591,16 @@ body:has(.engine-shell) {
   border-radius: 14px;
   background: var(--prospect-surface);
   padding-inline: clamp(1rem, 2vw, 1.5rem);
+}
+
+.prospect-preview-site[data-rhythm="bold-asymmetric"] .prospect-preview-proof-layout {
+  grid-template-columns: minmax(0, 1.22fr) minmax(0, 0.78fr);
+}
+
+.prospect-preview-site[data-rhythm="proof-led"] .prospect-preview-proof-notes {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--prospect-accent) 12%, transparent), transparent 42%),
+    var(--prospect-surface);
 }
 
 .prospect-preview-proof-notes article {
@@ -6912,7 +7061,8 @@ body:has(.engine-shell) {
     grid-template-columns: 1fr;
   }
 
-  .engine-preview-quality dl {
+  .engine-preview-quality dl,
+  .engine-preview-art-direction dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

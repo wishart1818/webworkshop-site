@@ -397,6 +397,7 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
   const preview = prospect.preview!;
   const styleProfile = previewStyleProfile(prospect, preview);
   const quality = preview.qualityScore;
+  const artDirection = preview.artDirection;
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -433,8 +434,25 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
           <div><dt>Typography</dt><dd>{styleProfile.typographyStyle}</dd></div>
           <div><dt>Brand signal</dt><dd>{styleProfile.brandSource}</dd></div>
           <div><dt>Primary CTA</dt><dd>{styleProfile.ctaLabel}</dd></div>
+          {artDirection ? <div><dt>Art direction</dt><dd>{artDirection.name}</dd></div> : null}
+          {artDirection ? <div><dt>Hero treatment</dt><dd>{artDirection.heroTreatment.replaceAll("-", " ")}</dd></div> : null}
         </dl>
       </section>
+      {artDirection && (
+        <section className="engine-preview-art-direction">
+          <div>
+            <span>Preview art direction</span>
+            <h3>{artDirection.visualVoice}</h3>
+            <p>{artDirection.sectionFlow}</p>
+          </div>
+          <dl>
+            <div><dt>Image treatment</dt><dd>{artDirection.imageTreatment}</dd></div>
+            <div><dt>Card style</dt><dd>{artDirection.cardStyle.replaceAll("-", " ")}</dd></div>
+            <div><dt>CTA treatment</dt><dd>{artDirection.ctaTreatment}</dd></div>
+          </dl>
+          <ul>{artDirection.reviewNotes.map((note) => <li key={note}>{note}</li>)}</ul>
+        </section>
+      )}
       {quality && (
         <section className="engine-preview-quality">
           <div>

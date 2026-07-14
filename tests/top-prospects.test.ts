@@ -886,6 +886,9 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.match(prompt, /Palette: primary #[0-9a-f]{6}/i);
   assert.match(prompt, /Primary CTA wording:/);
   assert.match(prompt, /Why this style was selected:/);
+  assert.match(prompt, /Art direction:/);
+  assert.match(prompt, /Imagery and section flow:/);
+  assert.match(prompt, /Hero treatment:/);
   assert.match(prompt, /Do not reuse WebWorkshop branding/i);
   assert.match(prompt, /no invented claims/i);
 });

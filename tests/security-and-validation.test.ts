@@ -35,6 +35,9 @@ test("prospect validation preserves safe preview style metadata", () => {
   if (result.ok) {
     assert.equal(result.value.preview?.styleProfile?.primaryColor, prospect.preview.styleProfile?.primaryColor);
     assert.equal(result.value.preview?.styleProfile?.ctaLabel, prospect.preview.styleProfile?.ctaLabel);
+    assert.equal(result.value.preview?.artDirection?.heroTreatment, prospect.preview.artDirection?.heroTreatment);
+    assert.equal(result.value.preview?.artDirection?.cardStyle, prospect.preview.artDirection?.cardStyle);
+    assert.match(result.value.preview?.artDirection?.imageTreatment ?? "", /hero photo/i);
     assert.equal(result.value.preview?.qualityScore?.overall, prospect.preview.qualityScore?.overall);
     assert.equal(result.value.preview?.qualityScore?.safetyTruthfulness, prospect.preview.qualityScore?.safetyTruthfulness);
   }

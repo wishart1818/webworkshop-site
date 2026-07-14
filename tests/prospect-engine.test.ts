@@ -7,6 +7,7 @@ import {
   generatePreview,
   generateProspectStyleProfile,
   prospectPresenceLabels,
+  scorePreviewQuality,
   seedProspects,
   sortProspects,
   withAnalysis,
@@ -186,14 +187,36 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.ok(preview.servicePageStructure.length >= 5);
   assert.match(preview.visualStyleDirection, /outdoor spaces/i);
   assert.ok(preview.styleProfile);
+  assert.ok(preview.artDirection);
   assert.ok(preview.qualityScore);
   assert.ok(preview.qualityScore.overall >= 85);
   assert.ok(preview.qualityScore.visualPolish >= 85);
   assert.ok(preview.qualityScore.safetyTruthfulness >= 90);
+  assert.match(preview.artDirection?.imageTreatment ?? "", /large landscaping hero photo|distinct service/i);
+  assert.match(preview.artDirection?.sectionFlow ?? "", /Dublin|proof layout|service-area CTA/i);
+  assert.match(preview.qualityScore.notes.join(" "), /prospect-specific style rationale|stronger CTA treatment/i);
   assert.ok(preview.heroHeadline);
   assert.equal(preview.styleProfile?.ctaLabel, "Get a free quote");
-  assert.match(preview.homepageStructure.join(" "), /sample service visual/i);
+  assert.match(preview.homepageStructure.join(" "), /strong trade photo|distinct service photos/i);
   assert.match(preview.portfolioDirection, /sample layout/i);
+});
+
+test("preview quality flags generic imagery and missing art direction", () => {
+  const prospect = structuredClone(seedProspects[5]);
+  const strong = generatePreview(prospect);
+  const weak = {
+    ...strong,
+    artDirection: undefined,
+    visualStyleDirection: "Use repeated placeholder art and a generic filler layout.",
+    homepageStructure: ["Generic service cards", "Generic service cards", "Same image repeated"],
+    servicePageStructure: ["Generic services"],
+  };
+
+  const score = scorePreviewQuality(prospect, weak);
+
+  assert.ok(score.overall < (strong.qualityScore?.overall ?? 100));
+  assert.ok(score.visualPolish < 85);
+  assert.match(score.notes.join(" "), /imagery sounds generic|section rhythm needs more visual variety|art direction metadata is missing/i);
 });
 
 test("preview generation normalizes city and state capitalization", () => {

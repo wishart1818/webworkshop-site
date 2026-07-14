@@ -305,6 +305,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const renderProspect = canonicalTrade === prospect.trade ? prospect : { ...prospect, trade: canonicalTrade };
   const preview = savedPreview ?? generatePreview(renderProspect);
   const styleProfile = previewStyleProfile(renderProspect, preview);
+  const artDirection = preview.artDirection;
   const displayCity = titleCaseLocation(prospect.city);
   const displayState = displayStateCode(prospect.state);
   const escapedTrade = prospect.trade.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -342,7 +343,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
       <div
         className="prospect-preview-site"
+        data-card-style={artDirection?.cardStyle ?? "layered-photo-cards"}
+        data-hero-treatment={artDirection?.heroTreatment ?? "clean-editorial"}
         data-layout={styleProfile.layoutStyle}
+        data-rhythm={artDirection?.layoutRhythm ?? "calm-premium"}
         data-tone={styleProfile.tone}
         style={style}
       >
@@ -367,13 +371,21 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
                 ? <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>
                 : <a className="prospect-preview-text-link" href="#services">Explore services</a>}
             </div>
+            <div className="prospect-preview-hero__proof-strip" aria-label="Concept priorities">
+              {(preview.serviceHighlights ?? pageCopy.services.map((item) => item.title)).slice(0, 3).map((item, index) => (
+                <span key={item}>
+                  <b>{item}</b>
+                  <i>{index === 0 ? "Primary service" : index === 1 ? "Clear quote path" : `${displayCity} focus`}</i>
+                </span>
+              ))}
+            </div>
           </div>
           <aside className="prospect-preview-hero__visual">
             <TradePreviewImage {...visual.hero} fallbackLabel={`${displayTrade} service visual`} slot="hero" />
             <div className="prospect-preview-visual-caption">
               <small>Representative image direction</small>
-              <strong>{visual.texture}</strong>
-              <span>Representative trade image. Replace with verified {prospect.businessName} photos before launch.</span>
+              <strong>{artDirection?.visualVoice ?? visual.texture}</strong>
+              <span>Representative trade image. {artDirection?.imageTreatment ?? visual.texture} Replace with verified {prospect.businessName} photos before launch.</span>
             </div>
           </aside>
         </section>
@@ -427,10 +439,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-proof-layout">
             <TradePreviewImage {...visual.proof} fallbackLabel={`${displayTrade} project-proof visual`} slot="proof" />
             <div className="prospect-preview-proof-notes">
-              {["Suggested project context", "Before-and-after layout", "Verified scope and outcome"].map((item) => (
+              {["Suggested project context", "Before-and-after layout", "Verified scope and outcome"].map((item, index) => (
                 <article key={item}>
                   <b>{item}</b>
-                  <span>Sample layout content. Add only verified photos, locations, scope, and outcomes supplied by the business.</span>
+                  <span>{index === 0 && artDirection ? artDirection.sectionFlow : "Sample layout content. Add only verified photos, locations, scope, and outcomes supplied by the business."}</span>
                 </article>
               ))}
             </div>

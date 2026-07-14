@@ -195,6 +195,9 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Trust strategy/);
   assert.match(html, /Lead capture/);
   assert.match(html, /Prospect-specific style profile/);
+  assert.match(html, /Preview art direction/);
+  assert.match(html, /Image treatment/);
+  assert.match(html, /CTA treatment/);
   assert.match(html, /Preview quality check/);
   assert.match(html, /Safety\/truthfulness/);
   assert.match(html, /Visual polish/);
@@ -218,6 +221,9 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /--prospect-primary:#174b78/);
   assert.match(html, /--prospect-accent:#2c94c6/);
   assert.match(html, /Request an estimate/);
+  assert.match(html, /data-hero-treatment="(?:proof-forward|clean-editorial)"/);
+  assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
+  assert.match(html, /data-rhythm="(?:proof-led|calm-premium)"/);
   assert.match(html, /Representative image direction/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-hero\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-service\.jpg/);
@@ -259,6 +265,9 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-detail\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-support\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/hvac-proof\.jpg/);
+  assert.match(html, /data-hero-treatment="service-command"/);
+  assert.match(html, /data-card-style="technical-service-panels"/);
+  assert.match(html, /data-rhythm="service-dense"/);
   assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/hvac-hero\.svg"/);
   assert.match(html, /outdoor AC condenser beside a residential home/);
   assert.match(html, /furnace or air handler equipment and technician tools/);

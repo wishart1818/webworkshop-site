@@ -20,6 +20,7 @@ import {
   type Analysis,
   type OutreachDraft,
   type PreviewConcept,
+  type PreviewArtDirection,
   type PreviewQualityScore,
   type PreviewStyleProfile,
   type Prospect,
@@ -153,6 +154,34 @@ function styleProfileValue(value: unknown): PreviewStyleProfile | undefined {
   };
 }
 
+function artDirectionValue(value: unknown): PreviewArtDirection | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview art direction must be a valid object.");
+  const heroTreatment = text(value.heroTreatment, "Preview hero treatment", 40) as PreviewArtDirection["heroTreatment"];
+  if (!["photo-led-overlap", "service-command", "proof-forward", "clean-editorial"].includes(heroTreatment)) {
+    throw new Error("Preview hero treatment is not supported.");
+  }
+  const layoutRhythm = text(value.layoutRhythm, "Preview layout rhythm", 40) as PreviewArtDirection["layoutRhythm"];
+  if (!["bold-asymmetric", "service-dense", "proof-led", "calm-premium"].includes(layoutRhythm)) {
+    throw new Error("Preview layout rhythm is not supported.");
+  }
+  const cardStyle = text(value.cardStyle, "Preview card style", 40) as PreviewArtDirection["cardStyle"];
+  if (!["layered-photo-cards", "technical-service-panels", "material-sample-cards", "clean-proof-tiles"].includes(cardStyle)) {
+    throw new Error("Preview card style is not supported.");
+  }
+  return {
+    name: text(value.name, "Preview art direction name", 160),
+    visualVoice: text(value.visualVoice, "Preview visual voice", 500),
+    heroTreatment,
+    layoutRhythm,
+    cardStyle,
+    imageTreatment: text(value.imageTreatment, "Preview image treatment", 1000),
+    sectionFlow: text(value.sectionFlow, "Preview section flow", 1000),
+    ctaTreatment: text(value.ctaTreatment, "Preview CTA treatment", 1000),
+    reviewNotes: value.reviewNotes === undefined ? [] : stringArray(value.reviewNotes, "Preview art direction notes", 12, 500),
+  };
+}
+
 function scoreValue(input: unknown, field: string) {
   const value = Number(input);
   if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`${field} must be a score from 0 to 100.`);
@@ -180,6 +209,7 @@ function previewValue(value: unknown): PreviewConcept | undefined {
   return {
     direction: text(value.direction, "Preview direction", 5000),
     visualStyleDirection: text(value.visualStyleDirection ?? "Practical contractor visual direction.", "Visual style direction", 5000),
+    artDirection: artDirectionValue(value.artDirection),
     hero: text(value.hero, "Preview hero", 5000),
     heroHeadline: value.heroHeadline === undefined ? undefined : text(value.heroHeadline, "Preview hero headline", 500),
     heroSupporting: value.heroSupporting === undefined ? undefined : text(value.heroSupporting, "Preview hero supporting copy", 2000),
