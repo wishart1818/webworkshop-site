@@ -1888,6 +1888,7 @@ body:has(.engine-shell) {
 
 .engine-detail__meta a,
 .engine-detail__meta > span,
+.engine-detail__meta button,
 .engine-detail__meta select {
   min-height: 2.25rem;
   border: 1px solid var(--engine-line);
@@ -1896,6 +1897,16 @@ body:has(.engine-shell) {
   padding: 0.48rem 0.55rem;
   font-size: 0.7rem;
   font-weight: 750;
+}
+
+.engine-detail__meta button {
+  cursor: pointer;
+}
+
+.engine-detail__meta button:hover,
+.engine-detail__meta button:focus-visible {
+  border-color: #9ed5c8;
+  background: #eff8f5;
 }
 
 .engine-detail__meta > span {
@@ -1919,6 +1930,24 @@ body:has(.engine-shell) {
   border-color: #e4d497;
   background: #fbf6e5;
   color: #725b08;
+}
+
+.engine-preview-action-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-top: 1px solid #e2c17b;
+  background: #fff8e7;
+  color: #725b08;
+  padding: 0.75rem 1.05rem;
+}
+
+.engine-preview-action-alert p {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.45;
 }
 
 .engine-prospect-labels {
@@ -7932,9 +7961,16 @@ body:has(.engine-shell) {
 
   .engine-detail__meta a,
   .engine-detail__meta > span,
+  .engine-detail__meta button,
   .engine-detail__meta select {
     width: 100%;
     flex: 1 1 100%;
+  }
+
+  .engine-preview-action-alert {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 0.7rem 0.75rem;
   }
 
   .engine-prospect-labels {

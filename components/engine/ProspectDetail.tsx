@@ -86,6 +86,19 @@ function safeWebsiteUrl(value: string) {
   }
 }
 
+export function publicPreviewUrlForProspect(prospect: Pick<Prospect, "outreach">) {
+  const source = [
+    prospect.outreach?.concise,
+    prospect.outreach?.detailed,
+    ...(prospect.outreach?.followUps ?? []),
+  ].filter(Boolean).join("\n");
+  for (const match of source.matchAll(/(?:https?:\/\/[^\s"'<>)]*)?\/p\/([A-Za-z0-9_-]{24,})/g)) {
+    const token = match[1];
+    if (token) return `/p/${token}`;
+  }
+  return "";
+}
+
 function prospectLocationLine(prospect: Pick<Prospect, "trade" | "city" | "state">) {
   return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
 }
@@ -115,8 +128,10 @@ export function ProspectDetail({
   addNote,
   updateSelected,
 }: ProspectDetailProps) {
+  const [previewOpenMessage, setPreviewOpenMessage] = useState("");
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const presenceLabels = prospectPresenceLabels(prospect);
+  const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
   const primaryAction = !prospect.analysis && prospect.websiteStatus === "unknown"
     ? { label: "Analyze website", action: onAnalyze }
     : !prospect.preview
@@ -126,6 +141,16 @@ export function ProspectDetail({
         : !prospect.outreach.approved
           ? { label: "Review draft", action: () => setDetailTab("Outreach") }
           : { label: "Mark reviewed", action: () => onStatus("Reviewed") };
+
+  function openPublicPreview() {
+    if (publicPreviewUrl) {
+      setPreviewOpenMessage("");
+      window.location.assign(publicPreviewUrl);
+      return;
+    }
+    setPreviewOpenMessage("No public preview link is available yet. Create or refresh the Autonomous Review Package to generate the prospect-safe /p/ preview.");
+  }
+
   return (
     <aside className="engine-detail">
       <header className="engine-detail__hero">
@@ -149,6 +174,7 @@ export function ProspectDetail({
         {prospect.phone ? <a href={`tel:${prospect.phone}`}>{prospect.phone}</a> : <span>No public phone</span>}
         {prospect.email ? <a href={`mailto:${prospect.email}`}>{prospect.email}</a> : <span>No public email</span>}
         {prospect.contactFormUrl ? <a href={safeWebsiteUrl(prospect.contactFormUrl)} rel="noreferrer" target="_blank">Open contact form</a> : null}
+        {prospect.preview ? <button className="engine-detail-link-button" onClick={openPublicPreview} type="button">Open preview</button> : null}
         <span className={`engine-website-state engine-website-state--${prospect.websiteStatus}`}>{websiteAvailabilityLabels[prospect.websiteStatus]}</span>
         <select aria-label="Pipeline status" onChange={(event) => onStatus(event.target.value as ProspectStatus)} value={prospect.status}>
           {prospectStatuses.map((item) => <option key={item}>{item}</option>)}
@@ -178,13 +204,20 @@ export function ProspectDetail({
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
         {detailTab === "Details" && <DetailsView prospect={prospect} />}
       </div>
+      {previewOpenMessage ? (
+        <div className="engine-preview-action-alert" role="alert">
+          <p>{previewOpenMessage}</p>
+          <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Create/Refresh Review Package</button>
+        </div>
+      ) : null}
       <div className="engine-mobile-action-bar" aria-label="Mobile prospect actions">
         <button className="engine-button engine-button--primary" onClick={primaryAction.action} type="button">{primaryAction.label}</button>
         <details className="engine-action-menu engine-action-menu--up">
           <summary>More</summary>
           <div>
             <button onClick={() => setDetailTab("Outreach")} type="button">Open outreach</button>
-            <button onClick={() => setDetailTab("Preview")} type="button">Open preview</button>
+            <button onClick={openPublicPreview} type="button">Open preview</button>
+            <button onClick={() => setDetailTab("Preview")} type="button">View internal Preview tab</button>
             <button onClick={() => void onRegenerateOutreach()} type="button">Rewrite outreach</button>
             <button onClick={() => void onCreateReviewPackage()} type="button">Create review package</button>
             <button onClick={() => onStatus("Reviewed")} type="button">Mark reviewed</button>

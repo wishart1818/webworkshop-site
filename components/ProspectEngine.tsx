@@ -6,7 +6,7 @@ import { AutonomousGrowthWorkspace } from "@/components/engine/AutonomousGrowthW
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { CommandActivityWorkspace, OperatorCommandBar } from "@/components/engine/OperatorCommandBar";
 import { OperatorTestCenterWorkspace } from "@/components/engine/OperatorTestCenterWorkspace";
-import { ProspectDetail, type DetailTab } from "@/components/engine/ProspectDetail";
+import { ProspectDetail, publicPreviewUrlForProspect, type DetailTab } from "@/components/engine/ProspectDetail";
 import { SystemWorkspace, type ProviderSmokeTestPayload, type SystemPayload } from "@/components/engine/SystemWorkspace";
 import { TopProspectsWorkspace } from "@/components/engine/TopProspectsWorkspace";
 import { applyManualCallSuppression, buildManualCallsQueue, callQueueResolutionState, callQueueSummaryLabels, pendingManualCallsCount, type ManualCallQueueItem } from "@/lib/calls-queue";
@@ -1310,6 +1310,7 @@ function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospec
       {prospects.map((prospect) => {
         const labels = prospectPresenceLabels(prospect);
         const state = prospect.analysis ? `${prospect.analysis.overallScore}/100 website` : prospect.websiteStatus === "unknown" ? "Not analyzed" : prospect.websiteStatusDetail || "Presence Gap";
+        const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
         return (
           <article className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} role="row">
             <button className="engine-table-main" onClick={() => onSelect(prospect.id)} type="button">
@@ -1321,7 +1322,7 @@ function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospec
             <span><strong>{prospect.priorityScore}</strong></span>
             <span className="engine-row-actions">
               <button className="engine-button engine-button--primary" onClick={() => onSelect(prospect.id)} type="button">Review</button>
-              {prospect.preview ? <a className="engine-button" href={`/engine/previews/${prospect.id}`}>Open Preview</a> : null}
+              {publicPreviewUrl ? <a className="engine-button" href={publicPreviewUrl} rel="noreferrer" target="_blank">Open Preview</a> : null}
               <ActionMenu label="More">
                 <button onClick={() => onSelect(prospect.id)} type="button">Open detail</button>
                 <button onClick={() => onSelect(prospect.id)} type="button">{prospectNextActionLabel(prospect)}</button>

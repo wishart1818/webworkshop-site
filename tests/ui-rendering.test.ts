@@ -9,8 +9,8 @@ import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePrev
 import { SystemWorkspace } from "../components/engine/SystemWorkspace";
 import { RecommendedMarketPresetCard } from "../components/engine/TopProspectsWorkspace";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
-import { ProspectDetail, type DetailTab } from "../components/engine/ProspectDetail";
-import { coreServiceTrades, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
+import { ProspectDetail, publicPreviewUrlForProspect, type DetailTab } from "../components/engine/ProspectDetail";
+import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 import { recommendedMarketPresets } from "../lib/top-prospects";
 
 const coreTradePhotoSlugs: Record<(typeof coreServiceTrades)[number], string> = {
@@ -37,6 +37,8 @@ function renderDetail(prospect: Prospect, detailTab: DetailTab) {
     onAnalyze: () => undefined,
     onPresenceGap: () => undefined,
     onOutreach: () => undefined,
+    onRegenerateOutreach: async () => undefined,
+    onCreateReviewPackage: async () => undefined,
     onPreview: () => undefined,
     onStatus: () => undefined,
     note: "",
@@ -132,6 +134,32 @@ test("phone-only outreach drafts show written-outreach block before approval", (
   assert.match(html, /Needs manual contact research/);
   assert.match(html, /Approve personal draft/);
   assert.match(html, /disabled=""/);
+});
+
+test("Prospect Detail open preview uses public preview links instead of internal Preview tabs", () => {
+  const token = "abcdefghijklmnopqrstuvwxyzABCDEF";
+  const base = withPreview(withAnalysis(structuredClone(seedProspects[0])));
+  const publicProspect = {
+    ...base,
+    outreach: generateOutreach(base, `https://webworkshop.dev/p/${token}`),
+  };
+  const protectedProspect = {
+    ...base,
+    outreach: generateOutreach(base, `https://webworkshop.dev/engine/previews/${base.id}`),
+  };
+  const html = renderDetail(publicProspect, "Preview");
+  const detailSource = readFileSync(new URL("../components/engine/ProspectDetail.tsx", import.meta.url), "utf8");
+  const engineSource = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
+
+  assert.equal(publicPreviewUrlForProspect(publicProspect), `/p/${token}`);
+  assert.equal(publicPreviewUrlForProspect(protectedProspect), "");
+  assert.match(html, /Open preview/);
+  assert.match(html, /View internal Preview tab/);
+  assert.match(detailSource, /window\.location\.assign\(publicPreviewUrl\)/);
+  assert.match(detailSource, /No public preview link is available yet/);
+  assert.match(detailSource, /Create\/Refresh Review Package/);
+  assert.match(engineSource, /href=\{publicPreviewUrl\}/);
+  assert.doesNotMatch(engineSource, /href=\{`\/engine\/previews\/\$\{prospect\.id\}`\}/);
 });
 
 test("Prospect Engine overview renders clickable funnel diagnostics", () => {
