@@ -1,49 +1,51 @@
 "use client";
 
-import Image from "next/image";
-import React from "react";
-import { useState } from "react";
+import React, { useState } from "react";
+import type { PreviewImageSource, PreviewImageSlot } from "@/lib/preview-image-resolver";
+
+export type PreviewImageRenderSlot = PreviewImageSlot | "proof";
 
 type TradePreviewImageProps = {
   alt: string;
-  fallbackLabel: string;
-  fallbackSrc: string;
-  slot: "hero" | "service" | "proof";
+  section?: string;
+  slot: PreviewImageRenderSlot;
   src: string;
+  source: PreviewImageSource;
 };
 
-type ImageState = "photo" | "fallback" | "unavailable";
+type ImageState = "photo" | "unavailable";
 
-export function TradePreviewImage({ alt, fallbackLabel, fallbackSrc, slot, src }: TradePreviewImageProps) {
+export function TradePreviewImage({ alt, section, slot, src, source }: TradePreviewImageProps) {
   const [imageState, setImageState] = useState<ImageState>("photo");
-  const activeSrc = imageState === "fallback" ? fallbackSrc : src;
 
   const handleImageError = () => {
-    setImageState((current) => current === "photo" ? "fallback" : "unavailable");
+    setImageState("unavailable");
   };
 
   return (
     <figure
       className={`prospect-preview-image prospect-preview-image--${slot}`}
-      data-fallback-src={fallbackSrc}
+      data-preview-image-source={source}
       data-preview-image-slot={slot}
       data-preview-image-state={imageState}
     >
       {imageState === "unavailable" ? (
-        <div className="prospect-preview-image__fallback" role="img" aria-label={`${fallbackLabel}. Service visual.`}>
-          <strong>{fallbackLabel}</strong>
-          <span>Service visual</span>
+        <div className="prospect-preview-image__fallback" role="img" aria-label={`${alt}. Image unavailable.`}>
+          <strong>{section || "Service photo"}</strong>
+          <span>Photo unavailable</span>
         </div>
       ) : (
-        <Image
-          alt={imageState === "fallback" ? `${alt}. Trade-specific illustration shown if the photo is unavailable.` : alt}
-          src={activeSrc}
-          fill
-          priority={slot === "hero"}
-          sizes={slot === "hero" ? "(max-width: 980px) 100vw, 52vw" : "(max-width: 767px) 100vw, 33vw"}
-          onError={handleImageError}
-          unoptimized
-        />
+        <>
+          {/* Plain img keeps configured stock/business-photo URLs renderable without Next remote host config. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            alt={alt}
+            decoding="async"
+            loading={slot === "hero" ? "eager" : "lazy"}
+            src={src}
+            onError={handleImageError}
+          />
+        </>
       )}
     </figure>
   );

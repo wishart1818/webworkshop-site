@@ -11,6 +11,7 @@ import { RecommendedMarketPresetCard } from "../components/engine/TopProspectsWo
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, publicPreviewUrlForProspect, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
+import { resolvePreviewImages, validatePreviewImages } from "../lib/preview-image-resolver";
 import { recommendedMarketPresets } from "../lib/top-prospects";
 
 const coreTradePhotoSlugs: Record<(typeof coreServiceTrades)[number], string> = {
@@ -343,16 +344,18 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /data-hero-treatment="(?:proof-forward|clean-editorial)"/);
   assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
   assert.match(html, /data-rhythm="(?:proof-led|calm-premium)"/);
-  assert.match(html, /Roofing website preview/);
+  assert.match(html, /Roofing services/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-hero\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-service\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-proof\.jpg/);
-  assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/roofing-hero\.svg"/);
-  assert.match(html, /Roofline, shingle detail/);
-  assert.match(html, /Designed around clear services, visible contact options/);
+  assert.match(html, /data-preview-image-source="curated-trade-library"/);
+  assert.match(html, /Service detail/);
+  assert.match(html, /Clear service paths, direct contact options/);
   assert.match(html, /Service guide/);
+  assert.match(html, /Quote request process/);
+  assert.match(html, /Get from question to quote faster/);
   assert.match(html, /Gallery/);
-  assert.match(html, /Before and after focus/);
+  assert.match(html, /Service comparison/);
   assert.match(html, /Questions/);
   assert.match(html, /Preview only: this concept form is not connected/);
   assert.match(html, /prospect-preview-mobile-cta/);
@@ -392,10 +395,10 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /data-hero-treatment="service-command"/);
   assert.match(html, /data-card-style="technical-service-panels"/);
   assert.match(html, /data-rhythm="service-dense"/);
-  assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/hvac-hero\.svg"/);
-  assert.match(html, /outdoor AC condenser beside a residential home/);
-  assert.match(html, /furnace or air handler equipment and technician tools/);
-  assert.match(html, /thermostat, vent, and home comfort detail/);
+  assert.match(html, /data-preview-image-source="curated-trade-library"/);
+  assert.match(html, /outdoor ac condenser, home comfort, hvac service/i);
+  assert.match(html, /ac condenser, air handler, technician tools/i);
+  assert.match(html, /thermostat, vent, home comfort/i);
   assert.match(html, /HVAC in Toledo, OH/);
   assert.match(html, /Heating and cooling help without the runaround\./);
   assert.match(html, /A clearer way to schedule heating and cooling service\./);
@@ -444,7 +447,7 @@ test("core trade previews render deterministic local imagery by default", () => 
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-detail\\.jpg`));
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-support\\.jpg`));
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-proof\\.jpg`));
-    assert.match(html, new RegExp(`data-fallback-src="/engine-preview-assets/trades/${slug}-hero\\.svg"`));
+    assert.match(html, /data-preview-image-source="curated-trade-library"/);
     assert.match(html, /prospect-preview-gallery/);
     assert.match(html, /prospect-preview-faq/);
     assert.match(html, /prospect-preview-mobile-cta/);
@@ -452,6 +455,61 @@ test("core trade previews render deterministic local imagery by default", () => 
     assert.doesNotMatch(html, /Representative image direction|Replace with verified|Sample layout content|Suggested proof section|Proof concept/i);
     assert.doesNotMatch(html, /prospect-preview-visual__mark|prospect-preview-visual__details/);
   }
+});
+
+test("preview image resolver creates distinct section intents and matching pressure washing imagery", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    businessName: "MC Pressure Washing FL",
+    trade: "Pressure Washing",
+    city: "tampa",
+    state: "FL",
+  });
+  const services = [
+    { title: "House washing", description: "Exterior siding and trim cleaning." },
+    { title: "Concrete cleaning", description: "Driveways, walks, and patios." },
+    { title: "Roof and soft washing", description: "Sensitive exterior surfaces." },
+  ] as const;
+  const images = resolvePreviewImages(prospect, services, {});
+  const firstFive = [images.hero, ...images.services, images.gallery[2]].map((image) => image.src);
+  const intentText = images.intents.map((intent) => `${intent.query} ${intent.keywords.join(" ")}`).join(" ");
+
+  assert.equal(images.providerStatus, "not configured");
+  assert.equal(images.sourceStatus, "curated trade photo library");
+  assert.equal(new Set(firstFive).size, 5);
+  assert.match(intentText, /house washing/i);
+  assert.match(intentText, /siding/i);
+  assert.match(intentText, /concrete/i);
+  assert.match(intentText, /driveway/i);
+  assert.match(intentText, /roof/i);
+  assert.match(intentText, /soft washing/i);
+  assert.equal(validatePreviewImages([images.hero, ...images.services, ...images.gallery]).ok, true);
+});
+
+test("preview image resolver supports configured stock manifests without exposing provider secrets", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[2]),
+    trade: "Landscaping",
+    city: "Tampa",
+    state: "FL",
+  });
+  const services = [
+    { title: "Landscape design", description: "Outdoor plans." },
+    { title: "Installation", description: "Plants and beds." },
+    { title: "Seasonal maintenance", description: "Recurring care." },
+  ] as const;
+  const manifest = Array.from({ length: 10 }, (_, index) => `https://images.example.com/landscaping-${index + 1}.jpg`);
+  const images = resolvePreviewImages(prospect, services, {
+    PREVIEW_STOCK_IMAGE_MANIFEST_JSON: JSON.stringify([...manifest, "javascript:alert(1)", "not a url"]),
+    PREVIEW_STOCK_API_KEY: "secret-key-that-must-not-render",
+  });
+  const renderedSources = [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta].map((image) => image.src).join(" ");
+
+  assert.equal(images.providerStatus, "configured");
+  assert.equal(images.sourceStatus, "configured stock provider");
+  assert.match(images.hero.src, /^https:\/\/images\.example\.com\/landscaping-1\.jpg/);
+  assert.doesNotMatch(renderedSources, /secret-key-that-must-not-render|javascript:|not a url/);
+  assert.equal(validatePreviewImages([images.hero, ...images.services, ...images.gallery]).ok, true);
 });
 
 test("core trade photo library covers each preview section", () => {
@@ -467,10 +525,10 @@ test("core trade photo library covers each preview section", () => {
 test("priority trades use matching preview image language", () => {
   const expected = [
     ["HVAC", /outdoor AC condenser/i],
-    ["Roofing", /roofline, shingle detail/i],
-    ["Plumbing", /under-sink service, visible pipes/i],
-    ["Landscaping", /lawn, planting beds, patio edge/i],
-    ["Electrical", /residential breaker panel service/i],
+    ["Roofing", /roofline, home exterior, shingle roof/i],
+    ["Plumbing", /fixtures, under-sink service, repair tools/i],
+    ["Landscaping", /outdoor, planting beds, outdoor space/i],
+    ["Electrical", /electrician, residential electrical, insulated tools/i],
   ] as const;
 
   for (const [trade, pattern] of expected) {

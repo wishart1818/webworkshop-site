@@ -232,14 +232,15 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.doesNotMatch(css, /--preview-green|--preview-lime/);
   assert.match(css, /prospect-preview-visual-caption/);
   assert.doesNotMatch(prospectWebsitePreview, /picsum\.photos/);
-  assert.match(prospectWebsitePreview, /src: `\/engine-preview-assets\/trade-photos\/\$\{slug\}-\$\{slot\}\.jpg`/);
-  assert.match(prospectWebsitePreview, /tradePhotoAsset\("hvac", "hero"/);
-  assert.match(prospectWebsitePreview, /tradePhotoAsset\("roofing", "hero"/);
-  assert.match(prospectWebsitePreview, /fallbackSrc: `\/engine-preview-assets\/trades\/\$\{slug\}-\$\{slot === "detail" \|\| slot === "support" \? "service" : slot\}\.svg`/);
+  assert.match(prospectWebsitePreview, /resolvePreviewImages/);
+  assert.match(prospectWebsitePreview, /previewImageProps/);
+  assert.match(tradePreviewImage, /data-preview-image-source/);
   assert.match(tradePreviewImage, /onError={handleImageError}/);
-  assert.match(tradePreviewImage, /current === "photo" \? "fallback" : "unavailable"/);
+  assert.match(tradePreviewImage, /Photo unavailable/);
+  assert.doesNotMatch(tradePreviewImage, /fallbackSrc|data-fallback-src/);
   assert.match(css, /contain: layout paint;/);
-  assert.match(css, /@media \(max-width: 980px\)[\s\S]*\.prospect-preview-proof-layout\s*{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*\.prospect-preview-process,\s*\.prospect-preview-proof-layout\s*{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(mobileCss, /\.prospect-preview-process ol,/);
   assert.doesNotMatch(prospectWebsitePreview, /prospect-preview-visual__mark|TradeVisualPanel/);
 });
 

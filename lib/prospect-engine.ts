@@ -1258,7 +1258,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     direction: `A visually premium, local-first ${tradeLower} website that feels like ${prospect.businessName}: ${artDirection.visualVoice}.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} ${artDirection.imageTreatment} Use ${styleProfile.primaryColor} as the primary brand color and ${styleProfile.accentColor} only for focused emphasis. Keep sample proof clearly labeled until verified business assets are available.`,
     artDirection,
-    hero: `${prospect.businessName} serves ${serviceArea} with a clearer path from service need to direct contact.`,
+    hero: `${prospect.businessName} serves ${serviceArea} with services, contact options, and quote requests easy to find.`,
     heroHeadline: heroHeadlines[trade],
     heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${serviceArea}.`,
     serviceHighlights: playbook.services.map(titleCase),
