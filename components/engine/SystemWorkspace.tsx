@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useEffect, useState } from "react";
 import type { DiscoveryDiagnostics, DiscoveryProviderCoverageStatus, DiscoveryProviderHealth } from "@/lib/lead-discovery";
 import type { AuditEventView } from "@/lib/operational-controls";
 import type { SystemSelfCheckReport } from "@/lib/system-self-check";
@@ -33,6 +35,15 @@ type SystemWorkspaceProps = {
   selfCheckRunning: boolean;
   providerSmokeTestRunning: boolean;
   providerSmokeTest: ProviderSmokeTestPayload | null;
+};
+type SystemView = "providers" | "email" | "safety" | "environment" | "technical";
+
+const systemViewLabels: Record<SystemView, string> = {
+  providers: "Providers",
+  email: "Email",
+  safety: "Safety",
+  environment: "Environment Status",
+  technical: "Technical Details",
 };
 
 function formatDate(value: string) {
@@ -83,6 +94,25 @@ function googleNextStep(smokeTest: ProviderSmokeTestPayload | null, providerHeal
   return "Run Provider Smoke Test and confirm Google Places succeeds before increasing scan count.";
 }
 
+function SystemTabs({ active, onChange }: { active: SystemView; onChange: (value: SystemView) => void }) {
+  return (
+    <div className="engine-section-tabs engine-section-tabs--sticky" role="tablist" aria-label="System views">
+      {(Object.keys(systemViewLabels) as SystemView[]).map((key) => (
+        <button
+          aria-selected={active === key}
+          className={active === key ? "is-active" : ""}
+          key={key}
+          onClick={() => onChange(key)}
+          role="tab"
+          type="button"
+        >
+          {systemViewLabels[key]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function launchReadinessFor(system: SystemPayload, providerHealth: DiscoveryProviderHealth[], smokeTest: ProviderSmokeTestPayload | null, coverage?: DiscoveryProviderCoverageStatus) {
   const databaseReady = Boolean(system.checks.database?.reachable ?? system.checks.database?.configured);
   const authReady = Boolean(system.checks.authentication?.configured);
@@ -119,9 +149,19 @@ function launchReadinessFor(system: SystemPayload, providerHealth: DiscoveryProv
 }
 
 export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCheck, onRunProviderSmokeTest, selfCheckRunning, providerSmokeTestRunning, providerSmokeTest }: SystemWorkspaceProps) {
+  const [activeView, setActiveView] = useState<SystemView>("providers");
   const providerHealth = system?.providerHealth ?? [];
   const providerCoverage = providerCoverageFromSmokeTest(providerSmokeTest, system?.providerCoverage);
   const launchReadiness = system ? launchReadinessFor(system, providerHealth, providerSmokeTest, providerCoverage) : null;
+  useEffect(() => {
+    const savedView = window.localStorage.getItem("webworkshop-system-view");
+    if (savedView && Object.hasOwn(systemViewLabels, savedView)) setActiveView(savedView as SystemView);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-system-view", activeView);
+  }, [activeView]);
+
   return (
     <div className="engine-content">
       <section className="engine-system-head">
@@ -159,6 +199,8 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
         </div>
       ) : system ? (
         <>
+          <SystemTabs active={activeView} onChange={setActiveView} />
+          {activeView === "environment" ? (
           <section className="engine-system-checks" aria-label="System readiness checks">
             {Object.entries(system.checks).map(([key, check]) => {
               const passing = check.reachable ?? check.configured;
@@ -173,9 +215,15 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
               );
             })}
           </section>
+          ) : null}
           {launchReadiness ? <LaunchReadinessCard buildVersion={system.buildVersion} readiness={launchReadiness} /> : null}
-          <ProviderHealthPanel providerCoverage={providerCoverage} providerHealth={providerHealth} smokeTest={providerSmokeTest} />
-          <SystemSelfCheckPanel report={system.selfCheck ?? null} running={selfCheckRunning} />
+          {activeView !== "safety" && system.selfCheck ? (
+            <SystemSelfCheckPanel report={system.selfCheck} running={selfCheckRunning} />
+          ) : null}
+          {activeView === "providers" ? <ProviderHealthPanel providerCoverage={providerCoverage} providerHealth={providerHealth} smokeTest={providerSmokeTest} /> : null}
+          {activeView === "email" ? <EmailReadinessPanel buildVersion={system.buildVersion} /> : null}
+          {activeView === "safety" ? <SystemSelfCheckPanel report={system.selfCheck ?? null} running={selfCheckRunning} /> : null}
+          {activeView === "technical" ? (
           <section className="engine-panel engine-audit-panel">
             <div className="engine-panel__head">
               <div>
@@ -206,6 +254,7 @@ export function SystemWorkspace({ system, loading, error, onRefresh, onRunSelfCh
               </div>
             )}
           </section>
+          ) : null}
         </>
       ) : (
         <div className="engine-system-empty">
@@ -255,6 +304,36 @@ function LaunchReadinessCard({ buildVersion, readiness }: { buildVersion?: strin
           <li>Only run Autopilot after this small test succeeds.</li>
         </ul>
       </div>
+    </section>
+  );
+}
+
+function EmailReadinessPanel({ buildVersion }: { buildVersion?: string }) {
+  return (
+    <section className="engine-panel engine-system-email" aria-label="Email readiness">
+      <div className="engine-panel__head">
+        <div>
+          <h2>Email readiness</h2>
+          <p>Prospect email remains gated by human review, suppression rules, daily caps, public preview checks, and environment flags.</p>
+        </div>
+        <span>{buildVersion || "Build not recorded"}</span>
+      </div>
+      <dl className="engine-launch-readiness-grid">
+        <div><dt>Default mode</dt><dd>Manual review</dd></div>
+        <div><dt>Automatic batches</dt><dd>Require full-auto env gate</dd></div>
+        <div><dt>Contact forms</dt><dd>Never automated</dd></div>
+        <div><dt>Social DMs</dt><dd>Manual only</dd></div>
+        <div><dt>Phone calls</dt><dd>Manual only</dd></div>
+        <div><dt>Prospect SMS</dt><dd>Never sent</dd></div>
+      </dl>
+      <details className="engine-system-email__details">
+        <summary>View full email safety summary</summary>
+        <ul>
+          <li><code>OUTREACH_EMAIL_DISABLED=true</code> blocks prospect email sending.</li>
+          <li><code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code> is required before fully automatic queued email batches can run.</li>
+          <li>Every queued email still needs a public email, public /p/ preview link, postal address, no suppression, no protected /engine link, cooldown clearance, and audit logging.</li>
+        </ul>
+      </details>
     </section>
   );
 }

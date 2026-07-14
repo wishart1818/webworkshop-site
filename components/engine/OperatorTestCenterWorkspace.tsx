@@ -6,6 +6,14 @@ import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import type { OperatorActionResult, OperatorTestCenterPayload } from "@/lib/operator-test-center";
 
 type ActionState = "idle" | "running";
+type TestCenterView = "readiness" | "safeTests" | "results" | "diagnostics";
+
+const testCenterViewLabels: Record<TestCenterView, string> = {
+  readiness: "Readiness",
+  safeTests: "Safe Tests",
+  results: "Results",
+  diagnostics: "Diagnostics",
+};
 
 function statusLabel(status: string) {
   return status.replaceAll("_", " ");
@@ -22,6 +30,25 @@ function failedRecordOpenDetail(record: NonNullable<OperatorActionResult["readin
   return { tab: "prospects", prospectId: record.prospectId, detailTab: "Outreach" };
 }
 
+function TestCenterTabs({ active, onChange }: { active: TestCenterView; onChange: (value: TestCenterView) => void }) {
+  return (
+    <div className="engine-section-tabs engine-section-tabs--sticky" role="tablist" aria-label="Operator Test Center views">
+      {(Object.keys(testCenterViewLabels) as TestCenterView[]).map((key) => (
+        <button
+          aria-selected={active === key}
+          className={active === key ? "is-active" : ""}
+          key={key}
+          onClick={() => onChange(key)}
+          role="tab"
+          type="button"
+        >
+          {testCenterViewLabels[key]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function OperatorTestCenterWorkspace() {
   const [payload, setPayload] = useState<OperatorTestCenterPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,6 +58,7 @@ export function OperatorTestCenterWorkspace() {
   const [lastAction, setLastAction] = useState<OperatorActionResult | null>(null);
   const [copied, setCopied] = useState("");
   const [providerSmokeSummary, setProviderSmokeSummary] = useState("");
+  const [activeView, setActiveView] = useState<TestCenterView>("readiness");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +80,15 @@ export function OperatorTestCenterWorkspace() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const savedView = window.localStorage.getItem("webworkshop-test-center-view");
+    if (savedView && Object.hasOwn(testCenterViewLabels, savedView)) setActiveView(savedView as TestCenterView);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-test-center-view", activeView);
+  }, [activeView]);
+
   async function runOperatorAction(action: string) {
     setActionState("running");
     setError("");
@@ -66,6 +103,7 @@ export function OperatorTestCenterWorkspace() {
       if (!response.ok) throw new Error(apiError(body, "Operator action failed safely."));
       setLastAction(body);
       setNotice(body.message);
+      setActiveView(action === "run_full_autonomous_readiness_test" ? "readiness" : "results");
       await load();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Operator action failed safely.");
@@ -89,6 +127,7 @@ export function OperatorTestCenterWorkspace() {
         body.smokeTest.safeError ? `Safe error: ${body.smokeTest.safeError}` : "",
       ].filter(Boolean).join("\n"));
       setNotice("Provider Smoke Test finished. It created no outreach packages and sent nothing.");
+      setActiveView("diagnostics");
       await load();
     } catch (smokeError) {
       setError(smokeError instanceof Error ? smokeError.message : "Provider Smoke Test failed safely.");
@@ -170,6 +209,9 @@ export function OperatorTestCenterWorkspace() {
       {error ? <div className="engine-error-banner" role="alert"><div><b>Operator Test Center needs attention</b><p>{error}</p></div></div> : null}
       {notice ? <div className="engine-success-banner" role="status"><div><b>Safe test completed</b><p>{notice}</p></div></div> : null}
 
+      <TestCenterTabs active={activeView} onChange={setActiveView} />
+
+      {activeView === "readiness" ? (
       <section className="engine-operator-card-grid" aria-label="Operator status cards">
         {payload.statusCards.map((card) => (
           <article className={`engine-operator-card engine-operator-card--${card.status}`} key={card.label}>
@@ -179,7 +221,9 @@ export function OperatorTestCenterWorkspace() {
           </article>
         ))}
       </section>
+      ) : null}
 
+      {activeView === "results" ? (
       <section className="engine-panel engine-operator-copy" aria-label="Latest Safe Test Results">
         <div className="engine-panel__head">
           <div>
@@ -205,7 +249,9 @@ export function OperatorTestCenterWorkspace() {
           ))}
         </div>
       </section>
+      ) : null}
 
+      {activeView === "safeTests" ? (
       <section className="engine-panel engine-operator-actions" aria-label="Safe test actions">
         <div className="engine-panel__head">
           <div>
@@ -233,8 +279,9 @@ export function OperatorTestCenterWorkspace() {
           <p>Prospect emails still obey OUTREACH_EMAIL_DISABLED, OUTREACH_AUTO_SEND_ENABLED, queue gates, public preview rules, suppression, cooldown, and approval status. Internal email notifications remain separate from prospect outreach. Full auto still requires OUTREACH_FULL_AUTO_SEND_ENABLED.</p>
         </div>
       </section>
+      ) : null}
 
-      {lastAction?.readiness ? (
+      {activeView === "readiness" && lastAction?.readiness ? (
         <section className="engine-panel engine-autonomous-readiness" aria-label="Full Autonomous Readiness Test result">
           <div className="engine-autonomous-readiness__summary">
             <div>
@@ -334,7 +381,7 @@ export function OperatorTestCenterWorkspace() {
         </section>
       ) : null}
 
-      {lastAction?.packagePreview ? (
+      {activeView === "results" && lastAction?.packagePreview ? (
         <section className="engine-panel engine-operator-package-check" aria-label="Test outreach package checks">
           <div className="engine-panel__head"><div><h2>Fake Test Outreach Package</h2><p>TEST / FAKE package, useful for checking current copy gates. It creates no real outreach activity.</p></div><span>{lastAction.packagePreview.subject}</span></div>
           <dl className="engine-operator-check-grid">
@@ -375,7 +422,7 @@ export function OperatorTestCenterWorkspace() {
         </section>
       ) : null}
 
-      {lastAction?.simulation ? (
+      {activeView === "results" && lastAction?.simulation ? (
         <section className="engine-panel engine-operator-package-check" aria-label="24-hour autonomous simulation">
           <div className="engine-panel__head">
             <div>
@@ -411,7 +458,7 @@ export function OperatorTestCenterWorkspace() {
         </section>
       ) : null}
 
-      {lastAction?.regeneration ? (
+      {activeView === "results" && lastAction?.regeneration ? (
         <section className="engine-panel engine-operator-package-check" aria-label="Outreach copy regeneration result">
           <div className="engine-panel__head">
             <div>
@@ -438,7 +485,7 @@ export function OperatorTestCenterWorkspace() {
         </section>
       ) : null}
 
-      {lastAction?.smartGrowth ? (
+      {activeView === "results" && lastAction?.smartGrowth ? (
         <section className="engine-panel engine-operator-package-check" aria-label="Smart Growth test result">
           <div className="engine-panel__head">
             <div>
@@ -472,6 +519,7 @@ export function OperatorTestCenterWorkspace() {
         </section>
       ) : null}
 
+      {activeView === "results" ? (
       <section className="engine-panel engine-operator-copy" aria-label="Copy summaries">
         <div className="engine-panel__head">
           <div>
@@ -506,8 +554,10 @@ export function OperatorTestCenterWorkspace() {
           ))}
         </div>
       </section>
+      ) : null}
 
-      <details className="engine-panel engine-operator-technical">
+      {activeView === "diagnostics" ? (
+      <details className="engine-panel engine-operator-technical" open>
         <summary>Show technical details</summary>
         <div className="engine-operator-provider-list">
           {payload.providerHealth.map((provider) => (
@@ -520,6 +570,7 @@ export function OperatorTestCenterWorkspace() {
           ))}
         </div>
       </details>
+      ) : null}
     </div>
   );
 }

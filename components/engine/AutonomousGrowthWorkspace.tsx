@@ -48,6 +48,15 @@ import {
 import { prospectModes, recommendedMarketPresets } from "@/lib/top-prospects";
 
 type DashboardPayload = AutonomousGrowthDashboard & { autopilot: AutopilotDashboard };
+type AutonomousGrowthView = "pilot" | "campaigns" | "queues" | "activity" | "settings";
+
+const autonomousGrowthViewLabels: Record<AutonomousGrowthView, string> = {
+  pilot: "Pilot",
+  campaigns: "Campaigns",
+  queues: "Queues",
+  activity: "Activity",
+  settings: "Settings",
+};
 
 type ApiPayload = Partial<DashboardPayload> & {
   error?: string;
@@ -159,6 +168,33 @@ function modeDescription(mode: AutonomousGrowthMode) {
   return "Pilot gate only. Email can send only when every env, cap, quality, and contact rule passes.";
 }
 
+function WorkspaceTabs<T extends string>({
+  active,
+  labels,
+  onChange,
+}: {
+  active: T;
+  labels: Record<T, string>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="engine-section-tabs engine-section-tabs--sticky" role="tablist">
+      {(Object.keys(labels) as T[]).map((key) => (
+        <button
+          aria-selected={active === key}
+          className={active === key ? "is-active" : ""}
+          key={key}
+          onClick={() => onChange(key)}
+          role="tab"
+          type="button"
+        >
+          {labels[key]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function readinessLabel(item: OutreachQueueItem) {
   if (item.status === "Eligible" || item.status === "Queued") return "Ready after human review";
   if (item.status === "Blocked") return "Blocked";
@@ -215,6 +251,7 @@ export function AutonomousGrowthWorkspace() {
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [activeView, setActiveView] = useState<AutonomousGrowthView>("pilot");
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -236,6 +273,15 @@ export function AutonomousGrowthWorkspace() {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    const savedView = window.localStorage.getItem("webworkshop-autonomous-growth-view");
+    if (savedView && Object.hasOwn(autonomousGrowthViewLabels, savedView)) setActiveView(savedView as AutonomousGrowthView);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-autonomous-growth-view", activeView);
+  }, [activeView]);
 
   useEffect(() => {
     if (!["running", "starting_top_prospects", "top_prospects_running"].includes(dashboard?.autopilot.activity.status ?? "")) return;
@@ -603,6 +649,10 @@ export function AutonomousGrowthWorkspace() {
         </div>
       )}
 
+      <WorkspaceTabs active={activeView} labels={autonomousGrowthViewLabels} onChange={setActiveView} />
+
+      {activeView === "pilot" ? (
+        <>
       <section className="engine-panel engine-autonomous-control-center" aria-label="Autonomous Growth Control Center">
         <div className="engine-panel__head">
           <div>
@@ -629,16 +679,42 @@ export function AutonomousGrowthWorkspace() {
           <span>Looms: manual only</span>
         </div>
         <div className="engine-action-row">
-          <button className="engine-button engine-button--primary" disabled={saving} form="autonomous-growth-settings-form" type="submit">{saving ? "Saving" : "Save Changes"}</button>
+          <button className="engine-button engine-button--primary" disabled={saving} onClick={() => setActiveView("settings")} type="button">Open Settings</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot(autopilot.activity.status === "paused" ? "resume_autopilot" : "run_autopilot_batch", {}, "Autopilot refreshed. Nothing was sent.")} type="button">{autopilot.activity.status === "paused" ? "Resume" : "Start / Resume"}</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")} type="button">Pause</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")} type="button">Stop</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("run_fake_autopilot_smoke_test")} type="button">Run Dry Test</button>
-          <button className="engine-button" onClick={() => document.getElementById("eligible-leads")?.scrollIntoView({ behavior: "smooth", block: "start" })} type="button">Open Eligible Leads</button>
+          <button className="engine-button" onClick={() => setActiveView("queues")} type="button">Open Eligible Leads</button>
         </div>
       </section>
 
-      <AutopilotCampaignPanel
+      <SmartGrowthPanel
+        copied={copied}
+        disabled={saving}
+        smartGrowth={dashboard.smartGrowth}
+        onCopy={copyText}
+        onMarketScout={() => void runSmartGrowthAction("run_market_scout_dry_run", "Market Scout dry run finished. No provider calls or outreach sends happened.")}
+        onProcessExisting={() => void runSmartGrowthAction("process_existing_qualified_prospects", "Existing qualified prospects processed for manual review. Nothing was sent.")}
+        onSmartDryRun={() => void runSmartGrowthAction("run_smart_autonomous_dry_run", "Smart Autonomous dry run finished. Nothing was sent.")}
+      />
+
+      <section className="engine-metrics" aria-label="Autonomous Growth metrics">
+        {[
+          ["Prospects found today", metrics.prospectsFoundToday, "Queued from generated packages"],
+          ["Previews generated", metrics.previewsGeneratedToday, "Public /p/ links only"],
+          ["Email-ready leads", metrics.emailReadyLeads, "Still requires the configured mode"],
+          ["Daily cap remaining", metrics.dailyCapRemaining, "Auto Email Pilot cap"],
+          ["Blocked phone-only", metrics.blockedPhoneOnlyLeads, "Written outreach protection"],
+          ["Average preview QA", `${metrics.averagePreviewQualityScore}/100`, "Self-review signal"],
+          ["Loom needed", metrics.loomNeeded, "Manual walkthroughs to record"],
+          ["Replies", metrics.replies, `${metrics.replyRate}% reply rate`],
+        ].map(([label, value, detail]) => <article key={label}><span>{label}</span><strong>{value}</strong><p>{detail}</p></article>)}
+      </section>
+        </>
+      ) : null}
+
+      {activeView === "campaigns" ? (
+        <AutopilotCampaignPanel
         autopilot={autopilot}
         disabled={saving}
         onDownload={() => downloadAutopilotCsv(autopilot)}
@@ -651,17 +727,22 @@ export function AutonomousGrowthWorkspace() {
         onStart={startAutopilot}
         onStop={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")}
       />
+      ) : null}
 
-      <SmartGrowthPanel
-        copied={copied}
-        disabled={saving}
-        smartGrowth={dashboard.smartGrowth}
-        onCopy={copyText}
-        onMarketScout={() => void runSmartGrowthAction("run_market_scout_dry_run", "Market Scout dry run finished. No provider calls or outreach sends happened.")}
-        onProcessExisting={() => void runSmartGrowthAction("process_existing_qualified_prospects", "Existing qualified prospects processed for manual review. Nothing was sent.")}
-        onSmartDryRun={() => void runSmartGrowthAction("run_smart_autonomous_dry_run", "Smart Autonomous dry run finished. Nothing was sent.")}
-      />
+      {activeView === "activity" ? (
+        <AutopilotLiveActivitySection
+          autopilot={autopilot}
+          disabled={saving}
+          onCopyRunSettings={() => void copyText("autopilot-run-settings", JSON.stringify(autopilot.activity.topProspectsPrefill, null, 2))}
+          onOpenTopProspects={() => window.dispatchEvent(new CustomEvent("webworkshop:open-engine-tab", { detail: { tab: "top-prospects" } }))}
+          onRefresh={() => void loadDashboard()}
+          onRetryHandoff={() => void postAutopilot("retry_autopilot_handoff", { autopilotSettings: autopilot.campaign.settings }, "Autopilot handoff retried. Nothing was sent.")}
+          onStop={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")}
+        />
+      ) : null}
 
+      {activeView === "settings" ? (
+        <>
       <section className="engine-panel">
         <div className="engine-panel__head">
           <div><h2>Mode and safety settings</h2><p>Default mode is Off. Dry Run and Manual Approval generate work but never send automatically.</p></div>
@@ -783,7 +864,11 @@ export function AutonomousGrowthWorkspace() {
           <p>Fully automatic batch sending is separate from <b>Send approved email</b>. It stays off unless <code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code>, and <code>OUTREACH_EMAIL_DISABLED=true</code> stops all email sends immediately. Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.</p>
         </div>
       </section>
+        </>
+      ) : null}
 
+      {activeView === "queues" ? (
+        <>
       <LoomQueueSection
         copied={copied}
         items={groupedQueue.loom}
@@ -830,7 +915,10 @@ export function AutonomousGrowthWorkspace() {
         onStatus={updateStatus}
         title="Send queue and sent log"
       />
+        </>
+      ) : null}
 
+      {activeView === "activity" ? (
       <section className="engine-panel engine-autonomous-insights engine-autonomous-learning">
         <div className="engine-panel__head"><div><h2>Learning &amp; Review</h2><p>Self-review reports and feedback patterns improve future recommendations, but never bypass hard safety blockers.</p></div></div>
         <div className="engine-learning-summary">
@@ -867,6 +955,7 @@ export function AutonomousGrowthWorkspace() {
           )) : <p>No reply-rate data yet.</p>}
         </div>
       </section>
+      ) : null}
     </div>
   );
 }

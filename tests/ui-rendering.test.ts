@@ -151,6 +151,28 @@ test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   assert.match(source, /Filter by prospect funnel bucket/);
 });
 
+test("Prospect Engine shell uses compact navigation, density, page tabs, and a single safety strip", () => {
+  const source = readFileSync("components/ProspectEngine.tsx", "utf8");
+  const css = readFileSync("app/engine/engine.css", "utf8");
+
+  assert.match(source, /workspaceIcons/);
+  assert.match(source, /engine-shell--nav-collapsed/);
+  assert.match(source, /Interface density/);
+  assert.match(source, /webworkshop-engine-density/);
+  assert.match(source, /CompactSafetyStatus/);
+  assert.match(source, /Email mode/);
+  assert.match(source, /DMs\/forms\/calls\/Looms/);
+  assert.match(source, /prospectViewLabels/);
+  assert.match(source, /pipelineViewLabels/);
+  assert.match(source, /Next action/);
+  assert.match(source, /SectionTabs/);
+  assert.match(css, /\.engine-section-tabs/);
+  assert.match(css, /\.engine-next-action-card/);
+  assert.match(css, /\.engine-compact-safety/);
+  assert.match(css, /\.engine-density--comfortable/);
+  assert.match(css, /\.engine-shell--nav-collapsed/);
+});
+
 test("global operator command bar exposes search, command help, previews, and safe receipts", () => {
   const source = readFileSync("components/engine/OperatorCommandBar.tsx", "utf8");
 
@@ -168,13 +190,41 @@ test("Autonomous Growth keeps important controls visible before advanced setting
   const source = readFileSync("components/engine/AutonomousGrowthWorkspace.tsx", "utf8");
 
   assert.match(source, /Autonomous Growth Control Center/);
-  assert.match(source, /Save Changes/);
+  assert.match(source, /autonomousGrowthViewLabels/);
+  assert.match(source, /Pilot/);
+  assert.match(source, /Campaigns/);
+  assert.match(source, /Queues/);
+  assert.match(source, /Activity/);
+  assert.match(source, /Settings/);
+  assert.match(source, /webworkshop-autonomous-growth-view/);
+  assert.match(source, /Open Settings/);
   assert.match(source, /Advanced Settings/);
   assert.match(source, /Unsaved changes/);
   assert.match(source, /beforeunload/);
   assert.match(source, /Contact forms: never automated/);
   assert.match(source, /Phone calls: never automated/);
   assert.match(source, /Looms: manual only/);
+});
+
+test("Operator Test Center and System use compact subnavigation with details preserved", () => {
+  const testCenterSource = readFileSync("components/engine/OperatorTestCenterWorkspace.tsx", "utf8");
+  const systemSource = readFileSync("components/engine/SystemWorkspace.tsx", "utf8");
+
+  assert.match(testCenterSource, /testCenterViewLabels/);
+  assert.match(testCenterSource, /Readiness/);
+  assert.match(testCenterSource, /Safe Tests/);
+  assert.match(testCenterSource, /Results/);
+  assert.match(testCenterSource, /Diagnostics/);
+  assert.match(testCenterSource, /webworkshop-test-center-view/);
+  assert.match(testCenterSource, /Provider Smoke Test finished/);
+  assert.match(testCenterSource, /setActiveView\("diagnostics"\)/);
+  assert.match(systemSource, /systemViewLabels/);
+  assert.match(systemSource, /Providers/);
+  assert.match(systemSource, /Environment Status/);
+  assert.match(systemSource, /Technical Details/);
+  assert.match(systemSource, /EmailReadinessPanel/);
+  assert.match(systemSource, /webworkshop-system-view/);
+  assert.match(systemSource, /LaunchReadinessCard/);
 });
 
 test("Autonomous Growth packages expose why-not-contacted diagnostics", () => {

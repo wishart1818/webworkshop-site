@@ -43,6 +43,39 @@ import {
 
 type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Calls" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System" | "Command Activity";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
+type DensityMode = "compact" | "comfortable";
+type ProspectView = "all" | "review" | "email" | "manual" | "blocked" | "contacted";
+type PipelineView = "board" | "followups" | "replies" | "wonLost";
+
+const workspaceTabs: WorkspaceTab[] = ["Overview", "Top Prospects", "Prospects", "Calls", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"];
+
+const workspaceIcons: Record<WorkspaceTab, string> = {
+  Overview: "O",
+  "Top Prospects": "T",
+  Prospects: "P",
+  Calls: "C",
+  Pipeline: "B",
+  "Autonomous Growth": "A",
+  "Operator Test Center": "Q",
+  System: "S",
+  "Command Activity": "L",
+};
+
+const prospectViewLabels: Record<ProspectView, string> = {
+  all: "All Prospects",
+  review: "Review Needed",
+  email: "Email Ready",
+  manual: "Manual Contact",
+  blocked: "Blocked",
+  contacted: "Contacted",
+};
+
+const pipelineViewLabels: Record<PipelineView, string> = {
+  board: "Board",
+  followups: "Follow-ups",
+  replies: "Replies",
+  wonLost: "Won / Lost",
+};
 
 function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
   if (filter === "all") return true;
@@ -63,6 +96,10 @@ export function ProspectEngine() {
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("Overview");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [density, setDensity] = useState<DensityMode>("compact");
+  const [prospectView, setProspectView] = useState<ProspectView>("all");
+  const [pipelineView, setPipelineView] = useState<PipelineView>("board");
   const [detailTab, setDetailTab] = useState<DetailTab>("Analysis");
   const [query, setQuery] = useState("");
   const [trade, setTrade] = useState<"All" | TradeCategory>("All");
@@ -138,6 +175,33 @@ export function ProspectEngine() {
   }, [workspaceTab]);
 
   useEffect(() => {
+    const savedDensity = window.localStorage.getItem("webworkshop-engine-density");
+    if (savedDensity === "compact" || savedDensity === "comfortable") setDensity(savedDensity);
+    const savedTab = window.localStorage.getItem("webworkshop-engine-tab");
+    if (workspaceTabs.includes(savedTab as WorkspaceTab)) setWorkspaceTab(savedTab as WorkspaceTab);
+    const savedProspectView = window.localStorage.getItem("webworkshop-prospect-view");
+    if (savedProspectView && Object.hasOwn(prospectViewLabels, savedProspectView)) setProspectView(savedProspectView as ProspectView);
+    const savedPipelineView = window.localStorage.getItem("webworkshop-pipeline-view");
+    if (savedPipelineView && Object.hasOwn(pipelineViewLabels, savedPipelineView)) setPipelineView(savedPipelineView as PipelineView);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-engine-density", density);
+  }, [density]);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-engine-tab", workspaceTab);
+  }, [workspaceTab]);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-prospect-view", prospectView);
+  }, [prospectView]);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-pipeline-view", pipelineView);
+  }, [pipelineView]);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("tab") === "operator-test-center") setWorkspaceTab("Operator Test Center");
   }, []);
@@ -207,12 +271,38 @@ export function ProspectEngine() {
     [prospects],
   );
 
+  const nextAction = useMemo(() => {
+    const emailReady = prospectFunnel.currentInventory.emailReady;
+    const qualifiedUnsent = prospectFunnel.currentInventory.qualifiedUnsent;
+    const previewIssues = prospects.filter((prospect) => prospect.analysis && !prospect.preview).length;
+    const unapprovedOutreach = prospects.filter((prospect) => prospect.outreach && !prospect.outreach.approved).length;
+    if (workspaceTab === "Overview") {
+      if (emailReady > 0) return { label: `Review ${emailReady} email-ready prospect${emailReady === 1 ? "" : "s"}`, action: () => { setWorkspaceTab("Prospects"); applyProspectView("email"); } };
+      if (pendingCalls > 0) return { label: `Process ${pendingCalls} manual call${pendingCalls === 1 ? "" : "s"}`, action: () => setWorkspaceTab("Calls") };
+      return { label: "Start next prospect scan", action: () => setWorkspaceTab("Top Prospects") };
+    }
+    if (workspaceTab === "Prospects") {
+      if (qualifiedUnsent > 0) return { label: `Review ${qualifiedUnsent} qualified unsent`, action: () => applyProspectView("review") };
+      if (previewIssues > 0) return { label: `Fix ${previewIssues} preview issue${previewIssues === 1 ? "" : "s"}`, action: () => applyProspectView("review") };
+      return { label: "Add a prospect", action: () => setShowDiscovery(true) };
+    }
+    if (workspaceTab === "Top Prospects") return { label: "Run focused Top Prospects scan", action: () => undefined };
+    if (workspaceTab === "Calls") return { label: pendingCalls > 0 ? `Call ${pendingCalls} pending lead${pendingCalls === 1 ? "" : "s"}` : "Review prospect queue", action: () => pendingCalls > 0 ? undefined : setWorkspaceTab("Prospects") };
+    if (workspaceTab === "Pipeline") return { label: "Check follow-ups", action: () => setPipelineView("followups") };
+    if (workspaceTab === "Autonomous Growth") return { label: "Review Autopilot status", action: () => undefined };
+    if (workspaceTab === "Operator Test Center") return { label: "Run readiness test", action: () => undefined };
+    if (workspaceTab === "System") return { label: "Run provider smoke test", action: () => void runProviderSmokeTest() };
+    if (workspaceTab === "Command Activity") return { label: "Review latest command", action: () => undefined };
+    return { label: unapprovedOutreach > 0 ? `Approve ${unapprovedOutreach} draft${unapprovedOutreach === 1 ? "" : "s"}` : "Review prospects", action: () => setWorkspaceTab("Prospects") };
+  }, [pendingCalls, prospectFunnel, prospects, workspaceTab]);
+
   function openFunnelFilter(filter: ProspectFunnelFilterKey) {
     setFunnelFilter(filter);
     setTrade("All");
     setStatus("All");
     setContactFilter("all");
     setQuery("");
+    setProspectView("all");
     setWorkspaceTab("Prospects");
   }
 
@@ -222,7 +312,44 @@ export function ProspectEngine() {
     setStatus("All");
     setContactFilter("all");
     setQuery("");
+    setProspectView("all");
     setWorkspaceTab("Prospects");
+  }
+
+  function applyProspectView(view: ProspectView) {
+    setProspectView(view);
+    setTrade("All");
+    setQuery("");
+    if (view === "all") {
+      setStatus("All");
+      setContactFilter("all");
+      setFunnelFilter("all");
+    }
+    if (view === "review") {
+      setStatus("All");
+      setContactFilter("all");
+      setFunnelFilter("qualified_unsent");
+    }
+    if (view === "email") {
+      setStatus("All");
+      setContactFilter("email");
+      setFunnelFilter("ready_email");
+    }
+    if (view === "manual") {
+      setStatus("All");
+      setContactFilter("needs_research");
+      setFunnelFilter("all");
+    }
+    if (view === "blocked") {
+      setStatus("All");
+      setContactFilter("all");
+      setFunnelFilter("bad_fit");
+    }
+    if (view === "contacted") {
+      setStatus("Contacted");
+      setContactFilter("all");
+      setFunnelFilter("all");
+    }
   }
 
   function clearAllProspectFilters() {
@@ -231,6 +358,7 @@ export function ProspectEngine() {
     setContactFilter("all");
     setFunnelFilter("all");
     setQuery("");
+    setProspectView("all");
   }
 
   useEffect(() => {
@@ -502,26 +630,32 @@ export function ProspectEngine() {
   }
 
   return (
-    <div className="engine-shell">
+    <div className={`engine-shell engine-density--${density} ${sidebarCollapsed ? "engine-shell--nav-collapsed" : ""}`}>
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
+        <button className="engine-nav-collapse" aria-pressed={sidebarCollapsed} onClick={() => setSidebarCollapsed((current) => !current)} type="button">
+          {sidebarCollapsed ? "Expand" : "Collapse"}
+        </button>
         <nav aria-label="Prospect Engine">
-          {(["Overview", "Top Prospects", "Prospects", "Calls", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"] as WorkspaceTab[]).map((tab) => (
+          {workspaceTabs.map((tab) => (
             <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
+              <i aria-hidden="true">{workspaceIcons[tab]}</i>
               <span>{tab === "Operator Test Center" ? "Test Center" : tab}</span>
               {tab === "Calls" && pendingCalls > 0 ? <b className="engine-nav-badge" aria-label={`${pendingCalls} pending manual calls`}>{pendingCalls}</b> : null}
             </button>
           ))}
         </nav>
         <div className="engine-compliance">
-          <b>Human review and source terms</b>
-          <p>Outreach stays in draft until approved. Analysis is user-triggered and robots-aware; review applicable site terms before running it.</p>
+          <b>Safety status</b>
+          <p>Email review required. DMs, forms, calls, Looms, and SMS stay manual only.</p>
         </div>
       </aside>
 
       <main className="engine-main">
         <header className="engine-topbar">
-          <div><p>WebWorkshop sales workspace</p><h1>{workspaceTab}</h1></div>
+          <div className="engine-page-title"><p>WebWorkshop sales workspace</p><h1>{workspaceTab}</h1></div>
+          <label className="engine-search engine-search--global"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
+          <CompactSafetyStatus pendingCalls={pendingCalls} persistenceMode={persistenceMode} syncState={syncState} />
           <div className="engine-topbar__actions">
             <div className={`engine-sync engine-sync--${syncState}`} role="status">
               <i aria-hidden="true" />
@@ -532,14 +666,20 @@ export function ProspectEngine() {
                     ? "Saving"
                     : syncState === "error"
                       ? syncError
-                      : persistenceMode === "postgresql"
+                  : persistenceMode === "postgresql"
                         ? "PostgreSQL synced"
                         : "Development memory"}
               </span>
             </div>
-            <label className="engine-search"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
-            <button className="engine-button" onClick={() => setShowLeadSearch(true)} type="button">Discover leads</button>
-            <button className="engine-button engine-button--primary" onClick={() => setShowDiscovery(true)} type="button">Add prospect</button>
+            <label className="engine-density-toggle">
+              <span>Density</span>
+              <select aria-label="Interface density" onChange={(event) => setDensity(event.target.value as DensityMode)} value={density}>
+                <option value="compact">Compact</option>
+                <option value="comfortable">Comfortable</option>
+              </select>
+            </label>
+            <button className="engine-button engine-button--subtle" onClick={() => setShowLeadSearch(true)} type="button">Discover</button>
+            <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">{nextAction.label}</button>
           </div>
         </header>
 
@@ -565,6 +705,14 @@ export function ProspectEngine() {
 
         {workspaceTab === "Overview" && !prospectStateBlocked && (
           <div className="engine-content">
+            <section className="engine-next-action-card" aria-label="Recommended next action">
+              <div>
+                <span>Next action</span>
+                <h2>{nextAction.label}</h2>
+                <p>{prospectFunnel.recommendation}</p>
+              </div>
+              <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">{nextAction.label}</button>
+            </section>
             <section className="engine-metrics" aria-label="Pipeline summary">
               {[
                 ["Total prospects", metrics.total, "National-ready lead records"],
@@ -601,6 +749,12 @@ export function ProspectEngine() {
 
         {workspaceTab === "Prospects" && !prospectStateBlocked && (
           <div className="engine-content">
+            <SectionTabs
+              active={prospectView}
+              ariaLabel="Prospect views"
+              labels={prospectViewLabels}
+              onChange={(view) => applyProspectView(view as ProspectView)}
+            />
             <div className="engine-filters">
               <label className="engine-mobile-search"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
               <select aria-label="Filter by trade" onChange={(event) => setTrade(event.target.value as "All" | TradeCategory)} value={trade}><option>All</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select>
@@ -642,16 +796,31 @@ export function ProspectEngine() {
         )}
 
         {workspaceTab === "Pipeline" && !prospectStateBlocked && (
-          <div className="engine-content engine-pipeline">
-            {prospectStatuses.map((column) => (
-              <section key={column}><header><h2>{column}</h2><span>{prospects.filter((prospect) => prospect.status === column).length}</span></header>
-                <div>{prospects.filter((prospect) => prospect.status === column).map((prospect) => (
+          <div className="engine-content">
+            <SectionTabs
+              active={pipelineView}
+              ariaLabel="Pipeline views"
+              labels={pipelineViewLabels}
+              onChange={(view) => setPipelineView(view as PipelineView)}
+            />
+            <div className="engine-pipeline">
+              {prospectStatuses
+                .filter((column) => {
+                  if (pipelineView === "board") return true;
+                  if (pipelineView === "followups") return ["Contacted", "Interested", "Proposal Sent"].includes(column);
+                  if (pipelineView === "replies") return ["Interested", "Proposal Sent"].includes(column);
+                  return ["Closed Won", "Closed Lost"].includes(column);
+                })
+                .map((column) => (
+                <section key={column}><header><h2>{column}</h2><span>{prospects.filter((prospect) => prospect.status === column).length}</span></header>
+                  <div>{prospects.filter((prospect) => prospect.status === column).map((prospect) => (
                   <button key={prospect.id} onClick={() => { setSelectedId(prospect.id); setWorkspaceTab("Prospects"); }} type="button">
                     <b>{prospect.businessName}</b><span>{prospectLocationLine(prospect)}</span><em>{prospect.priorityScore} priority</em>
                   </button>
-                ))}</div>
-              </section>
-            ))}
+                  ))}</div>
+                </section>
+              ))}
+            </div>
           </div>
         )}
 
@@ -692,6 +861,64 @@ export function ProspectEngine() {
 
       {showDiscovery && <DiscoveryDialog onClose={() => setShowDiscovery(false)} onSubmit={addProspect} />}
       {showLeadSearch && <LeadSearchDialog diagnostics={discoveryDiagnostics} existingWebsites={new Set(prospects.map((prospect) => prospect.website))} leads={discoveredLeads} state={discoveryState} error={discoveryError} onClose={() => setShowLeadSearch(false)} onDiscover={discoverLeads} onImport={importLead} />}
+    </div>
+  );
+}
+
+function CompactSafetyStatus({
+  pendingCalls,
+  persistenceMode,
+  syncState,
+}: {
+  pendingCalls: number;
+  persistenceMode: "memory" | "postgresql";
+  syncState: SyncState;
+}) {
+  return (
+    <details className="engine-compact-safety">
+      <summary>
+        <span className={`engine-system-dot engine-system-dot--${syncState}`} aria-hidden="true" />
+        <b>{persistenceMode === "postgresql" ? "PostgreSQL synced" : "Memory mode"}</b>
+        <small>Manual outreach</small>
+        {pendingCalls > 0 ? <i>{pendingCalls}</i> : null}
+      </summary>
+      <div>
+        <dl>
+          <div><dt>Email mode</dt><dd>Manual review</dd></div>
+          <div><dt>Full auto</dt><dd>Off unless env gate passes</dd></div>
+          <div><dt>DMs/forms/calls/Looms</dt><dd>Manual only</dd></div>
+          <div><dt>Notifications</dt><dd>{pendingCalls} pending call{pendingCalls === 1 ? "" : "s"}</dd></div>
+        </dl>
+      </div>
+    </details>
+  );
+}
+
+function SectionTabs<T extends string>({
+  active,
+  ariaLabel,
+  labels,
+  onChange,
+}: {
+  active: T;
+  ariaLabel: string;
+  labels: Record<T, string>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="engine-section-tabs" aria-label={ariaLabel} role="tablist">
+      {(Object.keys(labels) as T[]).map((key) => (
+        <button
+          aria-selected={active === key}
+          className={active === key ? "is-active" : ""}
+          key={key}
+          onClick={() => onChange(key)}
+          role="tab"
+          type="button"
+        >
+          {labels[key]}
+        </button>
+      ))}
     </div>
   );
 }
