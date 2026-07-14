@@ -34,12 +34,23 @@ export function OperatorCommandBar({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const [copied, setCopied] = useState("");
+
+  useEffect(() => {
+    const savedState = window.localStorage.getItem("webworkshop-command-center-expanded");
+    setMobileExpanded(savedState === "true");
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("webworkshop-command-center-expanded", String(mobileExpanded));
+  }, [mobileExpanded]);
 
   async function post(action: "preview" | "execute" | "confirm") {
     if (!commandText.trim()) return;
     setBusy(true);
     setError("");
+    setMobileExpanded(true);
     try {
       const response = await fetch("/api/engine/operator-commands", {
         method: "POST",
@@ -93,7 +104,14 @@ export function OperatorCommandBar({
   ];
 
   return (
-    <section className="engine-command-center" aria-label="WebWorkshop Operator Command Bar">
+    <section className={`engine-command-center ${mobileExpanded ? "is-mobile-expanded" : ""}`} aria-label="WebWorkshop Operator Command Bar">
+      <div className="engine-command-center__summary">
+        <button aria-expanded={mobileExpanded} onClick={() => setMobileExpanded((current) => !current)} type="button">
+          <span>Search or run a command</span>
+          <small>{commandText.trim() ? "Draft ready" : "Collapsed"}</small>
+        </button>
+      </div>
+      <div className="engine-command-center__body">
       <form className="engine-command-bar" onSubmit={submit}>
         <label>
           <span className="sr-only">Search prospects or paste a WebWorkshop command</span>
@@ -116,6 +134,7 @@ export function OperatorCommandBar({
         <button className="engine-button engine-button--primary" disabled={busy || !commandText.trim()} type="submit">{busy ? "Working" : "Run"}</button>
         <button className="engine-button" onClick={() => void post("preview")} disabled={busy || !commandText.trim()} type="button">Preview</button>
         <button className="engine-button" onClick={() => setShowHelp((current) => !current)} type="button">Help</button>
+        <button className="engine-button" onClick={() => onNavigate({ tab: "Command Activity" })} type="button">History</button>
       </form>
 
       {error ? <div className="engine-command-error" role="alert">{error}</div> : null}
@@ -183,6 +202,7 @@ export function OperatorCommandBar({
           <button className="engine-button" onClick={() => void copyText("Command result", receipt.copyForChatGPT)} type="button">{copied === "Command result" ? "Copied" : "Copy Result for ChatGPT"}</button>
         </div>
       ) : null}
+      </div>
     </section>
   );
 }

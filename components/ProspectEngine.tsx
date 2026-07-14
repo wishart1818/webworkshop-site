@@ -79,6 +79,19 @@ const pipelineViewLabels: Record<PipelineView, string> = {
   wonLost: "Won / Lost",
 };
 
+function shortActionLabel(label: string) {
+  if (/email-ready|qualified|draft/i.test(label)) return "Review";
+  if (/manual call|call/i.test(label)) return "Calls";
+  if (/scan|Top Prospects/i.test(label)) return "Scan";
+  if (/preview/i.test(label)) return "Previews";
+  if (/follow/i.test(label)) return "Follow-ups";
+  if (/Autopilot/i.test(label)) return "Autopilot";
+  if (/readiness/i.test(label)) return "Test";
+  if (/provider/i.test(label)) return "Smoke test";
+  if (/Add/i.test(label)) return "Add";
+  return "Open";
+}
+
 function matchesContactFilter(prospect: Prospect, filter: ContactFilter) {
   if (filter === "all") return true;
   if (filter === "email") return Boolean(prospect.email);
@@ -266,10 +279,8 @@ export function ProspectEngine() {
 
   const metrics = useMemo(
     () => ({
-      total: prospects.length,
-      high: prospects.filter((prospect) => prospect.priorityScore >= 70).length,
-      contacted: prospects.filter((prospect) => ["Contacted", "Interested", "Proposal Sent"].includes(prospect.status)).length,
-      won: prospects.filter((prospect) => prospect.status === "Closed Won").length,
+      replies: prospects.filter((prospect) => ["Interested", "Proposal Sent"].includes(prospect.status)).length,
+      followUps: prospects.filter((prospect) => prospect.status === "Contacted").length,
     }),
     [prospects],
   );
@@ -698,7 +709,10 @@ export function ProspectEngine() {
               <button onClick={() => navigateWorkspace("Operator Test Center")} type="button">Open Test Center</button>
               <button onClick={() => navigateWorkspace("System")} type="button">Open System</button>
             </ActionMenu>
-            <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">{nextAction.label}</button>
+            <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">
+              <span className="engine-action-label-full">{nextAction.label}</span>
+              <span className="engine-action-label-short">{shortActionLabel(nextAction.label)}</span>
+            </button>
           </div>
         </header>
 
@@ -728,17 +742,20 @@ export function ProspectEngine() {
               <div>
                 <span>Next action</span>
                 <h2>{nextAction.label}</h2>
-                <p>{prospectFunnel.recommendation}</p>
+                <details>
+                  <summary>Why this action?</summary>
+                  <p>{prospectFunnel.recommendation}</p>
+                </details>
               </div>
               <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">{nextAction.label}</button>
             </section>
-            <section className="engine-metrics" aria-label="Pipeline summary">
-              {[
-                ["Total prospects", metrics.total, "National-ready lead records"],
-                ["High priority", metrics.high, "Strong redesign opportunity"],
-                ["Active conversations", metrics.contacted, "Contacted through proposal"],
-                ["Closed won", metrics.won, "Converted WebWorkshop clients"],
-              ].map(([label, value, detail]) => <article key={label}><span>{label}</span><strong>{value}</strong><p>{detail}</p></article>)}
+            <section className="engine-overview-cards" aria-label="Operational dashboard">
+              <MetricCard label="Email Ready" value={prospectFunnel.currentInventory.emailReady} detail="Review drafts" onClick={() => { setWorkspaceTab("Prospects"); applyProspectView("email"); }} />
+              <MetricCard label="Manual DM" value={prospectFunnel.currentInventory.facebookReady + prospectFunnel.currentInventory.instagramReady} detail="Social paths" onClick={() => { setWorkspaceTab("Prospects"); setContactFilter("social"); setFunnelFilter("all"); setProspectView("all"); }} />
+              <MetricCard label="Phone Only" value={prospectFunnel.exclusiveBuckets.phone_only} detail="Blocked from written send" onClick={() => openFunnelFilter("phone_only")} />
+              <MetricCard label="Blocked / Suppressed" value={prospectFunnel.exclusiveBuckets.bad_fit + prospectFunnel.exclusiveBuckets.suppressed_do_not_contact} detail="Do not contact" onClick={() => openFunnelFilter("bad_fit")} />
+              <MetricCard label="Replies" value={metrics.replies} detail="Interested or proposal" onClick={() => { setWorkspaceTab("Pipeline"); setPipelineView("replies"); }} />
+              <MetricCard label="Follow-ups" value={metrics.followUps} detail="Contacted leads" onClick={() => { setWorkspaceTab("Pipeline"); setPipelineView("followups"); }} />
             </section>
             <ProspectFunnelCard
               funnel={prospectFunnel}
@@ -954,6 +971,26 @@ function MobileBottomNav({
         </div>
       </div>
     </>
+  );
+}
+
+function MetricCard({
+  detail,
+  label,
+  onClick,
+  value,
+}: {
+  detail: string;
+  label: string;
+  onClick: () => void;
+  value: number;
+}) {
+  return (
+    <button className="engine-metric-card" onClick={onClick} type="button">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </button>
   );
 }
 

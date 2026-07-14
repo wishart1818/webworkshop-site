@@ -149,6 +149,16 @@ test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   assert.match(source, /engine-funnel-count/);
   assert.match(source, /onOpenFilter/);
   assert.match(source, /Filter by prospect funnel bucket/);
+  assert.match(source, /engine-overview-cards/);
+  assert.match(source, /Operational dashboard/);
+  assert.match(source, /function MetricCard/);
+  assert.match(source, /Email Ready/);
+  assert.match(source, /Manual DM/);
+  assert.match(source, /Phone Only/);
+  assert.match(source, /Blocked \/ Suppressed/);
+  assert.match(source, /Replies/);
+  assert.match(source, /Follow-ups/);
+  assert.match(source, /Why this action\?/);
 });
 
 test("Prospect Engine shell uses compact navigation, density, page tabs, and a single safety strip", () => {
@@ -166,6 +176,9 @@ test("Prospect Engine shell uses compact navigation, density, page tabs, and a s
   assert.match(source, /webworkshop-engine-density/);
   assert.match(source, /CompactSafetyStatus/);
   assert.match(source, /ActionMenu/);
+  assert.match(source, /shortActionLabel/);
+  assert.match(source, /engine-action-label-full/);
+  assert.match(source, /engine-action-label-short/);
   assert.match(source, /Open Preview/);
   assert.match(source, /Rewrite outreach/);
   assert.match(source, /Regenerate with fixes/);
@@ -178,7 +191,15 @@ test("Prospect Engine shell uses compact navigation, density, page tabs, and a s
   assert.match(source, /SectionTabs/);
   assert.match(css, /\.engine-section-tabs/);
   assert.match(css, /\.engine-next-action-card/);
+  assert.match(css, /--engine-radius-sm/);
+  assert.match(css, /--engine-shadow-sheet/);
+  assert.match(css, /--engine-duration/);
   assert.match(css, /\.engine-compact-safety/);
+  assert.match(css, /\.engine-status-badge/);
+  assert.match(css, /\.engine-skeleton/);
+  assert.match(css, /\.engine-toast/);
+  assert.match(css, /\.engine-overview-cards/);
+  assert.match(css, /\.engine-metric-card/);
   assert.match(css, /\.engine-density--comfortable/);
   assert.match(css, /\.engine-shell--nav-collapsed/);
   assert.match(css, /\.engine-mobile-bottom-nav/);
@@ -191,12 +212,17 @@ test("Prospect Engine shell uses compact navigation, density, page tabs, and a s
 test("global operator command bar exposes search, command help, previews, and safe receipts", () => {
   const source = readFileSync("components/engine/OperatorCommandBar.tsx", "utf8");
 
+  assert.match(source, /webworkshop-command-center-expanded/);
+  assert.match(source, /engine-command-center__summary/);
+  assert.match(source, /Search or run a command/);
+  assert.match(source, /is-mobile-expanded/);
   assert.match(source, /Search prospects or paste a WebWorkshop command/);
   assert.match(source, /Auto detect/);
   assert.match(source, /Command understood/);
   assert.match(source, /Confirm and Apply/);
   assert.match(source, /Copy Result for ChatGPT/);
   assert.match(source, /Command Activity/);
+  assert.match(source, />History<\/button>/);
   assert.match(source, /Outreach sent/);
   assert.doesNotMatch(source, /eval\(|new Function|child_process|shell_command|runSql|runJavaScript/i);
 });

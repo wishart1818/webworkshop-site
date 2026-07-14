@@ -25,7 +25,17 @@ body:has(.engine-shell) {
   --engine-line-strong: #aebbb4;
   --engine-accent: #0d6956;
   --engine-accent-dark: #08483d;
+  --engine-danger: #b64231;
+  --engine-warning: #a76616;
+  --engine-success: #28734e;
   --engine-radius: 14px;
+  --engine-radius-sm: 8px;
+  --engine-radius-lg: 16px;
+  --engine-shadow-popover: 0 12px 28px rgba(17, 24, 21, 0.14);
+  --engine-shadow-sheet: 0 18px 42px rgba(17, 24, 21, 0.24);
+  --engine-duration: 180ms;
+  --engine-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --engine-safe-bottom: env(safe-area-inset-bottom);
   --engine-card-pad: 1rem;
   --engine-gap: 0.85rem;
   --engine-control-height: 2.45rem;
@@ -71,6 +81,11 @@ body:has(.engine-shell) {
 .engine-shell textarea:focus-visible,
 .engine-shell a:focus-visible {
   outline-color: #20a68c;
+}
+
+.engine-shell ::selection {
+  background: #bdebe2;
+  color: #07100d;
 }
 
 .engine-sidebar {
@@ -230,6 +245,7 @@ body:has(.engine-shell) {
   background: rgba(255, 255, 255, 0.94);
   padding: 0.62rem clamp(0.85rem, 2vw, 1.35rem);
   backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .engine-topbar p,
@@ -251,11 +267,21 @@ body:has(.engine-shell) {
 
 .engine-page-title {
   flex: 0 0 auto;
+  min-width: 0;
+  max-width: 18rem;
+}
+
+.engine-page-title p,
+.engine-page-title h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .engine-topbar__actions {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 0.45rem;
 }
 
@@ -453,7 +479,8 @@ body:has(.engine-shell) {
   min-width: 13rem;
   border: 1px solid var(--engine-line);
   background: #fff;
-  box-shadow: 0 10px 24px rgba(17, 24, 21, 0.12);
+  border-radius: var(--engine-radius-sm);
+  box-shadow: var(--engine-shadow-popover);
   padding: 0.35rem;
 }
 
@@ -486,6 +513,10 @@ body:has(.engine-shell) {
   outline: 2px solid transparent;
 }
 
+.engine-action-label-short {
+  display: none;
+}
+
 .engine-system-dot {
   width: 0.52rem;
   height: 0.52rem;
@@ -508,9 +539,39 @@ body:has(.engine-shell) {
   padding: 0.75rem clamp(1rem, 2.5vw, 2rem);
 }
 
+.engine-command-center__summary {
+  display: none;
+}
+
+.engine-command-center__summary button {
+  display: flex;
+  width: 100%;
+  min-height: var(--engine-control-height);
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--engine-line-strong);
+  border-radius: var(--engine-radius-sm);
+  background: #fff;
+  color: var(--engine-ink);
+  padding: 0.48rem 0.65rem;
+  text-align: left;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.engine-command-center__summary small {
+  color: var(--engine-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.engine-command-center__body {
+  display: block;
+}
+
 .engine-command-bar {
   display: grid;
-  grid-template-columns: minmax(16rem, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(16rem, 1fr) auto auto auto auto auto;
   gap: 0.6rem;
   align-items: start;
 }
@@ -847,6 +908,81 @@ body:has(.engine-shell) {
   margin-top: 0.25rem;
   color: var(--engine-muted);
   line-height: 1.45;
+}
+
+.engine-next-action-card details {
+  margin-top: 0.3rem;
+}
+
+.engine-next-action-card summary {
+  width: max-content;
+  max-width: 100%;
+  color: var(--engine-accent);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.engine-next-action-card details[open] summary {
+  margin-bottom: 0.2rem;
+}
+
+.engine-overview-cards {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.engine-metric-card {
+  display: grid;
+  min-width: 0;
+  min-height: 6.5rem;
+  align-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--engine-line);
+  border-radius: var(--engine-radius-sm);
+  background: #fff;
+  color: var(--engine-ink);
+  padding: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--engine-duration) var(--engine-ease),
+    background-color var(--engine-duration) var(--engine-ease),
+    transform var(--engine-duration) var(--engine-ease);
+}
+
+.engine-metric-card:hover,
+.engine-metric-card:focus-visible {
+  border-color: #9ed5c8;
+  background: #f5fbf8;
+}
+
+.engine-metric-card:active {
+  transform: translateY(1px);
+}
+
+.engine-metric-card span,
+.engine-metric-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engine-metric-card span {
+  color: var(--engine-muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.engine-metric-card strong {
+  font-size: clamp(1.55rem, 2.3vw, 2.25rem);
+  line-height: 1;
+}
+
+.engine-metric-card small {
+  color: var(--engine-muted);
+  font-size: 0.72rem;
 }
 
 .engine-metrics {
@@ -1500,6 +1636,7 @@ body:has(.engine-shell) {
 .engine-opportunity {
   display: inline-flex;
   justify-self: start;
+  border-radius: 999px;
   background: #edf1ee;
   color: #4f5f57;
   padding: 0.32rem 0.42rem;
@@ -1508,6 +1645,39 @@ body:has(.engine-shell) {
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+}
+
+.engine-status-badge {
+  display: inline-flex;
+  min-height: 1.55rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--engine-line);
+  border-radius: 999px;
+  background: #f8faf8;
+  color: var(--engine-ink);
+  padding: 0.22rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.engine-status-badge--success {
+  border-color: #b7ddcc;
+  background: #eef9f3;
+  color: var(--engine-success);
+}
+
+.engine-status-badge--warning {
+  border-color: #e2c17b;
+  background: #fff8e7;
+  color: var(--engine-warning);
+}
+
+.engine-status-badge--danger {
+  border-color: #e5b7ae;
+  background: #fff3f0;
+  color: var(--engine-danger);
 }
 
 .engine-status--interested,
@@ -2336,9 +2506,33 @@ body:has(.engine-shell) {
 .engine-loading-state i {
   width: 2.4rem;
   height: 2.4rem;
+  border-radius: var(--engine-radius-sm);
   background: linear-gradient(90deg, #e5ebe7 20%, #f4f7f5 50%, #e5ebe7 80%);
   background-size: 220% 100%;
   animation: engine-loading 1.4s ease-in-out infinite;
+}
+
+.engine-skeleton {
+  display: block;
+  min-height: 0.9rem;
+  border-radius: var(--engine-radius-sm);
+  background: linear-gradient(90deg, #e5ebe7 20%, #f4f7f5 50%, #e5ebe7 80%);
+  background-size: 220% 100%;
+  animation: engine-loading 1.4s ease-in-out infinite;
+}
+
+.engine-toast {
+  position: fixed;
+  z-index: 110;
+  right: 1rem;
+  bottom: calc(1rem + var(--engine-safe-bottom));
+  width: min(22rem, calc(100vw - 2rem));
+  border: 1px solid var(--engine-line);
+  border-radius: var(--engine-radius-sm);
+  background: #fff;
+  box-shadow: var(--engine-shadow-popover);
+  padding: 0.75rem;
+  color: var(--engine-ink);
 }
 
 .engine-loading-state h3,
@@ -2361,6 +2555,18 @@ body:has(.engine-shell) {
 @keyframes engine-loading {
   to {
     background-position: -220% 0;
+  }
+}
+
+@keyframes engine-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes engine-sheet-in {
+  to {
+    transform: translateY(0);
   }
 }
 
@@ -7307,7 +7513,8 @@ body:has(.engine-shell) {
     inset: 0;
     display: block;
     border: 0;
-    background: rgba(7, 16, 13, 0.38);
+    background: rgba(7, 16, 13, 0.42);
+    animation: engine-fade-in var(--engine-duration) var(--engine-ease);
   }
 
   .engine-mobile-more-sheet {
@@ -7320,9 +7527,12 @@ body:has(.engine-shell) {
     max-height: min(72dvh, 32rem);
     overflow: auto;
     border: 1px solid var(--engine-line);
+    border-radius: var(--engine-radius-lg) var(--engine-radius-lg) var(--engine-radius-sm) var(--engine-radius-sm);
     background: #fff;
-    box-shadow: 0 16px 36px rgba(17, 24, 21, 0.24);
-    padding: 0.75rem;
+    box-shadow: var(--engine-shadow-sheet);
+    padding: 0.8rem;
+    transform: translateY(0.45rem);
+    animation: engine-sheet-in var(--engine-duration) var(--engine-ease) forwards;
   }
 
   .engine-mobile-more-sheet.is-open {
@@ -7335,6 +7545,8 @@ body:has(.engine-shell) {
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+    border-bottom: 1px solid var(--engine-line);
+    padding-bottom: 0.65rem;
   }
 
   .engine-mobile-more-sheet header p,
@@ -7350,9 +7562,11 @@ body:has(.engine-shell) {
   .engine-mobile-more-sheet header button {
     min-height: 2.15rem;
     border: 1px solid var(--engine-line);
+    border-radius: var(--engine-radius-sm);
     background: #f8faf8;
     padding: 0.35rem 0.55rem;
     font-weight: 850;
+    cursor: pointer;
   }
 
   .engine-mobile-more-sheet > div {
@@ -7368,11 +7582,27 @@ body:has(.engine-shell) {
     align-items: center;
     gap: 0.55rem;
     border: 1px solid var(--engine-line);
+    border-radius: var(--engine-radius-sm);
     background: #f8faf8;
     color: var(--engine-ink);
     padding: 0.55rem;
     text-align: left;
     font-weight: 850;
+    cursor: pointer;
+    transition:
+      border-color var(--engine-duration) var(--engine-ease),
+      background-color var(--engine-duration) var(--engine-ease),
+      transform var(--engine-duration) var(--engine-ease);
+  }
+
+  .engine-mobile-more-sheet > div > button:hover,
+  .engine-mobile-more-sheet > div > button:focus-visible {
+    border-color: #9ed5c8;
+    background: #eff8f5;
+  }
+
+  .engine-mobile-more-sheet > div > button:active {
+    transform: translateY(1px);
   }
 
   .engine-mobile-more-sheet > div > button.is-active {
@@ -7430,7 +7660,8 @@ body:has(.engine-shell) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    padding: 0.55rem 0.7rem;
+    min-height: calc(3.85rem + env(safe-area-inset-top));
+    padding: calc(0.45rem + env(safe-area-inset-top)) 0.7rem 0.5rem;
   }
 
   .engine-topbar h1 {
@@ -7478,6 +7709,14 @@ body:has(.engine-shell) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .engine-action-label-full {
+    display: none;
+  }
+
+  .engine-action-label-short {
+    display: inline;
   }
 
   .engine-action-menu summary {
@@ -7612,11 +7851,31 @@ body:has(.engine-shell) {
   }
 
   .engine-command-center {
-    padding: 0.65rem 0.7rem;
+    padding: 0.5rem 0.7rem;
+  }
+
+  .engine-command-center__summary {
+    display: block;
+  }
+
+  .engine-command-center__body {
+    display: none;
+    padding-top: 0.55rem;
+  }
+
+  .engine-command-center.is-mobile-expanded .engine-command-center__body {
+    display: block;
   }
 
   .engine-command-bar {
     grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .engine-command-help,
+  .engine-command-preview,
+  .engine-command-receipt {
+    padding: 0.7rem;
   }
 
   .engine-command-preview__head,
@@ -7626,6 +7885,25 @@ body:has(.engine-shell) {
   .engine-sticky-save-bar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .engine-overview-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .engine-metric-card {
+    min-height: 5.45rem;
+    padding: 0.68rem;
+  }
+
+  .engine-metric-card strong {
+    font-size: 1.5rem;
+  }
+
+  .engine-metric-card span,
+  .engine-metric-card small {
+    font-size: 0.68rem;
   }
 
   .engine-command-actions,
@@ -8425,7 +8703,42 @@ body:has(.engine-shell) {
 }
 
 @media (max-width: 420px) {
+  .engine-shell {
+    --engine-card-pad: 0.72rem;
+    --engine-gap: 0.65rem;
+    --engine-control-height: 2.35rem;
+  }
+
+  .engine-topbar {
+    gap: 0.45rem;
+    padding-inline: 0.55rem;
+  }
+
   .engine-topbar__actions {
+    gap: 0.25rem;
+  }
+
+  .engine-topbar__actions .engine-button,
+  .engine-action-menu summary {
+    padding-inline: 0.48rem;
+    font-size: 0.76rem;
+  }
+
+  .engine-topbar__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .engine-overview-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .engine-mobile-more-sheet {
+    right: 0.45rem;
+    left: 0.45rem;
+    padding: 0.65rem;
+  }
+
+  .engine-mobile-more-sheet > div {
     grid-template-columns: 1fr;
   }
 
@@ -8440,9 +8753,22 @@ body:has(.engine-shell) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .engine-shell *,
+  .engine-shell *::before,
+  .engine-shell *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+
   .engine-loading-state i {
     animation: none;
     background: #e5ebe7;
+  }
+
+  .engine-skeleton {
+    animation: none;
   }
 }
 
