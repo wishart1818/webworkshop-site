@@ -156,10 +156,20 @@ test("Prospect Engine shell uses compact navigation, density, page tabs, and a s
   const css = readFileSync("app/engine/engine.css", "utf8");
 
   assert.match(source, /workspaceIcons/);
+  assert.match(source, /primaryMobileTabs/);
+  assert.match(source, /moreMobileTabs/);
+  assert.match(source, /MobileBottomNav/);
+  assert.match(source, /engine-mobile-more-sheet/);
+  assert.match(source, /aria-haspopup="dialog"/);
   assert.match(source, /engine-shell--nav-collapsed/);
   assert.match(source, /Interface density/);
   assert.match(source, /webworkshop-engine-density/);
   assert.match(source, /CompactSafetyStatus/);
+  assert.match(source, /ActionMenu/);
+  assert.match(source, /Open Preview/);
+  assert.match(source, /Rewrite outreach/);
+  assert.match(source, /Regenerate with fixes/);
+  assert.match(source, /activeFilterChips/);
   assert.match(source, /Email mode/);
   assert.match(source, /DMs\/forms\/calls\/Looms/);
   assert.match(source, /prospectViewLabels/);
@@ -171,6 +181,11 @@ test("Prospect Engine shell uses compact navigation, density, page tabs, and a s
   assert.match(css, /\.engine-compact-safety/);
   assert.match(css, /\.engine-density--comfortable/);
   assert.match(css, /\.engine-shell--nav-collapsed/);
+  assert.match(css, /\.engine-mobile-bottom-nav/);
+  assert.match(css, /\.engine-mobile-more-sheet/);
+  assert.match(css, /\.engine-row-actions/);
+  assert.match(css, /\.engine-filter-drawer/);
+  assert.match(css, /\.engine-mobile-action-bar/);
 });
 
 test("global operator command bar exposes search, command help, previews, and safe receipts", () => {

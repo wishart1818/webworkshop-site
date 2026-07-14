@@ -48,7 +48,7 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
   do_not_contact: "Do not contact",
 };
 
-export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity";
+export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity" | "Details";
 
 type ProspectDetailProps = {
   prospect: Prospect;
@@ -117,6 +117,15 @@ export function ProspectDetail({
 }: ProspectDetailProps) {
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const presenceLabels = prospectPresenceLabels(prospect);
+  const primaryAction = !prospect.analysis && prospect.websiteStatus === "unknown"
+    ? { label: "Analyze website", action: onAnalyze }
+    : !prospect.preview
+      ? { label: "Generate preview", action: onPreview }
+      : !prospect.outreach
+        ? { label: "Generate outreach", action: onOutreach }
+        : !prospect.outreach.approved
+          ? { label: "Review draft", action: () => setDetailTab("Outreach") }
+          : { label: "Mark reviewed", action: () => onStatus("Reviewed") };
   return (
     <aside className="engine-detail">
       <header className="engine-detail__hero">
@@ -148,9 +157,9 @@ export function ProspectDetail({
       {presenceLabels.length > 0 && <div className="engine-prospect-labels" aria-label="Prospect presence labels" role="list">{presenceLabels.map((label) => <span key={label} role="listitem">{label}</span>)}</div>}
       <ContactExplanation prospect={prospect} />
       <nav className="engine-tabs" aria-label="Prospect detail">
-        {(["Analysis", "Outreach", "Preview", "Activity"] as DetailTab[]).map((tab) => (
+        {(["Analysis", "Outreach", "Preview", "Activity", "Details"] as DetailTab[]).map((tab) => (
           <button className={detailTab === tab ? "is-active" : ""} key={tab} onClick={() => setDetailTab(tab)} type="button">
-            {tab}
+            {tab === "Analysis" ? "Summary" : tab}
           </button>
         ))}
       </nav>
@@ -167,8 +176,42 @@ export function ProspectDetail({
           ? <PreviewView prospect={prospect} />
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
+        {detailTab === "Details" && <DetailsView prospect={prospect} />}
+      </div>
+      <div className="engine-mobile-action-bar" aria-label="Mobile prospect actions">
+        <button className="engine-button engine-button--primary" onClick={primaryAction.action} type="button">{primaryAction.label}</button>
+        <details className="engine-action-menu engine-action-menu--up">
+          <summary>More</summary>
+          <div>
+            <button onClick={() => setDetailTab("Outreach")} type="button">Open outreach</button>
+            <button onClick={() => setDetailTab("Preview")} type="button">Open preview</button>
+            <button onClick={() => void onRegenerateOutreach()} type="button">Rewrite outreach</button>
+            <button onClick={() => void onCreateReviewPackage()} type="button">Create review package</button>
+            <button onClick={() => onStatus("Reviewed")} type="button">Mark reviewed</button>
+          </div>
+        </details>
       </div>
     </aside>
+  );
+}
+
+function DetailsView({ prospect }: { prospect: Prospect }) {
+  return (
+    <div className="engine-stack">
+      <section>
+        <h3>Business details</h3>
+        <dl className="engine-detail-facts">
+          <div><dt>Business</dt><dd>{prospect.businessName}</dd></div>
+          <div><dt>Trade</dt><dd>{displayTradeCategory(prospect.trade)}</dd></div>
+          <div><dt>Market</dt><dd>{titleCaseLocation(prospect.city)}, {displayStateCode(prospect.state)}</dd></div>
+          <div><dt>Status</dt><dd>{prospect.status}</dd></div>
+          <div><dt>Contact method</dt><dd>{contactMethodLabels[prospect.recommendedContactMethod]}</dd></div>
+          <div><dt>Classification</dt><dd>{classificationLabels[prospect.classification]}</dd></div>
+          <div><dt>Outreach draft</dt><dd>{prospect.outreach ? "Generated" : "Not generated"}</dd></div>
+        </dl>
+      </section>
+      <ContactExplanation prospect={prospect} />
+    </div>
   );
 }
 

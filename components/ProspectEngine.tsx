@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import { AutonomousGrowthWorkspace } from "@/components/engine/AutonomousGrowthWorkspace";
 import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
@@ -48,6 +48,8 @@ type ProspectView = "all" | "review" | "email" | "manual" | "blocked" | "contact
 type PipelineView = "board" | "followups" | "replies" | "wonLost";
 
 const workspaceTabs: WorkspaceTab[] = ["Overview", "Top Prospects", "Prospects", "Calls", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"];
+const primaryMobileTabs: WorkspaceTab[] = ["Overview", "Prospects", "Pipeline"];
+const moreMobileTabs: WorkspaceTab[] = ["Top Prospects", "Calls", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"];
 
 const workspaceIcons: Record<WorkspaceTab, string> = {
   Overview: "O",
@@ -97,6 +99,7 @@ export function ProspectEngine() {
   const [selectedId, setSelectedId] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("Overview");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [density, setDensity] = useState<DensityMode>("compact");
   const [prospectView, setProspectView] = useState<ProspectView>("all");
   const [pipelineView, setPipelineView] = useState<PipelineView>("board");
@@ -253,13 +256,13 @@ export function ProspectEngine() {
   const callsQueue = useMemo(() => buildManualCallsQueue(prospects), [prospects]);
   const pendingCalls = useMemo(() => pendingManualCallsCount(prospects), [prospects]);
   const selected = filtered.find((prospect) => prospect.id === selectedId) ?? null;
-  const activeFilterLabels = [
-    query ? `Search: ${query}` : "",
-    trade !== "All" ? `Trade: ${displayTradeCategory(trade)}` : "",
-    status !== "All" ? `Status: ${status}` : "",
-    contactFilter !== "all" ? `Contact: ${contactFilter.replaceAll("_", " ")}` : "",
-    funnelFilter !== "all" ? `${prospectFunnelLabels[funnelFilter]}` : "",
-  ].filter(Boolean);
+  const activeFilterChips = [
+    query ? { key: "query", label: `Search: ${query}`, clear: () => setQuery("") } : null,
+    trade !== "All" ? { key: "trade", label: `Trade: ${displayTradeCategory(trade)}`, clear: () => setTrade("All") } : null,
+    status !== "All" ? { key: "status", label: `Status: ${status}`, clear: () => setStatus("All") } : null,
+    contactFilter !== "all" ? { key: "contact", label: `Contact: ${contactFilter.replaceAll("_", " ")}`, clear: () => setContactFilter("all") } : null,
+    funnelFilter !== "all" ? { key: "funnel", label: `${prospectFunnelLabels[funnelFilter]}`, clear: () => setFunnelFilter("all") } : null,
+  ].filter((chip): chip is { clear: () => void; key: string; label: string } => Boolean(chip));
 
   const metrics = useMemo(
     () => ({
@@ -296,6 +299,10 @@ export function ProspectEngine() {
     return { label: unapprovedOutreach > 0 ? `Approve ${unapprovedOutreach} draft${unapprovedOutreach === 1 ? "" : "s"}` : "Review prospects", action: () => setWorkspaceTab("Prospects") };
   }, [pendingCalls, prospectFunnel, prospects, workspaceTab]);
 
+  useEffect(() => {
+    if (selectedId && !filtered.some((prospect) => prospect.id === selectedId)) setSelectedId("");
+  }, [filtered, selectedId]);
+
   function openFunnelFilter(filter: ProspectFunnelFilterKey) {
     setFunnelFilter(filter);
     setTrade("All");
@@ -304,6 +311,7 @@ export function ProspectEngine() {
     setQuery("");
     setProspectView("all");
     setWorkspaceTab("Prospects");
+    setMobileMoreOpen(false);
   }
 
   function openAllProspects() {
@@ -314,6 +322,12 @@ export function ProspectEngine() {
     setQuery("");
     setProspectView("all");
     setWorkspaceTab("Prospects");
+    setMobileMoreOpen(false);
+  }
+
+  function navigateWorkspace(tab: WorkspaceTab) {
+    setWorkspaceTab(tab);
+    setMobileMoreOpen(false);
   }
 
   function applyProspectView(view: ProspectView) {
@@ -636,9 +650,9 @@ export function ProspectEngine() {
         <button className="engine-nav-collapse" aria-pressed={sidebarCollapsed} onClick={() => setSidebarCollapsed((current) => !current)} type="button">
           {sidebarCollapsed ? "Expand" : "Collapse"}
         </button>
-        <nav aria-label="Prospect Engine">
+        <nav aria-label="Prospect Engine" className="engine-desktop-nav">
           {workspaceTabs.map((tab) => (
-            <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => setWorkspaceTab(tab)} type="button">
+            <button className={workspaceTab === tab ? "is-active" : ""} key={tab} onClick={() => navigateWorkspace(tab)} type="button">
               <i aria-hidden="true">{workspaceIcons[tab]}</i>
               <span>{tab === "Operator Test Center" ? "Test Center" : tab}</span>
               {tab === "Calls" && pendingCalls > 0 ? <b className="engine-nav-badge" aria-label={`${pendingCalls} pending manual calls`}>{pendingCalls}</b> : null}
@@ -678,7 +692,12 @@ export function ProspectEngine() {
                 <option value="comfortable">Comfortable</option>
               </select>
             </label>
-            <button className="engine-button engine-button--subtle" onClick={() => setShowLeadSearch(true)} type="button">Discover</button>
+            <ActionMenu label="More">
+              <button onClick={() => setShowLeadSearch(true)} type="button">Discover leads</button>
+              <button onClick={() => setShowDiscovery(true)} type="button">Add prospect</button>
+              <button onClick={() => navigateWorkspace("Operator Test Center")} type="button">Open Test Center</button>
+              <button onClick={() => navigateWorkspace("System")} type="button">Open System</button>
+            </ActionMenu>
             <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">{nextAction.label}</button>
           </div>
         </header>
@@ -755,6 +774,8 @@ export function ProspectEngine() {
               labels={prospectViewLabels}
               onChange={(view) => applyProspectView(view as ProspectView)}
             />
+            <details className="engine-filter-drawer" open>
+              <summary>Filters <span>{filtered.length} results</span></summary>
             <div className="engine-filters">
               <label className="engine-mobile-search"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
               <select aria-label="Filter by trade" onChange={(event) => setTrade(event.target.value as "All" | TradeCategory)} value={trade}><option>All</option>{tradeCategories.map((item) => <option key={item}>{item}</option>)}</select>
@@ -771,13 +792,14 @@ export function ProspectEngine() {
               </select>
               <select aria-label="Sort prospects" onChange={(event) => setSort(event.target.value as ProspectSort)} value={sort}>{prospectSortOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
               <span>{filtered.length} matching prospects</span>
-              {activeFilterLabels.length ? (
+              {activeFilterChips.length ? (
                 <div className="engine-filter-summary" aria-label="Active prospect filters">
-                  {activeFilterLabels.map((label) => <span key={label}>{label}</span>)}
+                  {activeFilterChips.map((chip) => <button key={chip.key} onClick={chip.clear} type="button">{chip.label}<span aria-hidden="true">x</span></button>)}
                 </div>
               ) : null}
-              {activeFilterLabels.length ? <button className="engine-button" onClick={clearAllProspectFilters} type="button">Clear filters</button> : null}
+              {activeFilterChips.length ? <button className="engine-button" onClick={clearAllProspectFilters} type="button">Clear filters</button> : null}
             </div>
+            </details>
             <div className="engine-workspace">
               <section className="engine-panel engine-list-panel">
                 <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
@@ -861,7 +883,77 @@ export function ProspectEngine() {
 
       {showDiscovery && <DiscoveryDialog onClose={() => setShowDiscovery(false)} onSubmit={addProspect} />}
       {showLeadSearch && <LeadSearchDialog diagnostics={discoveryDiagnostics} existingWebsites={new Set(prospects.map((prospect) => prospect.website))} leads={discoveredLeads} state={discoveryState} error={discoveryError} onClose={() => setShowLeadSearch(false)} onDiscover={discoverLeads} onImport={importLead} />}
+      <MobileBottomNav
+        activeTab={workspaceTab}
+        callsCount={pendingCalls}
+        moreOpen={mobileMoreOpen}
+        onCloseMore={() => setMobileMoreOpen(false)}
+        onNavigate={navigateWorkspace}
+        onToggleMore={() => setMobileMoreOpen((current) => !current)}
+      />
     </div>
+  );
+}
+
+function ActionMenu({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <details className="engine-action-menu">
+      <summary>{label}</summary>
+      <div>{children}</div>
+    </details>
+  );
+}
+
+function MobileBottomNav({
+  activeTab,
+  callsCount,
+  moreOpen,
+  onCloseMore,
+  onNavigate,
+  onToggleMore,
+}: {
+  activeTab: WorkspaceTab;
+  callsCount: number;
+  moreOpen: boolean;
+  onCloseMore: () => void;
+  onNavigate: (tab: WorkspaceTab) => void;
+  onToggleMore: () => void;
+}) {
+  const moreActive = moreMobileTabs.includes(activeTab);
+  return (
+    <>
+      {moreOpen ? <button aria-label="Close more navigation" className="engine-mobile-more-backdrop" onClick={onCloseMore} type="button" /> : null}
+      <nav className="engine-mobile-bottom-nav" aria-label="Mobile Prospect Engine">
+        {primaryMobileTabs.map((tab) => (
+          <button aria-current={activeTab === tab ? "page" : undefined} className={activeTab === tab ? "is-active" : ""} key={tab} onClick={() => onNavigate(tab)} type="button">
+            <i aria-hidden="true">{workspaceIcons[tab]}</i>
+            <span>{tab}</span>
+          </button>
+        ))}
+        <button aria-expanded={moreOpen} aria-haspopup="dialog" aria-current={moreActive ? "page" : undefined} className={moreActive || moreOpen ? "is-active" : ""} onClick={onToggleMore} type="button">
+          <i aria-hidden="true">M</i>
+          <span>More</span>
+        </button>
+      </nav>
+      <div aria-hidden={!moreOpen} aria-label="More engine destinations" className={`engine-mobile-more-sheet ${moreOpen ? "is-open" : ""}`} role="dialog">
+        <header>
+          <div>
+            <b>More</b>
+            <p>Advanced engine workspaces</p>
+          </div>
+          <button aria-label="Close more navigation" onClick={onCloseMore} type="button">Close</button>
+        </header>
+        <div>
+          {moreMobileTabs.map((tab) => (
+            <button aria-current={activeTab === tab ? "page" : undefined} className={activeTab === tab ? "is-active" : ""} key={tab} onClick={() => onNavigate(tab)} type="button">
+              <i aria-hidden="true">{workspaceIcons[tab]}</i>
+              <span>{tab === "Operator Test Center" ? "Test Center" : tab}</span>
+              {tab === "Calls" && callsCount > 0 ? <b>{callsCount}</b> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1156,8 +1248,58 @@ function ProspectFunnelCard({
   );
 }
 
+function prospectContactPathLabel(prospect: Prospect) {
+  if (prospect.email) return "Email found";
+  if (prospect.quoteFormUrl) return "Quote form";
+  if (prospect.contactFormUrl) return "Contact form";
+  if (prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl) return "Social path";
+  if (prospect.phone) return "Phone only";
+  return "Needs research";
+}
+
+function prospectNextActionLabel(prospect: Prospect) {
+  if (!prospect.analysis && prospect.websiteStatus === "unknown") return "Analyze";
+  if (!prospect.preview) return "Generate preview";
+  if (!prospect.outreach) return "Generate outreach";
+  if (!prospect.outreach.approved) return "Review draft";
+  if (!prospectWrittenContactMethodIsUsable(prospect)) return "Verify contact";
+  return "Review";
+}
+
 function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospect[]; selectedId: string; onSelect: (id: string) => void }) {
-  return <div className="engine-table" role="table" aria-label="Prospects"><div className="engine-table__head" role="row"><span>Prospect</span><span>Status</span><span>Website / presence</span><span>Priority</span></div>{prospects.map((prospect) => { const labels = prospectPresenceLabels(prospect); const state = prospect.analysis ? `${prospect.analysis.overallScore}/100` : prospect.websiteStatus === "unknown" ? "Not analyzed" : prospect.websiteStatusDetail || "Presence Gap analysis"; return <button className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} onClick={() => onSelect(prospect.id)} role="row" type="button"><span><b>{prospect.businessName}</b><small>{prospectLocationLine(prospect)}</small></span><span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span><span className="engine-table-presence"><b>{state}</b>{labels.slice(0, 2).map((label) => <small key={label}>{label}</small>)}</span><span><strong>{prospect.priorityScore}</strong></span></button>; })}</div>;
+  return (
+    <div className="engine-table" role="table" aria-label="Prospects">
+      <div className="engine-table__head" role="row"><span>Prospect</span><span>Contact</span><span>Status</span><span>Score</span><span>Next</span></div>
+      {prospects.map((prospect) => {
+        const labels = prospectPresenceLabels(prospect);
+        const state = prospect.analysis ? `${prospect.analysis.overallScore}/100 website` : prospect.websiteStatus === "unknown" ? "Not analyzed" : prospect.websiteStatusDetail || "Presence Gap";
+        return (
+          <article className={prospect.id === selectedId ? "is-selected" : ""} key={prospect.id} role="row">
+            <button className="engine-table-main" onClick={() => onSelect(prospect.id)} type="button">
+              <span><b>{prospect.businessName}</b><small>{prospectLocationLine(prospect)}</small></span>
+              <span className="engine-table-presence"><b>{state}</b>{labels.slice(0, 2).map((label) => <small key={label}>{label}</small>)}</span>
+            </button>
+            <span className="engine-table-contact">{prospectContactPathLabel(prospect)}</span>
+            <span><i className={`engine-status engine-status--${prospect.status.toLowerCase().replaceAll(" ", "-")}`}>{prospect.status}</i></span>
+            <span><strong>{prospect.priorityScore}</strong></span>
+            <span className="engine-row-actions">
+              <button className="engine-button engine-button--primary" onClick={() => onSelect(prospect.id)} type="button">Review</button>
+              {prospect.preview ? <a className="engine-button" href={`/engine/previews/${prospect.id}`}>Open Preview</a> : null}
+              <ActionMenu label="More">
+                <button onClick={() => onSelect(prospect.id)} type="button">Open detail</button>
+                <button onClick={() => onSelect(prospect.id)} type="button">{prospectNextActionLabel(prospect)}</button>
+                <button onClick={() => onSelect(prospect.id)} type="button">Rewrite outreach</button>
+                <button onClick={() => onSelect(prospect.id)} type="button">Regenerate with fixes</button>
+                <button onClick={() => onSelect(prospect.id)} type="button">Mark reviewed</button>
+                <button onClick={() => onSelect(prospect.id)} type="button">Suppress</button>
+                <button onClick={() => onSelect(prospect.id)} type="button">Add feedback</button>
+              </ActionMenu>
+            </span>
+          </article>
+        );
+      })}
+    </div>
+  );
 }
 
 function DiscoveryDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {

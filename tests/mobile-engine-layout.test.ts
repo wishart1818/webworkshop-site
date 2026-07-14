@@ -26,7 +26,8 @@ test("engine phone layout uses a single-column form flow", () => {
 
 test("engine phone layout removes desktop-width result overflow", () => {
   assert.match(mobileCss, /\.engine-table__head\s*{\s*display: none;/);
-  assert.match(mobileCss, /\.engine-table > button\s*{\s*min-width: 0;/);
+  assert.match(mobileCss, /\.engine-table > article\s*{\s*min-width: 0;/);
+  assert.match(mobileCss, /\.engine-table-main\s*{\s*grid-template-columns: minmax\(0, 1fr\);/);
   assert.match(mobileCss, /\.engine-pipeline\s*{\s*grid-template-columns: 1fr;\s*overflow-x: visible;/);
   assert.match(mobileCss, /\.engine-top-table article\s*{\s*min-width: 0;\s*grid-template-columns: 1fr;/);
   assert.doesNotMatch(mobileCss, /min-width:\s*36rem/);
@@ -40,13 +41,17 @@ test("engine phone layout removes desktop-width result overflow", () => {
 
 test("engine phone controls and navigation account for iPhone interaction constraints", () => {
   assert.match(css, /padding-bottom: calc\(var\(--engine-mobile-nav-height\) \+ env\(safe-area-inset-bottom\)\)/);
-  assert.match(css, /padding: 0\.4rem 0\.4rem calc\(0\.4rem \+ env\(safe-area-inset-bottom\)\)/);
-  assert.match(css, /--engine-mobile-nav-height: 7\.6rem/);
-  assert.match(css, /\.engine-sidebar nav\s*{\s*display: flex;\s*overflow-x: auto;/);
-  assert.match(css, /\.engine-sidebar nav button\s*{[\s\S]*flex: 0 0 5\.4rem;/);
+  assert.match(css, /--engine-mobile-nav-height: 4\.65rem/);
+  assert.match(css, /\.engine-sidebar\s*{\s*display: none;/);
+  assert.match(css, /\.engine-mobile-bottom-nav\s*{\s*position: fixed;[\s\S]*padding: 0\.35rem 0\.35rem calc\(0\.35rem \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(css, /\.engine-mobile-more-sheet\.is-open\s*{\s*display: grid;/);
+  assert.match(css, /\.engine-mobile-more-backdrop\s*{\s*position: fixed;/);
   assert.match(mobileCss, /\.engine-section-tabs\s*{\s*display: flex;\s*flex-wrap: nowrap;\s*overflow-x: auto;/);
+  assert.match(mobileCss, /\.engine-detail\s*{\s*position: fixed;/);
+  assert.match(mobileCss, /\.engine-mobile-action-bar\s*{\s*position: sticky;/);
+  assert.match(mobileCss, /\.engine-filter-drawer summary\s*{\s*display: flex;/);
   assert.match(mobileCss, /\.engine-top-prospect-launcher button\s*{\s*width: 100%;/);
-  assert.match(mobileCss, /min-height: 2\.75rem;\s*font-size: 1rem;/);
+  assert.match(mobileCss, /min-height: 2\.45rem;\s*font-size: 0\.92rem;/);
   assert.match(mobileCss, /\.engine-empty__actions \.engine-button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /\.engine-inline-actions \.engine-button\s*{\s*width: 100%;/);
   assert.match(mobileCss, /\.engine-prospect-labels span,/);
