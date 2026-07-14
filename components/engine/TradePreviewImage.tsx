@@ -30,13 +30,13 @@ export function TradePreviewImage({ alt, fallbackLabel, fallbackSrc, slot, src }
       data-preview-image-state={imageState}
     >
       {imageState === "unavailable" ? (
-        <div className="prospect-preview-image__fallback" role="img" aria-label={`${fallbackLabel}. Representative concept visual.`}>
+        <div className="prospect-preview-image__fallback" role="img" aria-label={`${fallbackLabel}. Service visual.`}>
           <strong>{fallbackLabel}</strong>
-          <span>Representative visual direction</span>
+          <span>Service visual</span>
         </div>
       ) : (
         <Image
-          alt={imageState === "fallback" ? `${alt}. Trade-specific illustration shown because the photo was unavailable.` : alt}
+          alt={imageState === "fallback" ? `${alt}. Trade-specific illustration shown if the photo is unavailable.` : alt}
           src={activeSrc}
           fill
           priority={slot === "hero"}

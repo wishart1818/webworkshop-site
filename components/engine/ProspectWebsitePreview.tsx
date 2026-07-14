@@ -64,143 +64,143 @@ function tradePhotoAsset(slug: string, slot: "hero" | "service" | "detail" | "su
 
 const tradeVisuals: Record<Prospect["trade"], TradeVisualProfile> = {
   Roofing: {
-    hero: tradePhotoAsset("roofing", "hero", "Representative roofing photo with roofline, shingle detail, gutter edge, and inspection context"),
+    hero: tradePhotoAsset("roofing", "hero", "Roofline, shingle detail, gutter edge, and inspection context"),
     services: [
-      tradePhotoAsset("roofing", "service", "Representative roofing service photo with shingles, flashing, gutter edge, and inspection tools"),
-      tradePhotoAsset("roofing", "detail", "Representative roofing detail photo with repair materials and roof surface context"),
-      tradePhotoAsset("roofing", "support", "Representative roofing support photo with inspection and exterior detail"),
+      tradePhotoAsset("roofing", "service", "Roofing service photo with shingles, flashing, gutter edge, and inspection tools"),
+      tradePhotoAsset("roofing", "detail", "Roofing detail photo with repair materials and roof surface context"),
+      tradePhotoAsset("roofing", "support", "Roofing support photo with inspection and exterior detail"),
     ],
-    proof: tradePhotoAsset("roofing", "proof", "Representative roofing example photo with roof inspection and repair context"),
+    proof: tradePhotoAsset("roofing", "proof", "Roof inspection and repair context"),
     texture: "Roofline, shingle detail, and practical inspection cues",
   },
   HVAC: {
-    hero: tradePhotoAsset("hvac", "hero", "Representative HVAC photo with an outdoor AC condenser beside a residential home"),
+    hero: tradePhotoAsset("hvac", "hero", "HVAC photo with an outdoor AC condenser beside a residential home"),
     services: [
-      tradePhotoAsset("hvac", "service", "Representative HVAC service photo with furnace or air handler equipment and technician tools"),
-      tradePhotoAsset("hvac", "detail", "Representative HVAC detail photo with residential ductwork, supply vent, and technician inspection"),
-      tradePhotoAsset("hvac", "support", "Representative HVAC service-call photo with technician, tool bag, and outdoor condenser"),
+      tradePhotoAsset("hvac", "service", "HVAC service photo with furnace or air handler equipment and technician tools"),
+      tradePhotoAsset("hvac", "detail", "HVAC detail photo with residential ductwork, supply vent, and technician inspection"),
+      tradePhotoAsset("hvac", "support", "HVAC service-call photo with technician, tool bag, and outdoor condenser"),
     ],
-    proof: tradePhotoAsset("hvac", "proof", "Representative HVAC example photo with thermostat, vent, and home comfort detail"),
+    proof: tradePhotoAsset("hvac", "proof", "HVAC thermostat, vent, and home comfort detail"),
     texture: "AC equipment, home comfort details, and service-call context",
   },
   Landscaping: {
-    hero: tradePhotoAsset("landscaping", "hero", "Representative landscaping photo with lawn, planting beds, patio edge, and outdoor service context"),
+    hero: tradePhotoAsset("landscaping", "hero", "Landscaping photo with lawn, planting beds, patio edge, and outdoor service context"),
     services: [
-      tradePhotoAsset("landscaping", "service", "Representative landscaping service photo with planting bed, mulch, edging, and hand tools"),
-      tradePhotoAsset("landscaping", "detail", "Representative landscaping detail photo with lawn and planting work"),
-      tradePhotoAsset("landscaping", "support", "Representative landscaping support photo with patio edge and finished outdoor space"),
+      tradePhotoAsset("landscaping", "service", "Landscaping service photo with planting bed, mulch, edging, and hand tools"),
+      tradePhotoAsset("landscaping", "detail", "Landscaping detail photo with lawn and planting work"),
+      tradePhotoAsset("landscaping", "support", "Landscaping support photo with patio edge and finished outdoor space"),
     ],
-    proof: tradePhotoAsset("landscaping", "proof", "Representative landscaping example photo with finished patio edge, lawn, shrubs, and outdoor living space"),
+    proof: tradePhotoAsset("landscaping", "proof", "Finished patio edge, lawn, shrubs, and outdoor living space"),
     texture: "Lawn, planting detail, and finished outdoor space",
   },
   Plumbing: {
-    hero: tradePhotoAsset("plumbing", "hero", "Representative plumbing photo with under-sink service, visible pipes, and repair tools"),
+    hero: tradePhotoAsset("plumbing", "hero", "Plumbing photo with under-sink service, visible pipes, and repair tools"),
     services: [
-      tradePhotoAsset("plumbing", "service", "Representative plumbing service photo with water heater, pipe fittings, and service tools"),
-      tradePhotoAsset("plumbing", "detail", "Representative plumbing detail photo with fixtures and repair access"),
-      tradePhotoAsset("plumbing", "support", "Representative plumbing support photo with drain lines and service tools"),
+      tradePhotoAsset("plumbing", "service", "Plumbing service photo with water heater, pipe fittings, and service tools"),
+      tradePhotoAsset("plumbing", "detail", "Plumbing detail photo with fixtures and repair access"),
+      tradePhotoAsset("plumbing", "support", "Plumbing support photo with drain lines and service tools"),
     ],
-    proof: tradePhotoAsset("plumbing", "proof", "Representative plumbing example photo with repaired drain trap, supply lines, and service tools"),
+    proof: tradePhotoAsset("plumbing", "proof", "Drain trap, supply lines, and service tools"),
     texture: "Clean repair detail, water systems, and practical service cues",
   },
   Electrical: {
-    hero: tradePhotoAsset("electrical", "hero", "Representative electrical photo with residential breaker panel service and insulated tools"),
+    hero: tradePhotoAsset("electrical", "hero", "Electrical photo with residential breaker panel service and insulated tools"),
     services: [
-      tradePhotoAsset("electrical", "service", "Representative electrical service photo with breaker panel, tools, and safe work context"),
-      tradePhotoAsset("electrical", "detail", "Representative electrical detail photo with wiring and panel work"),
-      tradePhotoAsset("electrical", "support", "Representative electrical support photo with lighting installation context"),
+      tradePhotoAsset("electrical", "service", "Electrical service photo with breaker panel, tools, and safe work context"),
+      tradePhotoAsset("electrical", "detail", "Electrical detail photo with wiring and panel work"),
+      tradePhotoAsset("electrical", "support", "Electrical support photo with lighting installation context"),
     ],
-    proof: tradePhotoAsset("electrical", "proof", "Representative electrical example photo with lighting installation, tools, and clean work area"),
+    proof: tradePhotoAsset("electrical", "proof", "Lighting installation, tools, and clean work area"),
     texture: "Breaker panels, lighting work, and safe installation cues",
   },
   "Pressure Washing": {
-    hero: tradePhotoAsset("power-washing", "hero", "Representative power washing photo with spray equipment and exterior cleaning context"),
+    hero: tradePhotoAsset("power-washing", "hero", "Pressure washing photo with spray equipment and exterior cleaning context"),
     services: [
-      tradePhotoAsset("power-washing", "service", "Representative power washing service photo with siding wash and surface cleaning detail"),
-      tradePhotoAsset("power-washing", "detail", "Representative power washing detail photo with spray equipment and siding"),
-      tradePhotoAsset("power-washing", "support", "Representative power washing support photo with driveway cleaning detail"),
+      tradePhotoAsset("power-washing", "service", "Pressure washing service photo with siding wash and surface cleaning detail"),
+      tradePhotoAsset("power-washing", "detail", "Pressure washing detail photo with spray equipment and siding"),
+      tradePhotoAsset("power-washing", "support", "Pressure washing support photo with driveway cleaning detail"),
     ],
-    proof: tradePhotoAsset("power-washing", "proof", "Representative power washing example photo with cleaned driveway and exterior surface detail"),
+    proof: tradePhotoAsset("power-washing", "proof", "Cleaned driveway and exterior surface detail"),
     texture: "Exterior cleaning, surface detail, and before-after potential",
   },
   Painting: {
-    hero: tradePhotoAsset("painting", "hero", "Representative painting photo with roller, wall finish, trim, and room refresh context"),
+    hero: tradePhotoAsset("painting", "hero", "Painting photo with roller, wall finish, trim, and room refresh context"),
     services: [
-      tradePhotoAsset("painting", "service", "Representative painting service photo with trim, roller, paint tray, and careful prep"),
-      tradePhotoAsset("painting", "detail", "Representative painting detail photo with surface prep and finish work"),
-      tradePhotoAsset("painting", "support", "Representative painting support photo with refreshed room and trim detail"),
+      tradePhotoAsset("painting", "service", "Painting service photo with trim, roller, paint tray, and careful prep"),
+      tradePhotoAsset("painting", "detail", "Painting detail photo with surface prep and finish work"),
+      tradePhotoAsset("painting", "support", "Painting support photo with refreshed room and trim detail"),
     ],
-    proof: tradePhotoAsset("painting", "proof", "Representative painting example photo with finish detail, roller, and clean trim"),
+    proof: tradePhotoAsset("painting", "proof", "Finish detail, roller, and clean trim"),
     texture: "Prep, finish detail, and color confidence",
   },
   Concrete: {
-    hero: tradePhotoAsset("concrete", "hero", "Representative concrete photo with driveway, walkway, and flatwork context"),
+    hero: tradePhotoAsset("concrete", "hero", "Concrete photo with driveway, walkway, and flatwork context"),
     services: [
-      tradePhotoAsset("concrete", "service", "Representative concrete service photo with trowel, surface finish, and flatwork detail"),
-      tradePhotoAsset("concrete", "detail", "Representative concrete detail photo with finishing and clean edges"),
-      tradePhotoAsset("concrete", "support", "Representative concrete support photo with walkway and completed surface"),
+      tradePhotoAsset("concrete", "service", "Concrete service photo with trowel, surface finish, and flatwork detail"),
+      tradePhotoAsset("concrete", "detail", "Concrete detail photo with finishing and clean edges"),
+      tradePhotoAsset("concrete", "support", "Concrete support photo with walkway and completed surface"),
     ],
-    proof: tradePhotoAsset("concrete", "proof", "Representative concrete example photo with walkway, driveway, and finished surface"),
+    proof: tradePhotoAsset("concrete", "proof", "Walkway, driveway, and finished surface"),
     texture: "Concrete surfaces, clean edges, and practical planning",
   },
   Cleaning: {
-    hero: tradePhotoAsset("cleaning", "hero", "Representative cleaning photo with clean interior, equipment, and organized service context"),
+    hero: tradePhotoAsset("cleaning", "hero", "Cleaning photo with clean interior, equipment, and organized service context"),
     services: [
-      tradePhotoAsset("cleaning", "service", "Representative cleaning service photo with supplies, clean room, and equipment"),
-      tradePhotoAsset("cleaning", "detail", "Representative cleaning detail photo with equipment and organized work"),
-      tradePhotoAsset("cleaning", "support", "Representative cleaning support photo with refreshed interior surfaces"),
+      tradePhotoAsset("cleaning", "service", "Cleaning service photo with supplies, clean room, and equipment"),
+      tradePhotoAsset("cleaning", "detail", "Cleaning detail photo with equipment and organized work"),
+      tradePhotoAsset("cleaning", "support", "Cleaning support photo with refreshed interior surfaces"),
     ],
-    proof: tradePhotoAsset("cleaning", "proof", "Representative cleaning example photo with fresh interior and cleaning equipment"),
+    proof: tradePhotoAsset("cleaning", "proof", "Fresh interior and cleaning equipment"),
     texture: "Fresh surfaces, equipment, and organized scope",
   },
   "Tree Service": {
-    hero: tradePhotoAsset("tree-service", "hero", "Representative tree service photo with tree care, trimming context, and outdoor equipment"),
+    hero: tradePhotoAsset("tree-service", "hero", "Tree service photo with tree care, trimming context, and outdoor equipment"),
     services: [
-      tradePhotoAsset("tree-service", "service", "Representative tree service photo with trimming, removal equipment, and cleanup context"),
-      tradePhotoAsset("tree-service", "detail", "Representative tree service detail photo with trimming and safety context"),
-      tradePhotoAsset("tree-service", "support", "Representative tree service support photo with equipment and cleanup"),
+      tradePhotoAsset("tree-service", "service", "Tree service photo with trimming, removal equipment, and cleanup context"),
+      tradePhotoAsset("tree-service", "detail", "Tree service detail photo with trimming and safety context"),
+      tradePhotoAsset("tree-service", "support", "Tree service support photo with equipment and cleanup"),
     ],
-    proof: tradePhotoAsset("tree-service", "proof", "Representative tree service example photo with equipment, trimming, and yard cleanup"),
+    proof: tradePhotoAsset("tree-service", "proof", "Equipment, trimming, and yard cleanup"),
     texture: "Tree care, equipment, and cleanup expectations",
   },
   Fencing: {
-    hero: tradePhotoAsset("fencing", "hero", "Representative fencing photo with fence panels, gate, and yard boundary context"),
+    hero: tradePhotoAsset("fencing", "hero", "Fencing photo with fence panels, gate, and yard boundary context"),
     services: [
-      tradePhotoAsset("fencing", "service", "Representative fencing service photo with gate, fence line, materials, and yard detail"),
-      tradePhotoAsset("fencing", "detail", "Representative fencing detail photo with materials and installation work"),
-      tradePhotoAsset("fencing", "support", "Representative fencing support photo with gate and finished yard context"),
+      tradePhotoAsset("fencing", "service", "Fencing service photo with gate, fence line, materials, and yard detail"),
+      tradePhotoAsset("fencing", "detail", "Fencing detail photo with materials and installation work"),
+      tradePhotoAsset("fencing", "support", "Fencing support photo with gate and finished yard context"),
     ],
-    proof: tradePhotoAsset("fencing", "proof", "Representative fencing example photo with installed fence, gate, and yard context"),
+    proof: tradePhotoAsset("fencing", "proof", "Installed fence, gate, and yard context"),
     texture: "Fence lines, gates, privacy, and property fit",
   },
   Flooring: {
-    hero: tradePhotoAsset("flooring", "hero", "Representative flooring photo with hardwood planks, tile, and installation context"),
+    hero: tradePhotoAsset("flooring", "hero", "Flooring photo with hardwood planks, tile, and installation context"),
     services: [
-      tradePhotoAsset("flooring", "service", "Representative flooring service photo with tile, planks, installation tools, and finished surface"),
-      tradePhotoAsset("flooring", "detail", "Representative flooring detail photo with installation and material texture"),
-      tradePhotoAsset("flooring", "support", "Representative flooring support photo with finished floor and room context"),
+      tradePhotoAsset("flooring", "service", "Flooring service photo with tile, planks, installation tools, and finished surface"),
+      tradePhotoAsset("flooring", "detail", "Flooring detail photo with installation and material texture"),
+      tradePhotoAsset("flooring", "support", "Flooring support photo with finished floor and room context"),
     ],
-    proof: tradePhotoAsset("flooring", "proof", "Representative flooring example photo with installed floor, tile, and plank detail"),
+    proof: tradePhotoAsset("flooring", "proof", "Installed floor, tile, and plank detail"),
     texture: "Floor surfaces, installation detail, and interior finish",
   },
   Remodeling: {
-    hero: tradePhotoAsset("remodeling", "hero", "Representative remodeling photo with kitchen, bath, room planning, and material context"),
+    hero: tradePhotoAsset("remodeling", "hero", "Remodeling photo with kitchen, bath, room planning, and material context"),
     services: [
-      tradePhotoAsset("remodeling", "service", "Representative remodeling service photo with bath, kitchen, planning, and room improvement detail"),
-      tradePhotoAsset("remodeling", "detail", "Representative remodeling detail photo with materials and room planning"),
-      tradePhotoAsset("remodeling", "support", "Representative remodeling support photo with finished interior context"),
+      tradePhotoAsset("remodeling", "service", "Remodeling service photo with bath, kitchen, planning, and room improvement detail"),
+      tradePhotoAsset("remodeling", "detail", "Remodeling detail photo with materials and room planning"),
+      tradePhotoAsset("remodeling", "support", "Remodeling support photo with finished interior context"),
     ],
-    proof: tradePhotoAsset("remodeling", "proof", "Representative remodeling example photo with room plan, kitchen, bath, and material detail"),
+    proof: tradePhotoAsset("remodeling", "proof", "Room plan, kitchen, bath, and material detail"),
     texture: "Finished spaces, materials, and planning clarity",
   },
   "General Contractor": {
-    hero: tradePhotoAsset("general-contractor", "hero", "Representative construction photo with framing, materials, blueprint, and project planning context"),
+    hero: tradePhotoAsset("general-contractor", "hero", "Construction photo with framing, materials, blueprint, and project planning context"),
     services: [
-      tradePhotoAsset("general-contractor", "service", "Representative general contractor service photo with blueprint, framing, materials, and build process detail"),
-      tradePhotoAsset("general-contractor", "detail", "Representative construction detail photo with framing and project materials"),
-      tradePhotoAsset("general-contractor", "support", "Representative construction support photo with planning and build context"),
+      tradePhotoAsset("general-contractor", "service", "General contractor service photo with blueprint, framing, materials, and build process detail"),
+      tradePhotoAsset("general-contractor", "detail", "Construction detail photo with framing and project materials"),
+      tradePhotoAsset("general-contractor", "support", "Construction support photo with planning and build context"),
     ],
-    proof: tradePhotoAsset("general-contractor", "proof", "Representative construction example photo with materials, framing, and planning context"),
+    proof: tradePhotoAsset("general-contractor", "proof", "Materials, framing, and planning context"),
     texture: "Project progress, materials, and communication clarity",
   },
 };
@@ -299,6 +299,89 @@ function trustItemDescription(item: string) {
   return "The next step is clear without extra searching.";
 }
 
+function businessInitials(name: string) {
+  const letters = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+  return letters || "WW";
+}
+
+function proofCopy(trade: Prospect["trade"], displayTrade: string) {
+  const byTrade: Partial<Record<Prospect["trade"], { headline: string; intro: string; checkpoints: [TradeServiceCard, TradeServiceCard, TradeServiceCard] }>> = {
+    "Pressure Washing": {
+      headline: "Make the before-and-after easy to understand.",
+      intro: "Visitors can quickly compare the surface, choose the right cleaning service, and request a quote without hunting around the page.",
+      checkpoints: [
+        { title: "Choose the surface", description: "House siding, concrete, roof areas, and other exterior surfaces are separated clearly." },
+        { title: "Explain the condition", description: "The form guides customers to share what needs cleaning and where it is located." },
+        { title: "Request a clear quote", description: "The main action stays focused on getting a property-specific estimate." },
+      ],
+    },
+    HVAC: {
+      headline: "Make urgent comfort issues easier to route.",
+      intro: "The page puts repairs, replacements, and maintenance into separate paths so homeowners can ask for the right help faster.",
+      checkpoints: [
+        { title: "Repair path", description: "Symptoms, airflow issues, and no-heat or no-cooling concerns are easy to describe." },
+        { title: "Install path", description: "Homeowners can start a replacement conversation without guessing what details matter." },
+        { title: "Maintenance path", description: "Seasonal tune-ups and routine service are clearly separated from urgent repairs." },
+      ],
+    },
+    Roofing: {
+      headline: "Put roof concerns into a clearer order.",
+      intro: "The page helps homeowners understand whether they need repair, replacement, storm review, or a direct estimate request.",
+      checkpoints: [
+        { title: "Show the concern", description: "Leaks, shingles, flashing, and storm damage are grouped into practical starting points." },
+        { title: "Set expectations", description: "Inspection and estimate actions stay visible before a homeowner scrolls too far." },
+        { title: "Keep details close", description: "Helpful roof details stay near the service options where homeowners need them." },
+      ],
+    },
+  };
+  return byTrade[trade] ?? {
+    headline: `Make ${displayTrade.toLowerCase()} options easier to compare.`,
+    intro: "Visitors can see the services, understand the next step, and contact the business without digging through a long page.",
+    checkpoints: [
+      { title: "Pick the service", description: "The most common customer needs are separated into clear service paths." },
+      { title: "Share the project", description: "Customers can explain the property, timing, and scope before the first call." },
+      { title: "Request the next step", description: "The page keeps one clear quote or estimate action within reach." },
+    ],
+  };
+}
+
+function faqItems(trade: Prospect["trade"], ctaLabel: string): [TradeServiceCard, TradeServiceCard, TradeServiceCard] {
+  const action = ctaLabel.toLowerCase();
+  const byTrade: Partial<Record<Prospect["trade"], [TradeServiceCard, TradeServiceCard, TradeServiceCard]>> = {
+    "Pressure Washing": [
+      { title: "What surfaces can I ask about?", description: "Share whether you need help with siding, concrete, patios, roof areas, or another exterior surface." },
+      { title: "Can I describe the property first?", description: "Yes. The request flow is built around surface type, location, and what you want cleaned." },
+      { title: "What is the next step?", description: `Use ${action} and include the surfaces, photos if available, and the best way to reach you.` },
+    ],
+    HVAC: [
+      { title: "Can I request repair or replacement help?", description: "Yes. The service paths separate urgent comfort issues from system planning and maintenance." },
+      { title: "What details should I include?", description: "Share the system concern, home comfort issue, and whether the problem is urgent." },
+      { title: "What is the next step?", description: `Use ${action} or call so the team can confirm the right service path.` },
+    ],
+  };
+  return byTrade[trade] ?? [
+    { title: "What should I include?", description: "Share the service needed, property details, timing, and the best way to reach you." },
+    { title: "Can I ask about a specific project?", description: "Yes. The page is organized so customers can describe the job before a call." },
+    { title: "What is the next step?", description: `Use ${action} and include enough detail for a useful response.` },
+  ];
+}
+
+function confidenceCopy(trade: Prospect["trade"], businessName: string) {
+  const byTrade: Partial<Record<Prospect["trade"], string>> = {
+    "Pressure Washing": "Homeowners can quickly see the surfaces you clean, the best way to request a quote, and how to get the conversation started.",
+    HVAC: "Homeowners can separate urgent service, maintenance, and replacement questions before they call.",
+    Roofing: "Homeowners can find repair, replacement, and storm-response information without digging through the page.",
+    Plumbing: "Customers can describe the issue, see common service paths, and reach the team faster.",
+    Electrical: "Customers can understand repair, upgrade, and installation paths before starting a service conversation.",
+  };
+  return byTrade[trade] ?? `${businessName} can use this page to make services, contact options, and next steps easier for customers to find.`;
+}
+
 export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
   const canonicalTrade = normalizeTradeName(prospect.trade);
   const displayTrade = displayTradeCategory(canonicalTrade);
@@ -314,6 +397,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const serviceArea = normalizeCopy(prospect.serviceArea || `${displayCity}, ${displayState}`);
   const visual = tradeVisuals[canonicalTrade];
   const pageCopy = tradePageCopy[canonicalTrade];
+  const proof = proofCopy(canonicalTrade, displayTrade);
+  const faqs = faqItems(canonicalTrade, styleProfile.ctaLabel);
+  const initials = businessInitials(prospect.businessName);
+  const galleryAssets = [visual.services[1], visual.services[2], visual.proof] as const;
   const heroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const serviceSummary = normalizeCopy(preview.hero);
   const trustItems = (preview.trustItems ?? [
@@ -351,10 +438,14 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         style={style}
       >
         <nav className="prospect-preview-nav" aria-label={`${prospect.businessName} concept navigation`}>
-          <a className="prospect-preview-brand" href="#top">{prospect.businessName}</a>
+          <a className="prospect-preview-brand" href="#top">
+            <span className="prospect-preview-logo" aria-hidden="true">{initials}</span>
+            <span>{prospect.businessName}</span>
+          </a>
           <div>
             <a href="#services">Services</a>
-            <a href="#work">Proof concept</a>
+            <a href="#gallery">Gallery</a>
+            <a href="#faq">FAQ</a>
             <a href="#contact">Contact</a>
           </div>
           <a className="prospect-preview-button" href="#contact">{styleProfile.ctaLabel}</a>
@@ -375,7 +466,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               {(preview.serviceHighlights ?? pageCopy.services.map((item) => item.title)).slice(0, 3).map((item, index) => (
                 <span key={item}>
                   <b>{item}</b>
-                  <i>{index === 0 ? "Primary service" : index === 1 ? "Clear quote path" : `${displayCity} focus`}</i>
+                  <i>{index === 0 ? "Core service" : index === 1 ? "Fast quote path" : `${displayCity} area`}</i>
                 </span>
               ))}
             </div>
@@ -383,9 +474,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <aside className="prospect-preview-hero__visual">
             <TradePreviewImage {...visual.hero} fallbackLabel={`${displayTrade} service visual`} slot="hero" />
             <div className="prospect-preview-visual-caption">
-              <small>Representative image direction</small>
+              <small>{displayTrade} website preview</small>
               <strong>{artDirection?.visualVoice ?? visual.texture}</strong>
-              <span>Representative trade image. {artDirection?.imageTreatment ?? visual.texture} Replace with verified {prospect.businessName} photos before launch.</span>
+              <span>Designed around clear services, visible contact options, and a cleaner path to calls or quote requests.</span>
             </div>
           </aside>
         </section>
@@ -417,7 +508,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Why choose us</span>
             <h2>Useful proof, placed where it builds confidence.</h2>
-            <p>{normalizeCopy(preview.trustStrategy)}</p>
+            <p>{confidenceCopy(canonicalTrade, prospect.businessName)}</p>
           </div>
           <div>
             {trustItems.slice(0, 3).map((item) => (
@@ -432,20 +523,56 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
         <section className="prospect-preview-work" id="work">
           <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">Suggested proof section</span>
-            <h2>How project proof could be shown.</h2>
-            <p>This sample layout shows where verified photos, project scope, and outcomes could appear after the business supplies them.</p>
+            <span className="prospect-preview-kicker">Service guide</span>
+            <h2>{proof.headline}</h2>
+            <p>{proof.intro}</p>
           </div>
           <div className="prospect-preview-proof-layout">
             <TradePreviewImage {...visual.proof} fallbackLabel={`${displayTrade} project-proof visual`} slot="proof" />
             <div className="prospect-preview-proof-notes">
-              {["Suggested project context", "Before-and-after layout", "Verified scope and outcome"].map((item, index) => (
-                <article key={item}>
-                  <b>{item}</b>
-                  <span>{index === 0 && artDirection ? artDirection.sectionFlow : "Sample layout content. Add only verified photos, locations, scope, and outcomes supplied by the business."}</span>
+              {proof.checkpoints.map((item) => (
+                <article key={item.title}>
+                  <b>{item.title}</b>
+                  <span>{item.description}</span>
                 </article>
               ))}
             </div>
+          </div>
+        </section>
+
+        <section className="prospect-preview-gallery-section" id="gallery">
+          <div className="prospect-preview-section__intro">
+            <span className="prospect-preview-kicker">Gallery</span>
+            <h2>Show customers the work before they reach out.</h2>
+            <p>A visual page gives people a faster way to recognize the service they need and take the next step.</p>
+          </div>
+          <div className="prospect-preview-gallery" aria-label={`${displayTrade} service gallery`}>
+            {galleryAssets.map((asset, index) => (
+              <a href={`#preview-gallery-${index + 1}`} key={asset.src}>
+                <TradePreviewImage {...asset} fallbackLabel={`${displayTrade} gallery visual`} slot="service" />
+                <span>{index === 0 ? "Service detail" : index === 1 ? "Property context" : "Finished look"}</span>
+              </a>
+            ))}
+          </div>
+          {galleryAssets.map((asset, index) => (
+            <div className="prospect-preview-lightbox" id={`preview-gallery-${index + 1}`} key={`lightbox-${asset.src}`} role="dialog" aria-label={`${displayTrade} gallery image ${index + 1}`}>
+              <a className="prospect-preview-lightbox__close" href="#gallery">Close image</a>
+              <TradePreviewImage {...asset} fallbackLabel={`${displayTrade} enlarged gallery visual`} slot="hero" />
+            </div>
+          ))}
+        </section>
+
+        <section className="prospect-preview-compare" aria-label="Before and after style planner">
+          <div>
+            <span className="prospect-preview-kicker">Before and after focus</span>
+            <h2>Help visitors picture the next step.</h2>
+            <p>Use a simple comparison area to make the service value easy to understand without forcing customers to read a long page.</p>
+          </div>
+          <div className="prospect-preview-slider-card">
+            <TradePreviewImage {...visual.services[0]} fallbackLabel={`${displayTrade} before service visual`} slot="service" />
+            <label htmlFor="preview-before-after">Move the slider to compare service focus</label>
+            <input id="preview-before-after" min="0" max="100" type="range" defaultValue="58" />
+            <div><span>Current condition</span><span>Cleaner finish</span></div>
           </div>
         </section>
 
@@ -456,17 +583,33 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           {prospect.phone && <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>}
         </section>
 
+        <section className="prospect-preview-faq" id="faq">
+          <div className="prospect-preview-section__intro">
+            <span className="prospect-preview-kicker">Questions</span>
+            <h2>Answer the questions people ask before they call.</h2>
+          </div>
+          <div>
+            {faqs.map((item, index) => (
+              <details key={item.title} open={index === 0}>
+                <summary>{item.title}</summary>
+                <p>{item.description}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+
         <section className="prospect-preview-contact" id="contact">
           <div>
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>A simple path to the right next step.</h2>
             <p>{normalizeCopy(preview.leadCaptureStrategy)}</p>
           </div>
-          <form>
-            <label>Name<input disabled /></label>
-            <label>Phone<input disabled /></label>
-            <label>How can we help?<textarea disabled /></label>
-            <button disabled>{styleProfile.ctaLabel}</button>
+          <form action="#contact" aria-describedby="preview-form-note">
+            <label>Name<input name="name" required /></label>
+            <label>Phone<input name="phone" required inputMode="tel" /></label>
+            <label>How can we help?<textarea name="message" required minLength={12} /></label>
+            <p id="preview-form-note">Preview only: this concept form is not connected to a live submission destination.</p>
+            <button type="submit">{styleProfile.ctaLabel}</button>
           </form>
         </section>
 
@@ -475,6 +618,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <span>{displayTrade} | {serviceArea}</span>
           {prospect.phone && <a href={`tel:${prospect.phone}`}>{prospect.phone}</a>}
         </footer>
+        <a className="prospect-preview-mobile-cta" href="#contact">{styleProfile.ctaLabel}</a>
       </div>
     </main>
   );

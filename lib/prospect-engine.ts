@@ -162,6 +162,8 @@ export type OutreachDraft = {
 };
 
 export type PreviewConcept = {
+  previewVersion?: "v2";
+  creativeBrief?: PreviewCreativeBrief;
   direction: string;
   visualStyleDirection: string;
   artDirection?: PreviewArtDirection;
@@ -179,6 +181,25 @@ export type PreviewConcept = {
   leadCaptureStrategy: string;
   qualityScore?: PreviewQualityScore;
   generatedAt: string;
+};
+
+export type PreviewCreativeBrief = {
+  businessName: string;
+  trade: TradeCategory;
+  city: string;
+  serviceArea: string;
+  services: string[];
+  websiteCondition: string;
+  logoStatus: "not available" | "available";
+  brandColorSource: PreviewStyleProfile["brandSource"];
+  brandingSource: "detected cue" | "trade fallback";
+  imagerySource: "trade photo library" | "business assets";
+  reviewSignal: "not used" | "public rating count only";
+  contactDetails: string[];
+  businessTone: PreviewStyleProfile["tone"];
+  likelyCustomerType: string;
+  visualDirection: string;
+  ctaStrategy: string;
 };
 
 export type PreviewQualityScore = {
@@ -220,6 +241,9 @@ export type PreviewArtDirection = {
   imageTreatment: string;
   sectionFlow: string;
   ctaTreatment: string;
+  interactiveFeatures: string[];
+  imageryPlan: string[];
+  qaWarnings: string[];
   reviewNotes: string[];
 };
 
@@ -624,6 +648,23 @@ function previewArtDirection(prospect: Prospect, styleProfile: PreviewStyleProfi
     imageTreatment: `Lead with a large ${displayTrade} hero photo, then rotate distinct service, detail, support, and proof images so the first visible sections never repeat the same visual.`,
     sectionFlow: `Open with the strongest service visual, move into ${serviceCue}, then show a clearly labeled proof layout and a practical ${city} service-area CTA.`,
     ctaTreatment: `Use "${styleProfile.ctaLabel}" as a high-contrast primary action with a phone option kept visible on mobile.`,
+    interactiveFeatures: [
+      "sticky header",
+      "service jump links",
+      "FAQ accordion",
+      "gallery lightbox",
+      "before-after style slider",
+      "quote form browser validation",
+      "sticky mobile quote CTA",
+    ],
+    imageryPlan: [
+      "hero photo",
+      "service photo",
+      "detail photo",
+      "support photo",
+      "proof photo",
+    ],
+    qaWarnings: [],
     reviewNotes: [
       "Avoid WebWorkshop dark-green styling inside the concept.",
       "Use representative trade photos only; label sample proof until the business supplies verified work.",
@@ -656,7 +697,19 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     preview.artDirection?.imageTreatment,
     preview.artDirection?.sectionFlow,
     preview.artDirection?.ctaTreatment,
+    ...(preview.artDirection?.interactiveFeatures ?? []),
+    ...(preview.artDirection?.imageryPlan ?? []),
+    ...(preview.artDirection?.qaWarnings ?? []),
     ...(preview.artDirection?.reviewNotes ?? []),
+    preview.creativeBrief?.businessName,
+    preview.creativeBrief?.trade,
+    preview.creativeBrief?.city,
+    preview.creativeBrief?.serviceArea,
+    preview.creativeBrief?.websiteCondition,
+    preview.creativeBrief?.businessTone,
+    preview.creativeBrief?.likelyCustomerType,
+    preview.creativeBrief?.visualDirection,
+    preview.creativeBrief?.ctaStrategy,
     preview.hero,
     preview.heroHeadline,
     preview.heroSupporting,
@@ -680,25 +733,39 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   const hasStrongHeroVisual = /hero photo|large .* hero|photo-led|strongest service visual|attention-grabbing/i.test(searchable);
   const hasSectionVariety = /distinct service|detail, support, and proof|visually different|proof layout|bold asymmetric|service dense|proof led/i.test(searchable);
   const hasMobile = /mobile|persistent mobile|phone action/i.test(searchable);
+  const hasInteractiveFeatures = (preview.artDirection?.interactiveFeatures?.length ?? 0) >= 5
+    || /FAQ accordion|gallery lightbox|before-after style slider|quote form browser validation|sticky mobile quote CTA/i.test(searchable);
+  const hasImageryPlan = (preview.artDirection?.imageryPlan?.length ?? 0) >= 5;
   const hasCta = Boolean(preview.styleProfile?.ctaLabel) && searchable.includes(preview.styleProfile?.ctaLabel ?? "");
   const hasSafetyLanguage = /verified|verification-ready|sample|placeholder|supplied by the business|no invented/i.test(searchable);
-  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock/i.test(searchable);
+  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led/i.test(searchable);
+  const publicCandidateCopy = [
+    preview.hero,
+    preview.heroHeadline,
+    preview.heroSupporting,
+    ...(preview.serviceHighlights ?? []),
+    ...(preview.trustItems ?? []),
+    preview.ctaStrategy,
+  ].filter(Boolean).join(" ");
+  const internalPublicLanguage = /representative image direction|replace with verified|proof concept|generator notes|internal QA|include only if verified/i.test(publicCandidateCopy);
   const missingBusinessBranding = !hasStyleProfile || !hasArtDirection;
   const unsupportedClaim = /\b(award-winning|certified|licensed|insured|warrant(?:y|ies)|guarantee|guarantees|five-star|best rated)\b/i.test(searchable)
     && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
 
   const base = {
-    visualPolish: boundedQuality(58 + (hasStyleProfile ? 8 : 0) + (hasArtDirection ? 12 : 0) + (hasImageDirection ? 8 : 0) + (hasStrongHeroVisual ? 7 : 0) + (hasSectionVariety ? 6 : 0) + (preview.homepageStructure.length >= 5 ? 4 : 0) - (weakImagery ? 24 : 0)),
+    visualPolish: boundedQuality(58 + (hasStyleProfile ? 8 : 0) + (hasArtDirection ? 12 : 0) + (hasImageDirection ? 8 : 0) + (hasStrongHeroVisual ? 7 : 0) + (hasSectionVariety ? 6 : 0) + (hasImageryPlan ? 5 : 0) + (preview.homepageStructure.length >= 5 ? 4 : 0) - (weakImagery ? 24 : 0)),
     businessSpecificity: boundedQuality(56 + (mentionsBusiness ? 12 : 0) + (mentionsTrade ? 10 : 0) + (mentionsCity ? 8 : 0) + (hasTradeServices ? 7 : 0) + (hasArtDirection ? 5 : 0) - (missingBusinessBranding ? 12 : 0)),
     clarity: boundedQuality(72 + (preview.heroHeadline ? 6 : 0) + (preview.heroSupporting ? 5 : 0) + (preview.servicePageStructure.length >= 5 ? 5 : 0) + (preview.artDirection?.sectionFlow ? 4 : 0)),
-    mobileResponsiveness: boundedQuality(72 + (hasMobile ? 12 : 0) + (hasCta ? 6 : 0)),
+    mobileResponsiveness: boundedQuality(72 + (hasMobile ? 12 : 0) + (hasCta ? 6 : 0) + (hasInteractiveFeatures ? 5 : 0)),
     conversionStrength: boundedQuality(66 + (hasCta ? 12 : 0) + (prospect.phone ? 5 : 0) + (/lead form|estimate|quote|inspection|service/i.test(searchable) ? 7 : 0) + (preview.artDirection?.ctaTreatment ? 5 : 0)),
-    safetyTruthfulness: boundedQuality(unsupportedClaim ? 58 : 82 + (hasSafetyLanguage ? 12 : 0) + (prospect.prospectType === "no_website_social_only" ? 4 : 0)),
+    safetyTruthfulness: boundedQuality(unsupportedClaim || internalPublicLanguage ? 58 : 82 + (hasSafetyLanguage ? 12 : 0) + (prospect.prospectType === "no_website_social_only" ? 4 : 0)),
   };
   const notes = previewQualityNotes(base);
   if (weakImagery) notes.push("Flag: imagery sounds generic, random, repeated, or placeholder-led.");
   if (!hasStrongHeroVisual) notes.push("Flag: hero needs a stronger trade-relevant visual direction.");
   if (!hasSectionVariety) notes.push("Flag: section rhythm needs more visual variety.");
+  if (!hasInteractiveFeatures) notes.push("Flag: preview needs mobile-friendly interactions such as FAQ, gallery, form validation, or sticky CTA.");
+  if (internalPublicLanguage) notes.push("Flag: public preview must not expose internal generator or verification wording.");
   if (missingBusinessBranding) notes.push("Flag: prospect-specific style and art direction metadata is missing.");
   return {
     ...base,
@@ -1136,6 +1203,15 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     : `${displayCity}, ${displayState}`;
   const artDirection = previewArtDirection(prospect, styleProfile);
   const verifiedProofAreas = playbook.trustProof.map((item) => `verified ${item}`).join(", ");
+  const contactDetails = [
+    prospect.phone ? "phone" : "",
+    prospect.email ? "email" : "",
+    prospect.contactFormDetected ? "contact form" : "",
+    prospect.quoteFormDetected ? "quote form" : "",
+    prospect.facebookUrl ? "Facebook" : "",
+    prospect.instagramUrl ? "Instagram" : "",
+    prospect.linkedinUrl ? "LinkedIn" : "",
+  ].filter(Boolean);
   const heroHeadlines: Record<TradeCategory, string> = {
     Roofing: "Roofing work that protects your home and earns your confidence.",
     HVAC: "Heating and cooling help without the runaround.",
@@ -1160,6 +1236,25 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   ];
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   const preview: PreviewConcept = {
+    previewVersion: "v2",
+    creativeBrief: {
+      businessName: prospect.businessName,
+      trade,
+      city: displayCity,
+      serviceArea,
+      services: playbook.services.map(titleCase),
+      websiteCondition: noWebsiteProspect ? "No owned website or social-only presence detected." : prospect.websiteStatusDetail || "Existing website available for redesign concept.",
+      logoStatus: "not available",
+      brandColorSource: styleProfile.brandSource,
+      brandingSource: styleProfile.brandSource === "trade fallback" ? "trade fallback" : "detected cue",
+      imagerySource: "trade photo library",
+      reviewSignal: prospect.reviewCount > 0 ? "public rating count only" : "not used",
+      contactDetails: contactDetails.length ? contactDetails : ["contact path not confirmed"],
+      businessTone: styleProfile.tone,
+      likelyCustomerType: `Local homeowners and property owners looking for ${tradeLower} help.`,
+      visualDirection: artDirection.visualVoice,
+      ctaStrategy: artDirection.ctaTreatment,
+    },
     direction: `A visually premium, local-first ${tradeLower} website that feels like ${prospect.businessName}: ${artDirection.visualVoice}.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} ${artDirection.imageTreatment} Use ${styleProfile.primaryColor} as the primary brand color and ${styleProfile.accentColor} only for focused emphasis. Keep sample proof clearly labeled until verified business assets are available.`,
     artDirection,

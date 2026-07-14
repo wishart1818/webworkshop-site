@@ -474,6 +474,7 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
   const styleProfile = previewStyleProfile(prospect, preview);
   const quality = preview.qualityScore;
   const artDirection = preview.artDirection;
+  const creativeBrief = preview.creativeBrief;
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -525,8 +526,28 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
             <div><dt>Image treatment</dt><dd>{artDirection.imageTreatment}</dd></div>
             <div><dt>Card style</dt><dd>{artDirection.cardStyle.replaceAll("-", " ")}</dd></div>
             <div><dt>CTA treatment</dt><dd>{artDirection.ctaTreatment}</dd></div>
+            <div><dt>Interactive features</dt><dd>{artDirection.interactiveFeatures?.join(", ") || "Not recorded"}</dd></div>
+            <div><dt>Imagery plan</dt><dd>{artDirection.imageryPlan?.join(", ") || "Not recorded"}</dd></div>
           </dl>
+          {artDirection.qaWarnings?.length ? <p><b>QA warnings:</b> {artDirection.qaWarnings.join(", ")}</p> : null}
           <ul>{artDirection.reviewNotes.map((note) => <li key={note}>{note}</li>)}</ul>
+        </section>
+      )}
+      {creativeBrief && (
+        <section className="engine-preview-art-direction">
+          <div>
+            <span>Creative brief</span>
+            <h3>{creativeBrief.businessName} preview brief</h3>
+            <p>{creativeBrief.visualDirection}</p>
+          </div>
+          <dl>
+            <div><dt>Branding source</dt><dd>{creativeBrief.brandingSource}</dd></div>
+            <div><dt>Logo</dt><dd>{creativeBrief.logoStatus}</dd></div>
+            <div><dt>Color source</dt><dd>{creativeBrief.brandColorSource}</dd></div>
+            <div><dt>Imagery source</dt><dd>{creativeBrief.imagerySource}</dd></div>
+            <div><dt>Business tone</dt><dd>{creativeBrief.businessTone.replace("-", " ")}</dd></div>
+            <div><dt>Customer type</dt><dd>{creativeBrief.likelyCustomerType}</dd></div>
+          </dl>
         </section>
       )}
       {quality && (

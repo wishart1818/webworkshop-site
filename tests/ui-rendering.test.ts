@@ -343,15 +343,19 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /data-hero-treatment="(?:proof-forward|clean-editorial)"/);
   assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
   assert.match(html, /data-rhythm="(?:proof-led|calm-premium)"/);
-  assert.match(html, /Representative image direction/);
+  assert.match(html, /Roofing website preview/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-hero\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-service\.jpg/);
   assert.match(html, /\/engine-preview-assets\/trade-photos\/roofing-proof\.jpg/);
   assert.match(html, /data-fallback-src="\/engine-preview-assets\/trades\/roofing-hero\.svg"/);
-  assert.match(html, /Representative roofing photo with roofline/);
-  assert.match(html, /Representative trade image/);
-  assert.match(html, /Replace with verified Blue Line Roofing photos before launch/);
-  assert.match(html, /Sample layout content/);
+  assert.match(html, /Roofline, shingle detail/);
+  assert.match(html, /Designed around clear services, visible contact options/);
+  assert.match(html, /Service guide/);
+  assert.match(html, /Gallery/);
+  assert.match(html, /Before and after focus/);
+  assert.match(html, /Questions/);
+  assert.match(html, /Preview only: this concept form is not connected/);
+  assert.match(html, /prospect-preview-mobile-cta/);
   assert.match(html, /Why choose us/);
   assert.match(html, /Service area/);
   assert.match(html, /Call \(419\) 555-0142/);
@@ -359,6 +363,7 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.doesNotMatch(html, /picsum\.photos|honey|coffee|liquid/i);
   assert.doesNotMatch(html, /--preview-green|--preview-lime/);
   assert.doesNotMatch(html, /Concept prepared for manual review in WebWorkshop Prospect Engine/);
+  assert.doesNotMatch(html, /Representative image direction|Representative trade image|Replace with verified|Sample layout content|Suggested proof section|Proof concept/i);
   assert.doesNotMatch(html, /prospect-preview-visual__mark|role="img"/);
 });
 
@@ -400,11 +405,14 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Compare replacement or new-system options/);
   assert.match(html, /Maintenance and tune-ups/);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
-  assert.match(html, /Suggested proof section/);
-  assert.match(html, /How project proof could be shown\./);
-  assert.match(html, /after the business supplies them/);
+  assert.match(html, /Service guide/);
+  assert.match(html, /Make urgent comfort issues easier to route\./);
+  assert.match(html, /FAQ|Questions/);
+  assert.match(html, /prospect-preview-lightbox/);
+  assert.match(html, /type="range"/);
+  assert.match(html, /required=""/);
   assert.doesNotMatch(html, /Recent local work|Our work/);
-  assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b/);
+  assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b|Representative image direction|Replace with verified|Sample layout content/);
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(imageSources.slice(0, 5), [
     "/engine-preview-assets/trade-photos/hvac-hero.jpg",
@@ -437,7 +445,11 @@ test("core trade previews render deterministic local imagery by default", () => 
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-support\\.jpg`));
     assert.match(html, new RegExp(`/engine-preview-assets/trade-photos/${slug}-proof\\.jpg`));
     assert.match(html, new RegExp(`data-fallback-src="/engine-preview-assets/trades/${slug}-hero\\.svg"`));
+    assert.match(html, /prospect-preview-gallery/);
+    assert.match(html, /prospect-preview-faq/);
+    assert.match(html, /prospect-preview-mobile-cta/);
     assert.doesNotMatch(html, /picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
+    assert.doesNotMatch(html, /Representative image direction|Replace with verified|Sample layout content|Suggested proof section|Proof concept/i);
     assert.doesNotMatch(html, /prospect-preview-visual__mark|prospect-preview-visual__details/);
   }
 });
@@ -474,7 +486,7 @@ test("priority trades use matching preview image language", () => {
     }));
 
     assert.match(html, pattern);
-    assert.doesNotMatch(html, /random|stock|placeholder|abstract visual panel/i);
+    assert.doesNotMatch(html, /random|stock|placeholder|abstract visual panel|Representative image direction/i);
   }
 });
 
@@ -493,10 +505,10 @@ test("public website preview exposes only the prospect concept with no engine na
 
   assert.match(html, /Concept preview\. Not a live client website\./);
   assert.match(html, /data-preview-access="public"/);
-  assert.doesNotMatch(html, /href="\/engine"|Back to Prospect Engine|Private operator note|Website score|Opportunity score/i);
+  assert.doesNotMatch(html, /href="\/engine"|Back to Prospect Engine|Private operator note|Website score|Opportunity score|internal QA|generator notes/i);
 });
 
-test("no-website public preview uses supported-fact placeholders instead of invented proof", () => {
+test("no-website public preview stays customer-facing without invented proof", () => {
   const prospect = withPreview({
     ...structuredClone(seedProspects[0]),
     website: "",
@@ -511,11 +523,11 @@ test("no-website public preview uses supported-fact placeholders instead of inve
     savedPreview: prospect.preview,
   }));
 
-  assert.match(html, /Suggested proof section/);
-  assert.match(html, /verified photos/i);
-  assert.match(html, /Suggested project context/);
-  assert.match(html, /Sample layout content/);
-  assert.match(html, /Replace with verified/);
+  assert.match(html, /Service guide/);
+  assert.match(html, /Gallery/);
+  assert.match(html, /Preview only: this concept form is not connected/);
+  assert.match(html, /Concept preview\. Not a live client website\./);
+  assert.doesNotMatch(html, /Suggested proof section|verified photos|Suggested project context|Sample layout content|Replace with verified|proof concept/i);
   assert.doesNotMatch(html, /Recent local work|licensed|insured|award-winning|warranties/i);
 });
 

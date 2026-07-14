@@ -188,12 +188,18 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.match(preview.visualStyleDirection, /outdoor spaces/i);
   assert.ok(preview.styleProfile);
   assert.ok(preview.artDirection);
+  assert.equal(preview.previewVersion, "v2");
+  assert.equal(preview.creativeBrief?.businessName, prospect.businessName);
+  assert.equal(preview.creativeBrief?.imagerySource, "trade photo library");
+  assert.match(preview.creativeBrief?.visualDirection ?? "", /locally credible|approachable|polished|sturdy|established/i);
   assert.ok(preview.qualityScore);
   assert.ok(preview.qualityScore.overall >= 85);
   assert.ok(preview.qualityScore.visualPolish >= 85);
   assert.ok(preview.qualityScore.safetyTruthfulness >= 90);
   assert.match(preview.artDirection?.imageTreatment ?? "", /large landscaping hero photo|distinct service/i);
   assert.match(preview.artDirection?.sectionFlow ?? "", /Dublin|proof layout|service-area CTA/i);
+  assert.deepEqual(preview.artDirection?.imageryPlan, ["hero photo", "service photo", "detail photo", "support photo", "proof photo"]);
+  assert.match(preview.artDirection?.interactiveFeatures.join(" ") ?? "", /FAQ accordion|gallery lightbox|quote form browser validation|sticky mobile quote CTA/i);
   assert.match(preview.qualityScore.notes.join(" "), /prospect-specific style rationale|stronger CTA treatment/i);
   assert.ok(preview.heroHeadline);
   assert.equal(preview.styleProfile?.ctaLabel, "Get a free quote");
@@ -216,7 +222,7 @@ test("preview quality flags generic imagery and missing art direction", () => {
 
   assert.ok(score.overall < (strong.qualityScore?.overall ?? 100));
   assert.ok(score.visualPolish < 85);
-  assert.match(score.notes.join(" "), /imagery sounds generic|section rhythm needs more visual variety|art direction metadata is missing/i);
+  assert.match(score.notes.join(" "), /imagery sounds generic|section rhythm needs more visual variety|art direction metadata is missing|mobile-friendly interactions/i);
 });
 
 test("preview generation normalizes city and state capitalization", () => {

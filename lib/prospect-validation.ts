@@ -21,6 +21,7 @@ import {
   type OutreachDraft,
   type PreviewConcept,
   type PreviewArtDirection,
+  type PreviewCreativeBrief,
   type PreviewQualityScore,
   type PreviewStyleProfile,
   type Prospect,
@@ -178,7 +179,51 @@ function artDirectionValue(value: unknown): PreviewArtDirection | undefined {
     imageTreatment: text(value.imageTreatment, "Preview image treatment", 1000),
     sectionFlow: text(value.sectionFlow, "Preview section flow", 1000),
     ctaTreatment: text(value.ctaTreatment, "Preview CTA treatment", 1000),
+    interactiveFeatures: value.interactiveFeatures === undefined ? [] : stringArray(value.interactiveFeatures, "Preview interaction features", 20, 200),
+    imageryPlan: value.imageryPlan === undefined ? [] : stringArray(value.imageryPlan, "Preview imagery plan", 20, 200),
+    qaWarnings: value.qaWarnings === undefined ? [] : stringArray(value.qaWarnings, "Preview QA warnings", 20, 500),
     reviewNotes: value.reviewNotes === undefined ? [] : stringArray(value.reviewNotes, "Preview art direction notes", 12, 500),
+  };
+}
+
+function creativeBriefValue(value: unknown): PreviewCreativeBrief | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview creative brief must be a valid object.");
+  const trade = normalizeTradeCategory(text(value.trade, "Preview brief trade", 40));
+  if (!trade) throw new Error("Preview brief trade is not supported.");
+  const logoStatus = text(value.logoStatus, "Preview logo status", 30) as PreviewCreativeBrief["logoStatus"];
+  if (!["not available", "available"].includes(logoStatus)) throw new Error("Preview logo status is not supported.");
+  const brandColorSource = text(value.brandColorSource, "Preview brand color source", 30) as PreviewStyleProfile["brandSource"];
+  if (!["business-name cue", "website-domain cue", "trade fallback"].includes(brandColorSource)) {
+    throw new Error("Preview brand color source is not supported.");
+  }
+  const brandingSource = text(value.brandingSource, "Preview branding source", 30) as PreviewCreativeBrief["brandingSource"];
+  if (!["detected cue", "trade fallback"].includes(brandingSource)) throw new Error("Preview branding source is not supported.");
+  const imagerySource = text(value.imagerySource, "Preview imagery source", 40) as PreviewCreativeBrief["imagerySource"];
+  if (!["trade photo library", "business assets"].includes(imagerySource)) throw new Error("Preview imagery source is not supported.");
+  const reviewSignal = text(value.reviewSignal, "Preview review signal", 40) as PreviewCreativeBrief["reviewSignal"];
+  if (!["not used", "public rating count only"].includes(reviewSignal)) throw new Error("Preview review signal is not supported.");
+  const businessTone = text(value.businessTone, "Preview business tone", 30) as PreviewStyleProfile["tone"];
+  if (!["practical", "modern-practical", "local-family", "premium-craft", "high-trust"].includes(businessTone)) {
+    throw new Error("Preview business tone is not supported.");
+  }
+  return {
+    businessName: text(value.businessName, "Preview brief business name", 160),
+    trade,
+    city: text(value.city, "Preview brief city", 120),
+    serviceArea: text(value.serviceArea, "Preview brief service area", 500),
+    services: stringArray(value.services, "Preview brief services", 12, 200),
+    websiteCondition: text(value.websiteCondition, "Preview brief website condition", 500),
+    logoStatus,
+    brandColorSource,
+    brandingSource,
+    imagerySource,
+    reviewSignal,
+    contactDetails: stringArray(value.contactDetails, "Preview brief contact details", 12, 200),
+    businessTone,
+    likelyCustomerType: text(value.likelyCustomerType, "Preview likely customer type", 500),
+    visualDirection: text(value.visualDirection, "Preview visual direction", 500),
+    ctaStrategy: text(value.ctaStrategy, "Preview CTA strategy", 1000),
   };
 }
 
@@ -207,6 +252,8 @@ function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
   return {
+    previewVersion: value.previewVersion === "v2" ? "v2" : undefined,
+    creativeBrief: creativeBriefValue(value.creativeBrief),
     direction: text(value.direction, "Preview direction", 5000),
     visualStyleDirection: text(value.visualStyleDirection ?? "Practical contractor visual direction.", "Visual style direction", 5000),
     artDirection: artDirectionValue(value.artDirection),
