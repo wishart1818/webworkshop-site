@@ -7,6 +7,8 @@ import {
   generatePreview,
   generateProspectStyleProfile,
   prospectPresenceLabels,
+  PREVIEW_GENERATOR_VERSION,
+  regeneratePreview,
   scorePreviewQuality,
   seedProspects,
   sortProspects,
@@ -188,7 +190,7 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.match(preview.visualStyleDirection, /outdoor spaces/i);
   assert.ok(preview.styleProfile);
   assert.ok(preview.artDirection);
-  assert.equal(preview.previewVersion, "v2");
+  assert.equal(preview.previewVersion, "v3");
   assert.equal(preview.creativeBrief?.businessName, prospect.businessName);
   assert.equal(preview.creativeBrief?.imagerySource, "trade photo library");
   assert.match(preview.creativeBrief?.visualDirection ?? "", /locally credible|approachable|polished|sturdy|established/i);
@@ -238,6 +240,40 @@ test("preview generation normalizes city and state capitalization", () => {
   assert.match(preview.hero, /Toledo and nearby communities/);
   assert.match(preview.heroSupporting ?? "", /Toledo and nearby communities/);
   assert.doesNotMatch(`${preview.hero} ${preview.heroSupporting}`, /\btoledo\b/);
+});
+
+test("preview generation creates a structured photo-led business design brief", () => {
+  const preview = generatePreview({
+    ...structuredClone(seedProspects[0]),
+    businessName: "MC Pressure Washing FL",
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    email: "hello@mcpressure.test",
+    recommendedContactMethod: "send_email",
+  });
+
+  assert.equal(preview.previewVersion, "v3");
+  assert.equal(preview.creativeBrief?.businessName, "MC Pressure Washing FL");
+  assert.equal(preview.creativeBrief?.primaryService, "House Washing");
+  assert.match(preview.creativeBrief?.verifiedEmailOrContactPath ?? "", /public email/);
+  assert.match(preview.creativeBrief?.imageIntents.join(" ") ?? "", /Hero: strong pressure washing service photo/i);
+  assert.match(preview.creativeBrief?.copyRestrictions.join(" ") ?? "", /Do not invent reviews/);
+  assert.ok((preview.qualityScore?.imageQuality ?? 0) > 75);
+  assert.ok(["Send-worthy / polished", "Needs visual review"].includes(preview.qualityScore?.status ?? ""));
+});
+
+test("preview regeneration uses latest generator, records feedback, and sends nothing", () => {
+  const prospect = withPreview(withAnalysis(structuredClone(seedProspects[0])));
+  prospect.preview = { ...prospect.preview!, previewVersion: "v2" };
+  const regenerated = regeneratePreview(prospect, "make it darker, more premium, and add certified five-star claims");
+
+  assert.equal(PREVIEW_GENERATOR_VERSION, "photo-led-v3");
+  assert.equal(regenerated.preview?.previewVersion, "v3");
+  assert.match(regenerated.activities[0].label, /Preview regenerated/);
+  assert.match(regenerated.preview?.regenerationFeedbackHistory?.[0] ?? "", /darker, more premium/i);
+  assert.doesNotMatch(regenerated.preview?.regenerationFeedbackHistory?.[0] ?? "", /certified|five-star/i);
+  assert.equal(regenerated.outreach?.approved ?? false, false);
 });
 
 test("preview intelligence changes meaningfully by contractor trade", () => {

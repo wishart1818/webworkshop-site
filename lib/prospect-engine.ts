@@ -162,8 +162,9 @@ export type OutreachDraft = {
 };
 
 export type PreviewConcept = {
-  previewVersion?: "v2";
+  previewVersion?: "v2" | "v3";
   creativeBrief?: PreviewCreativeBrief;
+  regenerationFeedbackHistory?: string[];
   direction: string;
   visualStyleDirection: string;
   artDirection?: PreviewArtDirection;
@@ -188,21 +189,46 @@ export type PreviewCreativeBrief = {
   trade: TradeCategory;
   city: string;
   serviceArea: string;
+  phone: string;
+  verifiedEmailOrContactPath: string;
+  existingWebsite: string;
   services: string[];
+  primaryService: string;
+  secondaryServices: string[];
+  customerAudience: "residential" | "commercial" | "mixed";
   websiteCondition: string;
   logoStatus: "not available" | "available";
+  logoSource: "not found" | "website" | "business asset" | "operator supplied";
   brandColorSource: PreviewStyleProfile["brandSource"];
   brandingSource: "detected cue" | "trade fallback";
-  imagerySource: "trade photo library" | "business assets";
+  imagerySource: "trade photo library" | "business assets" | "configured stock provider";
   reviewSignal: "not used" | "public rating count only";
+  factualPublicProof: string[];
   contactDetails: string[];
   businessTone: PreviewStyleProfile["tone"];
   likelyCustomerType: string;
   visualDirection: string;
+  heroComposition: PreviewArtDirection["heroTreatment"];
+  typographyDirection: string;
+  sectionDensity: PreviewArtDirection["layoutRhythm"];
+  imageIntents: string[];
+  copyRestrictions: string[];
   ctaStrategy: string;
 };
 
 export type PreviewQualityScore = {
+  heroImpact?: number;
+  imageQuality?: number;
+  imageSectionRelevance?: number;
+  branding?: number;
+  colorUsage?: number;
+  logoUsage?: number;
+  layoutVariety?: number;
+  typography?: number;
+  ctaProminence?: number;
+  publicLinkHealth?: number;
+  factualSafety?: number;
+  contentPolish?: number;
   visualPolish: number;
   businessSpecificity: number;
   clarity: number;
@@ -210,6 +236,7 @@ export type PreviewQualityScore = {
   conversionStrength: number;
   safetyTruthfulness: number;
   overall: number;
+  status?: "Send-worthy / polished" | "Needs visual review" | "Needs regeneration" | "Blocked by factual or technical issue";
   notes: string[];
 };
 
@@ -673,6 +700,33 @@ function previewArtDirection(prospect: Prospect, styleProfile: PreviewStyleProfi
   };
 }
 
+function prospectAudience(prospect: Prospect): PreviewCreativeBrief["customerAudience"] {
+  const text = `${prospect.businessName} ${prospect.serviceArea} ${prospect.websiteStatusDetail}`.toLowerCase();
+  if (/commercial|business|office|parking lot|retail|facility|restaurant|warehouse/.test(text)) return /home|residential/.test(text) ? "mixed" : "commercial";
+  return "residential";
+}
+
+function verifiedContactPath(prospect: Prospect) {
+  if (prospect.email) return `public email: ${prospect.email}`;
+  if (prospect.quoteFormUrl) return "quote form";
+  if (prospect.contactFormUrl) return "contact form";
+  if (prospect.facebookUrl) return "Facebook";
+  if (prospect.instagramUrl) return "Instagram";
+  if (prospect.linkedinUrl) return "LinkedIn";
+  if (prospect.phone) return "phone only";
+  return "not confirmed";
+}
+
+function previewImageIntentSummary(trade: TradeCategory, services: readonly string[]) {
+  const displayTrade = displayTradeCategory(trade).toLowerCase();
+  return [
+    `Hero: strong ${displayTrade} service photo matched to the primary service.`,
+    ...services.slice(0, 3).map((service) => `Service: ${service} gets its own matching section image.`),
+    "Process: equipment, team, or service-call context.",
+    "Proof/CTA: result-oriented trade photo without invented project claims.",
+  ];
+}
+
 function boundedQuality(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -737,8 +791,12 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     || /FAQ accordion|gallery lightbox|before-after style slider|quote form browser validation|sticky mobile quote CTA/i.test(searchable);
   const hasImageryPlan = (preview.artDirection?.imageryPlan?.length ?? 0) >= 5;
   const hasCta = Boolean(preview.styleProfile?.ctaLabel) && searchable.includes(preview.styleProfile?.ctaLabel ?? "");
-  const hasSafetyLanguage = /verified|verification-ready|sample|placeholder|supplied by the business|no invented/i.test(searchable);
-  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led/i.test(searchable);
+  const hasBrandingSource = Boolean(preview.creativeBrief?.brandingSource && preview.creativeBrief?.brandColorSource);
+  const hasLogoDecision = Boolean(preview.creativeBrief?.logoStatus && preview.creativeBrief?.logoSource);
+  const hasSectionImageIntents = (preview.creativeBrief?.imageIntents?.length ?? 0) >= 5;
+  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler/i.test(searchable);
+  const repeatedStructure = /three identical cards|same structure repeated|block-stacked|template/i.test(searchable);
+  const ignoredBrand = /ignored brand|same palette for every business/i.test(searchable);
   const publicCandidateCopy = [
     preview.hero,
     preview.heroHeadline,
@@ -749,16 +807,30 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   ].filter(Boolean).join(" ");
   const internalPublicLanguage = /representative image direction|replace with verified|proof concept|generator notes|internal QA|include only if verified/i.test(publicCandidateCopy);
   const missingBusinessBranding = !hasStyleProfile || !hasArtDirection;
-  const unsupportedClaim = /\b(award-winning|certified|licensed|insured|warrant(?:y|ies)|guarantee|guarantees|five-star|best rated)\b/i.test(searchable)
+  const unsupportedClaim = /\b(award-winning|certified|licensed|insured|warrant(?:y|ies)|guarantee|guarantees|five-star|best rated|family-owned|locally owned for \d+ years)\b/i.test(searchable)
     && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
 
+  const detailed = {
+    heroImpact: boundedQuality(60 + (hasStrongHeroVisual ? 22 : 0) + (hasImageDirection ? 8 : 0) + (hasCta ? 5 : 0) - (weakImagery ? 25 : 0)),
+    imageQuality: boundedQuality(58 + (hasImageryPlan ? 14 : 0) + (hasSectionImageIntents ? 12 : 0) + (hasImageDirection ? 8 : 0) - (weakImagery ? 28 : 0)),
+    imageSectionRelevance: boundedQuality(62 + (hasSectionImageIntents ? 18 : 0) + (hasTradeServices ? 8 : 0) - (weakImagery ? 22 : 0)),
+    branding: boundedQuality(62 + (hasStyleProfile ? 12 : 0) + (hasBrandingSource ? 10 : 0) + (mentionsBusiness ? 8 : 0) - (ignoredBrand ? 18 : 0)),
+    colorUsage: boundedQuality(68 + (hasBrandingSource ? 12 : 0) + (hasStyleProfile ? 8 : 0) - (ignoredBrand ? 18 : 0)),
+    logoUsage: boundedQuality(68 + (hasLogoDecision ? 12 : 0) + (preview.creativeBrief?.logoStatus === "available" ? 4 : 0)),
+    layoutVariety: boundedQuality(60 + (hasSectionVariety ? 18 : 0) + (preview.homepageStructure.length >= 5 ? 8 : 0) + (hasInteractiveFeatures ? 5 : 0) - (repeatedStructure ? 24 : 0)),
+    typography: boundedQuality(72 + (preview.styleProfile?.typographyStyle ? 12 : 0) + (preview.heroHeadline && preview.heroHeadline.length < 86 ? 6 : 0)),
+    ctaProminence: boundedQuality(66 + (hasCta ? 16 : 0) + (preview.artDirection?.ctaTreatment ? 8 : 0) + (prospect.phone ? 4 : 0)),
+    publicLinkHealth: boundedQuality(84 + (preview.previewVersion === "v3" ? 6 : 0)),
+    factualSafety: boundedQuality(unsupportedClaim || internalPublicLanguage ? 45 : 90 + (prospect.reviewCount > 0 ? 3 : 0)),
+    contentPolish: boundedQuality(68 + (preview.heroHeadline ? 7 : 0) + (preview.heroSupporting ? 7 : 0) + (hasTradeServices ? 8 : 0) - (internalPublicLanguage ? 30 : 0)),
+  };
   const base = {
-    visualPolish: boundedQuality(58 + (hasStyleProfile ? 8 : 0) + (hasArtDirection ? 12 : 0) + (hasImageDirection ? 8 : 0) + (hasStrongHeroVisual ? 7 : 0) + (hasSectionVariety ? 6 : 0) + (hasImageryPlan ? 5 : 0) + (preview.homepageStructure.length >= 5 ? 4 : 0) - (weakImagery ? 24 : 0)),
-    businessSpecificity: boundedQuality(56 + (mentionsBusiness ? 12 : 0) + (mentionsTrade ? 10 : 0) + (mentionsCity ? 8 : 0) + (hasTradeServices ? 7 : 0) + (hasArtDirection ? 5 : 0) - (missingBusinessBranding ? 12 : 0)),
-    clarity: boundedQuality(72 + (preview.heroHeadline ? 6 : 0) + (preview.heroSupporting ? 5 : 0) + (preview.servicePageStructure.length >= 5 ? 5 : 0) + (preview.artDirection?.sectionFlow ? 4 : 0)),
-    mobileResponsiveness: boundedQuality(72 + (hasMobile ? 12 : 0) + (hasCta ? 6 : 0) + (hasInteractiveFeatures ? 5 : 0)),
-    conversionStrength: boundedQuality(66 + (hasCta ? 12 : 0) + (prospect.phone ? 5 : 0) + (/lead form|estimate|quote|inspection|service/i.test(searchable) ? 7 : 0) + (preview.artDirection?.ctaTreatment ? 5 : 0)),
-    safetyTruthfulness: boundedQuality(unsupportedClaim || internalPublicLanguage ? 58 : 82 + (hasSafetyLanguage ? 12 : 0) + (prospect.prospectType === "no_website_social_only" ? 4 : 0)),
+    visualPolish: boundedQuality((detailed.heroImpact + detailed.imageQuality + detailed.layoutVariety + detailed.typography) / 4),
+    businessSpecificity: boundedQuality(60 + (mentionsBusiness ? 12 : 0) + (mentionsTrade ? 10 : 0) + (mentionsCity ? 8 : 0) + (hasTradeServices ? 7 : 0) + (hasArtDirection ? 5 : 0) - (missingBusinessBranding ? 12 : 0)),
+    clarity: boundedQuality(75 + (preview.heroHeadline ? 6 : 0) + (preview.heroSupporting ? 5 : 0) + (preview.servicePageStructure.length >= 5 ? 5 : 0) + (preview.artDirection?.sectionFlow ? 4 : 0)),
+    mobileResponsiveness: boundedQuality(74 + (hasMobile ? 12 : 0) + (hasCta ? 6 : 0) + (hasInteractiveFeatures ? 5 : 0)),
+    conversionStrength: boundedQuality(70 + (hasCta ? 12 : 0) + (prospect.phone ? 5 : 0) + (/lead form|estimate|quote|inspection|service/i.test(searchable) ? 7 : 0) + (preview.artDirection?.ctaTreatment ? 5 : 0)),
+    safetyTruthfulness: detailed.factualSafety,
   };
   const notes = previewQualityNotes(base);
   if (weakImagery) notes.push("Flag: imagery sounds generic, random, repeated, or placeholder-led.");
@@ -767,9 +839,22 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   if (!hasInteractiveFeatures) notes.push("Flag: preview needs mobile-friendly interactions such as FAQ, gallery, form validation, or sticky CTA.");
   if (internalPublicLanguage) notes.push("Flag: public preview must not expose internal generator or verification wording.");
   if (missingBusinessBranding) notes.push("Flag: prospect-specific style and art direction metadata is missing.");
+  if (repeatedStructure) notes.push("Flag: layout appears too repetitive or template-like.");
+  if (ignoredBrand) notes.push("Flag: branding appears ignored or too generic.");
+  if (unsupportedClaim) notes.push("Flag: factual or trust claim needs verification before this can be send-worthy.");
+  const overall = boundedQuality((base.visualPolish + base.businessSpecificity + base.clarity + base.mobileResponsiveness + base.conversionStrength + base.safetyTruthfulness) / 6);
+  const status: PreviewQualityScore["status"] = unsupportedClaim || internalPublicLanguage
+    ? "Blocked by factual or technical issue"
+    : overall >= 85 && detailed.imageQuality >= 78 && detailed.layoutVariety >= 78
+      ? "Send-worthy / polished"
+      : overall >= 76
+        ? "Needs visual review"
+        : "Needs regeneration";
   return {
+    ...detailed,
     ...base,
-    overall: boundedQuality((base.visualPolish + base.businessSpecificity + base.clarity + base.mobileResponsiveness + base.conversionStrength + base.safetyTruthfulness) / 6),
+    overall,
+    status,
     notes,
   };
 }
@@ -956,6 +1041,7 @@ export const websiteAvailabilityLabels: Record<WebsiteAvailabilityStatus, string
 
 export const OUTREACH_COPY_VERSION = WEBWORKSHOP_OUTREACH_COPY_VERSION;
 export const LEGACY_OUTREACH_COPY_VERSION = "legacy_unversioned";
+export const PREVIEW_GENERATOR_VERSION = "photo-led-v3";
 
 export function outreachDraftLooksCurrent(outreach: Pick<OutreachDraft, "concise" | "detailed" | "followUps" | "outreachCopyVersion">, environment: NodeJS.ProcessEnv = process.env) {
   const firstTouch = outreach.concise ?? "";
@@ -1235,24 +1321,46 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     "Simple estimate next step",
   ];
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
+  const services = playbook.services.map(titleCase);
   const preview: PreviewConcept = {
-    previewVersion: "v2",
+    previewVersion: "v3",
     creativeBrief: {
       businessName: prospect.businessName,
       trade,
       city: displayCity,
       serviceArea,
-      services: playbook.services.map(titleCase),
+      phone: prospect.phone || "not confirmed",
+      verifiedEmailOrContactPath: verifiedContactPath(prospect),
+      existingWebsite: prospect.website || prospect.profileUrl || "not found",
+      services,
+      primaryService: services[0] ?? displayTrade,
+      secondaryServices: services.slice(1),
+      customerAudience: prospectAudience(prospect),
       websiteCondition: noWebsiteProspect ? "No owned website or social-only presence detected." : prospect.websiteStatusDetail || "Existing website available for redesign concept.",
       logoStatus: "not available",
+      logoSource: "not found",
       brandColorSource: styleProfile.brandSource,
       brandingSource: styleProfile.brandSource === "trade fallback" ? "trade fallback" : "detected cue",
       imagerySource: "trade photo library",
       reviewSignal: prospect.reviewCount > 0 ? "public rating count only" : "not used",
+      factualPublicProof: [
+        prospect.reviewCount > 0 ? `${prospect.reviewCount} public review count recorded` : "",
+        prospect.rating > 0 ? `${prospect.rating} public rating recorded` : "",
+        prospect.address ? "public address recorded" : "",
+      ].filter(Boolean),
       contactDetails: contactDetails.length ? contactDetails : ["contact path not confirmed"],
       businessTone: styleProfile.tone,
       likelyCustomerType: `Local homeowners and property owners looking for ${tradeLower} help.`,
       visualDirection: artDirection.visualVoice,
+      heroComposition: artDirection.heroTreatment,
+      typographyDirection: styleProfile.typographyStyle,
+      sectionDensity: artDirection.layoutRhythm,
+      imageIntents: previewImageIntentSummary(trade, services),
+      copyRestrictions: [
+        "Do not invent reviews, years, certifications, licenses, insurance, awards, guarantees, or project outcomes.",
+        "Use customer-benefit copy when proof is unavailable.",
+        "Keep internal QA and operator notes out of the public preview.",
+      ],
       ctaStrategy: artDirection.ctaTreatment,
     },
     direction: `A visually premium, local-first ${tradeLower} website that feels like ${prospect.businessName}: ${artDirection.visualVoice}.`,
@@ -1347,6 +1455,59 @@ export function withPreview(prospect: Prospect): Prospect {
     ...prospect,
     preview: generatePreview(prospect),
     activities: [activity("preview", "Contractor-specific website preview concept generated."), ...prospect.activities],
+  };
+}
+
+function safePreviewFeedback(feedback: string) {
+  return feedback
+    .replace(/\b(award-winning|certified|licensed|insured|guarantee(?:d)?|five-star|best rated|family-owned|years in business)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
+function applyPreviewFeedback(preview: PreviewConcept, feedback: string): PreviewConcept {
+  const safeFeedback = safePreviewFeedback(feedback);
+  if (!safeFeedback) return preview;
+  const lower = safeFeedback.toLowerCase();
+  const artDirection = preview.artDirection ? { ...preview.artDirection } : undefined;
+  if (artDirection) {
+    if (/premium|upscale|dramatic|bold|cinematic|image-led|photo/.test(lower)) {
+      artDirection.heroTreatment = "photo-led-overlap";
+      artDirection.layoutRhythm = "bold-asymmetric";
+      artDirection.cardStyle = "layered-photo-cards";
+      artDirection.imageTreatment = "Use a more dramatic photo-led hero, larger imagery, deeper contrast, and fewer text-heavy blocks.";
+    }
+    if (/darker|dark|black|moody/.test(lower)) {
+      artDirection.ctaTreatment = "Use a high-contrast estimate CTA with a darker premium surface and a clear phone option.";
+    }
+    if (/concrete|driveway|roof|house wash|soft wash|equipment|landscap|hvac|plumb|electric|cleaning|painting|tree/.test(lower)) {
+      artDirection.imageryPlan = [...new Set([...artDirection.imageryPlan, "operator-requested image emphasis"])];
+    }
+    artDirection.reviewNotes = [
+      "Operator feedback was applied to art direction, layout, imagery, or tone while preserving factual-safety rules.",
+      ...artDirection.reviewNotes,
+    ].slice(0, 8);
+  }
+  return {
+    ...preview,
+    artDirection,
+    regenerationFeedbackHistory: [safeFeedback, ...(preview.regenerationFeedbackHistory ?? [])].slice(0, 8),
+  };
+}
+
+export function regeneratePreview(prospect: Prospect, feedback = ""): Prospect {
+  const generated = applyPreviewFeedback(generatePreview(prospect), feedback);
+  return {
+    ...prospect,
+    preview: {
+      ...generated,
+      qualityScore: scorePreviewQuality(prospect, generated),
+    },
+    activities: [
+      activity("preview", feedback.trim() ? "Preview regenerated with operator feedback. Nothing was sent." : "Preview regenerated with the latest photo-led generator. Nothing was sent."),
+      ...prospect.activities,
+    ],
   };
 }
 

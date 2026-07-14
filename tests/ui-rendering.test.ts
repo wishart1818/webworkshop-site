@@ -39,6 +39,7 @@ function renderDetail(prospect: Prospect, detailTab: DetailTab) {
     onPresenceGap: () => undefined,
     onOutreach: () => undefined,
     onRegenerateOutreach: async () => undefined,
+    onRegeneratePreview: async () => undefined,
     onCreateReviewPackage: async () => undefined,
     onPreview: () => undefined,
     onStatus: () => undefined,
@@ -310,6 +311,13 @@ test("preview workspace renders the complete contractor strategy", () => {
   const prospect = withPreview(structuredClone(seedProspects[2]));
   const html = renderDetail(prospect, "Preview");
 
+  assert.match(html, /Preview controls/);
+  assert.match(html, /Open Public Preview/);
+  assert.match(html, /Regenerate Preview/);
+  assert.match(html, /Regenerate with feedback/);
+  assert.match(html, /Preview QA/);
+  assert.match(html, /Generator/);
+  assert.match(html, /photo-led-v3/);
   assert.match(html, /Visual style direction/);
   assert.match(html, /Service page structure/);
   assert.match(html, /Trust strategy/);
@@ -323,6 +331,31 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Visual polish/);
   assert.match(html, /Brand signal/);
   assert.match(html, /Primary CTA/);
+  assert.match(html, /Image strategy/);
+  assert.match(html, /Distinct images/);
+  assert.match(html, /Nothing is sent/);
+});
+
+test("condensed engine uses one status indicator and authoritative ready review count", () => {
+  const source = readFileSync("components/ProspectEngine.tsx", "utf8");
+  const css = readFileSync("app/engine/engine.css", "utf8");
+
+  assert.match(source, /currentInventory\.readyForReview/);
+  assert.match(source, /setFunnelFilter\("ready_for_review"\)/);
+  assert.match(source, /syncState === "error" \? \(/);
+  assert.doesNotMatch(source, /PostgreSQL synced[\s\S]*Development memory[\s\S]*engine-sync/);
+  assert.match(css, /\.engine-filter-drawer\s*{[\s\S]*position: sticky;[\s\S]*z-index: 24;/);
+  assert.match(css, /\.engine-table__head,\s*\.engine-table > article\s*{[\s\S]*minmax\(18rem, 1\.25fr\)/);
+  assert.match(css, /\.engine-table-main\s*{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
+});
+
+test("preview action bar has sticky, mobile-safe controls", () => {
+  const css = readFileSync("app/engine/engine.css", "utf8");
+
+  assert.match(css, /\.engine-preview-action-bar\s*{[\s\S]*position: sticky;[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(css, /\.engine-preview-feedback textarea/);
+  assert.match(css, /\.engine-preview-status-card\s*{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(css, /@media \(max-width: 767px\)[\s\S]*\.engine-preview-action-bar\s*{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
 });
 
 test("protected website preview uses the prospect style profile instead of WebWorkshop branding", () => {

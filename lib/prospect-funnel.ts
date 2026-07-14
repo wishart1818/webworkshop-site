@@ -20,6 +20,7 @@ export const prospectExclusiveBucketKeys = [
 ] as const;
 
 export const prospectAttributeKeys = [
+  "ready_for_review",
   "qualified",
   "qualified_unsent",
   "unsent",
@@ -54,6 +55,7 @@ export const prospectFunnelLabels: Record<ProspectFunnelFilterKey, string> = {
   already_contacted: "Already Contacted",
   duplicate: "Duplicate",
   other_not_actionable: "Other / Not Currently Actionable",
+  ready_for_review: "Ready for Review",
   qualified: "Qualified",
   qualified_unsent: "Qualified & Unsent",
   unsent: "Unsent",
@@ -164,6 +166,7 @@ export function prospectIsQualifiedUnsent(prospect: Prospect) {
 }
 
 export function prospectAttributeMatches(prospect: Prospect, attribute: ProspectAttributeKey) {
+  if (attribute === "ready_for_review") return ["ready_email", "ready_facebook", "ready_instagram", "ready_contact_form"].includes(prospectCurrentBucket(prospect));
   if (attribute === "qualified") return prospectIsQualified(prospect);
   if (attribute === "qualified_unsent") return prospectIsQualifiedUnsent(prospect);
   if (attribute === "unsent") return prospectIsUnsent(prospect);
@@ -329,6 +332,7 @@ export function buildProspectFunnel(prospects: Prospect[]) {
       totalProspects: prospects.length,
       qualifiedProspects: attributes.qualified,
       qualifiedUnsent: prospects.filter(prospectIsQualifiedUnsent).length,
+      readyForReview: actionableTotal,
       emailReady: exclusiveBuckets.ready_email,
       facebookReady: exclusiveBuckets.ready_facebook,
       instagramReady: exclusiveBuckets.ready_instagram,

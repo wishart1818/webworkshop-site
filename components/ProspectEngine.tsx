@@ -27,6 +27,7 @@ import {
   normalizeTradeCategory,
   prospectPresenceLabels,
   prospectWrittenContactMethodIsUsable,
+  regeneratePreview,
   prospectSortOptions,
   prospectStatuses,
   sortProspects,
@@ -287,7 +288,7 @@ export function ProspectEngine() {
 
   const nextAction = useMemo(() => {
     const emailReady = prospectFunnel.currentInventory.emailReady;
-    const qualifiedUnsent = prospectFunnel.currentInventory.qualifiedUnsent;
+    const reviewReady = prospectFunnel.currentInventory.readyForReview;
     const previewIssues = prospects.filter((prospect) => prospect.analysis && !prospect.preview).length;
     const unapprovedOutreach = prospects.filter((prospect) => prospect.outreach && !prospect.outreach.approved).length;
     if (workspaceTab === "Overview") {
@@ -296,7 +297,7 @@ export function ProspectEngine() {
       return { label: "Start next prospect scan", action: () => setWorkspaceTab("Top Prospects") };
     }
     if (workspaceTab === "Prospects") {
-      if (qualifiedUnsent > 0) return { label: `Review ${qualifiedUnsent} qualified unsent`, action: () => applyProspectView("review") };
+      if (reviewReady > 0) return { label: `Review ${reviewReady} ready prospect${reviewReady === 1 ? "" : "s"}`, action: () => applyProspectView("review") };
       if (previewIssues > 0) return { label: `Fix ${previewIssues} preview issue${previewIssues === 1 ? "" : "s"}`, action: () => applyProspectView("review") };
       return { label: "Add a prospect", action: () => setShowDiscovery(true) };
     }
@@ -353,7 +354,7 @@ export function ProspectEngine() {
     if (view === "review") {
       setStatus("All");
       setContactFilter("all");
-      setFunnelFilter("qualified_unsent");
+      setFunnelFilter("ready_for_review");
     }
     if (view === "email") {
       setStatus("All");
@@ -634,6 +635,25 @@ export function ProspectEngine() {
     }
   }
 
+  async function regenerateSelectedPreview(feedback = "") {
+    if (!selected) return;
+    setSyncState("saving");
+    setSyncError("");
+    const previous = selected;
+    const updated = regeneratePreview(selected, feedback);
+    try {
+      const saved = await queuePersist(updated);
+      if (!saved) throw new Error("Unable to save regenerated preview.");
+      setProspects((current) => current.map((prospect) => prospect.id === saved.id ? saved : prospect));
+      setDetailTab("Preview");
+      setSyncState("saved");
+    } catch (error) {
+      setProspects((current) => current.map((prospect) => prospect.id === previous.id ? previous : prospect));
+      setSyncError(error instanceof Error ? error.message : "Unable to regenerate preview.");
+      setSyncState("error");
+    }
+  }
+
   async function createSelectedReviewPackage() {
     if (!selected) return;
     setSyncState("saving");
@@ -682,20 +702,12 @@ export function ProspectEngine() {
           <label className="engine-search engine-search--global"><span className="sr-only">Search prospects</span><input onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" value={query} /></label>
           <CompactSafetyStatus pendingCalls={pendingCalls} persistenceMode={persistenceMode} syncState={syncState} />
           <div className="engine-topbar__actions">
-            <div className={`engine-sync engine-sync--${syncState}`} role="status">
+            {syncState === "error" ? (
+            <div className="engine-sync engine-sync--error" role="status">
               <i aria-hidden="true" />
-              <span>
-                {syncState === "loading"
-                  ? "Loading"
-                  : syncState === "saving"
-                    ? "Saving"
-                    : syncState === "error"
-                      ? syncError
-                  : persistenceMode === "postgresql"
-                        ? "PostgreSQL synced"
-                        : "Development memory"}
-              </span>
+              <span>{syncError || "Sync needs attention"}</span>
             </div>
+            ) : null}
             <label className="engine-density-toggle">
               <span>Density</span>
               <select aria-label="Interface density" onChange={(event) => setDensity(event.target.value as DensityMode)} value={density}>
@@ -822,7 +834,7 @@ export function ProspectEngine() {
                 <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
             </div>
           </div>
         )}

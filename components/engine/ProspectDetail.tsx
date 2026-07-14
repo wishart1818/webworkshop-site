@@ -8,6 +8,7 @@ import {
   displayStateCode,
   displayTradeCategory,
   previewStyleProfile,
+  PREVIEW_GENERATOR_VERSION,
   OUTREACH_COPY_VERSION,
   outreachDraftLooksCurrent,
   priorityRationale,
@@ -24,6 +25,7 @@ import {
   type RecommendedContactMethod,
   type ScoreKey,
 } from "@/lib/prospect-engine";
+import { resolvePreviewImages } from "@/lib/preview-image-resolver";
 import { calculateNoWebsitePresenceScores } from "@/lib/top-prospects";
 
 const classificationLabels: Record<ProspectClassification, string> = {
@@ -58,6 +60,7 @@ type ProspectDetailProps = {
   onPresenceGap: () => void;
   onOutreach: () => void;
   onRegenerateOutreach: () => Promise<void>;
+  onRegeneratePreview: (feedback?: string) => Promise<void>;
   onCreateReviewPackage: () => Promise<void>;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
@@ -119,6 +122,7 @@ export function ProspectDetail({
   onPresenceGap,
   onOutreach,
   onRegenerateOutreach,
+  onRegeneratePreview,
   onCreateReviewPackage,
   onPreview,
   onStatus,
@@ -199,7 +203,7 @@ export function ProspectDetail({
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
-          ? <PreviewView prospect={prospect} />
+          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} publicPreviewUrl={publicPreviewUrl} />
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
         {detailTab === "Details" && <DetailsView prospect={prospect} />}
@@ -218,6 +222,7 @@ export function ProspectDetail({
             <button onClick={() => setDetailTab("Outreach")} type="button">Open outreach</button>
             <button onClick={openPublicPreview} type="button">Open preview</button>
             <button onClick={() => setDetailTab("Preview")} type="button">View internal Preview tab</button>
+            <button onClick={() => void onRegeneratePreview()} type="button">Regenerate preview</button>
             <button onClick={() => void onRegenerateOutreach()} type="button">Rewrite outreach</button>
             <button onClick={() => void onCreateReviewPackage()} type="button">Create review package</button>
             <button onClick={() => onStatus("Reviewed")} type="button">Mark reviewed</button>
@@ -469,12 +474,40 @@ function DraftSection({ approved, copied, label, onCopy, value }: {
   );
 }
 
-function PreviewView({ prospect }: { prospect: Prospect }) {
+function PreviewView({
+  prospect,
+  onCreateReviewPackage,
+  onOpenPublicPreview,
+  onRegeneratePreview,
+  publicPreviewUrl,
+}: {
+  prospect: Prospect;
+  onCreateReviewPackage: () => Promise<void>;
+  onOpenPublicPreview: () => void;
+  onRegeneratePreview: (feedback?: string) => Promise<void>;
+  publicPreviewUrl: string;
+}) {
   const preview = prospect.preview!;
+  const [feedback, setFeedback] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
   const styleProfile = previewStyleProfile(prospect, preview);
   const quality = preview.qualityScore;
   const artDirection = preview.artDirection;
   const creativeBrief = preview.creativeBrief;
+  const services = [
+    { title: preview.serviceHighlights?.[0] ?? displayTradeCategory(prospect.trade), description: "Primary service." },
+    { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
+    { title: preview.serviceHighlights?.[2] ?? "Estimate request", description: "Supporting service." },
+  ] as const;
+  const imageSet = resolvePreviewImages(prospect, services);
+  const imageSummary = [
+    imageSet.hero,
+    ...imageSet.services,
+    ...imageSet.gallery,
+    imageSet.beforeAfter,
+    imageSet.process,
+    imageSet.cta,
+  ];
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -482,8 +515,45 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
     ["Soft surface", styleProfile.softSurfaceColor],
     ["Text", styleProfile.inkColor],
   ];
+  async function regenerate(nextFeedback = "") {
+    if (regenerating) return;
+    setRegenerating(true);
+    try {
+      await onRegeneratePreview(nextFeedback);
+      if (nextFeedback) setFeedback("");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   return (
     <div className="engine-stack">
+      <section className="engine-preview-action-bar" aria-label="Preview actions">
+        <div>
+          <span>Preview controls</span>
+          <h3>{prospect.businessName}</h3>
+          <p>Regeneration updates only the preview concept. Nothing is sent, no suppression/contact history changes, and review packages stay manual.</p>
+        </div>
+        <div className="engine-preview-action-bar__actions">
+          <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
+          <button className="engine-button" disabled={regenerating} onClick={() => void regenerate()} type="button">{regenerating ? "Regenerating" : "Regenerate Preview"}</button>
+          <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
+          <a className="engine-button" href="#preview-qa">Preview QA</a>
+        </div>
+        <label className="engine-preview-feedback">
+          <span>Regenerate with feedback</span>
+          <textarea onChange={(event) => setFeedback(event.target.value)} placeholder="Example: make it darker, more premium, more image-led, or emphasize concrete cleaning." value={feedback} />
+          <button className="engine-button" disabled={regenerating} onClick={() => void regenerate(feedback)} type="button">Apply Feedback</button>
+        </label>
+      </section>
+      <section className="engine-preview-status-card">
+        <div><span>Preview exists</span><b>Yes</b></div>
+        <div><span>Generator</span><b>{preview.previewVersion === "v3" ? PREVIEW_GENERATOR_VERSION : preview.previewVersion || "legacy"}</b></div>
+        <div><span>Generated</span><b>{preview.generatedAt ? new Date(preview.generatedAt).toLocaleString() : "Not recorded"}</b></div>
+        <div><span>Public link</span><b>{publicPreviewUrl ? "Ready" : "Missing"}</b></div>
+        <div><span>QA status</span><b>{quality?.status || "Not scored"}</b></div>
+        <div><span>QA score</span><b>{quality?.overall ?? "N/A"}</b></div>
+      </section>
       <section className="engine-preview-hero">
         <span>{displayTradeCategory(prospect.trade)} concept</span>
         <h3>{preview.direction}</h3>
@@ -545,19 +615,29 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
             <div><dt>Logo</dt><dd>{creativeBrief.logoStatus}</dd></div>
             <div><dt>Color source</dt><dd>{creativeBrief.brandColorSource}</dd></div>
             <div><dt>Imagery source</dt><dd>{creativeBrief.imagerySource}</dd></div>
+            <div><dt>Primary service</dt><dd>{creativeBrief.primaryService}</dd></div>
+            <div><dt>Audience</dt><dd>{creativeBrief.customerAudience}</dd></div>
+            <div><dt>Contact path</dt><dd>{creativeBrief.verifiedEmailOrContactPath}</dd></div>
             <div><dt>Business tone</dt><dd>{creativeBrief.businessTone.replace("-", " ")}</dd></div>
             <div><dt>Customer type</dt><dd>{creativeBrief.likelyCustomerType}</dd></div>
           </dl>
+          <p><b>Image intents:</b> {creativeBrief.imageIntents?.join(" ") || "Not recorded"}</p>
         </section>
       )}
       {quality && (
-        <section className="engine-preview-quality">
+        <section className="engine-preview-quality" id="preview-qa">
           <div>
             <span>Preview quality check</span>
             <h3>{quality.overall}/100 overall</h3>
             <p>Internal design QA for polish, specificity, conversion clarity, mobile readiness, and truthfulness.</p>
           </div>
           <dl>
+            <div><dt>Status</dt><dd>{quality.status || "Not scored"}</dd></div>
+            <div><dt>Hero impact</dt><dd>{quality.heroImpact ?? "N/A"}</dd></div>
+            <div><dt>Image quality</dt><dd>{quality.imageQuality ?? "N/A"}</dd></div>
+            <div><dt>Image relevance</dt><dd>{quality.imageSectionRelevance ?? "N/A"}</dd></div>
+            <div><dt>Branding</dt><dd>{quality.branding ?? "N/A"}</dd></div>
+            <div><dt>Layout variety</dt><dd>{quality.layoutVariety ?? "N/A"}</dd></div>
             <div><dt>Visual polish</dt><dd>{quality.visualPolish}</dd></div>
             <div><dt>Business specificity</dt><dd>{quality.businessSpecificity}</dd></div>
             <div><dt>Clarity</dt><dd>{quality.clarity}</dd></div>
@@ -568,6 +648,22 @@ function PreviewView({ prospect }: { prospect: Prospect }) {
           {quality.notes.length ? <ul>{quality.notes.map((note) => <li key={note}>{note}</li>)}</ul> : null}
         </section>
       )}
+      <section className="engine-preview-art-direction">
+        <div>
+          <span>Image strategy</span>
+          <h3>{imageSet.sourceStatus}</h3>
+          <p>{imageSummary.length} images selected across hero, services, gallery, comparison, process, and CTA sections.</p>
+        </div>
+        <dl>
+          <div><dt>Stock provider</dt><dd>{imageSet.providerStatus}</dd></div>
+          <div><dt>Distinct images</dt><dd>{new Set(imageSummary.map((image) => image.src)).size}</dd></div>
+          <div><dt>Hero image</dt><dd>{imageSet.hero.source}</dd></div>
+          <div><dt>Warnings</dt><dd>{imageSet.warnings.length ? imageSet.warnings.join(", ") : "None"}</dd></div>
+        </dl>
+      </section>
+      {preview.regenerationFeedbackHistory?.length ? (
+        <section><h3>Feedback history</h3><ul>{preview.regenerationFeedbackHistory.map((item) => <li key={item}>{item}</li>)}</ul></section>
+      ) : null}
       <section><h3>Visual style direction</h3><p>{preview.visualStyleDirection || "Use confident typography, practical project photography, and high-contrast estimate actions."}</p></section>
       <section><h3>Homepage structure</h3><ol>{preview.homepageStructure.map((item) => <li key={item}>{item}</li>)}</ol></section>
       <section><h3>Service page structure</h3><ol>{preview.servicePageStructure.map((item) => <li key={item}>{item}</li>)}</ol></section>

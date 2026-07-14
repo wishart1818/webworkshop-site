@@ -6,7 +6,9 @@ import { discoverContractorsWithDiagnostics } from "@/lib/lead-discovery";
 import { createOrRefreshAutonomousReviewPackageForProspect, getAutonomousGrowthDashboard, processExistingQualifiedProspects, regenerateProspectOutreachWithCurrentScript, updateAutonomousGrowthSettings } from "@/lib/autonomous-growth-repository";
 import { autonomousGrowthModes, type AutonomousGrowthMode, type AutonomousGrowthSettings } from "@/lib/autonomous-growth";
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
-import { listProspects } from "@/lib/prospect-repository";
+import { listProspects, saveProspect } from "@/lib/prospect-repository";
+import { PREVIEW_GENERATOR_VERSION, regeneratePreview, type Prospect } from "@/lib/prospect-engine";
+import { prospectCurrentBucket } from "@/lib/prospect-funnel";
 
 export const operatorCommandTypes = [
   "OPEN_PROSPECT",
@@ -52,6 +54,10 @@ export const operatorCommandTypes = [
   "APPLY_LEGACY_OUTREACH_BACKFILL",
   "REGENERATE_PROSPECT_OUTREACH",
   "CREATE_AUTONOMOUS_REVIEW_PACKAGE",
+  "REGENERATE_PROSPECT_PREVIEW",
+  "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS",
+  "LIST_PREVIEWS_NEEDING_REGENERATION",
+  "SHOW_PREVIEW_QA",
 ] as const;
 
 export type OperatorCommandType = (typeof operatorCommandTypes)[number];
@@ -122,6 +128,7 @@ type ParsedStructured = {
 const commandAction = "operator_command_receipt";
 const noOutreach = { emails: 0, dms: 0, forms: 0, calls: 0, looms: 0 };
 const level3Commands = new Set(["SEND_PROSPECT_EMAIL", "ENABLE_FULL_AUTO_EMAIL", "SUPPRESS_PROSPECT", "DELETE_PROSPECT_DATA", "BULK_CHANGE_QUEUE_STATUS"]);
+const previewCommandSet = new Set<OperatorCommandType>(["REGENERATE_PROSPECT_PREVIEW", "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS", "LIST_PREVIEWS_NEEDING_REGENERATION", "SHOW_PREVIEW_QA"]);
 const supportedFields = new Set([
   "COMMAND",
   "ACTION",
@@ -137,6 +144,9 @@ const supportedFields = new Set([
   "FOLLOW_UPS",
   "QUEUE_ITEM_ID",
   "PROSPECT_ID",
+  "BUSINESS_NAME",
+  "FEEDBACK",
+  "FORCE",
 ]);
 
 function isOperatorCommandType(value: string): value is OperatorCommandType {
@@ -188,6 +198,76 @@ function positiveInteger(value: string | undefined, field: string, errors: strin
 
 function commandLabel(type: string) {
   return type.toLowerCase().replaceAll("_", " ");
+}
+
+function normalizedProspectText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function prospectPreviewIsCurrent(prospect: Prospect) {
+  return prospect.preview?.previewVersion === "v3" && prospect.preview?.qualityScore?.status === "Send-worthy / polished";
+}
+
+function prospectPreviewNeedsRegeneration(prospect: Prospect) {
+  if (!prospect.preview) return true;
+  if (prospect.preview.previewVersion !== "v3") return true;
+  if ((prospect.preview.qualityScore?.overall ?? 0) < 88) return true;
+  if (prospect.preview.qualityScore?.status && prospect.preview.qualityScore.status !== "Send-worthy / polished") return true;
+  return prospect.preview.qualityScore?.notes.some((note) => /flag|generic|placeholder|internal|unsupported|repeated/i.test(note)) ?? false;
+}
+
+function suspiciousPreviewEmail(email: string) {
+  return /^(admin|noreply|no-reply|wordpress|donotreply|test|example)@/i.test(email) || /(?:theme|template|developer|totalwptheme)\./i.test(email);
+}
+
+function previewBulkEligibility(prospect: Prospect, force = false) {
+  const bucket = prospectCurrentBucket(prospect);
+  const status = prospect.status.toLowerCase();
+  const activityText = prospect.activities.map((activity) => `${activity.type} ${activity.label}`).join(" ").toLowerCase();
+  if (/magic touch pressure washing/i.test(prospect.businessName)) return { eligible: false, reason: "excluded protected test/business record" };
+  if (["contacted", "interested", "proposal sent", "closed won", "closed lost"].includes(status)) return { eligible: false, reason: "already contacted or closed" };
+  if (/suppressed|opted out|do not contact|bounced|complained|not interested|never contact|sent/.test(activityText)) return { eligible: false, reason: "suppressed, contacted, sent, or non-actionable history" };
+  if (!["ready_email", "ready_contact_form"].includes(bucket)) return { eligible: false, reason: `not in eligible written review bucket (${bucket})` };
+  if (bucket === "ready_email" && (!prospect.email || suspiciousPreviewEmail(prospect.email))) return { eligible: false, reason: "missing or suspicious public email" };
+  if (!force && prospectPreviewIsCurrent(prospect)) return { eligible: false, reason: "already using latest polished generator" };
+  return { eligible: true, reason: "eligible unsent written-contact preview" };
+}
+
+function previewSafeFeedback(value: unknown) {
+  return safeOperatorText(String(value ?? "")).replace(/\b(award-winning|certified|licensed|insured|guarantee(?:d)?|five-star|best rated|years in business)\b/gi, "").slice(0, 240).trim();
+}
+
+async function findPreviewCommandMatches(preview: OperatorCommandPreview) {
+  const prospects = await listProspects().catch(() => []);
+  const id = String(preview.parsedParameters.PROSPECT_ID ?? "");
+  const query = normalizedProspectText(String(preview.parsedParameters.BUSINESS_NAME ?? preview.parsedParameters.query ?? ""));
+  if (id) return prospects.filter((prospect) => prospect.id === id);
+  if (!query) return [];
+  const exact = prospects.filter((prospect) => normalizedProspectText(prospect.businessName) === query);
+  if (exact.length) return exact;
+  return prospects.filter((prospect) => normalizedProspectText(prospect.businessName).includes(query) || query.includes(normalizedProspectText(prospect.businessName)));
+}
+
+function previewCommandSummary(prospects: Prospect[], force = false) {
+  const rows = prospects.map((prospect) => ({ prospect, eligibility: previewBulkEligibility(prospect, force), needsRegeneration: prospectPreviewNeedsRegeneration(prospect) }));
+  const eligible = rows.filter((row) => row.eligibility.eligible && row.needsRegeneration);
+  const alreadyCurrent = rows.filter((row) => row.eligibility.eligible && !row.needsRegeneration);
+  const excluded = rows.filter((row) => !row.eligibility.eligible);
+  return { rows, eligible, alreadyCurrent, excluded };
+}
+
+function previewBusinessQueryFromText(text: string) {
+  return safeOperatorText(text)
+    .replace(/^regenerate\s+(?:the\s+)?preview\s+for\s+/i, "")
+    .replace(/^refresh\s+/i, "")
+    .replace(/^make\s+/i, "")
+    .replace(/^show\s+(?:the\s+)?qa\s+report\s+for\s+/i, "")
+    .replace(/\s+using\s+the\s+latest.*$/i, "")
+    .replace(/\s+with\s+the\s+latest.*$/i, "")
+    .replace(/\s+preview\s+more.*$/i, "")
+    .replace(/(?:'|’|`)?s\s+preview.*$/i, "")
+    .replace(/\s+preview$/i, "")
+    .trim();
 }
 
 function previewText(preview: OperatorCommandPreview) {
@@ -248,7 +328,7 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
   for (const [key, value] of Object.entries(parsed.fields)) {
     if (key === "COMMAND") continue;
     if (key.endsWith("_CAP") || key === "COOLDOWN_MINUTES") preview.parsedParameters[key] = positiveInteger(value, key, preview.validationErrors, key === "COOLDOWN_MINUTES" ? 240 : 500) ?? 0;
-    else if (["PROCESS_EXISTING_FIRST", "FULL_AUTO", "FOLLOW_UPS"].includes(key)) preview.parsedParameters[key] = boolValue(value, key, preview.validationErrors) ?? false;
+    else if (["PROCESS_EXISTING_FIRST", "FULL_AUTO", "FOLLOW_UPS", "FORCE"].includes(key)) preview.parsedParameters[key] = boolValue(value, key, preview.validationErrors) ?? false;
     else preview.parsedParameters[key] = safeOperatorText(value);
   }
   if (command === "CONFIGURE_AUTO_EMAIL_PILOT") {
@@ -274,6 +354,19 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
     preview.plannedActions.push(`Create or refresh a review-only Autonomous Growth package for prospect ${safeOperatorText(parsed.fields.PROSPECT_ID ?? "")}.`);
     preview.plannedActions.push("Keep the package out of automatic sending.");
     if (!parsed.fields.PROSPECT_ID) preview.validationErrors.push("PROSPECT_ID is required.");
+  } else if (command === "REGENERATE_PROSPECT_PREVIEW") {
+    preview.plannedActions.push("Regenerate one prospect preview with the newest photo-led generator.");
+    preview.plannedActions.push("Retain the existing public preview token and send nothing.");
+    if (!parsed.fields.PROSPECT_ID && !parsed.fields.BUSINESS_NAME) preview.validationErrors.push("PROSPECT_ID or BUSINESS_NAME is required.");
+  } else if (command === "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS") {
+    preview.plannedActions.push("Regenerate only eligible unsent, uncontacted, non-suppressed written-contact previews.");
+    preview.plannedActions.push("Exclude contacted, sent, suppressed, phone-only, placeholder-email, blocked, and already-current records unless FORCE:true is supplied.");
+    preview.plannedActions.push("Send nothing and preserve suppression/contact history.");
+  } else if (command === "LIST_PREVIEWS_NEEDING_REGENERATION") {
+    preview.plannedActions.push("List previews that need regeneration without changing records.");
+  } else if (command === "SHOW_PREVIEW_QA") {
+    preview.plannedActions.push("Show the preview QA report for the matched prospect without changing records.");
+    if (!parsed.fields.PROSPECT_ID && !parsed.fields.BUSINESS_NAME) preview.validationErrors.push("PROSPECT_ID or BUSINESS_NAME is required.");
   } else {
     preview.plannedActions.push(`Run ${commandLabel(command)}.`);
   }
@@ -282,7 +375,7 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
 }
 
 function commandLevel(type: OperatorCommandType): OperatorCommandLevel {
-  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL"].includes(type)) return 2;
+  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL", "REGENERATE_PROSPECT_PREVIEW", "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS"].includes(type)) return 2;
   return 1;
 }
 
@@ -302,7 +395,7 @@ export function parseOperatorCommand(commandText: string, forcedMode?: "search" 
     return preview;
   }
   if (/^COMMAND\s*:/i.test(text)) return structuredPreview(text);
-  if (forcedMode !== "command" && !/^(why|show|run|set|pause|start|open|configure|enable|disable|use|process|move)\b/i.test(text)) {
+  if (forcedMode !== "command" && !/^(why|show|run|set|pause|start|open|configure|enable|disable|use|process|move|regenerate|refresh|make|list)\b/i.test(text)) {
     const preview = basePreview(text, "SEARCH", 1);
     preview.navigation = { tab: "Prospects", query: text };
     preview.plannedActions.push(`Search prospects for "${safeOperatorText(text)}".`);
@@ -322,6 +415,38 @@ export function parseOperatorCommand(commandText: string, forcedMode?: "search" 
   if (/turn everything on|enable everything|full auto everything/.test(lower)) {
     const preview = basePreview(text, "UNKNOWN", 3);
     preview.validationErrors.push("I can't safely apply that as written. Choose one specific command: Enable Auto Email Pilot, enable full-auto email, disable the global kill switch, or change a daily cap.");
+    preview.copyPlan = previewText(preview);
+    return preview;
+  }
+  if (/show previews?.*(need|needing).*(regen|refresh)|list previews?.*(need|needing).*(regen|refresh)/.test(lower)) {
+    return exact("LIST_PREVIEWS_NEEDING_REGENERATION", ["List previews needing regeneration.", "No records will be changed."], { tab: "Command Activity" });
+  }
+  if (/regenerate all eligible unsent previews|refresh all eligible unsent previews/.test(lower)) {
+    const preview = exact("REGENERATE_ELIGIBLE_UNSENT_PREVIEWS", [
+      "Find eligible unsent written-contact prospects needing the latest preview generator.",
+      "Exclude contacted, sent, suppressed, phone-only, placeholder-email, and already-current records.",
+      "Require confirmation before any preview is regenerated.",
+    ], { tab: "Command Activity" });
+    preview.copyPlan = previewText(preview);
+    return preview;
+  }
+  if (/show .*preview qa|show .*qa report/.test(lower)) {
+    const query = previewBusinessQueryFromText(text);
+    const preview = exact("SHOW_PREVIEW_QA", [`Show Preview QA for "${query || "matched prospect"}".`, "No records will be changed."], { tab: "Prospects", query });
+    preview.parsedParameters.BUSINESS_NAME = query;
+    preview.copyPlan = previewText(preview);
+    return preview;
+  }
+  if (/(regenerate|refresh|make).*(preview)/.test(lower) || /(regenerate|refresh).*(latest photo-led|latest .*generator)/.test(lower)) {
+    const query = previewBusinessQueryFromText(text);
+    const feedback = /(premium|image-led|darker|dramatic|upscale|reduce text|concrete|driveway|roof|blue|white)/i.test(text) ? text : "";
+    const preview = exact("REGENERATE_PROSPECT_PREVIEW", [
+      `Regenerate preview for "${query || "matched prospect"}" with ${PREVIEW_GENERATOR_VERSION}.`,
+      "Retain the public preview token where possible.",
+      "Require confirmation before saving.",
+    ], { tab: "Prospects", query });
+    preview.parsedParameters.BUSINESS_NAME = query;
+    if (feedback) preview.parsedParameters.FEEDBACK = previewSafeFeedback(feedback);
     preview.copyPlan = previewText(preview);
     return preview;
   }
@@ -365,6 +490,57 @@ export function parseOperatorCommand(commandText: string, forcedMode?: "search" 
   preview.validationErrors.push("I could not safely match this to a supported command. Use Search mode or open Command Help for examples.");
   preview.copyPlan = previewText(preview);
   return preview;
+}
+
+async function enrichPreviewCommand(preview: OperatorCommandPreview) {
+  if (!isOperatorCommandType(preview.commandType) || !previewCommandSet.has(preview.commandType)) return preview;
+  if (preview.commandType === "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS" || preview.commandType === "LIST_PREVIEWS_NEEDING_REGENERATION") {
+    const force = Boolean(preview.parsedParameters.FORCE);
+    const prospects = await listProspects().catch(() => []);
+    const summary = previewCommandSummary(prospects, force);
+    const needsRegeneration = summary.rows.filter((row) => row.needsRegeneration);
+    preview.parsedParameters.ELIGIBLE_COUNT = summary.eligible.length;
+    preview.parsedParameters.ALREADY_CURRENT_COUNT = summary.alreadyCurrent.length;
+    preview.parsedParameters.EXCLUDED_COUNT = summary.excluded.length;
+    preview.plannedActions.push(
+      `${summary.eligible.length} eligible preview(s) need regeneration.`,
+      `${summary.alreadyCurrent.length} eligible preview(s) already use ${PREVIEW_GENERATOR_VERSION}.`,
+      `${summary.excluded.length} record(s) excluded from mutation.`
+    );
+    if (preview.commandType === "LIST_PREVIEWS_NEEDING_REGENERATION") {
+      preview.plannedActions.push(`Need regeneration: ${needsRegeneration.slice(0, 10).map((row) => row.prospect.businessName).join(", ") || "none"}.`);
+    }
+    preview.safetyImpact.push("Bulk preview commands do not send outreach and do not rewrite contact, suppression, bounce, complaint, or sent history.");
+    preview.copyPlan = previewText(preview);
+    return preview;
+  }
+
+  const matches = await findPreviewCommandMatches(preview);
+  if (matches.length === 0) {
+    preview.validationErrors.push("No matching prospect was found. Use BUSINESS_NAME or PROSPECT_ID.");
+  } else if (matches.length > 1) {
+    preview.validationErrors.push(`Ambiguous prospect match. Choices: ${matches.slice(0, 8).map((prospect) => `${prospect.businessName} (${prospect.id})`).join(", ")}.`);
+  } else {
+    const [prospect] = matches;
+    preview.parsedParameters.PROSPECT_ID = prospect.id;
+    preview.parsedParameters.BUSINESS_NAME = prospect.businessName;
+    preview.navigation = { tab: "Prospects", query: prospect.businessName, prospectId: prospect.id };
+    preview.plannedActions.push(`Matched business: ${prospect.businessName}.`);
+    preview.plannedActions.push(`Current generator: ${prospect.preview?.previewVersion ?? "none"}. New generator: ${PREVIEW_GENERATOR_VERSION}.`);
+    preview.plannedActions.push("Public preview token will be retained by saving the same prospect record.");
+    if (preview.commandType === "SHOW_PREVIEW_QA") {
+      const quality = prospect.preview?.qualityScore;
+      preview.plannedActions.push(`QA status: ${quality?.status ?? "Not scored"}. Overall: ${quality?.overall ?? "N/A"}.`);
+      if (quality?.notes?.length) preview.plannedActions.push(`Warnings: ${quality.notes.slice(0, 5).join("; ")}`);
+    }
+  }
+  preview.safetyImpact.push("Preview actions do not send email, DMs, forms, calls, Looms, or prospect SMS.");
+  preview.copyPlan = previewText(preview);
+  return preview;
+}
+
+export async function previewOperatorCommand(commandText: string, forcedMode?: "search" | "command") {
+  return enrichPreviewCommand(parseOperatorCommand(commandText, forcedMode));
 }
 
 function copyForReceipt(receipt: Omit<OperatorCommandReceipt, "copyForChatGPT" | "technicalSummary">) {
@@ -491,7 +667,7 @@ function settingsPatchFromPreview(preview: OperatorCommandPreview): Partial<Auto
 }
 
 export async function executeOperatorCommand(commandText: string, options: { mode?: "search" | "command"; confirmed?: boolean } = {}) {
-  const preview = parseOperatorCommand(commandText, options.mode);
+  const preview = await previewOperatorCommand(commandText, options.mode);
   if (preview.validationErrors.length) {
     const receipt = makeReceipt({
       commandText: preview.commandText,
@@ -782,6 +958,101 @@ export async function executeOperatorCommand(commandText: string, options: { mod
         nextRecommendedAction: "Open Autonomous Growth and review the package.",
         relatedPage: "Autonomous Growth",
         relatedProspectIds: prospectId ? [prospectId] : [],
+      });
+    } else if (preview.commandType === "REGENERATE_PROSPECT_PREVIEW") {
+      const prospectId = String(preview.parsedParameters.PROSPECT_ID ?? "");
+      const prospects = await listProspects();
+      const prospect = prospects.find((item) => item.id === prospectId);
+      if (!prospect) {
+        receipt = makeReceipt({
+          commandText: preview.commandText,
+          commandType: preview.commandType,
+          status: "blocked",
+          plannedActions: preview.plannedActions,
+          whatChanged: [],
+          whatDidNotChange: ["No preview changed.", "No outreach was sent."],
+          recordsAffected: 0,
+          testsTriggered: [],
+          safeErrorMessage: "Matched prospect could not be loaded.",
+          safeErrorCategory: "prospect_not_found",
+          nextRecommendedAction: "Open Prospects and choose a specific record.",
+          relatedPage: "Prospects",
+        });
+      } else {
+        const updated = regeneratePreview(prospect, previewSafeFeedback(preview.parsedParameters.FEEDBACK));
+        const saved = await saveProspect(updated);
+        receipt = makeReceipt({
+          commandText: preview.commandText,
+          commandType: preview.commandType,
+          status: "completed",
+          confirmedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          plannedActions: preview.plannedActions,
+          whatChanged: [
+            `Preview regenerated for ${saved.businessName}.`,
+            `Generator: ${PREVIEW_GENERATOR_VERSION}.`,
+            `QA score: ${saved.preview?.qualityScore?.overall ?? "N/A"}.`,
+            `QA status: ${saved.preview?.qualityScore?.status ?? "Not scored"}.`,
+          ],
+          whatDidNotChange: ["Public preview record identity was retained.", "No outreach was sent.", "Contact/suppression/sent history was not rewritten."],
+          recordsAffected: 1,
+          testsTriggered: [],
+          nextRecommendedAction: "Open the Prospect Preview tab and inspect the public preview.",
+          relatedPage: "Prospects",
+          relatedProspectIds: [saved.id],
+        });
+      }
+    } else if (preview.commandType === "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS") {
+      const force = Boolean(preview.parsedParameters.FORCE);
+      const prospects = await listProspects();
+      const summary = previewCommandSummary(prospects, force);
+      const regenerated: string[] = [];
+      const failed: string[] = [];
+      for (const row of summary.eligible) {
+        try {
+          const updated = regeneratePreview(row.prospect);
+          const saved = await saveProspect(updated);
+          regenerated.push(saved.businessName);
+        } catch (error) {
+          failed.push(`${row.prospect.businessName}: ${safeOperatorText(error instanceof Error ? error.message : "safe failure")}`);
+        }
+      }
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: failed.length ? "partially_completed" : "completed",
+        confirmedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        plannedActions: preview.plannedActions,
+        whatChanged: regenerated.length ? [`Regenerated ${regenerated.length} eligible unsent preview(s): ${regenerated.join(", ")}.`] : ["No previews needed regeneration."],
+        whatDidNotChange: [
+          `${summary.alreadyCurrent.length} eligible preview(s) were already current.`,
+          `${summary.excluded.length} record(s) were excluded from mutation.`,
+          "No outreach was sent.",
+          "Suppression/contact/sent history was unchanged.",
+          ...(failed.length ? [`Failures: ${failed.join("; ")}`] : []),
+        ],
+        recordsAffected: regenerated.length,
+        testsTriggered: [],
+        safeErrorMessage: failed.length ? failed.join("; ") : undefined,
+        safeErrorCategory: failed.length ? "partial_preview_regeneration_failure" : undefined,
+        nextRecommendedAction: regenerated.length ? "Review the regenerated public previews before using them in outreach." : "Run Show previews that need regeneration to inspect remaining records.",
+        relatedPage: "Command Activity",
+        relatedProspectIds: summary.eligible.map((row) => row.prospect.id),
+      });
+    } else if (preview.commandType === "LIST_PREVIEWS_NEEDING_REGENERATION" || preview.commandType === "SHOW_PREVIEW_QA") {
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: "completed",
+        plannedActions: preview.plannedActions,
+        whatChanged: ["Displayed preview diagnostics only."],
+        whatDidNotChange: ["No preview changed.", "No outreach was sent.", "No records were mutated."],
+        recordsAffected: 0,
+        testsTriggered: [],
+        nextRecommendedAction: preview.commandType === "SHOW_PREVIEW_QA" ? "Open the Prospect Preview tab for the full QA report." : "Regenerate eligible previews only after reviewing exclusions.",
+        relatedPage: preview.navigation?.tab ?? "Command Activity",
+        relatedProspectIds: typeof preview.parsedParameters.PROSPECT_ID === "string" ? [preview.parsedParameters.PROSPECT_ID] : [],
       });
     } else if (preview.confirmationLevel === 2) {
       const patch = settingsPatchFromPreview(preview);

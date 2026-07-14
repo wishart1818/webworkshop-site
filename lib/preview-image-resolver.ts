@@ -292,6 +292,43 @@ function buildIntent(
   };
 }
 
+function serviceCatalogSlot(trade: TradeCategory, serviceTitle: string, index: number): CatalogSlot {
+  const title = serviceTitle.toLowerCase();
+  if (trade === "Pressure Washing") {
+    if (/house|siding|exterior/.test(title)) return "service";
+    if (/concrete|driveway|walk|patio|paver/.test(title)) return "support";
+    if (/roof|soft/.test(title)) return "detail";
+  }
+  if (trade === "Landscaping") {
+    if (/install|plant|bed|mulch/.test(title)) return "service";
+    if (/season|maintenance|lawn/.test(title)) return "detail";
+    if (/hardscape|patio|outdoor/.test(title)) return "support";
+  }
+  if (trade === "Roofing") {
+    if (/repair|leak|shingle/.test(title)) return "service";
+    if (/replacement|material/.test(title)) return "detail";
+    if (/storm|inspection/.test(title)) return "support";
+  }
+  if (trade === "HVAC") {
+    if (/repair|heating|cooling/.test(title)) return "service";
+    if (/install|system/.test(title)) return "detail";
+    if (/maintenance|tune/.test(title)) return "support";
+  }
+  return (["service", "detail", "support"] as const)[index] ?? "service";
+}
+
+function serviceSpecificKeywords(trade: TradeCategory, serviceTitle: string) {
+  const title = serviceTitle.toLowerCase();
+  if (trade === "Pressure Washing") {
+    if (/house|siding|exterior/.test(title)) return ["house washing", "siding", "exterior wall cleaning"];
+    if (/concrete|driveway|walk|patio|paver/.test(title)) return ["driveway cleaning", "concrete surface", "walkway wash"];
+    if (/roof|soft/.test(title)) return ["roof soft washing", "roofline", "low-pressure cleaning"];
+  }
+  if (/emergency/.test(title)) return ["urgent service", "service call", "technician"];
+  if (/maintenance|tune/.test(title)) return ["maintenance", "inspection", "equipment check"];
+  return [];
+}
+
 function imageAlt(prospect: Prospect, intent: PreviewImageIntent) {
   const city = titleCaseLocation(prospect.city);
   const service = intent.serviceTitle || displayTradeCategory(prospect.trade);
@@ -349,8 +386,9 @@ export function resolvePreviewImages(
 
   const heroIntent = buildIntent(trade, prospect, "Hero", "hero", "hero");
   const serviceIntents = services.map((service, index) => {
-    const slot = (["service", "detail", "support"] as const)[index] ?? "service";
-    return buildIntent(trade, prospect, service.title, "service", slot, service.title);
+    const slot = serviceCatalogSlot(trade, service.title, index);
+    const intent = buildIntent(trade, prospect, service.title, "service", slot, service.title);
+    return { ...intent, keywords: [...new Set([...serviceSpecificKeywords(trade, service.title), ...intent.keywords])] };
   }) as [PreviewImageIntent, PreviewImageIntent, PreviewImageIntent];
   const proofIntent = buildIntent(trade, prospect, "Service results", "gallery", "proof");
   const beforeAfterIntent = buildIntent(trade, prospect, "Comparison", "beforeAfter", "proof", services[0].title);
@@ -359,7 +397,7 @@ export function resolvePreviewImages(
 
   const hero = sourceForIndex(prospect, heroIntent, entry, "hero", 0, businessPhotos, stockPhotos);
   const resolvedServices = serviceIntents.map((intent, index) => {
-    const slot = (["service", "detail", "support"] as const)[index] ?? "service";
+    const slot = serviceCatalogSlot(trade, services[index].title, index);
     return sourceForIndex(prospect, intent, entry, slot, index + 1, businessPhotos, stockPhotos);
   }) as [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
   const gallery = [
@@ -397,9 +435,17 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
   for (const image of images) bySrc.set(image.src, (bySrc.get(image.src) ?? 0) + 1);
   const maxReuse = Math.max(...bySrc.values(), 0);
   if (maxReuse > Math.ceil(images.length / 2)) warnings.push("One image is used across too much of the preview.");
+  if (maxReuse > 2) warnings.push("The preview repeats one image more than twice.");
   if (images[0]?.source === "neutral-fallback") warnings.push("Hero image resolved to a neutral fallback.");
   if (images.some((image) => !safeImageUrl(image.src))) warnings.push("One or more preview image URLs are unsafe.");
   if (images.some((image) => image.source === "neutral-fallback")) warnings.push("A photographic image was unavailable for at least one section.");
+  for (const image of images) {
+    const service = image.serviceTitle?.toLowerCase() ?? "";
+    const blob = `${image.src} ${image.alt} ${image.intent.keywords.join(" ")}`.toLowerCase();
+    if (/concrete|driveway|patio|paver/.test(service) && !/concrete|driveway|walkway|patio|paver/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match concrete or driveway cleaning.`);
+    if (/house|siding/.test(service) && !/house|siding|exterior/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match house washing.`);
+    if (/roof|soft/.test(service) && !/roof|soft/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match roof or soft washing.`);
+  }
   return {
     ok: warnings.length === 0,
     warnings,

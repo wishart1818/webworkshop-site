@@ -200,29 +200,51 @@ function creativeBriefValue(value: unknown): PreviewCreativeBrief | undefined {
   const brandingSource = text(value.brandingSource, "Preview branding source", 30) as PreviewCreativeBrief["brandingSource"];
   if (!["detected cue", "trade fallback"].includes(brandingSource)) throw new Error("Preview branding source is not supported.");
   const imagerySource = text(value.imagerySource, "Preview imagery source", 40) as PreviewCreativeBrief["imagerySource"];
-  if (!["trade photo library", "business assets"].includes(imagerySource)) throw new Error("Preview imagery source is not supported.");
+  if (!["trade photo library", "business assets", "configured stock provider"].includes(imagerySource)) throw new Error("Preview imagery source is not supported.");
   const reviewSignal = text(value.reviewSignal, "Preview review signal", 40) as PreviewCreativeBrief["reviewSignal"];
   if (!["not used", "public rating count only"].includes(reviewSignal)) throw new Error("Preview review signal is not supported.");
   const businessTone = text(value.businessTone, "Preview business tone", 30) as PreviewStyleProfile["tone"];
   if (!["practical", "modern-practical", "local-family", "premium-craft", "high-trust"].includes(businessTone)) {
     throw new Error("Preview business tone is not supported.");
   }
+  const logoSource = text(value.logoSource ?? "not found", "Preview logo source", 40) as PreviewCreativeBrief["logoSource"];
+  if (!["not found", "website", "business asset", "operator supplied"].includes(logoSource)) throw new Error("Preview logo source is not supported.");
+  const customerAudience = text(value.customerAudience ?? "residential", "Preview customer audience", 30) as PreviewCreativeBrief["customerAudience"];
+  if (!["residential", "commercial", "mixed"].includes(customerAudience)) throw new Error("Preview customer audience is not supported.");
+  const heroComposition = text(value.heroComposition ?? "clean-editorial", "Preview hero composition", 40) as PreviewArtDirection["heroTreatment"];
+  if (!["photo-led-overlap", "service-command", "proof-forward", "clean-editorial"].includes(heroComposition)) throw new Error("Preview hero composition is not supported.");
+  const sectionDensity = text(value.sectionDensity ?? "calm-premium", "Preview section density", 40) as PreviewArtDirection["layoutRhythm"];
+  if (!["bold-asymmetric", "service-dense", "proof-led", "calm-premium"].includes(sectionDensity)) throw new Error("Preview section density is not supported.");
+  const services = stringArray(value.services, "Preview brief services", 12, 200);
   return {
     businessName: text(value.businessName, "Preview brief business name", 160),
     trade,
     city: text(value.city, "Preview brief city", 120),
     serviceArea: text(value.serviceArea, "Preview brief service area", 500),
-    services: stringArray(value.services, "Preview brief services", 12, 200),
+    phone: text(value.phone ?? "not confirmed", "Preview brief phone", 120),
+    verifiedEmailOrContactPath: text(value.verifiedEmailOrContactPath ?? "not confirmed", "Preview brief contact path", 240),
+    existingWebsite: text(value.existingWebsite ?? "not found", "Preview brief website", 2048),
+    services,
+    primaryService: text(value.primaryService ?? services[0] ?? "Primary service", "Preview primary service", 200),
+    secondaryServices: value.secondaryServices === undefined ? services.slice(1) : stringArray(value.secondaryServices, "Preview secondary services", 12, 200),
+    customerAudience,
     websiteCondition: text(value.websiteCondition, "Preview brief website condition", 500),
     logoStatus,
+    logoSource,
     brandColorSource,
     brandingSource,
     imagerySource,
     reviewSignal,
+    factualPublicProof: value.factualPublicProof === undefined ? [] : stringArray(value.factualPublicProof, "Preview factual public proof", 12, 240),
     contactDetails: stringArray(value.contactDetails, "Preview brief contact details", 12, 200),
     businessTone,
     likelyCustomerType: text(value.likelyCustomerType, "Preview likely customer type", 500),
     visualDirection: text(value.visualDirection, "Preview visual direction", 500),
+    heroComposition,
+    typographyDirection: text(value.typographyDirection ?? "Strong contractor typography", "Preview typography direction", 240),
+    sectionDensity,
+    imageIntents: value.imageIntents === undefined ? [] : stringArray(value.imageIntents, "Preview image intents", 20, 300),
+    copyRestrictions: value.copyRestrictions === undefined ? [] : stringArray(value.copyRestrictions, "Preview copy restrictions", 20, 300),
     ctaStrategy: text(value.ctaStrategy, "Preview CTA strategy", 1000),
   };
 }
@@ -236,7 +258,21 @@ function scoreValue(input: unknown, field: string) {
 function previewQualityValue(value: unknown): PreviewQualityScore | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview quality score must be a valid object.");
+  const status = value.status === undefined ? undefined : text(value.status, "Preview quality status", 60) as PreviewQualityScore["status"];
+  if (status && !["Send-worthy / polished", "Needs visual review", "Needs regeneration", "Blocked by factual or technical issue"].includes(status)) throw new Error("Preview quality status is not supported.");
   return {
+    heroImpact: value.heroImpact === undefined ? undefined : scoreValue(value.heroImpact, "Preview hero impact"),
+    imageQuality: value.imageQuality === undefined ? undefined : scoreValue(value.imageQuality, "Preview image quality"),
+    imageSectionRelevance: value.imageSectionRelevance === undefined ? undefined : scoreValue(value.imageSectionRelevance, "Preview image section relevance"),
+    branding: value.branding === undefined ? undefined : scoreValue(value.branding, "Preview branding"),
+    colorUsage: value.colorUsage === undefined ? undefined : scoreValue(value.colorUsage, "Preview color usage"),
+    logoUsage: value.logoUsage === undefined ? undefined : scoreValue(value.logoUsage, "Preview logo usage"),
+    layoutVariety: value.layoutVariety === undefined ? undefined : scoreValue(value.layoutVariety, "Preview layout variety"),
+    typography: value.typography === undefined ? undefined : scoreValue(value.typography, "Preview typography"),
+    ctaProminence: value.ctaProminence === undefined ? undefined : scoreValue(value.ctaProminence, "Preview CTA prominence"),
+    publicLinkHealth: value.publicLinkHealth === undefined ? undefined : scoreValue(value.publicLinkHealth, "Preview public link health"),
+    factualSafety: value.factualSafety === undefined ? undefined : scoreValue(value.factualSafety, "Preview factual safety"),
+    contentPolish: value.contentPolish === undefined ? undefined : scoreValue(value.contentPolish, "Preview content polish"),
     visualPolish: scoreValue(value.visualPolish, "Preview visual polish"),
     businessSpecificity: scoreValue(value.businessSpecificity, "Preview business specificity"),
     clarity: scoreValue(value.clarity, "Preview clarity"),
@@ -244,6 +280,7 @@ function previewQualityValue(value: unknown): PreviewQualityScore | undefined {
     conversionStrength: scoreValue(value.conversionStrength, "Preview conversion strength"),
     safetyTruthfulness: scoreValue(value.safetyTruthfulness, "Preview safety truthfulness"),
     overall: scoreValue(value.overall, "Preview overall quality"),
+    status,
     notes: value.notes === undefined ? [] : stringArray(value.notes, "Preview quality notes", 12, 500),
   };
 }
@@ -252,8 +289,9 @@ function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
   return {
-    previewVersion: value.previewVersion === "v2" ? "v2" : undefined,
+    previewVersion: value.previewVersion === "v3" ? "v3" : value.previewVersion === "v2" ? "v2" : undefined,
     creativeBrief: creativeBriefValue(value.creativeBrief),
+    regenerationFeedbackHistory: value.regenerationFeedbackHistory === undefined ? undefined : stringArray(value.regenerationFeedbackHistory, "Preview regeneration feedback history", 8, 240),
     direction: text(value.direction, "Preview direction", 5000),
     visualStyleDirection: text(value.visualStyleDirection ?? "Practical contractor visual direction.", "Visual style direction", 5000),
     artDirection: artDirectionValue(value.artDirection),

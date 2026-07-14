@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { executeOperatorCommand, listOperatorCommandReceipts, parseOperatorCommand } from "@/lib/operator-command-center";
+import { executeOperatorCommand, listOperatorCommandReceipts, previewOperatorCommand } from "@/lib/operator-command-center";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     };
     const commandText = String(payload.commandText ?? "");
     if (payload.action === "preview") {
-      return NextResponse.json({ preview: parseOperatorCommand(commandText, payload.mode) });
+      return NextResponse.json({ preview: await previewOperatorCommand(commandText, payload.mode) });
     }
     if (payload.action === "cancel") {
       const result = await executeOperatorCommand(commandText, { mode: payload.mode, confirmed: false });
