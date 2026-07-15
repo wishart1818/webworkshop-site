@@ -267,7 +267,7 @@ test("preview generation normalizes city and state capitalization", () => {
     serviceArea: "toledo and nearby communities",
   });
 
-  assert.equal(preview.heroHeadline, "Heating and cooling help without the runaround.");
+  assert.match(preview.heroHeadline ?? "", /heating and cooling service for Toledo/i);
   assert.match(preview.hero, /Toledo and nearby communities/);
   assert.match(preview.heroSupporting ?? "", /Toledo and nearby communities/);
   assert.doesNotMatch(`${preview.hero} ${preview.heroSupporting}`, /\btoledo\b/);
@@ -285,6 +285,13 @@ test("preview generation creates a structured photo-led business design brief", 
   });
 
   assert.equal(preview.previewVersion, "v3");
+  assert.equal(preview.businessProfile?.officialBusinessName, "MC Pressure Washing FL");
+  assert.equal(preview.businessProfile?.primaryMarket, "Tampa, FL");
+  assert.equal(preview.businessProfile?.primaryService, "House Washing");
+  assert.equal(preview.businessProfile?.logo.status, "wordmark_fallback");
+  assert.match(preview.businessProfile?.logo.note ?? "", /instead of inventing a logo/i);
+  assert.ok((preview.businessProfile?.sourceFacts.length ?? 0) >= 4);
+  assert.ok(preview.businessProfile?.sourceFacts.every((fact) => ["verified", "inferred", "unavailable"].includes(fact.confidence)));
   assert.equal(preview.creativeBrief?.businessName, "MC Pressure Washing FL");
   assert.equal(preview.creativeBrief?.primaryService, "House Washing");
   assert.match(preview.creativeBrief?.verifiedEmailOrContactPath ?? "", /public email/);
@@ -292,6 +299,7 @@ test("preview generation creates a structured photo-led business design brief", 
   assert.equal(preview.resolvedImages?.sourceStatus, "curated stock photo library");
   assert.match(preview.resolvedImages?.hero.src ?? "", /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(preview.creativeBrief?.copyRestrictions.join(" ") ?? "", /Do not invent reviews/);
+  assert.match(preview.heroHeadline ?? "", /Exterior cleaning for Tampa homes from MC Pressure Washing FL/i);
   assert.ok((preview.qualityScore?.imageQuality ?? 0) >= 60);
   assert.ok(["Send-worthy / polished", "Needs visual review", "Needs regeneration"].includes(preview.qualityScore?.status ?? ""));
 });

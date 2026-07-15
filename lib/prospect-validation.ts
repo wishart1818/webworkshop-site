@@ -21,9 +21,12 @@ import {
   type OutreachDraft,
   type PreviewConcept,
   type PreviewArtDirection,
+  type PreviewBusinessProfile,
   type PreviewCreativeBrief,
+  type PreviewFactConfidence,
   type PreviewLayoutDirection,
   type PreviewQualityScore,
+  type PreviewResearchFact,
   type PreviewStyleProfile,
   type Prospect,
   type ProspectStatus,
@@ -251,6 +254,77 @@ function creativeBriefValue(value: unknown): PreviewCreativeBrief | undefined {
   };
 }
 
+function previewFactConfidenceValue(value: unknown, field: string): PreviewFactConfidence {
+  const confidence = text(value, field, 20) as PreviewFactConfidence;
+  if (!["verified", "inferred", "unavailable"].includes(confidence)) throw new Error(`${field} is not supported.`);
+  return confidence;
+}
+
+function previewResearchFactValue(value: unknown, field: string): PreviewResearchFact {
+  if (!isRecord(value)) throw new Error(`${field} must be a valid object.`);
+  return {
+    label: text(value.label, `${field} label`, 120),
+    value: text(value.value, `${field} value`, 2048),
+    source: text(value.source, `${field} source`, 240),
+    confidence: previewFactConfidenceValue(value.confidence, `${field} confidence`),
+  };
+}
+
+function previewResearchFactArray(value: unknown, field: string, maxItems = 24) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > maxItems) throw new Error(`${field} must be a valid list.`);
+  return value.map((item, index) => previewResearchFactValue(item, `${field} ${index + 1}`));
+}
+
+function previewBusinessProfileValue(value: unknown): PreviewBusinessProfile | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview business profile must be a valid object.");
+  const trade = normalizeTradeCategory(text(value.trade, "Preview business profile trade", 40));
+  if (!trade) throw new Error("Preview business profile trade is not supported.");
+  const customerType = text(value.customerType, "Preview business profile customer type", 30) as PreviewCreativeBrief["customerAudience"];
+  if (!["residential", "commercial", "mixed"].includes(customerType)) throw new Error("Preview business profile customer type is not supported.");
+  const logo = value.logo;
+  if (!isRecord(logo)) throw new Error("Preview business profile logo must be a valid object.");
+  const logoStatus = text(logo.status, "Preview business profile logo status", 30) as PreviewBusinessProfile["logo"]["status"];
+  if (!["available", "wordmark_fallback"].includes(logoStatus)) throw new Error("Preview business profile logo status is not supported.");
+  const logoSource = text(logo.source, "Preview business profile logo source", 40) as PreviewBusinessProfile["logo"]["source"];
+  if (!["website", "business asset", "operator supplied", "social profile", "wordmark fallback"].includes(logoSource)) throw new Error("Preview business profile logo source is not supported.");
+  const logoUrl = text(logo.url ?? "", "Preview business profile logo URL", 2048, false);
+  if (logoUrl) previewImageUrl(logoUrl, "Preview business profile logo URL");
+  const verifiedServices = stringArray(value.verifiedServices, "Preview business profile verified services", 12, 200);
+  return {
+    officialBusinessName: text(value.officialBusinessName, "Preview business profile business name", 160),
+    trade,
+    primaryMarket: text(value.primaryMarket, "Preview business profile market", 160),
+    verifiedServiceArea: text(value.verifiedServiceArea, "Preview business profile service area", 500),
+    verifiedPhone: previewResearchFactValue(value.verifiedPhone, "Preview business profile phone"),
+    verifiedPublicEmailOrContactPath: previewResearchFactValue(value.verifiedPublicEmailOrContactPath, "Preview business profile contact path"),
+    officialWebsite: previewResearchFactValue(value.officialWebsite, "Preview business profile website"),
+    officialSocialProfiles: previewResearchFactArray(value.officialSocialProfiles, "Preview business profile social profiles", 8),
+    customerType,
+    verifiedServices,
+    primaryService: text(value.primaryService ?? verifiedServices[0] ?? "Primary service", "Preview business profile primary service", 200),
+    secondaryServices: value.secondaryServices === undefined ? verifiedServices.slice(1) : stringArray(value.secondaryServices, "Preview business profile secondary services", 12, 200),
+    logo: {
+      status: logoStatus,
+      url: logoUrl,
+      source: logoSource,
+      confidence: previewFactConfidenceValue(logo.confidence, "Preview business profile logo confidence"),
+      note: text(logo.note, "Preview business profile logo note", 500),
+    },
+    businessPhotoSources: previewResearchFactArray(value.businessPhotoSources, "Preview business profile photo sources", 12),
+    detectedBrandColors: previewResearchFactArray(value.detectedBrandColors, "Preview business profile brand colors", 8),
+    brandPersonality: text(value.brandPersonality, "Preview business profile brand personality", 500),
+    recurringPublicReviewThemes: previewResearchFactArray(value.recurringPublicReviewThemes, "Preview business profile review themes", 8),
+    realDifferentiators: previewResearchFactArray(value.realDifferentiators, "Preview business profile differentiators", 12),
+    currentWebsiteWeaknesses: previewResearchFactArray(value.currentWebsiteWeaknesses, "Preview business profile website weaknesses", 12),
+    recommendedDesignDirection: text(value.recommendedDesignDirection, "Preview business profile design direction", 500),
+    sourceFacts: previewResearchFactArray(value.sourceFacts, "Preview business profile source facts", 24),
+    confidenceSummary: text(value.confidenceSummary, "Preview business profile confidence summary", 500),
+    uncertainFactsExcluded: value.uncertainFactsExcluded === undefined ? [] : stringArray(value.uncertainFactsExcluded, "Preview business profile excluded facts", 20, 500),
+  };
+}
+
 function scoreValue(input: unknown, field: string) {
   const value = Number(input);
   if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`${field} must be a score from 0 to 100.`);
@@ -367,6 +441,7 @@ function previewValue(value: unknown): PreviewConcept | undefined {
   return {
     previewVersion: value.previewVersion === "v3" ? "v3" : value.previewVersion === "v2" ? "v2" : undefined,
     creativeBrief: creativeBriefValue(value.creativeBrief),
+    businessProfile: previewBusinessProfileValue(value.businessProfile),
     regenerationFeedbackHistory: value.regenerationFeedbackHistory === undefined ? undefined : stringArray(value.regenerationFeedbackHistory, "Preview regeneration feedback history", 8, 240),
     layoutDirection,
     resolvedImages: previewImageSetValue(value.resolvedImages),

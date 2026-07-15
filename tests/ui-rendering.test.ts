@@ -323,6 +323,10 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Trust strategy/);
   assert.match(html, /Lead capture/);
   assert.match(html, /Prospect-specific style profile/);
+  assert.match(html, /Business research summary/);
+  assert.match(html, /Source-backed facts/);
+  assert.match(html, /Excluded unless verified/);
+  assert.match(html, /Use Improve Preview, add the correction, then regenerate/);
   assert.match(html, /Preview art direction/);
   assert.match(html, /Image treatment/);
   assert.match(html, /CTA treatment/);
@@ -569,7 +573,7 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.doesNotMatch(html, /Clear surface details, local service-area copy, and a direct estimate request work together/);
   assert.match(html, /Service guide/);
   assert.match(html, /Service request steps/);
-  assert.match(html, /Start with the surface that needs attention/);
+  assert.match(html, /Start with the roof concern you are seeing/);
   assert.match(html, /Gallery/);
   assert.match(html, /Service comparison/);
   assert.match(html, /Questions/);
@@ -613,13 +617,13 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /technician tools|service call|equipment/i);
   assert.match(html, /home comfort|thermostat-ready home|air conditioner/i);
   assert.match(html, /HVAC in Toledo, OH/);
-  assert.match(html, /Heating and cooling help without the runaround\./);
+  assert.match(html, /Heating and cooling service for Toledo homes from Rick&#x27;s Affordable Heating &amp; Cooling\./);
   assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
-  assert.match(html, /Heating and cooling repair/);
+  assert.match(html, /Heating And Cooling Repair/i);
   assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
-  assert.match(html, /System installation/);
+  assert.match(html, /System Installation/i);
   assert.match(html, /Compare replacement or new-system options/);
-  assert.match(html, /Maintenance and tune-ups/);
+  assert.match(html, /Maintenance Plans/i);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
   assert.match(html, /Service guide/);
   assert.match(html, /Heating and cooling service without the guesswork\./);
@@ -628,7 +632,9 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /type="range"/);
   assert.match(html, /required=""/);
   assert.doesNotMatch(html, /Recent local work|Our work/);
-  assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b|Representative image direction|Replace with verified|Sample layout content/);
+  assert.match(html, /Start with the comfort issue at home/);
+  assert.match(html, /Pick the HVAC help that best matches the property/);
+  assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b|Pick the hvac help|Representative image direction|Replace with verified|Sample layout content/);
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
   assert.ok(imageSources.slice(0, 5).every((src) => src.includes("images.unsplash.com/photo-")));
   assert.ok(new Set(imageSources.slice(0, 5)).size >= 4);
@@ -763,7 +769,9 @@ test("two pressure washing public previews are photo-led but not visual duplicat
   assert.equal(isPublicPreviewImageRelevant(second.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.notEqual(first.preview?.layoutDirection, undefined);
   assert.notEqual(second.preview?.layoutDirection, undefined);
-  assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|contact options|quote path|website structure|Representative image direction|proof concept|Service detail|Property context|Finished look|Photos should look|service-area copy/i);
+  assert.match(firstHtml, /Exterior cleaning for Tampa homes from MC Pressure Washing FL/);
+  assert.match(secondHtml, /Exterior cleaning for St Augustine homes from Styles Power Wash/);
+  assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /Business research summary|Source-backed facts|Excluded unless verified|A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|contact options|quote path|website structure|Representative image direction|proof concept|Service detail|Property context|Finished look|Photos should look|service-area copy/i);
 });
 
 test("representative public previews use service-focused copy without UX wording", () => {
@@ -784,9 +792,11 @@ test("representative public previews use service-focused copy without UX wording
   }).join("\n");
 
   assert.match(rendered, /Wash away dirt, algae, and buildup/);
+  assert.match(rendered, /Exterior cleaning for Tampa homes from MC Pressure Washing FL/);
+  assert.match(rendered, /Exterior cleaning for St Augustine homes from Styles Power Wash/);
   assert.match(rendered, /Landscaping shaped around the property and the season/);
   assert.match(rendered, /Roofing help built around the condition of your home/);
-  assert.doesNotMatch(rendered, /contact options|quote path|website structure|customer navigation|conversion design|Services explained clearly|The contact path stays visible/i);
+  assert.doesNotMatch(rendered, /Business research summary|Source-backed facts|Excluded unless verified|contact options|quote path|website structure|customer navigation|conversion design|Services explained clearly|The contact path stays visible/i);
   assert.doesNotMatch(rendered, /municipal|street cleaning|commercial surface|honey|coffee|liquid|abstract/i);
 });
 

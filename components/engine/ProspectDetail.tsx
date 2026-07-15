@@ -570,6 +570,7 @@ function PreviewView({
   const quality = preview.qualityScore;
   const artDirection = preview.artDirection;
   const creativeBrief = preview.creativeBrief;
+  const businessProfile = preview.businessProfile;
   const services = [
     { title: preview.serviceHighlights?.[0] ?? displayTradeCategory(prospect.trade), description: "Primary service." },
     { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
@@ -723,6 +724,49 @@ function PreviewView({
           </div>
         ) : null}
       </section>
+      {businessProfile ? (
+        <section className="engine-preview-research-summary" aria-label="Business research summary">
+          <div>
+            <span>Business research summary</span>
+            <h3>{businessProfile.officialBusinessName}</h3>
+            <p>{businessProfile.confidenceSummary}</p>
+          </div>
+          <div className="engine-preview-research-summary__grid">
+            <div><span>Logo</span><b>{businessProfile.logo.status === "available" ? `Using ${businessProfile.logo.source}` : "Text wordmark fallback"}</b></div>
+            <div><span>Market</span><b>{businessProfile.primaryMarket}</b></div>
+            <div><span>Services</span><b>{businessProfile.verifiedServices.slice(0, 3).join(", ")}</b></div>
+            <div><span>Branding</span><b>{businessProfile.detectedBrandColors[0]?.source ?? "trade fallback"}</b></div>
+            <div><span>Photos</span><b>{businessProfile.businessPhotoSources.length ? `${businessProfile.businessPhotoSources.length} approved business photos` : "No approved business photos"}</b></div>
+            <div><span>Contact</span><b>{businessProfile.verifiedPublicEmailOrContactPath.value}</b></div>
+          </div>
+          <details>
+            <summary>Sources, confidence, and excluded claims</summary>
+            <div className="engine-preview-research-summary__details">
+              <section>
+                <h4>Source-backed facts</h4>
+                <ul>{businessProfile.sourceFacts.slice(0, 10).map((fact) => <li key={`${fact.label}-${fact.value}`}><b>{fact.label}:</b> {fact.value} <span>({fact.source}, {fact.confidence})</span></li>)}</ul>
+              </section>
+              <section>
+                <h4>Excluded unless verified</h4>
+                <ul>{businessProfile.uncertainFactsExcluded.map((fact) => <li key={fact}>{fact}</li>)}</ul>
+              </section>
+              <section>
+                <h4>Design direction</h4>
+                <p>{businessProfile.recommendedDesignDirection}</p>
+              </section>
+            </div>
+          </details>
+          <p className="engine-muted-note">Need to correct a fact or visual direction? Use Improve Preview, add the correction, then regenerate. Nothing is sent.</p>
+        </section>
+      ) : (
+        <section className="engine-preview-research-summary" aria-label="Business research summary">
+          <div>
+            <span>Business research summary</span>
+            <h3>Not recorded for this preview</h3>
+            <p>Regenerate the preview to create a source-backed business profile before using it for outreach review.</p>
+          </div>
+        </section>
+      )}
       <section className="engine-preview-status-card">
         <div><span>Preview exists</span><b>Yes</b></div>
         <div><span>Generator</span><b>{preview.previewVersion === "v3" ? PREVIEW_GENERATOR_VERSION : preview.previewVersion || "legacy"}</b></div>
