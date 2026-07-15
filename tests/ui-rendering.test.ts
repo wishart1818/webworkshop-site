@@ -528,7 +528,7 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /data-preview-image-source="curated-stock-photo-library"/);
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
   assert.match(html, /Service detail/);
-  assert.match(html, /Services, photos, and contact options work together/);
+  assert.match(html, /Clear surface details, local service-area copy, and a direct estimate request work together/);
   assert.match(html, /Service guide/);
   assert.match(html, /Quote request process/);
   assert.match(html, /Get from question to quote faster/);
@@ -576,7 +576,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /home comfort|thermostat-ready home|air conditioner/i);
   assert.match(html, /HVAC in Toledo, OH/);
   assert.match(html, /Heating and cooling help without the runaround\./);
-  assert.match(html, /A clearer way to schedule heating and cooling service\./);
+  assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
   assert.match(html, /Heating and cooling repair/);
   assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
   assert.match(html, /System installation/);
@@ -584,7 +584,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Maintenance and tune-ups/);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
   assert.match(html, /Service guide/);
-  assert.match(html, /Route comfort problems to the right service\./);
+  assert.match(html, /Heating and cooling service without the guesswork\./);
   assert.match(html, /FAQ|Questions/);
   assert.match(html, /prospect-preview-lightbox/);
   assert.match(html, /type="range"/);
@@ -655,6 +655,35 @@ test("preview image resolver creates distinct section intents and matching press
   assert.equal(validatePreviewImages([images.hero, ...images.services, ...images.gallery]).ok, true);
 });
 
+test("preview QA rejects municipal or mismatched pressure washing imagery", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    businessName: "MC Pressure Washing FL",
+    trade: "Pressure Washing",
+    city: "tampa",
+    state: "FL",
+  });
+  const services = [
+    { title: "House washing", description: "Exterior siding and trim cleaning." },
+    { title: "Concrete cleaning", description: "Driveways, walks, and patios." },
+    { title: "Roof and soft washing", description: "Sensitive exterior surfaces." },
+  ] as const;
+  const images = resolvePreviewImages(prospect, services, {});
+  const mismatchedHouseImage = {
+    ...images.services[0],
+    section: "House washing",
+    serviceTitle: "House washing",
+    intent: {
+      ...images.services[0].intent,
+      keywords: ["pressure washing", "municipal", "street cleaning", "sidewalk", "commercial surface"],
+    },
+  };
+  const report = validatePreviewImages([images.hero, mismatchedHouseImage, images.services[1], images.services[2]]);
+
+  assert.equal(report.ok, false);
+  assert.match(report.warnings.join(" "), /municipal|street-cleaning|house washing/i);
+});
+
 test("two pressure washing public previews are photo-led but not visual duplicates", () => {
   const first = withPreview({
     ...structuredClone(seedProspects[0]),
@@ -699,7 +728,31 @@ test("two pressure washing public previews are photo-led but not visual duplicat
     `${first.preview?.layoutDirection}:${first.preview?.resolvedImages?.hero.src}`,
     `${second.preview?.layoutDirection}:${second.preview?.resolvedImages?.hero.src}`,
   );
-  assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|Representative image direction|proof concept/i);
+  assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|contact options|quote path|website structure|Representative image direction|proof concept/i);
+});
+
+test("representative public previews use service-focused copy without UX wording", () => {
+  const representatives = [
+    { ...structuredClone(seedProspects[0]), businessName: "MC Pressure Washing FL", trade: "Pressure Washing", city: "tampa", state: "FL" },
+    { ...structuredClone(seedProspects[0]), businessName: "Styles Power Wash", trade: "Pressure Washing", city: "st augustine", state: "FL" },
+    { ...structuredClone(seedProspects[2]), businessName: "Evergreen Outdoor Works", trade: "Landscaping", city: "dublin", state: "OH" },
+    { ...structuredClone(seedProspects[0]), businessName: "Blue Line Roofing", trade: "Roofing", city: "findlay", state: "OH" },
+  ] as Prospect[];
+
+  const rendered = representatives.map((prospect) => {
+    const withGeneratedPreview = withPreview(prospect);
+    return renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+      prospect: withGeneratedPreview,
+      publicView: true,
+      savedPreview: withGeneratedPreview.preview,
+    }));
+  }).join("\n");
+
+  assert.match(rendered, /Wash away dirt, algae, and buildup/);
+  assert.match(rendered, /Landscaping shaped around the property and the season/);
+  assert.match(rendered, /Roofing help built around the condition of your home/);
+  assert.doesNotMatch(rendered, /contact options|quote path|website structure|customer navigation|conversion design|Services explained clearly|The contact path stays visible/i);
+  assert.doesNotMatch(rendered, /municipal|street cleaning|commercial surface|honey|coffee|liquid|abstract/i);
 });
 
 test("preview image resolver supports configured stock manifests without exposing provider secrets", () => {

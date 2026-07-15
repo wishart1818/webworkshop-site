@@ -48,35 +48,35 @@ type TradePageCopy = {
 };
 
 const tradePageCopy: Record<Prospect["trade"], TradePageCopy> = {
-  Roofing: { heroHeadline: "Straight answers when your roof needs attention.", servicesHeadline: "Roofing help built around the condition of your home.", servicesIntro: "Start with the problem, understand the options, and make the next step easy.", services: [
+  Roofing: { heroHeadline: "Straight answers when your roof needs attention.", servicesHeadline: "Roofing help built around the condition of your home.", servicesIntro: "Start with the roof concern, understand the work involved, and request an estimate for the property.", services: [
     { title: "Roof repair", description: "Address leaks, damaged shingles, flashing, and other focused roof concerns." },
     { title: "Full roof replacement", description: "Plan material choices, project scope, and a clear estimate for a larger roofing project." },
     { title: "Storm damage response", description: "Document visible concerns and request an inspection after wind, hail, or severe weather." },
   ] },
-  HVAC: { heroHeadline: "Heating and cooling help without the runaround.", servicesHeadline: "A clearer way to schedule heating and cooling service.", servicesIntro: "Whether comfort is out now or a system upgrade is ahead, homeowners should know what to request and what happens next.", services: [
+  HVAC: { heroHeadline: "Heating and cooling help without the runaround.", servicesHeadline: "Heating and cooling service for repairs, installs, and seasonal care.", servicesIntro: "Whether comfort is out now or a system upgrade is ahead, homeowners can describe the issue and request the right service.", services: [
     { title: "Heating and cooling repair", description: "Troubleshoot comfort problems, airflow issues, unusual sounds, and systems that stop running." },
     { title: "System installation", description: "Compare replacement or new-system options around the home, comfort goals, and project scope." },
     { title: "Maintenance and tune-ups", description: "Plan seasonal system checks, filter and airflow review, and routine equipment care." },
   ] },
-  Plumbing: { heroHeadline: "Plumbing help that gets to the point.", servicesHeadline: "Clear next steps for everyday plumbing problems.", servicesIntro: "Make it easy to explain the issue, understand the likely service, and request help.", services: [
+  Plumbing: { heroHeadline: "Plumbing help that gets to the point.", servicesHeadline: "Practical help for leaks, drains, fixtures, and water heaters.", servicesIntro: "Share the issue, the room or fixture involved, and how soon the property needs service.", services: [
     { title: "Leak and drain repair", description: "Share the location, symptoms, and urgency of leaks, clogs, or slow drains." },
     { title: "Fixture installation", description: "Plan faucet, sink, toilet, and fixture work with the right property details." },
     { title: "Water heater service", description: "Request repair or replacement help for hot-water and equipment concerns." },
   ] },
-  Electrical: { heroHeadline: "Electrical service explained clearly from the start.", servicesHeadline: "Safe electrical help for repairs and planned upgrades.", servicesIntro: "Give homeowners a straightforward way to describe the issue and request qualified service.", services: [
+  Electrical: { heroHeadline: "Safe electrical help for repairs and planned upgrades.", servicesHeadline: "Electrical work for everyday issues and bigger home updates.", servicesIntro: "Describe the repair, upgrade, or installation need so the right electrical work can be estimated.", services: [
     { title: "Electrical repair", description: "Request help for outlets, switches, circuits, and other electrical issues." },
     { title: "Panel and service upgrades", description: "Plan capacity, panel, and service changes around the property and project scope." },
     { title: "Lighting and new circuits", description: "Discuss lighting, dedicated circuits, and installation needs before scheduling." },
   ] },
-  Landscaping: { heroHeadline: "A better outdoor space starts with a clear plan.", servicesHeadline: "Landscaping shaped around the property and the season.", servicesIntro: "Help homeowners move from an idea to a useful project conversation.", services: [
+  Landscaping: { heroHeadline: "A better outdoor space starts with a clear plan.", servicesHeadline: "Landscaping shaped around the property and the season.", servicesIntro: "From planting beds to ongoing care, the work starts with the yard, the season, and the way the space is used.", services: [
     { title: "Landscape design", description: "Shape planting, layout, and outdoor-use ideas around the property." },
     { title: "Installation", description: "Plan beds, plants, edging, and hardscape details with a defined scope." },
     { title: "Seasonal maintenance", description: "Organize recurring care, cleanups, and seasonal property needs." },
   ] },
-  "Pressure Washing": { heroHeadline: "Exterior cleaning that makes the difference easy to see.", servicesHeadline: "Pressure washing for the surfaces people notice first.", servicesIntro: "Help homeowners choose the right exterior cleaning service and request a quote with the right details.", services: [
-    { title: "House washing", description: "Plan exterior siding and trim cleaning around the property materials." },
-    { title: "Concrete cleaning", description: "Address driveways, walks, patios, and other hard surfaces." },
-    { title: "Roof and soft washing", description: "Request a surface-aware cleaning approach for more sensitive exterior areas." },
+  "Pressure Washing": { heroHeadline: "Exterior cleaning that makes the difference easy to see.", servicesHeadline: "Pressure washing for the surfaces people notice first.", servicesIntro: "Wash away buildup from siding, concrete, patios, and other exterior surfaces around the home.", services: [
+    { title: "House washing", description: "Wash away dirt, algae, and buildup from siding, trim, brick, stucco, and other home exterior surfaces." },
+    { title: "Concrete cleaning", description: "Refresh driveways, walkways, patios, and other residential concrete areas with focused surface cleaning." },
+    { title: "Roof and soft washing", description: "Use a gentler exterior-cleaning approach for roof areas and other surfaces that need lower pressure." },
   ] },
   Painting: { heroHeadline: "A cleaner finish begins with careful preparation.", servicesHeadline: "Painting services organized around the space and scope.", servicesIntro: "Give homeowners a clear way to discuss rooms, surfaces, timing, and finish goals.", services: [
     { title: "Interior painting", description: "Plan rooms, walls, ceilings, colors, and preparation needs." },
@@ -88,7 +88,7 @@ const tradePageCopy: Record<Prospect["trade"], TradePageCopy> = {
     { title: "Patios and walkways", description: "Plan usable outdoor flatwork around layout, edges, and finish." },
     { title: "Flatwork repair", description: "Identify cracked, settled, or damaged areas that may need focused work." },
   ] },
-  Cleaning: { heroHeadline: "Cleaning service with the scope clear before the visit.", servicesHeadline: "The right cleaning plan for the home and schedule.", servicesIntro: "Let customers choose the service type and share the details needed for a useful response.", services: [
+  Cleaning: { heroHeadline: "Cleaning service with the scope clear before the visit.", servicesHeadline: "The right cleaning plan for the home and schedule.", servicesIntro: "Share the rooms, timing, and level of cleaning needed so the visit starts with clear expectations.", services: [
     { title: "Recurring cleaning", description: "Set expectations for frequency, priority rooms, and routine home care." },
     { title: "Deep cleaning", description: "Request a more detailed reset for kitchens, bathrooms, and high-use spaces." },
     { title: "Move-in and move-out cleaning", description: "Plan an empty-home clean around timing, access, and property size." },
@@ -135,10 +135,10 @@ function normalizeLocationCopy(value: string, rawCity: string, displayCity: stri
 }
 
 function trustItemDescription(item: string) {
-  if (/serving/i.test(item)) return "Customers can quickly confirm whether their property is in range.";
-  if (/phone|contact/i.test(item)) return "Customers have a direct way to start the conversation.";
-  if (/service/i.test(item)) return "The main services are easy to compare before someone calls.";
-  return "The estimate request is simple and easy to start.";
+  if (/serving/i.test(item)) return "Service-area details are stated up front for nearby homeowners.";
+  if (/phone|contact/i.test(item)) return "A direct call option is available for questions and estimates.";
+  if (/service/i.test(item)) return "The main types of work are grouped by property need.";
+  return "An estimate starts with the property, timing, and service details.";
 }
 
 function businessInitials(name: string) {
@@ -154,40 +154,40 @@ function businessInitials(name: string) {
 function proofCopy(trade: Prospect["trade"], displayTrade: string) {
   const byTrade: Partial<Record<Prospect["trade"], { headline: string; intro: string; checkpoints: [TradeServiceCard, TradeServiceCard, TradeServiceCard] }>> = {
     "Pressure Washing": {
-      headline: "Show the surfaces customers care about most.",
-      intro: "Homeowners can see house washing, concrete cleaning, and exterior cleaning options without guessing which service to ask for.",
+      headline: "Exterior surfaces homeowners care about most.",
+      intro: "House washing, concrete cleaning, and soft washing are grouped around the parts of the property that need attention.",
       checkpoints: [
-        { title: "Choose the surface", description: "House siding, concrete, roof areas, and other exterior surfaces are separated clearly." },
-        { title: "Explain the condition", description: "The form guides customers to share what needs cleaning and where it is located." },
-        { title: "Request a clear quote", description: "The main action helps customers ask for a property-specific estimate." },
+        { title: "House exterior", description: "Siding, trim, brick, and stucco can collect algae, dirt, and weather stains." },
+        { title: "Driveways and patios", description: "Concrete, walkways, and patio areas often need a different cleaning approach than siding." },
+        { title: "Sensitive surfaces", description: "Roof areas and softer exterior materials call for lower-pressure cleaning when offered." },
       ],
     },
     HVAC: {
-      headline: "Route comfort problems to the right service.",
-      intro: "The page puts repairs, replacements, and maintenance into separate paths so homeowners can ask for the right help faster.",
+      headline: "Heating and cooling service without the guesswork.",
+      intro: "Repairs, replacements, and maintenance are separated by the kind of comfort issue a homeowner is dealing with.",
       checkpoints: [
-        { title: "Repair path", description: "Symptoms, airflow issues, and no-heat or no-cooling concerns are easy to describe." },
-        { title: "Install path", description: "Homeowners can start a replacement conversation without guessing what details matter." },
-        { title: "Maintenance path", description: "Seasonal tune-ups and routine service are clearly separated from urgent repairs." },
+        { title: "Repairs", description: "No-heat, no-cooling, airflow, and unusual-sound concerns can be described before service." },
+        { title: "Installation", description: "Replacement work starts with the home, comfort goals, and current system situation." },
+        { title: "Maintenance", description: "Seasonal tune-ups and routine care stay separate from urgent repair requests." },
       ],
     },
     Roofing: {
-      headline: "Put roof concerns into a practical order.",
-      intro: "The page helps homeowners understand whether they need repair, replacement, storm review, or a direct estimate request.",
+      headline: "Roof concerns sorted by the work they may need.",
+      intro: "Leaks, storm damage, missing shingles, and replacement questions each need a practical next step.",
       checkpoints: [
-        { title: "Show the concern", description: "Leaks, shingles, flashing, and storm damage are grouped into practical starting points." },
-        { title: "Set expectations", description: "Inspection and estimate actions stay visible before a homeowner scrolls too far." },
-        { title: "Keep details close", description: "Helpful roof details stay near the service options where homeowners need them." },
+        { title: "Repair concerns", description: "Leaks, flashing, missing shingles, and roof damage can be described clearly." },
+        { title: "Replacement planning", description: "Bigger roofing projects start with materials, scope, and the home's condition." },
+        { title: "Storm review", description: "Wind and hail concerns can be separated from routine repair questions." },
       ],
     },
   };
   return byTrade[trade] ?? {
-    headline: `${displayTrade} options that are easy to compare.`,
-    intro: "Customers can see the services, understand the next step, and contact the business without digging through a long page.",
+    headline: `${displayTrade} work organized around the property need.`,
+    intro: "The service options stay focused on the work, the property details, and the estimate request.",
     checkpoints: [
-      { title: "Pick the service", description: "The most common customer needs are separated into clear service paths." },
-      { title: "Share the project", description: "Customers can explain the property, timing, and scope before the first call." },
-      { title: "Request the next step", description: "The page keeps one clear quote or estimate action within reach." },
+      { title: "Choose the work", description: "The most common property needs are grouped by service type." },
+      { title: "Share the details", description: "The estimate can start with the property, timing, and scope." },
+      { title: "Request service", description: "The next step stays focused on a practical quote or estimate." },
     ],
   };
 }
@@ -197,38 +197,38 @@ function faqItems(trade: Prospect["trade"], ctaLabel: string): [TradeServiceCard
   const byTrade: Partial<Record<Prospect["trade"], [TradeServiceCard, TradeServiceCard, TradeServiceCard]>> = {
     "Pressure Washing": [
       { title: "What surfaces can I ask about?", description: "Share whether you need help with siding, concrete, patios, roof areas, or another exterior surface." },
-      { title: "Can I describe the property first?", description: "Yes. The request flow is built around surface type, location, and what you want cleaned." },
+      { title: "Can I describe the property first?", description: "Yes. Include the surface type, location, and what you want cleaned." },
       { title: "What is the next step?", description: `Use ${action} and include the surfaces, photos if available, and the best way to reach you.` },
     ],
     HVAC: [
-      { title: "Can I request repair or replacement help?", description: "Yes. The service paths separate urgent comfort issues from system planning and maintenance." },
+      { title: "Can I request repair or replacement help?", description: "Yes. Share whether the system needs urgent repair, seasonal maintenance, or replacement planning." },
       { title: "What details should I include?", description: "Share the system concern, home comfort issue, and whether the problem is urgent." },
       { title: "What is the next step?", description: `Use ${action} or call so the team can confirm the right service path.` },
     ],
   };
   return byTrade[trade] ?? [
     { title: "What should I include?", description: "Share the service needed, property details, timing, and the best way to reach you." },
-    { title: "Can I ask about a specific project?", description: "Yes. The page is organized so customers can describe the job before a call." },
+    { title: "Can I ask about a specific project?", description: "Yes. Include the job type, location, timing, and any details that affect the estimate." },
     { title: "What is the next step?", description: `Use ${action} and include enough detail for a useful response.` },
   ];
 }
 
 function confidenceCopy(trade: Prospect["trade"], businessName: string) {
   const byTrade: Partial<Record<Prospect["trade"], string>> = {
-    "Pressure Washing": "Homeowners can quickly see the surfaces you clean, the best way to request a quote, and how to get the conversation started.",
-    HVAC: "Homeowners can separate urgent service, maintenance, and replacement questions before they call.",
-    Roofing: "Homeowners can find repair, replacement, and storm-response information without digging through the page.",
-    Plumbing: "Customers can describe the issue, see common service paths, and reach the team faster.",
-    Electrical: "Customers can understand repair, upgrade, and installation paths before starting a service conversation.",
+    "Pressure Washing": "House washing, concrete cleaning, and soft washing are framed around the surfaces homeowners want cleaned.",
+    HVAC: "Repair, maintenance, and replacement requests are grouped around the comfort issue in the home.",
+    Roofing: "Repair, replacement, and storm concerns are separated by what the roof appears to need.",
+    Plumbing: "Leaks, drains, fixtures, and water-heater concerns can be described before the visit.",
+    Electrical: "Repairs, upgrades, lighting, and circuit work are presented by the type of electrical help needed.",
   };
-  return byTrade[trade] ?? `${businessName} can use this page to make services, contact options, and next steps easier for customers to find.`;
+  return byTrade[trade] ?? `${businessName} presents the main services around the property need, timing, and estimate request.`;
 }
 
 function quoteProcess(displayTrade: string, ctaLabel: string): [TradeProcessCopy, TradeProcessCopy, TradeProcessCopy] {
   return [
     { title: "Choose the service", description: `Pick the ${displayTrade.toLowerCase()} help that best matches the property.` },
     { title: "Share the details", description: "Send the address, timing, surface or room details, and the best way to reach you." },
-    { title: ctaLabel, description: "Get the conversation started without searching around for the right next step." },
+    { title: ctaLabel, description: "Request an estimate with enough detail for a useful response." },
   ];
 }
 
@@ -266,7 +266,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const serviceSummary = normalizeCopy(preview.hero);
   const trustItems = (preview.trustItems ?? [
     `Serving ${displayCity}, ${displayState}`,
-    prospect.phone ? "Direct phone contact" : "Clear contact path",
+    prospect.phone ? "Direct phone contact" : "Estimate request",
     `${displayTrade} services`,
     "Easy estimate request",
   ]).map(normalizeCopy);
@@ -328,7 +328,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               {(preview.serviceHighlights ?? pageCopy.services.map((item) => item.title)).slice(0, 3).map((item, index) => (
                 <a href={`#service-${index + 1}`} key={item}>
                   <b>{item}</b>
-                  <i>{index === 0 ? "Core service" : index === 1 ? "Fast quote path" : `${displayCity} area`}</i>
+                  <i>{index === 0 ? "Core service" : index === 1 ? "Estimate details" : `${displayCity} area`}</i>
                 </a>
               ))}
             </div>
@@ -337,8 +337,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <TradePreviewImage {...previewImageProps(images.hero, "hero")} />
             <div className="prospect-preview-visual-caption">
               <small>{displayTrade} services</small>
-              <strong>{displayCity} customers can see the right service before they call.</strong>
-              <span>Services, photos, and contact options work together so the next step is easy.</span>
+              <strong>{displayCity} homeowners can match the property need to the right service.</strong>
+              <span>Clear surface details, local service-area copy, and a direct estimate request work together.</span>
             </div>
           </aside>
         </section>
@@ -422,8 +422,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         <section className="prospect-preview-gallery-section" id="gallery">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Gallery</span>
-            <h2>Show the kind of help customers are looking for.</h2>
-            <p>Relevant photos make each service easier to recognize before someone calls or requests a quote.</p>
+            <h2>Show the surfaces and settings people recognize.</h2>
+            <p>Photos should look like the homes, yards, rooms, and exterior surfaces customers are asking about.</p>
           </div>
           <div className="prospect-preview-gallery" aria-label={`${displayTrade} service gallery`}>
             {galleryAssets.map((asset, index) => (
@@ -445,11 +445,11 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <span className="prospect-preview-kicker">Service comparison</span>
             <h2>Help customers picture the finished result.</h2>
-            <p>A simple slider-style concept lets customers compare what needs attention with the cleaner finished look.</p>
+            <p>Use a simple comparison to show the kind of visible refresh the service is meant to provide.</p>
           </div>
           <div className="prospect-preview-slider-card">
             <TradePreviewImage {...previewImageProps(images.beforeAfter, "service")} />
-            <label htmlFor="preview-before-after">Move the slider to compare the service focus</label>
+            <label htmlFor="preview-before-after">Move the slider to picture the cleaning result</label>
             <input id="preview-before-after" min="0" max="100" type="range" defaultValue="58" />
             <div><span>Current condition</span><span>Cleaner finish</span></div>
           </div>
@@ -481,7 +481,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>A simple path to the right next step.</h2>
-            <p>{displayTrade} requests start with the service, property details, timing, and the best way to reach the team.</p>
+            <p>Tell us what needs done, where it is, and when you would like the work estimated.</p>
             <TradePreviewImage {...previewImageProps(images.cta, "proof")} />
           </div>
           <form action="#contact" aria-describedby="preview-form-note">

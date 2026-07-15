@@ -834,7 +834,7 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   const hasBrandingSource = Boolean(preview.creativeBrief?.brandingSource && preview.creativeBrief?.brandColorSource);
   const hasLogoDecision = Boolean(preview.creativeBrief?.logoStatus && preview.creativeBrief?.logoSource);
   const hasSectionImageIntents = (preview.creativeBrief?.imageIntents?.length ?? 0) >= 5;
-  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler/i.test(searchable) || illustrationFallbackUsed || (imageList.length > 0 && photoLedImageCount < 6) || (imageList.length > 0 && uniqueImageCount < 5);
+  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler|does not clearly match|municipal|street-cleaning|street cleaning|industrial/i.test(searchable) || illustrationFallbackUsed || (imageList.length > 0 && photoLedImageCount < 6) || (imageList.length > 0 && uniqueImageCount < 5);
   const repeatedStructure = /three identical cards|same structure repeated|block-stacked|template/i.test(searchable);
   const ignoredBrand = /ignored brand|same palette for every business/i.test(searchable);
   const publicCandidateCopy = [
@@ -845,7 +845,7 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     ...(preview.trustItems ?? []),
     preview.ctaStrategy,
   ].filter(Boolean).join(" ");
-  const internalPublicLanguage = /representative image direction|replace with verified|proof concept|generator notes|internal QA|include only if verified/i.test(publicCandidateCopy);
+  const internalPublicLanguage = /representative image direction|replace with verified|proof concept|generator notes|internal QA|include only if verified|contact options|quote requests easy to find|quote path|website structure|customer navigation|conversion design/i.test(publicCandidateCopy);
   const missingBusinessBranding = !hasStyleProfile || !hasArtDirection;
   const unsupportedClaim = /\b(award-winning|certified|licensed|insured|warrant(?:y|ies)|guarantee|guarantees|five-star|best rated|family-owned|locally owned for \d+ years)\b/i.test(searchable)
     && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
@@ -1359,7 +1359,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   };
   const trustItems = [
     `Serving ${prospect.city}, ${prospect.state}`,
-    prospect.phone ? "Direct phone contact" : "Clear contact path",
+    prospect.phone ? "Direct phone contact" : "Estimate request",
     `${displayTrade} services`,
     "Easy estimate request",
   ];
@@ -1410,7 +1410,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     direction: `A visually premium, local-first ${tradeLower} website that feels like ${prospect.businessName}: ${artDirection.visualVoice}.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} ${artDirection.imageTreatment} Use ${styleProfile.primaryColor} as the primary brand color and ${styleProfile.accentColor} only for focused emphasis. Keep the public page focused on verified services, service area, photos, and contact actions.`,
     artDirection,
-    hero: `${prospect.businessName} serves ${serviceArea} with services, contact options, and quote requests easy to find.`,
+    hero: `${prospect.businessName} handles ${playbook.services.join(", ")} across ${serviceArea}.`,
     heroHeadline: heroHeadlines[trade],
     heroSupporting: `${prospect.businessName} provides ${playbook.services.join(", ")} across ${serviceArea}.`,
     serviceHighlights: playbook.services.map(titleCase),

@@ -266,11 +266,12 @@ function unsplashPhoto(id: string) {
 
 const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
   "Pressure Washing": [
-    { id: "photo-1718152521364-b9655b8a7926", keywords: ["pressure washer", "surface cleaner", "sidewalk", "equipment"] },
-    { id: "photo-1581883579507-019c44b711cb", keywords: ["pressure washing", "commercial surface", "cleaning equipment"] },
-    { id: "photo-1677956787377-a0f32c0974af", keywords: ["pressure washing", "walkway", "exterior cleaning"] },
-    { id: "photo-1600585154340-be6161a56a0c", keywords: ["clean home exterior", "driveway", "residential exterior"] },
-    { id: "photo-1564013799919-ab600027ffc6", keywords: ["house washing", "siding", "clean exterior"] },
+    { id: "photo-1600585154340-be6161a56a0c", keywords: ["residential exterior cleaning", "clean home exterior", "driveway", "finished home", "hero"] },
+    { id: "photo-1564013799919-ab600027ffc6", keywords: ["house washing", "siding", "brick", "stucco", "residential exterior"] },
+    { id: "photo-1600573472550-8090b5e0745e", keywords: ["house washing", "home exterior", "trim", "residential property"] },
+    { id: "photo-1597007066704-67bf2068d5b5", keywords: ["concrete cleaning", "driveway", "walkway", "patio", "residential concrete"] },
+    { id: "photo-1600566753190-17f0baa2a6c3", keywords: ["patio cleaning", "residential patio", "backyard", "walkway", "outdoor surface"] },
+    { id: "photo-1632759145355-b0c7f70a2558", keywords: ["roof soft washing", "residential roof", "roofline", "home exterior"] },
   ],
   Roofing: [
     { id: "photo-1635424824849-1b09bdcc55b1", keywords: ["roofer", "roof inspection", "shingles"] },
@@ -517,8 +518,80 @@ function curatedStockSources(trade: TradeCategory, prospect: Prospect) {
   })).filter((photo) => photo.src);
 }
 
+function textTokens(value: string) {
+  return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2));
+}
+
+function serviceNeedKeywords(trade: TradeCategory, intent: PreviewImageIntent) {
+  const service = (intent.serviceTitle ?? intent.section).toLowerCase();
+  if (trade === "Pressure Washing") {
+    if (/house|siding|exterior/.test(service)) return ["house", "siding", "exterior", "residential", "home", "brick", "stucco"];
+    if (/concrete|driveway|walk|patio|paver/.test(service)) return ["concrete", "driveway", "walkway", "patio", "paver", "residential"];
+    if (/roof|soft/.test(service)) return ["roof", "soft", "roofline", "residential"];
+    if (intent.slot === "hero") return ["residential", "exterior", "home", "clean", "driveway"];
+  }
+  return [];
+}
+
+function photoRelevanceScore(trade: TradeCategory, intent: PreviewImageIntent, photo: { src: string; keywords: string[] }, usedSources: Set<string>) {
+  const desired = textTokens([...intent.keywords, ...serviceNeedKeywords(trade, intent), intent.section, intent.serviceTitle ?? ""].join(" "));
+  const available = textTokens(photo.keywords.join(" "));
+  let score = usedSources.has(photo.src) ? -12 : 0;
+  for (const token of desired) {
+    if (available.has(token)) score += 3;
+  }
+  const service = (intent.serviceTitle ?? intent.section).toLowerCase();
+  const keywords = photo.keywords.join(" ").toLowerCase();
+  if (trade === "Pressure Washing") {
+    if (/municipal|street|sidewalk|commercial surface|industrial/.test(keywords)) score -= 30;
+    if (/house|siding|exterior/.test(service) && /house|siding|exterior|home|residential/.test(keywords)) score += 16;
+    if (/concrete|driveway|walk|patio|paver/.test(service) && /concrete|driveway|walkway|patio|paver/.test(keywords)) score += 16;
+    if (/roof|soft/.test(service) && /roof|soft|roofline/.test(keywords)) score += 16;
+    if (intent.slot === "hero") {
+      if (/residential exterior|home exterior|clean home|house washing|siding/.test(keywords)) score += 18;
+      if (/driveway|patio|walkway/.test(keywords)) score += 6;
+      if (/roof|roofline|soft washing/.test(keywords)) score -= 18;
+    }
+  }
+  return score;
+}
+
+function selectCuratedStockPhoto(
+  trade: TradeCategory,
+  intent: PreviewImageIntent,
+  curatedStockPhotos: Array<{ src: string; keywords: string[] }>,
+  usedSources: Set<string>,
+  seed: string,
+) {
+  const scored = curatedStockPhotos
+    .map((photo, index) => ({ photo, index, score: photoRelevanceScore(trade, intent, photo, usedSources) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  if (intent.slot === "hero") {
+    const bestScore = scored[0]?.score ?? 0;
+    const acceptableHero = scored
+      .filter((candidate) => candidate.score >= Math.max(6, bestScore - 22))
+      .sort((a, b) => a.index - b.index);
+    const heroPool = acceptableHero.filter((candidate) => !usedSources.has(candidate.photo.src));
+    const selectedPool = heroPool.length ? heroPool : acceptableHero;
+    const selected = selectedPool[seededIndex(seed, selectedPool.length)] ?? selectedPool[0];
+    return selected?.photo
+      ?? curatedStockPhotos[0];
+  }
+  return scored.find((candidate) => !usedSources.has(candidate.photo.src) || candidate.score > 0)?.photo
+    ?? curatedStockPhotos.find((photo) => !usedSources.has(photo.src))
+    ?? curatedStockPhotos[0];
+}
+
+function selectConfiguredImage(images: string[], index: number, usedSources: Set<string>) {
+  if (!images.length) return "";
+  const start = index % images.length;
+  const ordered = [...images.slice(start), ...images.slice(0, start)];
+  return ordered.find((src) => !usedSources.has(src)) ?? ordered[0] ?? "";
+}
+
 function sourceForIndex(
   prospect: Prospect,
+  trade: TradeCategory,
   intent: PreviewImageIntent,
   catalogEntry: CatalogEntry,
   catalogSlot: CatalogSlot,
@@ -526,13 +599,21 @@ function sourceForIndex(
   businessPhotos: string[],
   stockPhotos: string[],
   curatedStockPhotos: Array<{ src: string; keywords: string[] }>,
+  usedSources: Set<string>,
 ): ResolvedPreviewImage {
-  const businessPhoto = businessPhotos[index % Math.max(1, businessPhotos.length)];
-  if (businessPhoto) return imageFrom(prospect, intent, businessPhoto, "business-photo");
-  const stockPhoto = stockPhotos[index % Math.max(1, stockPhotos.length)];
-  if (stockPhoto) return imageFrom(prospect, intent, stockPhoto, "configured-stock-provider");
-  const curatedStockPhoto = curatedStockPhotos[index % Math.max(1, curatedStockPhotos.length)];
+  const businessPhoto = selectConfiguredImage(businessPhotos, index, usedSources);
+  if (businessPhoto) {
+    usedSources.add(businessPhoto);
+    return imageFrom(prospect, intent, businessPhoto, "business-photo");
+  }
+  const stockPhoto = selectConfiguredImage(stockPhotos, index, usedSources);
+  if (stockPhoto) {
+    usedSources.add(stockPhoto);
+    return imageFrom(prospect, intent, stockPhoto, "configured-stock-provider");
+  }
+  const curatedStockPhoto = selectCuratedStockPhoto(trade, intent, curatedStockPhotos, usedSources, `${prospect.businessName}|${prospect.city}|${prospect.state}|${intent.id}|${index}`);
   if (curatedStockPhoto?.src) {
+    usedSources.add(curatedStockPhoto.src);
     const curatedIntent = {
       ...intent,
       keywords: [...new Set([...intent.keywords, ...curatedStockPhoto.keywords])],
@@ -553,6 +634,7 @@ export function resolvePreviewImages(
   const stockPhotos = configuredStockImages(environment);
   const curatedStockPhotos = curatedStockSources(trade, prospect);
   const providerStatus = stockPhotos.length ? "configured" : "not configured";
+  const usedSources = new Set<string>();
 
   const heroIntent = buildIntent(trade, prospect, "Hero", "hero", "hero");
   const serviceIntents = services.map((service, index) => {
@@ -565,19 +647,19 @@ export function resolvePreviewImages(
   const processIntent = buildIntent(trade, prospect, "Process", "process", "support");
   const ctaIntent = buildIntent(trade, prospect, "Quote request", "cta", "detail");
 
-  const hero = sourceForIndex(prospect, heroIntent, entry, "hero", 0, businessPhotos, stockPhotos, curatedStockPhotos);
+  const hero = sourceForIndex(prospect, trade, heroIntent, entry, "hero", 0, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
   const resolvedServices = serviceIntents.map((intent, index) => {
     const slot = serviceCatalogSlot(trade, services[index].title, index);
-    return sourceForIndex(prospect, intent, entry, slot, index + 1, businessPhotos, stockPhotos, curatedStockPhotos);
+    return sourceForIndex(prospect, trade, intent, entry, slot, index + 1, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
   }) as [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
   const gallery = [
-    sourceForIndex(prospect, buildIntent(trade, prospect, "Gallery detail", "gallery", "detail"), entry, "detail", 4, businessPhotos, stockPhotos, curatedStockPhotos),
-    sourceForIndex(prospect, buildIntent(trade, prospect, "Gallery equipment", "gallery", "support"), entry, "support", 5, businessPhotos, stockPhotos, curatedStockPhotos),
-    sourceForIndex(prospect, proofIntent, entry, "proof", 6, businessPhotos, stockPhotos, curatedStockPhotos),
+    sourceForIndex(prospect, trade, buildIntent(trade, prospect, "Gallery detail", "gallery", "detail"), entry, "detail", 4, businessPhotos, stockPhotos, curatedStockPhotos, usedSources),
+    sourceForIndex(prospect, trade, buildIntent(trade, prospect, "Gallery equipment", "gallery", "support"), entry, "support", 5, businessPhotos, stockPhotos, curatedStockPhotos, usedSources),
+    sourceForIndex(prospect, trade, proofIntent, entry, "proof", 6, businessPhotos, stockPhotos, curatedStockPhotos, usedSources),
   ] as [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
-  const beforeAfter = sourceForIndex(prospect, beforeAfterIntent, entry, "proof", 7, businessPhotos, stockPhotos, curatedStockPhotos);
-  const process = sourceForIndex(prospect, processIntent, entry, "support", 8, businessPhotos, stockPhotos, curatedStockPhotos);
-  const cta = sourceForIndex(prospect, ctaIntent, entry, "detail", 9, businessPhotos, stockPhotos, curatedStockPhotos);
+  const beforeAfter = sourceForIndex(prospect, trade, beforeAfterIntent, entry, "proof", 7, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
+  const process = sourceForIndex(prospect, trade, processIntent, entry, "support", 8, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
+  const cta = sourceForIndex(prospect, trade, ctaIntent, entry, "detail", 9, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
   const all = [hero, ...resolvedServices, ...gallery, beforeAfter, process, cta];
   const warnings = validatePreviewImages(all).warnings;
 
@@ -654,6 +736,10 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
   for (const image of images) {
     const service = image.serviceTitle?.toLowerCase() ?? "";
     const blob = `${image.src} ${image.alt} ${image.intent.keywords.join(" ")}`.toLowerCase();
+    const pressureWashingContext = /pressure washing|house washing|concrete cleaning|soft washing|exterior cleaning/.test(blob);
+    if (pressureWashingContext && /municipal|street cleaning|street sweeper|commercial surface|industrial/.test(blob)) {
+      warnings.push(`${image.section} image reads as municipal, industrial, or street-cleaning instead of residential exterior cleaning.`);
+    }
     if (/concrete|driveway|patio|paver/.test(service) && !/concrete|driveway|walkway|patio|paver/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match concrete or driveway cleaning.`);
     if (/house|siding/.test(service) && !/house|siding|exterior/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match house washing.`);
     if (/roof|soft/.test(service) && !/roof|soft/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match roof or soft washing.`);

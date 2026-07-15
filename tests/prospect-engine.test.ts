@@ -232,6 +232,32 @@ test("preview quality flags generic imagery and missing art direction", () => {
   assert.match(score.notes.join(" "), /imagery sounds generic|section rhythm needs more visual variety|art direction metadata is missing|mobile-friendly interactions/i);
 });
 
+test("preview quality keeps mismatched real imagery out of send-worthy status", () => {
+  const prospect = {
+    ...structuredClone(seedProspects[5]),
+    businessName: "MC Pressure Washing FL",
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+  };
+  const preview = generatePreview(prospect);
+  const mismatchedPreview = {
+    ...preview,
+    artDirection: {
+      ...preview.artDirection!,
+      qaWarnings: [
+        ...(preview.artDirection?.qaWarnings ?? []),
+        "House washing image reads as municipal, industrial, or street-cleaning instead of residential exterior cleaning.",
+      ],
+    },
+  };
+
+  const score = scorePreviewQuality(prospect, mismatchedPreview);
+
+  assert.notEqual(score.status, "Send-worthy / polished");
+  assert.match(score.notes.join(" "), /imagery sounds generic|random|placeholder/i);
+});
+
 test("preview generation normalizes city and state capitalization", () => {
   const preview = generatePreview({
     ...structuredClone(seedProspects[0]),
