@@ -574,7 +574,8 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /Roof concerns/);
   assert.match(html, /Service request steps/);
   assert.match(html, /Start with the roof concern you are seeing/);
-  assert.doesNotMatch(html, /href="#gallery"/);
+  assert.match(html, /href="#gallery"/);
+  assert.match(html, /prospect-preview-lightbox/);
   assert.doesNotMatch(html, /Project view|Surface refresh|Yard refresh/);
   assert.match(html, /Questions/);
   assert.match(html, /This sample form will not submit/);
@@ -617,7 +618,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /technician tools|service call|equipment/i);
   assert.match(html, /home comfort|thermostat-ready home|air conditioner/i);
   assert.match(html, /HVAC in Toledo, OH/);
-  assert.match(html, /Heating and cooling service for Toledo homes from Rick&#x27;s Affordable Heating &amp; Cooling\./);
+  assert.match(html, /Heating and cooling help for Toledo homes\./);
   assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
   assert.match(html, /Heating And Cooling Repair/i);
   assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
@@ -628,13 +629,13 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Home comfort/);
   assert.match(html, /Heating and cooling service without the guesswork\./);
   assert.match(html, /FAQ|Questions/);
-  assert.doesNotMatch(html, /href="#gallery"/);
-  assert.doesNotMatch(html, /prospect-preview-lightbox/);
+  assert.match(html, /href="#gallery"/);
+  assert.match(html, /prospect-preview-lightbox/);
   assert.doesNotMatch(html, /type="range"/);
   assert.match(html, /required=""/);
   assert.doesNotMatch(html, /Recent local work|Our work/);
   assert.match(html, /Start with the comfort issue at home/);
-  assert.match(html, /Pick the HVAC help that best matches the property/);
+  assert.match(html, /Choose the HVAC work that matches what needs attention/);
   assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b|Pick the hvac help|Representative image direction|Replace with verified|Sample layout content/);
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
   assert.ok(imageSources.slice(0, 5).every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
@@ -691,7 +692,9 @@ test("preview image resolver creates distinct section intents and matching press
   assert.equal(images.sourceStatus, "curated stock photo library");
   assert.ok(new Set(firstVisibleImages).size >= 2);
   assert.ok(firstVisibleImages.every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
-  assert.ok([images.hero, ...images.services, ...images.gallery].some((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")));
+  assert.ok([images.hero, ...images.services, ...images.gallery].filter((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")).length >= 2);
+  assert.equal(isPublicPreviewImageRelevant(images.services[0], "Pressure Washing"), false);
+  assert.equal(images.services[0].source, "curated-trade-library");
   assert.match(intentText, /house washing/i);
   assert.match(intentText, /siding/i);
   assert.match(intentText, /concrete/i);
@@ -771,8 +774,9 @@ test("two pressure washing public previews are photo-led but not visual duplicat
   assert.equal(isPublicPreviewImageRelevant(second.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.notEqual(first.preview?.layoutDirection, undefined);
   assert.notEqual(second.preview?.layoutDirection, undefined);
-  assert.match(firstHtml, /Exterior cleaning for Tampa homes from MC Pressure Washing FL/);
-  assert.match(secondHtml, /Exterior cleaning for St Augustine homes from Styles Power Wash/);
+  assert.match(firstHtml, /Cleaner exterior surfaces around Tampa\./);
+  assert.match(secondHtml, /Cleaner exterior surfaces around St Augustine\./);
+  assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /href="#gallery"|prospect-preview-lightbox/);
   assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /Business research summary|Source-backed facts|Excluded unless verified|A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|contact options|quote path|website structure|Representative image direction|proof concept|Service detail|Property context|Finished look|Photos should look|service-area copy/i);
 });
 
@@ -794,12 +798,45 @@ test("representative public previews use service-focused copy without UX wording
   }).join("\n");
 
   assert.match(rendered, /Wash away dirt, algae, and buildup/);
-  assert.match(rendered, /Exterior cleaning for Tampa homes from MC Pressure Washing FL/);
-  assert.match(rendered, /Exterior cleaning for St Augustine homes from Styles Power Wash/);
+  assert.match(rendered, /Cleaner exterior surfaces around Tampa\./);
+  assert.match(rendered, /Cleaner exterior surfaces around St Augustine\./);
   assert.match(rendered, /Landscaping shaped around the property and the season/);
   assert.match(rendered, /Roofing help built around the condition of your home/);
   assert.doesNotMatch(rendered, /Business research summary|Source-backed facts|Excluded unless verified|contact options|quote path|website structure|customer navigation|conversion design|Services explained clearly|The contact path stays visible/i);
   assert.doesNotMatch(rendered, /municipal|street cleaning|commercial surface|honey|coffee|liquid|abstract/i);
+});
+
+test("True Clean-style pressure washing preview uses honest branding, lower-image layout, and natural copy", () => {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    businessName: "True Clean Prowash",
+    trade: "Pressure Washing",
+    city: "tampa",
+    state: "FL",
+    serviceArea: "Tampa, FL",
+    phone: "(813) 555-0198",
+  });
+  const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    publicView: true,
+    savedPreview: prospect.preview,
+  }));
+  const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
+
+  assert.match(html, /True Clean Prowash/);
+  assert.match(html, /prospect-preview-brand--wordmark/);
+  assert.doesNotMatch(html, /prospect-preview-wordmark[^>]*border-radius|business-name pill/i);
+  assert.match(html, /Cleaner exterior surfaces around Tampa\./);
+  assert.match(html, /True Clean Prowash helps homeowners with house washing, concrete cleaning, roof and soft washing across Tampa, FL\./);
+  assert.match(html, /Wash away dirt, algae, and buildup from siding, trim, brick, stucco, and other home exterior surfaces\./);
+  assert.match(html, />01</);
+  assert.match(html, />02</);
+  assert.match(html, />03</);
+  assert.doesNotMatch(html, />00</);
+  assert.doesNotMatch(html, /href="#gallery"|prospect-preview-lightbox/);
+  assert.doesNotMatch(html, /Service detail|Property context|Finished look|Photos should look|service-area copy|quote-path design|website structure|customer navigation|contact options/i);
+  assert.doesNotMatch(html, /municipal|street cleaning|commercial surface|interior rooms|swimming pools|architecture portfolio/i);
+  assert.ok(new Set(imageSources).size >= 2);
 });
 
 test("preview image resolver supports configured stock manifests without exposing provider secrets", () => {

@@ -6,7 +6,7 @@ import {
   webworkshopPreviewValueLine,
   webworkshopYesReply,
 } from "@/lib/outreach-style-guide";
-import { attachResolvedPreviewImages, type PreviewImageSet } from "@/lib/preview-image-resolver";
+import { attachResolvedPreviewImages, isPublicPreviewImageRelevant, type PreviewImageSet } from "@/lib/preview-image-resolver";
 
 export const prospectStatuses = [
   "New",
@@ -1103,14 +1103,20 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     preview.resolvedImages.process,
     preview.resolvedImages.cta,
   ] : [];
-  const photoLedImageCount = imageList.filter((image) => ["business-photo", "configured-stock-provider", "curated-stock-photo-library"].includes(image.source)).length;
-  const illustrationFallbackUsed = imageList.some((image) => image.source === "curated-trade-library" || image.source === "neutral-fallback");
-  const uniqueImageCount = new Set(imageList.map((image) => image.src)).size;
+  const qualityImageList = displayTradeCategory(trade) === "Pressure Washing"
+    ? imageList.filter((image) => isPublicPreviewImageRelevant(image, trade))
+    : imageList;
+  const photoLedImageCount = qualityImageList.filter((image) => ["business-photo", "configured-stock-provider", "curated-stock-photo-library"].includes(image.source)).length;
+  const illustrationFallbackUsed = qualityImageList.some((image) => image.source === "curated-trade-library" || image.source === "neutral-fallback");
+  const uniqueImageCount = new Set(qualityImageList.map((image) => image.src)).size;
+  const requiredPhotoCount = displayTradeCategory(trade) === "Pressure Washing" ? 2 : 6;
+  const requiredUniqueImageCount = displayTradeCategory(trade) === "Pressure Washing" ? 2 : 5;
+  const limitedReliableImagery = displayTradeCategory(trade) === "Pressure Washing" && imageList.length > 0 && photoLedImageCount < 3;
   const hasCta = Boolean(preview.styleProfile?.ctaLabel) && searchable.includes(preview.styleProfile?.ctaLabel ?? "");
   const hasBrandingSource = Boolean(preview.creativeBrief?.brandingSource && preview.creativeBrief?.brandColorSource);
   const hasLogoDecision = Boolean(preview.businessProfile?.logo.status || (preview.creativeBrief?.logoStatus && preview.creativeBrief?.logoSource));
   const hasSectionImageIntents = (preview.creativeBrief?.imageIntents?.length ?? 0) >= 5;
-  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler|does not clearly match|municipal|street-cleaning|street cleaning|industrial/i.test(searchable) || illustrationFallbackUsed || (imageList.length > 0 && photoLedImageCount < 6) || (imageList.length > 0 && uniqueImageCount < 5);
+  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler|does not clearly match|municipal|street-cleaning|street cleaning|industrial/i.test(searchable) || illustrationFallbackUsed || (qualityImageList.length > 0 && photoLedImageCount < requiredPhotoCount) || (qualityImageList.length > 0 && uniqueImageCount < requiredUniqueImageCount);
   const repeatedStructure = /three identical cards|same structure repeated|block-stacked|template/i.test(searchable);
   const ignoredBrand = /ignored brand|same palette for every business/i.test(searchable);
   const publicCandidateCopy = [
@@ -1127,9 +1133,9 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
 
   const detailed = {
-    heroImpact: boundedQuality(60 + (hasStrongHeroVisual ? 18 : 0) + (hasImageDirection ? 8 : 0) + (photoLedImageCount >= 6 ? 10 : 0) + (hasCta ? 5 : 0) - (weakImagery ? 25 : 0)),
-    imageQuality: boundedQuality(58 + (hasImageryPlan ? 10 : 0) + (hasSectionImageIntents ? 10 : 0) + (photoLedImageCount >= 6 ? 16 : 0) + (uniqueImageCount >= 5 ? 8 : 0) - (weakImagery ? 28 : 0)),
-    imageSectionRelevance: boundedQuality(62 + (hasSectionImageIntents ? 14 : 0) + (hasTradeServices ? 8 : 0) + (photoLedImageCount >= 6 ? 10 : 0) - (weakImagery ? 22 : 0)),
+    heroImpact: boundedQuality(60 + (hasStrongHeroVisual ? 18 : 0) + (hasImageDirection ? 8 : 0) + (photoLedImageCount >= requiredPhotoCount ? 10 : 0) + (hasCta ? 5 : 0) - (weakImagery ? 25 : 0)),
+    imageQuality: boundedQuality(58 + (hasImageryPlan ? 10 : 0) + (hasSectionImageIntents ? 10 : 0) + (photoLedImageCount >= requiredPhotoCount ? 16 : 0) + (uniqueImageCount >= requiredUniqueImageCount ? 8 : 0) - (weakImagery ? 28 : 0)),
+    imageSectionRelevance: boundedQuality(62 + (hasSectionImageIntents ? 14 : 0) + (hasTradeServices ? 8 : 0) + (photoLedImageCount >= requiredPhotoCount ? 10 : 0) - (weakImagery ? 22 : 0)),
     branding: boundedQuality(62 + (hasStyleProfile ? 12 : 0) + (hasBrandingSource ? 10 : 0) + (mentionsBusiness ? 8 : 0) - (ignoredBrand ? 18 : 0)),
     colorUsage: boundedQuality(68 + (hasBrandingSource ? 12 : 0) + (hasStyleProfile ? 8 : 0) - (ignoredBrand ? 18 : 0)),
     logoUsage: boundedQuality(68 + (hasLogoDecision ? 12 : 0) + (preview.businessProfile?.logo.status === "available" || preview.creativeBrief?.logoStatus === "available" ? 4 : 0)),
@@ -1150,8 +1156,9 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   };
   const notes = previewQualityNotes(base);
   if (weakImagery) notes.push("Flag: imagery sounds generic, random, repeated, or placeholder-led.");
+  if (limitedReliableImagery) notes.push("Note: pressure-washing preview uses a lower-image layout because only limited reliable service photos are available.");
   if (illustrationFallbackUsed) notes.push("Flag: one or more public preview images resolved to illustration fallback instead of photography.");
-  if (imageList.length > 0 && uniqueImageCount < 5) notes.push("Flag: preview repeats too many images across visible sections.");
+  if (qualityImageList.length > 0 && uniqueImageCount < requiredUniqueImageCount) notes.push("Flag: preview repeats too many images across visible sections.");
   if (!hasStrongHeroVisual) notes.push("Flag: hero needs a stronger trade-relevant visual direction.");
   if (!hasSectionVariety) notes.push("Flag: section rhythm needs more visual variety.");
   if (!hasBusinessProfile) notes.push("Flag: preview is missing a structured business research profile.");

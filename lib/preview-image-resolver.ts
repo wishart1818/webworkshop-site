@@ -268,10 +268,6 @@ function unsplashPhoto(id: string) {
 const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
   "Pressure Washing": [
     {
-      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Concrete_Cleaning_with_a_Surface_Cleaner.jpg/900px-Concrete_Cleaning_with_a_Surface_Cleaner.jpg",
-      keywords: ["pressure washing", "concrete cleaning", "driveway cleaning", "walkway cleaning", "residential concrete", "surface cleaner", "water spray", "verified exterior cleaning photo"],
-    },
-    {
       src: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/ArborBay2.jpg/900px-ArborBay2.jpg",
       keywords: ["soft washing", "roof cleaning", "residential roof", "roofline", "soft-wash system", "exterior cleaning", "verified exterior cleaning photo"],
     },
@@ -586,6 +582,37 @@ function photoRelevanceScore(trade: TradeCategory, intent: PreviewImageIntent, p
   return score;
 }
 
+function minimumPhotoRelevanceScore(trade: TradeCategory, intent: PreviewImageIntent) {
+  if (trade !== "Pressure Washing") return 0;
+  const service = (intent.serviceTitle ?? intent.section).toLowerCase();
+  if (intent.slot === "hero") return 12;
+  if (/house|siding|exterior/.test(service)) return 18;
+  if (/concrete|driveway|walk|patio|paver/.test(service)) return 18;
+  if (/roof|soft/.test(service)) return 18;
+  return 10;
+}
+
+function pressureWashingPhotoMatchesIntent(intent: PreviewImageIntent, photo: { keywords: string[] }) {
+  const service = (intent.serviceTitle ?? intent.section).toLowerCase();
+  const keywords = photo.keywords.join(" ").toLowerCase();
+  if (/municipal|street|street-cleaning|street sweeper|commercial surface|industrial|architecture|interior|room|pool|luxury house|real estate|landscaping/.test(keywords)) {
+    return false;
+  }
+  if (intent.slot === "hero") {
+    return /pressure washing|exterior cleaning|driveway cleaning|concrete cleaning|house washing|siding cleaning|soft washing|roof cleaning|surface cleaner/.test(keywords);
+  }
+  if (/house|siding|exterior/.test(service)) {
+    return /house washing|siding washing|siding cleaning|residential siding|home exterior cleaning/.test(keywords);
+  }
+  if (/concrete|driveway|walk|patio|paver/.test(service)) {
+    return /concrete cleaning|driveway cleaning|walkway cleaning|patio cleaning|surface cleaner/.test(keywords);
+  }
+  if (/roof|soft/.test(service)) {
+    return /roof cleaning|soft washing|soft-wash|roofline/.test(keywords);
+  }
+  return /pressure washing|exterior cleaning|driveway cleaning|concrete cleaning|house washing|siding cleaning|soft washing|roof cleaning|surface cleaner/.test(keywords);
+}
+
 function selectCuratedStockPhoto(
   trade: TradeCategory,
   intent: PreviewImageIntent,
@@ -595,11 +622,13 @@ function selectCuratedStockPhoto(
 ) {
   const scored = curatedStockPhotos
     .map((photo, index) => ({ photo, index, score: photoRelevanceScore(trade, intent, photo, usedSources) }))
+    .filter((candidate) => trade !== "Pressure Washing" || pressureWashingPhotoMatchesIntent(intent, candidate.photo))
     .sort((a, b) => b.score - a.score || a.index - b.index);
+  const minimumScore = minimumPhotoRelevanceScore(trade, intent);
   if (intent.slot === "hero") {
     const bestScore = scored[0]?.score ?? 0;
     const acceptableHero = scored
-      .filter((candidate) => candidate.score >= Math.max(6, bestScore - 22))
+      .filter((candidate) => candidate.score >= Math.max(minimumScore, bestScore - 22))
       .sort((a, b) => a.index - b.index);
     const heroPool = acceptableHero.filter((candidate) => !usedSources.has(candidate.photo.src));
     const directLocalHero = heroPool.find((candidate) => /-hero\.(jpe?g|png|webp)$/i.test(candidate.photo.src));
@@ -607,15 +636,12 @@ function selectCuratedStockPhoto(
     const localHeroPool = heroPool.filter((candidate) => candidate.photo.src.startsWith("/engine-preview-assets/"));
     const selectedPool = localHeroPool.length ? localHeroPool : heroPool.length ? heroPool : acceptableHero;
     const selected = selectedPool[seededIndex(seed, selectedPool.length)] ?? selectedPool[0];
-    return selected?.photo
-      ?? curatedStockPhotos[0];
+    return selected?.photo;
   }
   const bestScore = scored[0]?.score ?? 0;
-  const unusedRelevant = scored.find((candidate) => !usedSources.has(candidate.photo.src) && candidate.score >= Math.max(0, bestScore - 18));
+  const unusedRelevant = scored.find((candidate) => !usedSources.has(candidate.photo.src) && candidate.score >= Math.max(minimumScore, bestScore - 12));
   if (unusedRelevant) return unusedRelevant.photo;
-  return scored.find((candidate) => !usedSources.has(candidate.photo.src))?.photo
-    ?? curatedStockPhotos.find((photo) => !usedSources.has(photo.src))
-    ?? curatedStockPhotos[0];
+  return undefined;
 }
 
 function selectConfiguredImage(images: string[], index: number, usedSources: Set<string>) {
@@ -656,7 +682,12 @@ function sourceForIndex(
     };
     return imageFrom(prospect, curatedIntent, curatedStockPhoto.src, "curated-stock-photo-library");
   }
-  return imageFrom(prospect, intent, curatedPhoto(catalogEntry.slug, catalogSlot), "curated-trade-library");
+  return imageFrom(
+    prospect,
+    intent,
+    curatedPhoto(catalogEntry.slug, catalogSlot),
+    trade === "Pressure Washing" ? "curated-trade-library" : "curated-stock-photo-library",
+  );
 }
 
 export function resolvePreviewImages(
@@ -797,6 +828,7 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
 export function isPublicPreviewImageRelevant(image: ResolvedPreviewImage, trade: string) {
   const normalizedTrade = normalizeTradeCategory(trade) ?? "General Contractor";
   if (normalizedTrade !== "Pressure Washing") return true;
+  if (image.source === "curated-trade-library" || image.source === "neutral-fallback") return false;
   const service = image.serviceTitle?.toLowerCase() ?? image.section.toLowerCase();
   const blob = `${image.src} ${image.intent.keywords.join(" ")}`.toLowerCase();
   if (/municipal|street cleaning|street-cleaning|street sweeper|commercial surface|industrial|architecture|interior|room|pool|luxury house|real estate|landscaping/.test(blob)) {
