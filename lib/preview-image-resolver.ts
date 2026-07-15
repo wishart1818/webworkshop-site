@@ -1,10 +1,39 @@
-import {
-  displayTradeCategory,
-  normalizeTradeCategory,
-  titleCaseLocation,
-  type Prospect,
-  type TradeCategory,
-} from "@/lib/prospect-engine";
+import type { Prospect, PreviewConcept, TradeCategory } from "@/lib/prospect-engine";
+
+const tradeCategories = [
+  "Roofing",
+  "HVAC",
+  "Plumbing",
+  "Electrical",
+  "Landscaping",
+  "Pressure Washing",
+  "Painting",
+  "Concrete",
+  "Cleaning",
+  "Tree Service",
+  "Fencing",
+  "Flooring",
+  "Remodeling",
+  "General Contractor",
+] as const;
+
+function normalizeTradeCategory(value: string): TradeCategory | undefined {
+  const normalized = value.trim().toLowerCase().replace(/&/g, "and");
+  if (normalized === "hvac") return "HVAC";
+  if (normalized === "power washing" || normalized === "pressure washing") return "Pressure Washing";
+  return tradeCategories.find((trade) => trade.toLowerCase() === normalized);
+}
+
+function displayTradeCategory(value: string) {
+  return normalizeTradeCategory(value)?.replace("HVAC", "HVAC") ?? value;
+}
+
+function titleCaseLocation(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (character) => character.toUpperCase());
+}
 
 export type PreviewImageSlot =
   | "hero"
@@ -17,6 +46,7 @@ export type PreviewImageSlot =
 export type PreviewImageSource =
   | "business-photo"
   | "configured-stock-provider"
+  | "curated-stock-photo-library"
   | "curated-trade-library"
   | "neutral-fallback";
 
@@ -52,6 +82,7 @@ export type PreviewImageSet = {
   sourceStatus: string;
   providerStatus: "not configured" | "configured";
   warnings: string[];
+  resolvedAt?: string;
 };
 
 type ServiceInput = {
@@ -65,6 +96,11 @@ type CatalogEntry = {
   slug: string;
   tradeKeywords: string[];
   slotKeywords: Record<CatalogSlot, string[]>;
+};
+
+type CuratedStockPhoto = {
+  id: string;
+  keywords: string[];
 };
 
 const catalog: Record<TradeCategory, CatalogEntry> = {
@@ -224,6 +260,111 @@ const catalog: Record<TradeCategory, CatalogEntry> = {
   },
 };
 
+function unsplashPhoto(id: string) {
+  return `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1800&q=82`;
+}
+
+const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
+  "Pressure Washing": [
+    { id: "photo-1718152521364-b9655b8a7926", keywords: ["pressure washer", "surface cleaner", "sidewalk", "equipment"] },
+    { id: "photo-1581883579507-019c44b711cb", keywords: ["pressure washing", "commercial surface", "cleaning equipment"] },
+    { id: "photo-1677956787377-a0f32c0974af", keywords: ["pressure washing", "walkway", "exterior cleaning"] },
+    { id: "photo-1600585154340-be6161a56a0c", keywords: ["clean home exterior", "driveway", "residential exterior"] },
+    { id: "photo-1564013799919-ab600027ffc6", keywords: ["house washing", "siding", "clean exterior"] },
+  ],
+  Roofing: [
+    { id: "photo-1635424824849-1b09bdcc55b1", keywords: ["roofer", "roof inspection", "shingles"] },
+    { id: "photo-1635424709845-3a85ad5e1f5e", keywords: ["roofing crew", "roof repair", "roofline"] },
+    { id: "photo-1632759145355-b0c7f70a2558", keywords: ["roof", "shingles", "home exterior"] },
+    { id: "photo-1599139574071-585d8cf395f0", keywords: ["shingle roof", "roof detail", "exterior"] },
+    { id: "photo-1600573472550-8090b5e0745e", keywords: ["finished home", "roofline", "residential exterior"] },
+  ],
+  HVAC: [
+    { id: "photo-1718203862467-c33159fdc504", keywords: ["outdoor AC condenser", "hvac equipment", "cooling"] },
+    { id: "photo-1700124113583-81aa99ea2aa2", keywords: ["HVAC unit", "air conditioner", "service"] },
+    { id: "photo-1581092160562-40aa08e78837", keywords: ["technician tools", "maintenance", "mechanical service"] },
+    { id: "photo-1581091226825-a6a2a5aee158", keywords: ["technician", "service call", "equipment"] },
+    { id: "photo-1600566752355-35792bedcfea", keywords: ["home comfort", "interior", "thermostat-ready home"] },
+  ],
+  Landscaping: [
+    { id: "photo-1734079692160-fcbe4be6ab96", keywords: ["landscaping worker", "wheelbarrow", "lawn"] },
+    { id: "photo-1734303023491-db8037a21f09", keywords: ["landscaping crew", "lawn care", "outdoor space"] },
+    { id: "photo-1558904541-efa843a96f01", keywords: ["garden bed", "planting", "landscape"] },
+    { id: "photo-1598902108854-10e335adac99", keywords: ["lawn", "yard", "garden maintenance"] },
+    { id: "photo-1629219519687-f9a4eb7d3b1c", keywords: ["patio", "hardscape", "outdoor living"] },
+  ],
+  Plumbing: [
+    { id: "photo-1676210134188-4c05dd172f89", keywords: ["plumber", "under-sink", "repair"] },
+    { id: "photo-1676210133055-eab6ef033ce3", keywords: ["plumber", "pipes", "sink repair"] },
+    { id: "photo-1542013936693-884638332954", keywords: ["faucet", "fixture", "water"] },
+    { id: "photo-1585704032915-c3400ca199e7", keywords: ["tools", "repair", "service call"] },
+    { id: "photo-1607472586893-edb57bdc0e39", keywords: ["bathroom fixture", "plumbing", "sink"] },
+  ],
+  Electrical: [
+    { id: "photo-1621905252507-b35492cc74b4", keywords: ["electrician", "breaker panel", "wiring"] },
+    { id: "photo-1509391366360-2e959784a276", keywords: ["electrical", "solar panel", "power"] },
+    { id: "photo-1518770660439-4636190af475", keywords: ["circuit", "wiring", "technical detail"] },
+    { id: "photo-1558618666-fcd25c85cd64", keywords: ["lighting", "installation", "interior"] },
+    { id: "photo-1581092160562-40aa08e78837", keywords: ["tools", "technician", "safe work"] },
+  ],
+  Concrete: [
+    { id: "photo-1621947081720-86970823b77a", keywords: ["concrete", "driveway", "finished surface"] },
+    { id: "photo-1599995903128-531fc7fb694b", keywords: ["concrete", "walkway", "patio"] },
+    { id: "photo-1590644365607-1c5a939a6f38", keywords: ["concrete", "surface", "flatwork"] },
+    { id: "photo-1597007066704-67bf2068d5b5", keywords: ["driveway", "home exterior", "concrete"] },
+    { id: "photo-1600585154340-be6161a56a0c", keywords: ["house", "driveway", "residential exterior"] },
+  ],
+  Painting: [
+    { id: "photo-1742900280861-32bed068938b", keywords: ["exterior painting", "ladder", "paint roller"] },
+    { id: "photo-1717281234297-3def5ae3eee1", keywords: ["interior painter", "wall painting", "prep"] },
+    { id: "photo-1589939705384-5185137a7f0f", keywords: ["paint roller", "wall", "interior painting"] },
+    { id: "photo-1562259949-e8e7689d7828", keywords: ["paint", "roller", "home improvement"] },
+    { id: "photo-1503387762-592deb58ef4e", keywords: ["interior", "wall finish", "painting"] },
+  ],
+  Cleaning: [
+    { id: "photo-1581578731548-c64695cc6952", keywords: ["cleaning", "supplies", "interior"] },
+    { id: "photo-1563453392212-326f5e854473", keywords: ["cleaning service", "home", "surface"] },
+    { id: "photo-1528744598421-b7b93e12df44", keywords: ["clean interior", "home", "room"] },
+    { id: "photo-1584622650111-993a426fbf0a", keywords: ["bathroom", "clean surface", "home"] },
+    { id: "photo-1593702288056-7927b7c52dd8", keywords: ["cleaning tools", "home care", "equipment"] },
+  ],
+  "Tree Service": [
+    { id: "photo-1520412099551-62b6bafeb5bb", keywords: ["tree", "trimming", "outdoor"] },
+    { id: "photo-1513836279014-a89f7a76ae86", keywords: ["trees", "canopy", "tree care"] },
+    { id: "photo-1597520425495-3f081d8dcc98", keywords: ["chainsaw", "tree work", "equipment"] },
+    { id: "photo-1523712999610-f77fbcfc3843", keywords: ["tree", "yard", "cleanup"] },
+    { id: "photo-1448375240586-882707db888b", keywords: ["trees", "outdoor", "service area"] },
+  ],
+  Fencing: [
+    { id: "photo-1564013799919-ab600027ffc6", keywords: ["yard", "fence", "home exterior"] },
+    { id: "photo-1593604572571-e01c35fce4aa", keywords: ["wood fence", "yard", "privacy"] },
+    { id: "photo-1600607687939-ce8a6c25118c", keywords: ["home exterior", "gate", "yard"] },
+    { id: "photo-1600566753190-17f0baa2a6c3", keywords: ["backyard", "fence", "outdoor"] },
+    { id: "photo-1600585154340-be6161a56a0c", keywords: ["residential exterior", "property", "yard"] },
+  ],
+  Flooring: [
+    { id: "photo-1600121848594-d8644e57abab", keywords: ["flooring", "wood floor", "room"] },
+    { id: "photo-1586023492125-27b2c045efd7", keywords: ["finished floor", "living room", "interior"] },
+    { id: "photo-1513694203232-719a280e022f", keywords: ["wood floor", "interior", "room"] },
+    { id: "photo-1616046229478-9901c5536a45", keywords: ["floor", "home interior", "installation context"] },
+    { id: "photo-1600210492486-724fe5c67fb0", keywords: ["interior", "flooring", "finished room"] },
+  ],
+  Remodeling: [
+    { id: "photo-1600566753086-00f18fb6b3ea", keywords: ["kitchen remodel", "interior", "home update"] },
+    { id: "photo-1600585154526-990dced4db0d", keywords: ["bathroom", "remodel", "interior"] },
+    { id: "photo-1600607687920-4e2a09cf159d", keywords: ["home interior", "renovation", "finished room"] },
+    { id: "photo-1600566752355-35792bedcfea", keywords: ["living space", "home update", "interior"] },
+    { id: "photo-1600585154340-be6161a56a0c", keywords: ["home exterior", "project", "residential"] },
+  ],
+  "General Contractor": [
+    { id: "photo-1503387762-592deb58ef4e", keywords: ["construction", "tools", "project"] },
+    { id: "photo-1541888946425-d81bb19240f5", keywords: ["construction site", "equipment", "building"] },
+    { id: "photo-1504307651254-35680f356dfd", keywords: ["contractor", "construction", "planning"] },
+    { id: "photo-1581092160562-40aa08e78837", keywords: ["tools", "technician", "work"] },
+    { id: "photo-1600585154340-be6161a56a0c", keywords: ["home exterior", "project", "residential"] },
+  ],
+};
+
 function safeImageUrl(value: unknown) {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
@@ -357,6 +498,25 @@ function imageFrom(
   };
 }
 
+function seededIndex(seed: string, length: number) {
+  if (length <= 0) return 0;
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+  return hash % length;
+}
+
+function curatedStockSources(trade: TradeCategory, prospect: Prospect) {
+  const photos = curatedStockCatalog[trade] ?? curatedStockCatalog["General Contractor"] ?? [];
+  const start = seededIndex(`${prospect.businessName}|${prospect.city}|${trade}`, photos.length);
+  const ordered = [...photos.slice(start), ...photos.slice(0, start)];
+  return ordered.map((photo) => ({
+    src: safeImageUrl(unsplashPhoto(photo.id)),
+    keywords: photo.keywords,
+  })).filter((photo) => photo.src);
+}
+
 function sourceForIndex(
   prospect: Prospect,
   intent: PreviewImageIntent,
@@ -365,11 +525,20 @@ function sourceForIndex(
   index: number,
   businessPhotos: string[],
   stockPhotos: string[],
+  curatedStockPhotos: Array<{ src: string; keywords: string[] }>,
 ): ResolvedPreviewImage {
   const businessPhoto = businessPhotos[index % Math.max(1, businessPhotos.length)];
   if (businessPhoto) return imageFrom(prospect, intent, businessPhoto, "business-photo");
   const stockPhoto = stockPhotos[index % Math.max(1, stockPhotos.length)];
   if (stockPhoto) return imageFrom(prospect, intent, stockPhoto, "configured-stock-provider");
+  const curatedStockPhoto = curatedStockPhotos[index % Math.max(1, curatedStockPhotos.length)];
+  if (curatedStockPhoto?.src) {
+    const curatedIntent = {
+      ...intent,
+      keywords: [...new Set([...intent.keywords, ...curatedStockPhoto.keywords])],
+    };
+    return imageFrom(prospect, curatedIntent, curatedStockPhoto.src, "curated-stock-photo-library");
+  }
   return imageFrom(prospect, intent, curatedPhoto(catalogEntry.slug, catalogSlot), "curated-trade-library");
 }
 
@@ -382,6 +551,7 @@ export function resolvePreviewImages(
   const entry = catalog[trade];
   const businessPhotos = approvedBusinessPhotos(prospect);
   const stockPhotos = configuredStockImages(environment);
+  const curatedStockPhotos = curatedStockSources(trade, prospect);
   const providerStatus = stockPhotos.length ? "configured" : "not configured";
 
   const heroIntent = buildIntent(trade, prospect, "Hero", "hero", "hero");
@@ -395,19 +565,19 @@ export function resolvePreviewImages(
   const processIntent = buildIntent(trade, prospect, "Process", "process", "support");
   const ctaIntent = buildIntent(trade, prospect, "Quote request", "cta", "detail");
 
-  const hero = sourceForIndex(prospect, heroIntent, entry, "hero", 0, businessPhotos, stockPhotos);
+  const hero = sourceForIndex(prospect, heroIntent, entry, "hero", 0, businessPhotos, stockPhotos, curatedStockPhotos);
   const resolvedServices = serviceIntents.map((intent, index) => {
     const slot = serviceCatalogSlot(trade, services[index].title, index);
-    return sourceForIndex(prospect, intent, entry, slot, index + 1, businessPhotos, stockPhotos);
+    return sourceForIndex(prospect, intent, entry, slot, index + 1, businessPhotos, stockPhotos, curatedStockPhotos);
   }) as [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
   const gallery = [
-    sourceForIndex(prospect, buildIntent(trade, prospect, "Gallery detail", "gallery", "detail"), entry, "detail", 4, businessPhotos, stockPhotos),
-    sourceForIndex(prospect, buildIntent(trade, prospect, "Gallery equipment", "gallery", "support"), entry, "support", 5, businessPhotos, stockPhotos),
-    sourceForIndex(prospect, proofIntent, entry, "proof", 6, businessPhotos, stockPhotos),
+    sourceForIndex(prospect, buildIntent(trade, prospect, "Gallery detail", "gallery", "detail"), entry, "detail", 4, businessPhotos, stockPhotos, curatedStockPhotos),
+    sourceForIndex(prospect, buildIntent(trade, prospect, "Gallery equipment", "gallery", "support"), entry, "support", 5, businessPhotos, stockPhotos, curatedStockPhotos),
+    sourceForIndex(prospect, proofIntent, entry, "proof", 6, businessPhotos, stockPhotos, curatedStockPhotos),
   ] as [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
-  const beforeAfter = sourceForIndex(prospect, beforeAfterIntent, entry, "proof", 7, businessPhotos, stockPhotos);
-  const process = sourceForIndex(prospect, processIntent, entry, "support", 8, businessPhotos, stockPhotos);
-  const cta = sourceForIndex(prospect, ctaIntent, entry, "detail", 9, businessPhotos, stockPhotos);
+  const beforeAfter = sourceForIndex(prospect, beforeAfterIntent, entry, "proof", 7, businessPhotos, stockPhotos, curatedStockPhotos);
+  const process = sourceForIndex(prospect, processIntent, entry, "support", 8, businessPhotos, stockPhotos, curatedStockPhotos);
+  const cta = sourceForIndex(prospect, ctaIntent, entry, "detail", 9, businessPhotos, stockPhotos, curatedStockPhotos);
   const all = [hero, ...resolvedServices, ...gallery, beforeAfter, process, cta];
   const warnings = validatePreviewImages(all).warnings;
 
@@ -423,9 +593,49 @@ export function resolvePreviewImages(
       ? "approved business photos"
       : stockPhotos.length
         ? "configured stock provider"
-        : "curated trade photo library",
+        : curatedStockPhotos.length
+          ? "curated stock photo library"
+          : "curated trade fallback library",
     providerStatus,
     warnings,
+    resolvedAt: new Date().toISOString(),
+  };
+}
+
+export function attachResolvedPreviewImages(
+  prospect: Prospect,
+  preview: PreviewConcept,
+  environment: NodeJS.ProcessEnv = process.env,
+): PreviewConcept {
+  const services = [
+    { title: preview.serviceHighlights?.[0] ?? displayTradeCategory(prospect.trade), description: "Primary service." },
+    { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
+    { title: preview.serviceHighlights?.[2] ?? "Estimate request", description: "Supporting service." },
+  ] as const;
+  const resolvedImages = resolvePreviewImages(prospect, services, environment);
+  return {
+    ...preview,
+    creativeBrief: preview.creativeBrief
+      ? {
+          ...preview.creativeBrief,
+          imagerySource: resolvedImages.sourceStatus === "approved business photos"
+            ? "business assets"
+            : resolvedImages.sourceStatus === "configured stock provider"
+              ? "configured stock provider"
+              : resolvedImages.sourceStatus === "curated stock photo library"
+                ? "curated stock photo library"
+                : "trade photo library",
+          imageIntents: resolvedImages.intents.map((intent) => `${intent.section}: ${intent.query}`),
+        }
+      : preview.creativeBrief,
+    artDirection: preview.artDirection
+      ? {
+          ...preview.artDirection,
+          imageryPlan: resolvedImages.intents.map((intent) => `${intent.slot}: ${intent.query}`),
+          qaWarnings: [...new Set([...(preview.artDirection.qaWarnings ?? []), ...resolvedImages.warnings])],
+        }
+      : preview.artDirection,
+    resolvedImages,
   };
 }
 
@@ -437,8 +647,10 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
   if (maxReuse > Math.ceil(images.length / 2)) warnings.push("One image is used across too much of the preview.");
   if (maxReuse > 2) warnings.push("The preview repeats one image more than twice.");
   if (images[0]?.source === "neutral-fallback") warnings.push("Hero image resolved to a neutral fallback.");
+  if (images[0]?.source === "curated-trade-library") warnings.push("Hero image resolved to illustration fallback instead of photography.");
   if (images.some((image) => !safeImageUrl(image.src))) warnings.push("One or more preview image URLs are unsafe.");
   if (images.some((image) => image.source === "neutral-fallback")) warnings.push("A photographic image was unavailable for at least one section.");
+  if (images.some((image) => image.source === "curated-trade-library")) warnings.push("One or more sections used illustration fallback instead of photography.");
   for (const image of images) {
     const service = image.serviceTitle?.toLowerCase() ?? "";
     const blob = `${image.src} ${image.alt} ${image.intent.keywords.join(" ")}`.toLowerCase();

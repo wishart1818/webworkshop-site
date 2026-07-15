@@ -22,6 +22,7 @@ import {
   type PreviewConcept,
   type PreviewArtDirection,
   type PreviewCreativeBrief,
+  type PreviewLayoutDirection,
   type PreviewQualityScore,
   type PreviewStyleProfile,
   type Prospect,
@@ -34,6 +35,7 @@ import {
   type ContactConfidence,
   type ScoreKey,
 } from "@/lib/prospect-engine";
+import type { PreviewImageIntent, PreviewImageSet, PreviewImageSlot, PreviewImageSource, ResolvedPreviewImage } from "@/lib/preview-image-resolver";
 
 type ValidationResult = { ok: true; value: Prospect } | { ok: false; error: string };
 
@@ -200,7 +202,7 @@ function creativeBriefValue(value: unknown): PreviewCreativeBrief | undefined {
   const brandingSource = text(value.brandingSource, "Preview branding source", 30) as PreviewCreativeBrief["brandingSource"];
   if (!["detected cue", "trade fallback"].includes(brandingSource)) throw new Error("Preview branding source is not supported.");
   const imagerySource = text(value.imagerySource, "Preview imagery source", 40) as PreviewCreativeBrief["imagerySource"];
-  if (!["trade photo library", "business assets", "configured stock provider"].includes(imagerySource)) throw new Error("Preview imagery source is not supported.");
+  if (!["curated stock photo library", "trade photo library", "business assets", "configured stock provider"].includes(imagerySource)) throw new Error("Preview imagery source is not supported.");
   const reviewSignal = text(value.reviewSignal, "Preview review signal", 40) as PreviewCreativeBrief["reviewSignal"];
   if (!["not used", "public rating count only"].includes(reviewSignal)) throw new Error("Preview review signal is not supported.");
   const businessTone = text(value.businessTone, "Preview business tone", 30) as PreviewStyleProfile["tone"];
@@ -285,13 +287,89 @@ function previewQualityValue(value: unknown): PreviewQualityScore | undefined {
   };
 }
 
+function previewImageUrl(value: unknown, field: string) {
+  const url = text(value, field, 2048);
+  if (url.startsWith("/engine-preview-assets/") || url.startsWith("/uploads/") || url.startsWith("/prospect-assets/")) return url;
+  const parsed = new URL(url);
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(`${field} must use HTTP or HTTPS.`);
+  if (parsed.username || parsed.password) throw new Error(`${field} cannot include credentials.`);
+  return parsed.href;
+}
+
+function previewImageIntentValue(value: unknown): PreviewImageIntent {
+  if (!isRecord(value)) throw new Error("Preview image intent must be a valid object.");
+  const slot = text(value.slot, "Preview image intent slot", 30) as PreviewImageSlot;
+  if (!["hero", "service", "gallery", "beforeAfter", "process", "cta"].includes(slot)) throw new Error("Preview image intent slot is not supported.");
+  return {
+    id: text(value.id, "Preview image intent ID", 120),
+    slot,
+    section: text(value.section, "Preview image intent section", 160),
+    serviceTitle: value.serviceTitle === undefined ? undefined : text(value.serviceTitle, "Preview image intent service title", 160, false),
+    query: text(value.query, "Preview image intent query", 400),
+    keywords: value.keywords === undefined ? [] : stringArray(value.keywords, "Preview image intent keywords", 24, 120),
+    purpose: text(value.purpose, "Preview image intent purpose", 300),
+  };
+}
+
+function resolvedPreviewImageValue(value: unknown): ResolvedPreviewImage {
+  if (!isRecord(value)) throw new Error("Resolved preview image must be a valid object.");
+  const slot = text(value.slot, "Resolved preview image slot", 30) as PreviewImageSlot;
+  if (!["hero", "service", "gallery", "beforeAfter", "process", "cta"].includes(slot)) throw new Error("Resolved preview image slot is not supported.");
+  const source = text(value.source, "Resolved preview image source", 60) as PreviewImageSource;
+  if (!["business-photo", "configured-stock-provider", "curated-stock-photo-library", "curated-trade-library", "neutral-fallback"].includes(source)) throw new Error("Resolved preview image source is not supported.");
+  return {
+    id: text(value.id, "Resolved preview image ID", 120),
+    slot,
+    section: text(value.section, "Resolved preview image section", 160),
+    serviceTitle: value.serviceTitle === undefined ? undefined : text(value.serviceTitle, "Resolved preview image service title", 160, false),
+    src: previewImageUrl(value.src, "Resolved preview image URL"),
+    alt: text(value.alt, "Resolved preview image alt text", 500),
+    source,
+    intent: previewImageIntentValue(value.intent),
+  };
+}
+
+function imageTuple(value: unknown, field: string): [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage] {
+  if (!Array.isArray(value) || value.length < 3) throw new Error(`${field} must include three images.`);
+  return [
+    resolvedPreviewImageValue(value[0]),
+    resolvedPreviewImageValue(value[1]),
+    resolvedPreviewImageValue(value[2]),
+  ];
+}
+
+function previewImageSetValue(value: unknown): PreviewImageSet | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview resolved images must be a valid object.");
+  const providerStatus = text(value.providerStatus ?? "not configured", "Preview image provider status", 30) as PreviewImageSet["providerStatus"];
+  if (!["not configured", "configured"].includes(providerStatus)) throw new Error("Preview image provider status is not supported.");
+  const intents = Array.isArray(value.intents) ? value.intents.slice(0, 20).map(previewImageIntentValue) : [];
+  return {
+    hero: resolvedPreviewImageValue(value.hero),
+    services: imageTuple(value.services, "Preview service images"),
+    gallery: imageTuple(value.gallery, "Preview gallery images"),
+    beforeAfter: resolvedPreviewImageValue(value.beforeAfter),
+    process: resolvedPreviewImageValue(value.process),
+    cta: resolvedPreviewImageValue(value.cta),
+    intents,
+    sourceStatus: text(value.sourceStatus ?? "not recorded", "Preview image source status", 120),
+    providerStatus,
+    warnings: value.warnings === undefined ? [] : stringArray(value.warnings, "Preview image warnings", 20, 500),
+    resolvedAt: value.resolvedAt === undefined ? undefined : dateText(value.resolvedAt, "Preview images resolved date"),
+  };
+}
+
 function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
+  const layoutDirection = value.layoutDirection === undefined ? undefined : text(value.layoutDirection, "Preview layout direction", 40) as PreviewLayoutDirection;
+  if (layoutDirection && !["split-photo", "full-bleed-photo", "image-led-grid", "dark-premium", "light-editorial", "bold-local-service"].includes(layoutDirection)) throw new Error("Preview layout direction is not supported.");
   return {
     previewVersion: value.previewVersion === "v3" ? "v3" : value.previewVersion === "v2" ? "v2" : undefined,
     creativeBrief: creativeBriefValue(value.creativeBrief),
     regenerationFeedbackHistory: value.regenerationFeedbackHistory === undefined ? undefined : stringArray(value.regenerationFeedbackHistory, "Preview regeneration feedback history", 8, 240),
+    layoutDirection,
+    resolvedImages: previewImageSetValue(value.resolvedImages),
     direction: text(value.direction, "Preview direction", 5000),
     visualStyleDirection: text(value.visualStyleDirection ?? "Practical contractor visual direction.", "Visual style direction", 5000),
     artDirection: artDirectionValue(value.artDirection),

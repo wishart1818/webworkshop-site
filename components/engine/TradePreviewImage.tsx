@@ -26,6 +26,7 @@ export function TradePreviewImage({ alt, section, slot, src, source }: TradePrev
     <figure
       className={`prospect-preview-image prospect-preview-image--${slot}`}
       data-preview-image-source={source}
+      data-preview-image-src={src}
       data-preview-image-slot={slot}
       data-preview-image-state={imageState}
     >

@@ -7130,6 +7130,50 @@ body:has(.engine-shell) {
   grid-template-columns: minmax(0, 0.82fr) minmax(24rem, 1.18fr);
 }
 
+.prospect-preview-site[data-layout-direction="full-bleed-photo"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 0.75fr) minmax(26rem, 1.25fr);
+}
+
+.prospect-preview-site[data-layout-direction="full-bleed-photo"] .prospect-preview-image--hero {
+  aspect-ratio: 16 / 10;
+}
+
+.prospect-preview-site[data-layout-direction="image-led-grid"] .prospect-preview-service-list {
+  grid-template-columns: minmax(0, 1.1fr) repeat(2, minmax(0, 0.95fr));
+}
+
+.prospect-preview-site[data-layout-direction="bold-local-service"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 1fr);
+  border-bottom: 1px solid color-mix(in srgb, var(--prospect-primary) 16%, transparent);
+}
+
+.prospect-preview-site[data-layout-direction="light-editorial"] .prospect-preview-hero__content h1 {
+  max-width: 14ch;
+  letter-spacing: -0.026em;
+}
+
+.prospect-preview-site[data-layout-direction="dark-premium"] {
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--prospect-accent) 16%, transparent), transparent 28rem),
+    linear-gradient(135deg, color-mix(in srgb, var(--prospect-primary) 92%, #050706), color-mix(in srgb, var(--prospect-primary) 72%, #101820));
+}
+
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-hero,
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-nav,
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-process {
+  color: #ffffff;
+}
+
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-hero__content > p,
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-kicker,
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-text-link {
+  color: rgb(255 255 255 / 0.84);
+}
+
+.prospect-preview-site[data-layout-direction="dark-premium"] .prospect-preview-nav {
+  background: color-mix(in srgb, var(--prospect-primary) 92%, #050706);
+}
+
 .prospect-preview-hero__content h1 {
   max-width: 12.5ch;
   font-size: clamp(3rem, 6vw, 5.45rem);

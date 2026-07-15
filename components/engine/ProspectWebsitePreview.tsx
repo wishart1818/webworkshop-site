@@ -73,7 +73,7 @@ const tradePageCopy: Record<Prospect["trade"], TradePageCopy> = {
     { title: "Installation", description: "Plan beds, plants, edging, and hardscape details with a defined scope." },
     { title: "Seasonal maintenance", description: "Organize recurring care, cleanups, and seasonal property needs." },
   ] },
-  "Pressure Washing": { heroHeadline: "A cleaner exterior starts with a clear quote.", servicesHeadline: "Exterior cleaning for the surfaces that need attention.", servicesIntro: "Show the likely scope and make it easy to request a property-specific quote.", services: [
+  "Pressure Washing": { heroHeadline: "Exterior cleaning that makes the difference easy to see.", servicesHeadline: "Pressure washing for the surfaces people notice first.", servicesIntro: "Help homeowners choose the right exterior cleaning service and request a quote with the right details.", services: [
     { title: "House washing", description: "Plan exterior siding and trim cleaning around the property materials." },
     { title: "Concrete cleaning", description: "Address driveways, walks, patios, and other hard surfaces." },
     { title: "Roof and soft washing", description: "Request a surface-aware cleaning approach for more sensitive exterior areas." },
@@ -135,10 +135,10 @@ function normalizeLocationCopy(value: string, rawCity: string, displayCity: stri
 }
 
 function trustItemDescription(item: string) {
-  if (/serving/i.test(item)) return "Service-area expectations are easy to find.";
-  if (/phone|contact/i.test(item)) return "The contact path stays visible and direct.";
-  if (/service/i.test(item)) return "Homeowners can quickly find the help they need.";
-  return "The next step is clear without extra searching.";
+  if (/serving/i.test(item)) return "Customers can quickly confirm whether their property is in range.";
+  if (/phone|contact/i.test(item)) return "Customers have a direct way to start the conversation.";
+  if (/service/i.test(item)) return "The main services are easy to compare before someone calls.";
+  return "The estimate request is simple and easy to start.";
 }
 
 function businessInitials(name: string) {
@@ -154,16 +154,16 @@ function businessInitials(name: string) {
 function proofCopy(trade: Prospect["trade"], displayTrade: string) {
   const byTrade: Partial<Record<Prospect["trade"], { headline: string; intro: string; checkpoints: [TradeServiceCard, TradeServiceCard, TradeServiceCard] }>> = {
     "Pressure Washing": {
-      headline: "Make the before-and-after easy to understand.",
-      intro: "Visitors can quickly compare the surface, choose the right cleaning service, and request a quote without hunting around the page.",
+      headline: "Show the surfaces customers care about most.",
+      intro: "Homeowners can see house washing, concrete cleaning, and exterior cleaning options without guessing which service to ask for.",
       checkpoints: [
         { title: "Choose the surface", description: "House siding, concrete, roof areas, and other exterior surfaces are separated clearly." },
         { title: "Explain the condition", description: "The form guides customers to share what needs cleaning and where it is located." },
-        { title: "Request a clear quote", description: "The main action stays focused on getting a property-specific estimate." },
+        { title: "Request a clear quote", description: "The main action helps customers ask for a property-specific estimate." },
       ],
     },
     HVAC: {
-      headline: "Make urgent comfort issues easier to route.",
+      headline: "Route comfort problems to the right service.",
       intro: "The page puts repairs, replacements, and maintenance into separate paths so homeowners can ask for the right help faster.",
       checkpoints: [
         { title: "Repair path", description: "Symptoms, airflow issues, and no-heat or no-cooling concerns are easy to describe." },
@@ -172,7 +172,7 @@ function proofCopy(trade: Prospect["trade"], displayTrade: string) {
       ],
     },
     Roofing: {
-      headline: "Put roof concerns into a clearer order.",
+      headline: "Put roof concerns into a practical order.",
       intro: "The page helps homeowners understand whether they need repair, replacement, storm review, or a direct estimate request.",
       checkpoints: [
         { title: "Show the concern", description: "Leaks, shingles, flashing, and storm damage are grouped into practical starting points." },
@@ -182,8 +182,8 @@ function proofCopy(trade: Prospect["trade"], displayTrade: string) {
     },
   };
   return byTrade[trade] ?? {
-    headline: `Make ${displayTrade.toLowerCase()} options easier to compare.`,
-    intro: "Visitors can see the services, understand the next step, and contact the business without digging through a long page.",
+    headline: `${displayTrade} options that are easy to compare.`,
+    intro: "Customers can see the services, understand the next step, and contact the business without digging through a long page.",
     checkpoints: [
       { title: "Pick the service", description: "The most common customer needs are separated into clear service paths." },
       { title: "Share the project", description: "Customers can explain the property, timing, and scope before the first call." },
@@ -256,7 +256,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
     .replace(new RegExp(`\\b${escapedTrade}\\b`, "gi"), displayTrade);
   const pageCopy = tradePageCopy[canonicalTrade];
   const serviceArea = normalizeCopy(prospect.serviceArea || `${displayCity}, ${displayState}`);
-  const images = resolvePreviewImages(renderProspect, pageCopy.services);
+  const images = preview.resolvedImages ?? resolvePreviewImages(renderProspect, pageCopy.services);
   const proof = proofCopy(canonicalTrade, displayTrade);
   const faqs = faqItems(canonicalTrade, styleProfile.ctaLabel);
   const steps = quoteProcess(displayTrade, styleProfile.ctaLabel);
@@ -267,8 +267,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const trustItems = (preview.trustItems ?? [
     `Serving ${displayCity}, ${displayState}`,
     prospect.phone ? "Direct phone contact" : "Clear contact path",
-    "Services explained clearly",
-    "Simple estimate next step",
+    `${displayTrade} services`,
+    "Easy estimate request",
   ]).map(normalizeCopy);
   const style = {
     "--prospect-primary": styleProfile.primaryColor,
@@ -294,6 +294,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         data-card-style={artDirection?.cardStyle ?? "layered-photo-cards"}
         data-hero-treatment={artDirection?.heroTreatment ?? "clean-editorial"}
         data-layout={styleProfile.layoutStyle}
+        data-layout-direction={preview.layoutDirection ?? "split-photo"}
         data-rhythm={artDirection?.layoutRhythm ?? "calm-premium"}
         data-tone={styleProfile.tone}
         style={style}
@@ -336,8 +337,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <TradePreviewImage {...previewImageProps(images.hero, "hero")} />
             <div className="prospect-preview-visual-caption">
               <small>{displayTrade} services</small>
-              <strong>{displayCity} customers can see what to request before they call.</strong>
-              <span>Clear service paths, direct contact options, and quote steps stay close to the photos.</span>
+              <strong>{displayCity} customers can see the right service before they call.</strong>
+              <span>Services, photos, and contact options work together so the next step is easy.</span>
             </div>
           </aside>
         </section>
@@ -421,8 +422,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         <section className="prospect-preview-gallery-section" id="gallery">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Gallery</span>
-            <h2>Help customers recognize the service they need.</h2>
-            <p>Relevant photos make it easier to choose a service, understand the scope, and request the right next step.</p>
+            <h2>Show the kind of help customers are looking for.</h2>
+            <p>Relevant photos make each service easier to recognize before someone calls or requests a quote.</p>
           </div>
           <div className="prospect-preview-gallery" aria-label={`${displayTrade} service gallery`}>
             {galleryAssets.map((asset, index) => (
@@ -443,8 +444,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         <section className="prospect-preview-compare" aria-label="Service comparison slider">
           <div>
             <span className="prospect-preview-kicker">Service comparison</span>
-            <h2>Make the result easier to picture.</h2>
-            <p>A simple slider gives customers a quick way to compare the concern with the goal before they request help.</p>
+            <h2>Help customers picture the finished result.</h2>
+            <p>A simple slider-style concept lets customers compare what needs attention with the cleaner finished look.</p>
           </div>
           <div className="prospect-preview-slider-card">
             <TradePreviewImage {...previewImageProps(images.beforeAfter, "service")} />
@@ -480,7 +481,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>A simple path to the right next step.</h2>
-            <p>{normalizeCopy(preview.leadCaptureStrategy)}</p>
+            <p>{displayTrade} requests start with the service, property details, timing, and the best way to reach the team.</p>
             <TradePreviewImage {...previewImageProps(images.cta, "proof")} />
           </div>
           <form action="#contact" aria-describedby="preview-form-note">

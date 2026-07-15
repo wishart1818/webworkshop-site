@@ -531,7 +531,7 @@ function PreviewView({
     { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
     { title: preview.serviceHighlights?.[2] ?? "Estimate request", description: "Supporting service." },
   ] as const;
-  const imageSet = resolvePreviewImages(prospect, services);
+  const imageSet = prospect.preview?.resolvedImages ?? resolvePreviewImages(prospect, services);
   const imageSummary = [
     imageSet.hero,
     ...imageSet.services,

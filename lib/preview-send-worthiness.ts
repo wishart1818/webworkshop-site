@@ -34,8 +34,6 @@ function publicCopy(preview: PreviewConcept) {
     ...(preview.serviceHighlights ?? []),
     ...(preview.trustItems ?? []),
     preview.ctaStrategy,
-    preview.portfolioDirection,
-    preview.trustStrategy,
     preview.leadCaptureStrategy,
   ].filter(Boolean).join("\n");
 }
@@ -79,11 +77,17 @@ export function evaluatePreviewSendWorthiness(
     warnings.push("The public preview route could not be verified against the latest saved preview.");
   }
 
-  const images = resolvePreviewImages(prospect, previewServices(prospect, preview));
+  const images = preview.resolvedImages ?? resolvePreviewImages(prospect, previewServices(prospect, preview));
   const imageList = [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta];
-  const resolvedImageCount = imageList.filter((image) => image.src && image.source !== "neutral-fallback").length;
+  const resolvedImageCount = imageList.filter((image) => image.src && image.source !== "neutral-fallback" && image.source !== "curated-trade-library").length;
   const imageValidation = validatePreviewImages(imageList);
   warnings.push(...images.warnings, ...imageValidation.warnings);
+  if (images.hero.source === "curated-trade-library" || images.hero.source === "neutral-fallback") {
+    warnings.push("Hero image did not resolve to photography.");
+  }
+  if (imageList.some((image) => image.source === "curated-trade-library")) {
+    warnings.push("One or more public preview sections are using illustration fallback instead of photography.");
+  }
 
   const copy = publicCopy(preview);
   if (!copy.includes(prospect.businessName)) warnings.push("Business name is not clearly represented in the preview copy.");

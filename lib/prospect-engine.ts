@@ -6,6 +6,7 @@ import {
   webworkshopPreviewValueLine,
   webworkshopYesReply,
 } from "@/lib/outreach-style-guide";
+import { attachResolvedPreviewImages, type PreviewImageSet } from "@/lib/preview-image-resolver";
 
 export const prospectStatuses = [
   "New",
@@ -165,6 +166,8 @@ export type PreviewConcept = {
   previewVersion?: "v2" | "v3";
   creativeBrief?: PreviewCreativeBrief;
   regenerationFeedbackHistory?: string[];
+  layoutDirection?: PreviewLayoutDirection;
+  resolvedImages?: PreviewImageSet;
   direction: string;
   visualStyleDirection: string;
   artDirection?: PreviewArtDirection;
@@ -184,6 +187,14 @@ export type PreviewConcept = {
   generatedAt: string;
 };
 
+export type PreviewLayoutDirection =
+  | "split-photo"
+  | "full-bleed-photo"
+  | "image-led-grid"
+  | "dark-premium"
+  | "light-editorial"
+  | "bold-local-service";
+
 export type PreviewCreativeBrief = {
   businessName: string;
   trade: TradeCategory;
@@ -201,7 +212,7 @@ export type PreviewCreativeBrief = {
   logoSource: "not found" | "website" | "business asset" | "operator supplied";
   brandColorSource: PreviewStyleProfile["brandSource"];
   brandingSource: "detected cue" | "trade fallback";
-  imagerySource: "trade photo library" | "business assets" | "configured stock provider";
+  imagerySource: "curated stock photo library" | "trade photo library" | "business assets" | "configured stock provider";
   reviewSignal: "not used" | "public rating count only";
   factualPublicProof: string[];
   contactDetails: string[];
@@ -727,6 +738,18 @@ function previewImageIntentSummary(trade: TradeCategory, services: readonly stri
   ];
 }
 
+function choosePreviewLayoutDirection(prospect: Prospect, artDirection: PreviewArtDirection): PreviewLayoutDirection {
+  const optionsByHero: Record<PreviewArtDirection["heroTreatment"], PreviewLayoutDirection[]> = {
+    "photo-led-overlap": ["split-photo", "full-bleed-photo", "image-led-grid", "bold-local-service"],
+    "service-command": ["image-led-grid", "split-photo", "light-editorial", "bold-local-service"],
+    "proof-forward": ["full-bleed-photo", "image-led-grid", "dark-premium", "split-photo"],
+    "clean-editorial": ["light-editorial", "split-photo", "image-led-grid", "bold-local-service"],
+  };
+  const options = optionsByHero[artDirection.heroTreatment] ?? ["split-photo", "image-led-grid", "light-editorial"];
+  const index = seededScore(`${prospect.businessName}|${prospect.trade}|${prospect.city}|${artDirection.name}`, options.length);
+  return options[index] ?? "split-photo";
+}
+
 function boundedQuality(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -764,6 +787,12 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     preview.creativeBrief?.likelyCustomerType,
     preview.creativeBrief?.visualDirection,
     preview.creativeBrief?.ctaStrategy,
+    preview.layoutDirection,
+    preview.resolvedImages?.sourceStatus,
+    preview.resolvedImages?.hero.source,
+    preview.resolvedImages?.hero.src,
+    ...((preview.resolvedImages?.services ?? []).map((image) => `${image.source} ${image.src} ${image.intent.query}`)),
+    ...((preview.resolvedImages?.gallery ?? []).map((image) => `${image.source} ${image.src} ${image.intent.query}`)),
     preview.hero,
     preview.heroHeadline,
     preview.heroSupporting,
@@ -790,11 +819,22 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   const hasInteractiveFeatures = (preview.artDirection?.interactiveFeatures?.length ?? 0) >= 5
     || /FAQ accordion|gallery lightbox|before-after style slider|quote form browser validation|sticky mobile quote CTA/i.test(searchable);
   const hasImageryPlan = (preview.artDirection?.imageryPlan?.length ?? 0) >= 5;
+  const imageList = preview.resolvedImages ? [
+    preview.resolvedImages.hero,
+    ...preview.resolvedImages.services,
+    ...preview.resolvedImages.gallery,
+    preview.resolvedImages.beforeAfter,
+    preview.resolvedImages.process,
+    preview.resolvedImages.cta,
+  ] : [];
+  const photoLedImageCount = imageList.filter((image) => ["business-photo", "configured-stock-provider", "curated-stock-photo-library"].includes(image.source)).length;
+  const illustrationFallbackUsed = imageList.some((image) => image.source === "curated-trade-library" || image.source === "neutral-fallback");
+  const uniqueImageCount = new Set(imageList.map((image) => image.src)).size;
   const hasCta = Boolean(preview.styleProfile?.ctaLabel) && searchable.includes(preview.styleProfile?.ctaLabel ?? "");
   const hasBrandingSource = Boolean(preview.creativeBrief?.brandingSource && preview.creativeBrief?.brandColorSource);
   const hasLogoDecision = Boolean(preview.creativeBrief?.logoStatus && preview.creativeBrief?.logoSource);
   const hasSectionImageIntents = (preview.creativeBrief?.imageIntents?.length ?? 0) >= 5;
-  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler/i.test(searchable);
+  const weakImagery = /repeated placeholder art|abstract visual panel|generic filler|same image repeated|random stock|placeholder-led|weak filler/i.test(searchable) || illustrationFallbackUsed || (imageList.length > 0 && photoLedImageCount < 6) || (imageList.length > 0 && uniqueImageCount < 5);
   const repeatedStructure = /three identical cards|same structure repeated|block-stacked|template/i.test(searchable);
   const ignoredBrand = /ignored brand|same palette for every business/i.test(searchable);
   const publicCandidateCopy = [
@@ -811,9 +851,9 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
 
   const detailed = {
-    heroImpact: boundedQuality(60 + (hasStrongHeroVisual ? 22 : 0) + (hasImageDirection ? 8 : 0) + (hasCta ? 5 : 0) - (weakImagery ? 25 : 0)),
-    imageQuality: boundedQuality(58 + (hasImageryPlan ? 14 : 0) + (hasSectionImageIntents ? 12 : 0) + (hasImageDirection ? 8 : 0) - (weakImagery ? 28 : 0)),
-    imageSectionRelevance: boundedQuality(62 + (hasSectionImageIntents ? 18 : 0) + (hasTradeServices ? 8 : 0) - (weakImagery ? 22 : 0)),
+    heroImpact: boundedQuality(60 + (hasStrongHeroVisual ? 18 : 0) + (hasImageDirection ? 8 : 0) + (photoLedImageCount >= 6 ? 10 : 0) + (hasCta ? 5 : 0) - (weakImagery ? 25 : 0)),
+    imageQuality: boundedQuality(58 + (hasImageryPlan ? 10 : 0) + (hasSectionImageIntents ? 10 : 0) + (photoLedImageCount >= 6 ? 16 : 0) + (uniqueImageCount >= 5 ? 8 : 0) - (weakImagery ? 28 : 0)),
+    imageSectionRelevance: boundedQuality(62 + (hasSectionImageIntents ? 14 : 0) + (hasTradeServices ? 8 : 0) + (photoLedImageCount >= 6 ? 10 : 0) - (weakImagery ? 22 : 0)),
     branding: boundedQuality(62 + (hasStyleProfile ? 12 : 0) + (hasBrandingSource ? 10 : 0) + (mentionsBusiness ? 8 : 0) - (ignoredBrand ? 18 : 0)),
     colorUsage: boundedQuality(68 + (hasBrandingSource ? 12 : 0) + (hasStyleProfile ? 8 : 0) - (ignoredBrand ? 18 : 0)),
     logoUsage: boundedQuality(68 + (hasLogoDecision ? 12 : 0) + (preview.creativeBrief?.logoStatus === "available" ? 4 : 0)),
@@ -834,6 +874,8 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
   };
   const notes = previewQualityNotes(base);
   if (weakImagery) notes.push("Flag: imagery sounds generic, random, repeated, or placeholder-led.");
+  if (illustrationFallbackUsed) notes.push("Flag: one or more public preview images resolved to illustration fallback instead of photography.");
+  if (imageList.length > 0 && uniqueImageCount < 5) notes.push("Flag: preview repeats too many images across visible sections.");
   if (!hasStrongHeroVisual) notes.push("Flag: hero needs a stronger trade-relevant visual direction.");
   if (!hasSectionVariety) notes.push("Flag: section rhythm needs more visual variety.");
   if (!hasInteractiveFeatures) notes.push("Flag: preview needs mobile-friendly interactions such as FAQ, gallery, form validation, or sticky CTA.");
@@ -1288,6 +1330,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     ? escapedCity ? prospect.serviceArea.replace(new RegExp(escapedCity, "gi"), displayCity) : prospect.serviceArea
     : `${displayCity}, ${displayState}`;
   const artDirection = previewArtDirection(prospect, styleProfile);
+  const layoutDirection = choosePreviewLayoutDirection(prospect, artDirection);
   const verifiedProofAreas = playbook.trustProof.map((item) => `verified ${item}`).join(", ");
   const contactDetails = [
     prospect.phone ? "phone" : "",
@@ -1317,8 +1360,8 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   const trustItems = [
     `Serving ${prospect.city}, ${prospect.state}`,
     prospect.phone ? "Direct phone contact" : "Clear contact path",
-    "Services explained clearly",
-    "Simple estimate next step",
+    `${displayTrade} services`,
+    "Easy estimate request",
   ];
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   const services = playbook.services.map(titleCase);
@@ -1341,7 +1384,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
       logoSource: "not found",
       brandColorSource: styleProfile.brandSource,
       brandingSource: styleProfile.brandSource === "trade fallback" ? "trade fallback" : "detected cue",
-      imagerySource: "trade photo library",
+      imagerySource: "curated stock photo library",
       reviewSignal: prospect.reviewCount > 0 ? "public rating count only" : "not used",
       factualPublicProof: [
         prospect.reviewCount > 0 ? `${prospect.reviewCount} public review count recorded` : "",
@@ -1363,8 +1406,9 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
       ],
       ctaStrategy: artDirection.ctaTreatment,
     },
+    layoutDirection,
     direction: `A visually premium, local-first ${tradeLower} website that feels like ${prospect.businessName}: ${artDirection.visualVoice}.`,
-    visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} ${artDirection.imageTreatment} Use ${styleProfile.primaryColor} as the primary brand color and ${styleProfile.accentColor} only for focused emphasis. Keep sample proof clearly labeled until verified business assets are available.`,
+    visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} ${artDirection.imageTreatment} Use ${styleProfile.primaryColor} as the primary brand color and ${styleProfile.accentColor} only for focused emphasis. Keep the public page focused on verified services, service area, photos, and contact actions.`,
     artDirection,
     hero: `${prospect.businessName} serves ${serviceArea} with services, contact options, and quote requests easy to find.`,
     heroHeadline: heroHeadlines[trade],
@@ -1375,12 +1419,12 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     homepageStructure: [
       `${artDirection.heroTreatment.replaceAll("-", " ")} hero with "${styleProfile.ctaLabel}", a strong trade photo, and business-specific service-area copy`,
       `${playbook.services.join(", ")} organized with distinct service photos, card styles, and homeowner need`,
-      noWebsiteProspect ? "Supported public business details and clearly labeled proof placeholders" : `Verification-ready proof areas for ${verifiedProofAreas}`,
-      noWebsiteProspect ? "A sample project-proof section ready for verified photos and facts" : "Sample local work layout ready for verified photos, scope, and outcome",
+      noWebsiteProspect ? "Supported public business details with room for future proof once supplied" : `Support areas for ${verifiedProofAreas} without publishing claims until verified`,
+      noWebsiteProspect ? "A service-photo gallery focused on common customer needs" : "A photo-led service gallery that avoids unverified project claims",
       `${artDirection.sectionFlow} Service areas, practical FAQs, and lead form`,
     ],
     ctaStrategy: artDirection.ctaTreatment,
-    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Distinct real-looking visual slots for each core service", "Verification-ready trust proof and FAQs", styleProfile.ctaLabel],
+    servicePageStructure: ["Homeowner problem and service fit", "Scope, options, and what is included", "Distinct photo slots for each core service", "Plain-language trust points and FAQs", styleProfile.ctaLabel],
     portfolioDirection: noWebsiteProspect
       ? "Reserve a clearly labeled project-proof section for verified photos, locations, scope, and outcomes supplied by the business."
       : "Use a clearly labeled sample layout for project photos until the business supplies verified location, scope, and outcome details.",
@@ -1390,9 +1434,10 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     leadCaptureStrategy: `Keep the first step focused on ${playbook.leadDetails.join(", ")} and contact details.`,
     generatedAt: now(),
   };
+  const previewWithImages = attachResolvedPreviewImages(prospect, preview);
   return {
-    ...preview,
-    qualityScore: scorePreviewQuality(prospect, preview),
+    ...previewWithImages,
+    qualityScore: scorePreviewQuality(prospect, previewWithImages),
   };
 }
 
@@ -1471,15 +1516,18 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
   if (!safeFeedback) return preview;
   const lower = safeFeedback.toLowerCase();
   const artDirection = preview.artDirection ? { ...preview.artDirection } : undefined;
+  let layoutDirection = preview.layoutDirection;
   if (artDirection) {
     if (/premium|upscale|dramatic|bold|cinematic|image-led|photo/.test(lower)) {
       artDirection.heroTreatment = "photo-led-overlap";
       artDirection.layoutRhythm = "bold-asymmetric";
       artDirection.cardStyle = "layered-photo-cards";
       artDirection.imageTreatment = "Use a more dramatic photo-led hero, larger imagery, deeper contrast, and fewer text-heavy blocks.";
+      layoutDirection = "full-bleed-photo";
     }
     if (/darker|dark|black|moody/.test(lower)) {
       artDirection.ctaTreatment = "Use a high-contrast estimate CTA with a darker premium surface and a clear phone option.";
+      layoutDirection = "dark-premium";
     }
     if (/concrete|driveway|roof|house wash|soft wash|equipment|landscap|hvac|plumb|electric|cleaning|painting|tree/.test(lower)) {
       artDirection.imageryPlan = [...new Set([...artDirection.imageryPlan, "operator-requested image emphasis"])];
@@ -1492,6 +1540,7 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
   return {
     ...preview,
     artDirection,
+    layoutDirection,
     regenerationFeedbackHistory: [safeFeedback, ...(preview.regenerationFeedbackHistory ?? [])].slice(0, 8),
   };
 }
@@ -1499,7 +1548,7 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
 export function regeneratePreview(prospect: Prospect, feedback = ""): Prospect {
   const blockReason = previewRegenerationBlockReason(prospect);
   if (blockReason) throw new Error(`Preview regeneration blocked: ${blockReason}.`);
-  const generated = applyPreviewFeedback(generatePreview(prospect), feedback);
+  const generated = attachResolvedPreviewImages(prospect, applyPreviewFeedback(generatePreview(prospect), feedback));
   return {
     ...prospect,
     preview: {
