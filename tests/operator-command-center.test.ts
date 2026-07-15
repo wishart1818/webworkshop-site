@@ -184,6 +184,32 @@ test("confirmed preview regeneration uses latest generator and sends nothing", a
   assert.equal(confirmed.receipt.outreachSent.forms, 0);
 });
 
+test("confirmed preview regeneration command blocks unsafe contacted records without mutation", async () => {
+  resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
+  const prospect = withPreview(withOutreach(withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    id: "preview-command-contacted",
+    businessName: "Contacted Pressure Washing",
+    email: "hello@contactedwash.test",
+    recommendedContactMethod: "send_email",
+    status: "Contacted",
+  })));
+  prospect.preview = { ...prospect.preview!, previewVersion: "v2" };
+  setProspectMemoryForTests([prospect]);
+
+  const confirmed = await executeOperatorCommand("Regenerate the preview for Contacted Pressure Washing", { confirmed: true });
+  const [saved] = await listProspects();
+
+  assert.equal(confirmed.receipt.status, "blocked");
+  assert.match(confirmed.receipt.safeErrorMessage ?? "", /Preview regeneration blocked/i);
+  assert.equal(saved.preview?.previewVersion, "v2");
+  assert.equal(confirmed.receipt.recordsAffected, 0);
+  assert.equal(confirmed.receipt.outreachSent.emails, 0);
+  assert.equal(confirmed.receipt.outreachSent.dms, 0);
+  assert.equal(confirmed.receipt.outreachSent.forms, 0);
+});
+
 test("bulk preview regeneration excludes unsafe or non-actionable records", async () => {
   resetOperationalMemoryForTests();
   resetProspectMemoryForTests();

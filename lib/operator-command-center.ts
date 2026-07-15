@@ -7,7 +7,7 @@ import { createOrRefreshAutonomousReviewPackageForProspect, getAutonomousGrowthD
 import { autonomousGrowthModes, type AutonomousGrowthMode, type AutonomousGrowthSettings } from "@/lib/autonomous-growth";
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { listProspects, saveProspect } from "@/lib/prospect-repository";
-import { PREVIEW_GENERATOR_VERSION, regeneratePreview, type Prospect } from "@/lib/prospect-engine";
+import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, regeneratePreview, type Prospect } from "@/lib/prospect-engine";
 import { prospectCurrentBucket } from "@/lib/prospect-funnel";
 
 export const operatorCommandTypes = [
@@ -222,11 +222,9 @@ function suspiciousPreviewEmail(email: string) {
 
 function previewBulkEligibility(prospect: Prospect, force = false) {
   const bucket = prospectCurrentBucket(prospect);
-  const status = prospect.status.toLowerCase();
-  const activityText = prospect.activities.map((activity) => `${activity.type} ${activity.label}`).join(" ").toLowerCase();
   if (/magic touch pressure washing/i.test(prospect.businessName)) return { eligible: false, reason: "excluded protected test/business record" };
-  if (["contacted", "interested", "proposal sent", "closed won", "closed lost"].includes(status)) return { eligible: false, reason: "already contacted or closed" };
-  if (/suppressed|opted out|do not contact|bounced|complained|not interested|never contact|sent/.test(activityText)) return { eligible: false, reason: "suppressed, contacted, sent, or non-actionable history" };
+  const blockReason = previewRegenerationBlockReason(prospect);
+  if (blockReason) return { eligible: false, reason: blockReason };
   if (!["ready_email", "ready_contact_form"].includes(bucket)) return { eligible: false, reason: `not in eligible written review bucket (${bucket})` };
   if (bucket === "ready_email" && (!prospect.email || suspiciousPreviewEmail(prospect.email))) return { eligible: false, reason: "missing or suspicious public email" };
   if (!force && prospectPreviewIsCurrent(prospect)) return { eligible: false, reason: "already using latest polished generator" };
@@ -979,8 +977,27 @@ export async function executeOperatorCommand(commandText: string, options: { mod
           relatedPage: "Prospects",
         });
       } else {
+        const blockReason = previewRegenerationBlockReason(prospect);
+        if (blockReason) {
+          receipt = makeReceipt({
+            commandText: preview.commandText,
+            commandType: preview.commandType,
+            status: "blocked",
+            plannedActions: preview.plannedActions,
+            whatChanged: [],
+            whatDidNotChange: [`Preview regeneration blocked: ${blockReason}.`, "No preview changed.", "No outreach was sent."],
+            recordsAffected: 0,
+            testsTriggered: [],
+            safeErrorMessage: `Preview regeneration blocked: ${blockReason}.`,
+            safeErrorCategory: "preview_regeneration_blocked",
+            nextRecommendedAction: "Choose an unsent, uncontacted, non-suppressed prospect.",
+            relatedPage: "Prospects",
+            relatedProspectIds: [prospect.id],
+          });
+        } else {
         const updated = regeneratePreview(prospect, previewSafeFeedback(preview.parsedParameters.FEEDBACK));
         const saved = await saveProspect(updated);
+        const queueItem = await createOrRefreshAutonomousReviewPackageForProspect(saved.id);
         receipt = makeReceipt({
           commandText: preview.commandText,
           commandType: preview.commandType,
@@ -993,6 +1010,7 @@ export async function executeOperatorCommand(commandText: string, options: { mod
             `Generator: ${PREVIEW_GENERATOR_VERSION}.`,
             `QA score: ${saved.preview?.qualityScore?.overall ?? "N/A"}.`,
             `QA status: ${saved.preview?.qualityScore?.status ?? "Not scored"}.`,
+            queueItem ? `Linked unsent review package refreshed: ${queueItem.id}.` : "No eligible linked review package was refreshed.",
           ],
           whatDidNotChange: ["Public preview record identity was retained.", "No outreach was sent.", "Contact/suppression/sent history was not rewritten."],
           recordsAffected: 1,
@@ -1001,6 +1019,7 @@ export async function executeOperatorCommand(commandText: string, options: { mod
           relatedPage: "Prospects",
           relatedProspectIds: [saved.id],
         });
+        }
       }
     } else if (preview.commandType === "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS") {
       const force = Boolean(preview.parsedParameters.FORCE);

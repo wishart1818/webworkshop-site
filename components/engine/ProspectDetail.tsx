@@ -64,6 +64,7 @@ type ProspectDetailProps = {
   onCreateReviewPackage: () => Promise<void>;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
+  previewRegenerating?: boolean;
   onClose?: () => void;
   note: string;
   setNote: (value: string) => void;
@@ -126,6 +127,7 @@ export function ProspectDetail({
   onCreateReviewPackage,
   onPreview,
   onStatus,
+  previewRegenerating = false,
   onClose,
   note,
   setNote,
@@ -133,6 +135,7 @@ export function ProspectDetail({
   updateSelected,
 }: ProspectDetailProps) {
   const [previewOpenMessage, setPreviewOpenMessage] = useState("");
+  const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const presenceLabels = prospectPresenceLabels(prospect);
   const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
@@ -203,7 +206,7 @@ export function ProspectDetail({
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
-          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} publicPreviewUrl={publicPreviewUrl} />
+          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} previewRegenerating={previewRegenerating} publicPreviewUrl={publicPreviewUrl} />
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
         {detailTab === "Details" && <DetailsView prospect={prospect} />}
@@ -216,16 +219,16 @@ export function ProspectDetail({
       ) : null}
       <div className="engine-mobile-action-bar" aria-label="Mobile prospect actions">
         <button className="engine-button engine-button--primary" onClick={primaryAction.action} type="button">{primaryAction.label}</button>
-        <details className="engine-action-menu engine-action-menu--up">
+        <details className="engine-action-menu engine-action-menu--up" open={mobileActionMenuOpen} onToggle={(event) => setMobileActionMenuOpen(event.currentTarget.open)}>
           <summary>More</summary>
           <div>
-            <button onClick={() => setDetailTab("Outreach")} type="button">Open outreach</button>
-            <button onClick={openPublicPreview} type="button">Open preview</button>
-            <button onClick={() => setDetailTab("Preview")} type="button">View internal Preview tab</button>
-            <button onClick={() => void onRegeneratePreview()} type="button">Regenerate preview</button>
-            <button onClick={() => void onRegenerateOutreach()} type="button">Rewrite outreach</button>
-            <button onClick={() => void onCreateReviewPackage()} type="button">Create review package</button>
-            <button onClick={() => onStatus("Reviewed")} type="button">Mark reviewed</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Outreach"); }} type="button">Open outreach</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); openPublicPreview(); }} type="button">Open preview</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">View internal Preview tab</button>
+            <button disabled={previewRegenerating} onClick={() => { setMobileActionMenuOpen(false); void onRegeneratePreview(); }} type="button">{previewRegenerating ? "Regenerating preview" : "Regenerate preview"}</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); void onRegenerateOutreach(); }} type="button">Rewrite outreach</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); void onCreateReviewPackage(); }} type="button">Create review package</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); onStatus("Reviewed"); }} type="button">Mark reviewed</button>
           </div>
         </details>
       </div>
@@ -479,12 +482,14 @@ function PreviewView({
   onCreateReviewPackage,
   onOpenPublicPreview,
   onRegeneratePreview,
+  previewRegenerating,
   publicPreviewUrl,
 }: {
   prospect: Prospect;
   onCreateReviewPackage: () => Promise<void>;
   onOpenPublicPreview: () => void;
   onRegeneratePreview: (feedback?: string) => Promise<void>;
+  previewRegenerating: boolean;
   publicPreviewUrl: string;
 }) {
   const preview = prospect.preview!;
@@ -516,7 +521,7 @@ function PreviewView({
     ["Text", styleProfile.inkColor],
   ];
   async function regenerate(nextFeedback = "") {
-    if (regenerating) return;
+    if (regenerating || previewRegenerating) return;
     setRegenerating(true);
     try {
       await onRegeneratePreview(nextFeedback);
@@ -536,14 +541,14 @@ function PreviewView({
         </div>
         <div className="engine-preview-action-bar__actions">
           <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
-          <button className="engine-button" disabled={regenerating} onClick={() => void regenerate()} type="button">{regenerating ? "Regenerating" : "Regenerate Preview"}</button>
+          <button className="engine-button" disabled={regenerating || previewRegenerating} onClick={() => void regenerate()} type="button">{regenerating || previewRegenerating ? "Regenerating" : "Regenerate Preview"}</button>
           <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
           <a className="engine-button" href="#preview-qa">Preview QA</a>
         </div>
         <label className="engine-preview-feedback">
           <span>Regenerate with feedback</span>
           <textarea onChange={(event) => setFeedback(event.target.value)} placeholder="Example: make it darker, more premium, more image-led, or emphasize concrete cleaning." value={feedback} />
-          <button className="engine-button" disabled={regenerating} onClick={() => void regenerate(feedback)} type="button">Apply Feedback</button>
+          <button className="engine-button" disabled={regenerating || previewRegenerating} onClick={() => void regenerate(feedback)} type="button">Apply Feedback</button>
         </label>
       </section>
       <section className="engine-preview-status-card">

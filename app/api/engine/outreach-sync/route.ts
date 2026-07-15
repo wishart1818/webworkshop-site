@@ -5,6 +5,8 @@ import {
 } from "@/lib/autonomous-growth-repository";
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { safeRecordAudit } from "@/lib/operational-controls";
+import { listProspects, saveProspect } from "@/lib/prospect-repository";
+import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, regeneratePreview } from "@/lib/prospect-engine";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,7 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as {
       action?: string;
       prospectId?: string;
+      feedback?: string;
       confirmed?: boolean;
       previewOnly?: boolean;
     };
@@ -32,6 +35,33 @@ export async function POST(request: Request) {
       if (!result) return NextResponse.json({ error: "Prospect was not found." }, { status: 404 });
       await safeRecordAudit({ action: "prospect_outreach_regenerate", outcome: "success", subject: payload.prospectId, metadata: { previewOnly: Boolean(payload.previewOnly), queueUpdated: result.wouldUpdateQueue } });
       return NextResponse.json(result);
+    }
+    if (payload.action === "regenerate_prospect_preview") {
+      if (!payload.prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });
+      const prospect = (await listProspects()).find((item) => item.id === payload.prospectId);
+      if (!prospect) return NextResponse.json({ error: "Prospect was not found." }, { status: 404 });
+      const blockReason = previewRegenerationBlockReason(prospect);
+      if (blockReason) {
+        await safeRecordAudit({ action: "prospect_preview_regenerate", outcome: "rejected", subject: payload.prospectId, metadata: { reason: blockReason } });
+        return NextResponse.json({ error: `Preview regeneration blocked: ${blockReason}.` }, { status: 409 });
+      }
+      const updated = regeneratePreview(prospect, payload.feedback ?? "");
+      const saved = await saveProspect(updated);
+      const queueItem = await createOrRefreshAutonomousReviewPackageForProspect(saved.id);
+      await safeRecordAudit({
+        action: "prospect_preview_regenerate",
+        outcome: "success",
+        subject: payload.prospectId,
+        metadata: { previewVersion: PREVIEW_GENERATOR_VERSION, queueItemId: queueItem?.id ?? "", feedbackProvided: Boolean(payload.feedback?.trim()) },
+      });
+      return NextResponse.json({
+        updatedProspect: saved,
+        queueItem,
+        previewVersion: PREVIEW_GENERATOR_VERSION,
+        message: queueItem
+          ? "Preview regenerated and review package refreshed. Nothing was sent."
+          : "Preview regenerated. No eligible review package was refreshed. Nothing was sent.",
+      });
     }
     if (payload.action === "create_autonomous_review_package") {
       if (!payload.prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });

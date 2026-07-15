@@ -7,6 +7,7 @@ import {
   generatePreview,
   generateProspectStyleProfile,
   prospectPresenceLabels,
+  previewRegenerationBlockReason,
   PREVIEW_GENERATOR_VERSION,
   regeneratePreview,
   scorePreviewQuality,
@@ -274,6 +275,26 @@ test("preview regeneration uses latest generator, records feedback, and sends no
   assert.match(regenerated.preview?.regenerationFeedbackHistory?.[0] ?? "", /darker, more premium/i);
   assert.doesNotMatch(regenerated.preview?.regenerationFeedbackHistory?.[0] ?? "", /certified|five-star/i);
   assert.equal(regenerated.outreach?.approved ?? false, false);
+});
+
+test("preview regeneration blocks contacted or suppressed records before mutation", () => {
+  const contacted = withPreview(withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    status: "Contacted",
+  }));
+  const suppressed = withPreview(withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    recommendedContactMethod: "do_not_contact",
+    activities: [
+      ...seedProspects[0].activities,
+      { id: "suppression-test", type: "status", label: "Prospect opted out. Never contact.", at: new Date().toISOString() },
+    ],
+  }));
+
+  assert.match(previewRegenerationBlockReason(contacted), /already contacted/i);
+  assert.match(previewRegenerationBlockReason(suppressed), /do not contact|suppression/i);
+  assert.throws(() => regeneratePreview(contacted), /Preview regeneration blocked/i);
+  assert.throws(() => regeneratePreview(suppressed), /Preview regeneration blocked/i);
 });
 
 test("preview intelligence changes meaningfully by contractor trade", () => {

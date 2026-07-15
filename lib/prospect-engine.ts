@@ -1497,6 +1497,8 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
 }
 
 export function regeneratePreview(prospect: Prospect, feedback = ""): Prospect {
+  const blockReason = previewRegenerationBlockReason(prospect);
+  if (blockReason) throw new Error(`Preview regeneration blocked: ${blockReason}.`);
   const generated = applyPreviewFeedback(generatePreview(prospect), feedback);
   return {
     ...prospect,
@@ -1509,6 +1511,24 @@ export function regeneratePreview(prospect: Prospect, feedback = ""): Prospect {
       ...prospect.activities,
     ],
   };
+}
+
+export function previewRegenerationBlockReason(prospect: Prospect) {
+  const status = prospect.status.toLowerCase();
+  if (["contacted", "interested", "proposal sent", "closed won", "closed lost"].includes(status)) {
+    return "prospect is already contacted, interested, sent, won, or closed";
+  }
+  if (prospect.recommendedContactMethod === "do_not_contact") {
+    return "prospect is marked do not contact";
+  }
+  const historyText = [
+    ...prospect.notes,
+    ...prospect.activities.map((item) => `${item.type} ${item.label}`),
+  ].join(" ").toLowerCase();
+  if (/suppressed|opted out|opted-out|do not contact|bounced|complained|not interested|never contact|closed lost|sent email|email sent|prospect email sent|marked sent/.test(historyText)) {
+    return "prospect has suppression, sent, bounce, complaint, or non-actionable history";
+  }
+  return "";
 }
 
 type CreateProspectInput = Omit<

@@ -336,6 +336,41 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Nothing is sent/);
 });
 
+test("preview regeneration controls use one protected action with loading and safe feedback", () => {
+  const source = readFileSync("components/ProspectEngine.tsx", "utf8");
+  const route = readFileSync("app/api/engine/outreach-sync/route.ts", "utf8");
+  const handler = source.slice(source.indexOf("async function regenerateSelectedPreview"), source.indexOf("async function createSelectedReviewPackage"));
+
+  assert.match(source, /action: "regenerate_prospect_preview"/);
+  assert.match(source, /prospectId: target\.id/);
+  assert.match(source, /feedback/);
+  assert.match(source, /previewRegeneratingId === target\.id/);
+  assert.match(source, /previewRegenerationBlockReason\(target\)/);
+  assert.match(source, /setPreviewActionMessage\(\{ tone: "success"/);
+  assert.match(source, /Existing public preview was preserved/);
+  assert.match(source, /onRegeneratePreview\("", prospect\)/);
+  assert.match(source, /disabled=\{previewRegeneratingId === prospect\.id\}/);
+  assert.match(source, /typeof children === "function" \? children\(close\) : children/);
+  assert.doesNotMatch(handler, /const updated = regeneratePreview\(target/);
+  assert.doesNotMatch(handler, /queuePersist\(updated\)/);
+  assert.match(route, /if \(payload\.action === "regenerate_prospect_preview"\)/);
+  assert.match(route, /previewRegenerationBlockReason\(prospect\)/);
+  assert.match(route, /regeneratePreview\(prospect, payload\.feedback \?\? ""\)/);
+  assert.match(route, /createOrRefreshAutonomousReviewPackageForProspect\(saved\.id\)/);
+  assert.match(route, /Nothing was sent/);
+});
+
+test("prospect detail keeps More scoped to the mobile action menu only", () => {
+  const prospect = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
+  const html = renderDetail(prospect, "Preview");
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
+
+  assert.equal((html.match(/<summary>More<\/summary>/g) ?? []).length, 1);
+  assert.match(detailSource, /setMobileActionMenuOpen\(false\); void onRegeneratePreview\(\)/);
+  assert.match(detailSource, /disabled=\{previewRegenerating\}/);
+  assert.doesNotMatch(detailSource.slice(detailSource.indexOf("function PreviewView")), /<summary>More<\/summary>/);
+});
+
 test("condensed engine uses one status indicator and authoritative ready review count", () => {
   const source = readFileSync("components/ProspectEngine.tsx", "utf8");
   const css = readFileSync("app/engine/engine.css", "utf8");

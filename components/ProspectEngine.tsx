@@ -25,9 +25,10 @@ import {
   displayStateCode,
   displayTradeCategory,
   normalizeTradeCategory,
+  PREVIEW_GENERATOR_VERSION,
   prospectPresenceLabels,
   prospectWrittenContactMethodIsUsable,
-  regeneratePreview,
+  previewRegenerationBlockReason,
   prospectSortOptions,
   prospectStatuses,
   sortProspects,
@@ -47,6 +48,7 @@ type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "
 type DensityMode = "compact" | "comfortable";
 type ProspectView = "all" | "review" | "email" | "manual" | "blocked" | "contacted";
 type PipelineView = "board" | "followups" | "replies" | "wonLost";
+type PreviewActionMessage = { tone: "success" | "error"; text: string };
 
 const workspaceTabs: WorkspaceTab[] = ["Overview", "Top Prospects", "Prospects", "Calls", "Pipeline", "Autonomous Growth", "Operator Test Center", "System", "Command Activity"];
 const primaryMobileTabs: WorkspaceTab[] = ["Overview", "Prospects", "Pipeline"];
@@ -134,6 +136,8 @@ export function ProspectEngine() {
   const [note, setNote] = useState("");
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [syncError, setSyncError] = useState("");
+  const [previewRegeneratingId, setPreviewRegeneratingId] = useState("");
+  const [previewActionMessage, setPreviewActionMessage] = useState<PreviewActionMessage | null>(null);
   const [persistenceMode, setPersistenceMode] = useState<"memory" | "postgresql">("memory");
   const [system, setSystem] = useState<SystemPayload | null>(null);
   const [systemLoading, setSystemLoading] = useState(false);
@@ -635,22 +639,47 @@ export function ProspectEngine() {
     }
   }
 
-  async function regenerateSelectedPreview(feedback = "") {
-    if (!selected) return;
+  async function regenerateSelectedPreview(feedback = "", targetProspect?: Prospect) {
+    const target = targetProspect ?? selected;
+    if (!target) return;
+    if (previewRegeneratingId === target.id) return;
+    const blockReason = previewRegenerationBlockReason(target);
+    if (blockReason) {
+      setDetailTab("Preview");
+      setSelectedId(target.id);
+      setPreviewActionMessage({ tone: "error", text: `Preview regeneration blocked: ${blockReason}. Nothing was sent.` });
+      return;
+    }
     setSyncState("saving");
     setSyncError("");
-    const previous = selected;
-    const updated = regeneratePreview(selected, feedback);
+    setPreviewRegeneratingId(target.id);
+    setPreviewActionMessage(null);
     try {
-      const saved = await queuePersist(updated);
-      if (!saved) throw new Error("Unable to save regenerated preview.");
+      const response = await fetch("/api/engine/outreach-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "regenerate_prospect_preview", prospectId: target.id, feedback }),
+      });
+      const payload = (await response.json()) as {
+        updatedProspect?: Prospect;
+        previewVersion?: string;
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.updatedProspect) throw new Error(payload.error || "Unable to regenerate preview.");
+      const saved = payload.updatedProspect;
       setProspects((current) => current.map((prospect) => prospect.id === saved.id ? saved : prospect));
+      setSelectedId(saved.id);
       setDetailTab("Preview");
       setSyncState("saved");
+      setPreviewActionMessage({ tone: "success", text: payload.message || `Preview regenerated with ${payload.previewVersion ?? PREVIEW_GENERATOR_VERSION}. Linked review package refreshed. Nothing was sent.` });
     } catch (error) {
-      setProspects((current) => current.map((prospect) => prospect.id === previous.id ? previous : prospect));
-      setSyncError(error instanceof Error ? error.message : "Unable to regenerate preview.");
+      const message = error instanceof Error ? error.message : "Unable to regenerate preview.";
+      setSyncError(message);
+      setPreviewActionMessage({ tone: "error", text: `${message} Existing public preview was preserved.` });
       setSyncState("error");
+    } finally {
+      setPreviewRegeneratingId("");
     }
   }
 
@@ -727,6 +756,11 @@ export function ProspectEngine() {
             </button>
           </div>
         </header>
+        {previewActionMessage ? (
+          <div className={`engine-toast engine-toast--${previewActionMessage.tone}`} role={previewActionMessage.tone === "error" ? "alert" : "status"}>
+            {previewActionMessage.text}
+          </div>
+        ) : null}
 
         <OperatorCommandBar
           onNavigate={applyCommandNavigation}
@@ -781,7 +815,7 @@ export function ProspectEngine() {
             <section className="engine-overview-grid">
               <div className="engine-panel">
                 <div className="engine-panel__head"><div><h2>Priority queue</h2><p>Ranked by website opportunity and business fit.</p></div><button onClick={() => setWorkspaceTab("Prospects")} type="button">View all</button></div>
-                <ProspectTable prospects={filtered.slice(0, 5)} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); }} />
+                <ProspectTable prospects={filtered.slice(0, 5)} selectedId={selectedId} previewRegeneratingId={previewRegeneratingId} onRegeneratePreview={regenerateSelectedPreview} onSelect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); }} />
               </div>
               <div className="engine-panel engine-focus">
                 <div className="engine-panel__head"><div><h2>Today&apos;s focus</h2><p>Move the best-fit leads forward.</p></div></div>
@@ -831,10 +865,10 @@ export function ProspectEngine() {
             </details>
             <div className="engine-workspace">
               <section className="engine-panel engine-list-panel">
-                <ProspectTable prospects={filtered} selectedId={selectedId} onSelect={setSelectedId} />
+                <ProspectTable prospects={filtered} selectedId={selectedId} previewRegeneratingId={previewRegeneratingId} onRegeneratePreview={regenerateSelectedPreview} onSelect={setSelectedId} />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} previewRegenerating={previewRegeneratingId === selected.id} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
             </div>
           </div>
         )}
@@ -924,11 +958,13 @@ export function ProspectEngine() {
   );
 }
 
-function ActionMenu({ children, label }: { children: ReactNode; label: string }) {
+function ActionMenu({ children, label }: { children: ReactNode | ((close: () => void) => ReactNode); label: string }) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
   return (
-    <details className="engine-action-menu">
+    <details className="engine-action-menu" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>{label}</summary>
-      <div>{children}</div>
+      <div>{typeof children === "function" ? children(close) : children}</div>
     </details>
   );
 }
@@ -1315,7 +1351,19 @@ function prospectNextActionLabel(prospect: Prospect) {
   return "Review";
 }
 
-function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospect[]; selectedId: string; onSelect: (id: string) => void }) {
+function ProspectTable({
+  prospects,
+  selectedId,
+  previewRegeneratingId,
+  onRegeneratePreview,
+  onSelect,
+}: {
+  prospects: Prospect[];
+  selectedId: string;
+  previewRegeneratingId: string;
+  onRegeneratePreview: (feedback?: string, prospect?: Prospect) => Promise<void>;
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="engine-table" role="table" aria-label="Prospects">
       <div className="engine-table__head" role="row"><span>Prospect</span><span>Contact</span><span>Status</span><span>Score</span><span>Next</span></div>
@@ -1336,13 +1384,27 @@ function ProspectTable({ prospects, selectedId, onSelect }: { prospects: Prospec
               <button className="engine-button engine-button--primary" onClick={() => onSelect(prospect.id)} type="button">Review</button>
               {publicPreviewUrl ? <a className="engine-button" href={publicPreviewUrl} rel="noreferrer" target="_blank">Open Preview</a> : null}
               <ActionMenu label="More">
-                <button onClick={() => onSelect(prospect.id)} type="button">Open detail</button>
-                <button onClick={() => onSelect(prospect.id)} type="button">{prospectNextActionLabel(prospect)}</button>
-                <button onClick={() => onSelect(prospect.id)} type="button">Rewrite outreach</button>
-                <button onClick={() => onSelect(prospect.id)} type="button">Regenerate with fixes</button>
-                <button onClick={() => onSelect(prospect.id)} type="button">Mark reviewed</button>
-                <button onClick={() => onSelect(prospect.id)} type="button">Suppress</button>
-                <button onClick={() => onSelect(prospect.id)} type="button">Add feedback</button>
+                {(close) => (
+                  <>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Open detail</button>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">{prospectNextActionLabel(prospect)}</button>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Rewrite outreach</button>
+                    <button
+                      disabled={previewRegeneratingId === prospect.id}
+                      onClick={() => {
+                        close();
+                        onSelect(prospect.id);
+                        void onRegeneratePreview("", prospect);
+                      }}
+                      type="button"
+                    >
+                      {previewRegeneratingId === prospect.id ? "Regenerating" : "Regenerate with fixes"}
+                    </button>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Mark reviewed</button>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Suppress</button>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Add feedback</button>
+                  </>
+                )}
               </ActionMenu>
             </span>
           </article>
