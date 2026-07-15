@@ -12,6 +12,7 @@ import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, publicPreviewUrlForProspect, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 import { resolvePreviewImages, validatePreviewImages } from "../lib/preview-image-resolver";
+import { evaluatePreviewSendWorthiness } from "../lib/preview-send-worthiness";
 import { recommendedMarketPresets } from "../lib/top-prospects";
 
 const coreTradePhotoSlugs: Record<(typeof coreServiceTrades)[number], string> = {
@@ -311,11 +312,12 @@ test("preview workspace renders the complete contractor strategy", () => {
   const prospect = withPreview(structuredClone(seedProspects[2]));
   const html = renderDetail(prospect, "Preview");
 
-  assert.match(html, /Preview controls/);
+  assert.match(html, /Preview send-worthiness verdict/);
+  assert.match(html, /Improve preview/);
   assert.match(html, /Open Public Preview/);
   assert.match(html, /Regenerate Preview/);
   assert.match(html, /Regenerate with feedback/);
-  assert.match(html, /Preview QA/);
+  assert.match(html, /Advanced preview details/);
   assert.match(html, /Generator/);
   assert.match(html, /photo-led-v3/);
   assert.match(html, /Visual style direction/);
@@ -356,6 +358,11 @@ test("preview regeneration controls use one protected action with loading and sa
   assert.match(route, /if \(payload\.action === "regenerate_prospect_preview"\)/);
   assert.match(route, /previewRegenerationBlockReason\(prospect\)/);
   assert.match(route, /regeneratePreview\(prospect, payload\.feedback \?\? ""\)/);
+  assert.match(route, /evaluatePreviewSendWorthiness\(updated/);
+  assert.match(route, /getPublicProspectPreview\(publicPreviewToken\)/);
+  assert.match(route, /publicPreviewVerified/);
+  assert.match(route, /await saveProspect\(prospect\)/);
+  assert.match(route, /revalidatePath\(`\/p\/\$\{publicPreviewToken\}`\)/);
   assert.match(route, /createOrRefreshAutonomousReviewPackageForProspect\(saved\.id\)/);
   assert.match(route, /Nothing was sent/);
 });
@@ -369,6 +376,82 @@ test("prospect detail keeps More scoped to the mobile action menu only", () => {
   assert.match(detailSource, /setMobileActionMenuOpen\(false\); void onRegeneratePreview\(\)/);
   assert.match(detailSource, /disabled=\{previewRegenerating\}/);
   assert.doesNotMatch(detailSource.slice(detailSource.indexOf("function PreviewView")), /<summary>More<\/summary>/);
+});
+
+test("preview review starts with a send-worthiness verdict and focused improvement controls", () => {
+  const prospect = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
+  prospect.outreach!.detailed = `${prospect.outreach!.detailed}\n\nSounds good - here's the preview:\nhttps://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF`;
+  const html = renderDetail(prospect, "Preview");
+
+  assert.match(html, /Preview send-worthiness verdict/);
+  assert.match(html, /SEND-WORTHY|NEEDS IMPROVEMENT|BLOCKED/);
+  assert.match(html, /Most important issue/);
+  assert.match(html, /Images resolved/);
+  assert.match(html, /Focused preview improvements/);
+  assert.match(html, /Stronger hero/);
+  assert.match(html, /Better trade-specific photos/);
+  assert.match(html, /Replace repeated images/);
+  assert.match(html, /Advanced preview details/);
+  assert.match(html, /Nothing is sent/);
+});
+
+test("missing public preview link blocks send-worthiness and points to review package creation", () => {
+  const prospect = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
+  prospect.outreach!.detailed = prospect.outreach!.detailed.replace(/https:\/\/webworkshop\.dev\/p\/[A-Za-z0-9_-]+/g, "");
+  const verdict = evaluatePreviewSendWorthiness(prospect, { publicPreviewUrl: "", publicPreviewVerified: false });
+  const html = renderDetail(prospect, "Preview");
+
+  assert.equal(verdict.verdict, "blocked");
+  assert.match(verdict.primaryWarning, /public \/p\/ preview link/i);
+  assert.match(html, /Create public preview/);
+  assert.match(html, /Public link<\/span><b>Missing/);
+});
+
+test("send-worthiness blocks internal wording and works across representative trades", () => {
+  const pressureWashing = withPreview(withOutreach(withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    trade: "Pressure Washing",
+    city: "Toledo",
+    state: "OH",
+  })));
+  const landscaping = withPreview(withOutreach(withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Greenline Landscaping",
+    trade: "Landscaping",
+    city: "Tampa",
+    state: "FL",
+  })));
+  const roofing = withPreview(withOutreach(withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Summit Roofing",
+    trade: "Roofing",
+    city: "Charlotte",
+    state: "NC",
+  })));
+  const internalWording = {
+    ...pressureWashing,
+    preview: {
+      ...pressureWashing.preview!,
+      hero: `${pressureWashing.preview!.hero} replace with verified photos before launch`,
+    },
+  };
+
+  for (const prospect of [pressureWashing, landscaping, roofing]) {
+    const verdict = evaluatePreviewSendWorthiness(prospect, {
+      publicPreviewUrl: "/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+      publicPreviewVerified: true,
+    });
+    assert.notEqual(verdict.verdict, "blocked");
+    assert.ok(verdict.resolvedImageCount >= 6);
+  }
+
+  const blocked = evaluatePreviewSendWorthiness(internalWording, {
+    publicPreviewUrl: "/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+    publicPreviewVerified: true,
+  });
+  assert.equal(blocked.verdict, "blocked");
+  assert.match(blocked.primaryWarning, /Internal or placeholder wording/i);
 });
 
 test("condensed engine uses one status indicator and authoritative ready review count", () => {

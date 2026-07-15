@@ -26,6 +26,7 @@ import {
   type ScoreKey,
 } from "@/lib/prospect-engine";
 import { resolvePreviewImages } from "@/lib/preview-image-resolver";
+import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
 import { calculateNoWebsitePresenceScores } from "@/lib/top-prospects";
 
 const classificationLabels: Record<ProspectClassification, string> = {
@@ -206,7 +207,7 @@ export function ProspectDetail({
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
-          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} previewRegenerating={previewRegenerating} publicPreviewUrl={publicPreviewUrl} />
+          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} onReviewOutreach={() => setDetailTab("Outreach")} previewRegenerating={previewRegenerating} publicPreviewUrl={publicPreviewUrl} />
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
         {detailTab === "Details" && <DetailsView prospect={prospect} />}
@@ -482,6 +483,7 @@ function PreviewView({
   onCreateReviewPackage,
   onOpenPublicPreview,
   onRegeneratePreview,
+  onReviewOutreach,
   previewRegenerating,
   publicPreviewUrl,
 }: {
@@ -489,6 +491,7 @@ function PreviewView({
   onCreateReviewPackage: () => Promise<void>;
   onOpenPublicPreview: () => void;
   onRegeneratePreview: (feedback?: string) => Promise<void>;
+  onReviewOutreach: () => void;
   previewRegenerating: boolean;
   publicPreviewUrl: string;
 }) {
@@ -513,6 +516,20 @@ function PreviewView({
     imageSet.process,
     imageSet.cta,
   ];
+  const sendWorthiness = evaluatePreviewSendWorthiness(prospect, {
+    publicPreviewUrl,
+    publicPreviewVerified: Boolean(publicPreviewUrl),
+  });
+  const improvementOptions = [
+    "Stronger hero",
+    "Better trade-specific photos",
+    "More premium design",
+    "Use branding more clearly",
+    "Reduce text",
+    "Improve mobile layout",
+    "Replace repeated images",
+    "Improve CTA",
+  ];
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -530,25 +547,51 @@ function PreviewView({
       setRegenerating(false);
     }
   }
+  const busy = regenerating || previewRegenerating;
+  const primaryAction = !publicPreviewUrl
+    ? { label: "Create public preview", action: onCreateReviewPackage, disabled: false }
+    : sendWorthiness.verdict === "send_worthy"
+      ? { label: "Review Outreach", action: onReviewOutreach, disabled: false }
+      : { label: busy ? "Regenerating preview..." : sendWorthiness.nextAction, action: () => void regenerate(sendWorthiness.primaryWarning), disabled: busy };
 
   return (
     <div className="engine-stack">
+      <section className={`engine-preview-verdict engine-preview-verdict--${sendWorthiness.verdict}`} aria-label="Preview send-worthiness verdict">
+        <div className="engine-preview-verdict__main">
+          <span>{prospectLocationLine(prospect)}</span>
+          <h3>{sendWorthiness.label}</h3>
+          <p>{sendWorthiness.description}</p>
+        </div>
+        <div className="engine-preview-verdict__facts">
+          <div><span>Most important issue</span><b>{sendWorthiness.primaryWarning}</b></div>
+          <div><span>Freshness</span><b>{sendWorthiness.freshness}</b></div>
+          <div><span>Images resolved</span><b>{sendWorthiness.resolvedImageCount}</b></div>
+        </div>
+        <div className="engine-preview-verdict__actions">
+          <button className="engine-button engine-button--primary" disabled={primaryAction.disabled} onClick={() => void primaryAction.action()} type="button">{primaryAction.label}</button>
+          {publicPreviewUrl ? <button className="engine-button" onClick={onOpenPublicPreview} type="button">Open Preview</button> : null}
+        </div>
+      </section>
       <section className="engine-preview-action-bar" aria-label="Preview actions">
         <div>
-          <span>Preview controls</span>
+          <span>Improve preview</span>
           <h3>{prospect.businessName}</h3>
-          <p>Regeneration updates only the preview concept. Nothing is sent, no suppression/contact history changes, and review packages stay manual.</p>
+          <p>Use focused feedback when the visible public result is not strong enough to show the prospect. Nothing is sent.</p>
         </div>
         <div className="engine-preview-action-bar__actions">
           <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
-          <button className="engine-button" disabled={regenerating || previewRegenerating} onClick={() => void regenerate()} type="button">{regenerating || previewRegenerating ? "Regenerating" : "Regenerate Preview"}</button>
+          <button className="engine-button" disabled={busy} onClick={() => void regenerate()} type="button">{busy ? "Regenerating preview..." : "Regenerate Preview"}</button>
           <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
-          <a className="engine-button" href="#preview-qa">Preview QA</a>
+        </div>
+        <div className="engine-preview-chip-grid" aria-label="Focused preview improvements">
+          {improvementOptions.map((option) => (
+            <button className="engine-chip-button" disabled={busy} key={option} onClick={() => void regenerate(option)} type="button">{option}</button>
+          ))}
         </div>
         <label className="engine-preview-feedback">
           <span>Regenerate with feedback</span>
           <textarea onChange={(event) => setFeedback(event.target.value)} placeholder="Example: make it darker, more premium, more image-led, or emphasize concrete cleaning." value={feedback} />
-          <button className="engine-button" disabled={regenerating || previewRegenerating} onClick={() => void regenerate(feedback)} type="button">Apply Feedback</button>
+          <button className="engine-button" disabled={busy} onClick={() => void regenerate(feedback)} type="button">Apply Feedback</button>
         </label>
       </section>
       <section className="engine-preview-status-card">
@@ -556,7 +599,7 @@ function PreviewView({
         <div><span>Generator</span><b>{preview.previewVersion === "v3" ? PREVIEW_GENERATOR_VERSION : preview.previewVersion || "legacy"}</b></div>
         <div><span>Generated</span><b>{preview.generatedAt ? new Date(preview.generatedAt).toLocaleString() : "Not recorded"}</b></div>
         <div><span>Public link</span><b>{publicPreviewUrl ? "Ready" : "Missing"}</b></div>
-        <div><span>QA status</span><b>{quality?.status || "Not scored"}</b></div>
+        <div><span>Verdict</span><b>{sendWorthiness.label}</b></div>
         <div><span>QA score</span><b>{quality?.overall ?? "N/A"}</b></div>
       </section>
       <section className="engine-preview-hero">
@@ -590,6 +633,9 @@ function PreviewView({
           {artDirection ? <div><dt>Hero treatment</dt><dd>{artDirection.heroTreatment.replaceAll("-", " ")}</dd></div> : null}
         </dl>
       </section>
+      <details className="engine-preview-advanced">
+        <summary>Advanced preview details</summary>
+        <div className="engine-stack">
       {artDirection && (
         <section className="engine-preview-art-direction">
           <div>
@@ -678,6 +724,8 @@ function PreviewView({
         <section><h3>Portfolio direction</h3><p>{preview.portfolioDirection}</p></section>
         <section><h3>Lead capture</h3><p>{preview.leadCaptureStrategy}</p></section>
       </div>
+        </div>
+      </details>
     </div>
   );
 }

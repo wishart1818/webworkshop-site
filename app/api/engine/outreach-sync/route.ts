@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import {
   createOrRefreshAutonomousReviewPackageForProspect,
   regenerateProspectOutreachWithCurrentScript,
@@ -7,8 +8,15 @@ import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/li
 import { safeRecordAudit } from "@/lib/operational-controls";
 import { listProspects, saveProspect } from "@/lib/prospect-repository";
 import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, regeneratePreview } from "@/lib/prospect-engine";
+import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
+import { getPublicProspectPreview } from "@/lib/top-prospect-repository";
 
 export const dynamic = "force-dynamic";
+
+function publicPreviewTokenFromLink(value: string | undefined) {
+  const match = value?.match(/\/p\/([A-Za-z0-9_-]{32})/);
+  return match?.[1] ?? "";
+}
 
 export async function POST(request: Request) {
   try {
@@ -46,21 +54,78 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Preview regeneration blocked: ${blockReason}.` }, { status: 409 });
       }
       const updated = regeneratePreview(prospect, payload.feedback ?? "");
+      const preflightVerdict = evaluatePreviewSendWorthiness(updated, {
+        publicPreviewUrl: "/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+        publicPreviewVerified: true,
+      });
+      if (preflightVerdict.verdict === "blocked") {
+        await safeRecordAudit({
+          action: "prospect_preview_regenerate",
+          outcome: "rejected",
+          subject: payload.prospectId,
+          metadata: { reason: preflightVerdict.primaryWarning, previewVersion: PREVIEW_GENERATOR_VERSION },
+        });
+        return NextResponse.json({
+          error: `Preview regeneration blocked: ${preflightVerdict.primaryWarning}. Previous public preview was retained. Nothing was sent.`,
+          previewVerdict: preflightVerdict,
+        }, { status: 422 });
+      }
       const saved = await saveProspect(updated);
       const queueItem = await createOrRefreshAutonomousReviewPackageForProspect(saved.id);
+      const publicPreviewLink = queueItem?.previewLink ?? "";
+      const publicPreviewToken = publicPreviewTokenFromLink(publicPreviewLink);
+      const publicProspect = publicPreviewToken ? await getPublicProspectPreview(publicPreviewToken) : null;
+      const publicPreviewVerified = Boolean(
+        publicProspect?.id === saved.id
+        && publicProspect.preview?.generatedAt === saved.preview?.generatedAt
+        && publicProspect.preview?.previewVersion === saved.preview?.previewVersion,
+      );
+      const previewVerdict = evaluatePreviewSendWorthiness(saved, {
+        publicPreviewUrl: publicPreviewLink,
+        publicPreviewVerified,
+      });
+      if (!publicPreviewVerified || previewVerdict.verdict === "blocked") {
+        await saveProspect(prospect);
+        await createOrRefreshAutonomousReviewPackageForProspect(prospect.id).catch(() => null);
+        await safeRecordAudit({
+          action: "prospect_preview_regenerate",
+          outcome: "failure",
+          subject: payload.prospectId,
+          metadata: {
+            reason: previewVerdict.primaryWarning,
+            publicPreviewVerified,
+            previewVersion: PREVIEW_GENERATOR_VERSION,
+          },
+        });
+        return NextResponse.json({
+          error: `Preview regeneration could not verify the updated public preview: ${previewVerdict.primaryWarning}. Previous public preview was retained. Nothing was sent.`,
+          previewVerdict,
+          publicPreviewVerified,
+        }, { status: 502 });
+      }
+      revalidatePath(`/p/${publicPreviewToken}`);
+      revalidatePath("/engine");
       await safeRecordAudit({
         action: "prospect_preview_regenerate",
         outcome: "success",
         subject: payload.prospectId,
-        metadata: { previewVersion: PREVIEW_GENERATOR_VERSION, queueItemId: queueItem?.id ?? "", feedbackProvided: Boolean(payload.feedback?.trim()) },
+        metadata: {
+          previewVersion: PREVIEW_GENERATOR_VERSION,
+          queueItemId: queueItem?.id ?? "",
+          feedbackProvided: Boolean(payload.feedback?.trim()),
+          previewVerdict: previewVerdict.label,
+          resolvedImageCount: previewVerdict.resolvedImageCount,
+          publicPreviewVerified,
+        },
       });
       return NextResponse.json({
         updatedProspect: saved,
         queueItem,
         previewVersion: PREVIEW_GENERATOR_VERSION,
-        message: queueItem
-          ? "Preview regenerated and review package refreshed. Nothing was sent."
-          : "Preview regenerated. No eligible review package was refreshed. Nothing was sent.",
+        previewVerdict,
+        publicPreviewVerified,
+        publicPreviewUrl: publicPreviewLink,
+        message: `Public preview updated. Verdict: ${previewVerdict.label}. ${previewVerdict.resolvedImageCount} images resolved. ${previewVerdict.primaryWarning} Nothing was sent.`,
       });
     }
     if (payload.action === "create_autonomous_review_package") {
