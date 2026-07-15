@@ -7250,11 +7250,9 @@ body:has(.engine-shell) {
 }
 
 .prospect-preview-hero__proof-strip b {
-  overflow: hidden;
   color: var(--prospect-ink);
   font-size: 0.88rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .prospect-preview-hero__proof-strip i {
@@ -7482,17 +7480,31 @@ body:has(.engine-shell) {
 .prospect-preview-service-list h3 {
   font-size: clamp(1.15rem, 2vw, 1.65rem);
   line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .prospect-preview-service-list article > div > a {
   display: inline-flex;
-  width: max-content;
+  width: fit-content;
   max-width: 100%;
   align-items: center;
   border-bottom: 2px solid color-mix(in srgb, var(--prospect-accent) 72%, transparent);
   color: var(--prospect-primary);
   font-weight: 900;
+  line-height: 1.25;
   text-decoration: none;
+  white-space: normal;
+}
+
+.prospect-preview-service-card--text-only {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--prospect-primary) 7%, transparent), transparent 62%),
+    var(--prospect-surface);
+}
+
+.prospect-preview-service-card--text-only > div {
+  min-height: 100%;
 }
 
 .prospect-preview-why {

@@ -684,7 +684,7 @@ function previewArtDirection(prospect: Prospect, styleProfile: PreviewStyleProfi
     layoutRhythm,
     cardStyle,
     imageTreatment: `Lead with a large ${displayTrade} hero photo, then rotate distinct service, detail, support, and proof images so the first visible sections never repeat the same visual.`,
-    sectionFlow: `Open with the strongest service visual, move into ${serviceCue}, then show a clearly labeled proof layout and a practical ${city} service-area CTA.`,
+    sectionFlow: `Open with the strongest service visual, move into ${serviceCue}, then show practical service details and a ${city} estimate CTA.`,
     ctaTreatment: `Use "${styleProfile.ctaLabel}" as a high-contrast primary action with a phone option kept visible on mobile.`,
     interactiveFeatures: [
       "sticky header",
@@ -845,7 +845,7 @@ export function scorePreviewQuality(prospect: Prospect, preview: PreviewConcept)
     ...(preview.trustItems ?? []),
     preview.ctaStrategy,
   ].filter(Boolean).join(" ");
-  const internalPublicLanguage = /representative image direction|replace with verified|proof concept|generator notes|internal QA|include only if verified|contact options|quote requests easy to find|quote path|website structure|customer navigation|conversion design/i.test(publicCandidateCopy);
+  const internalPublicLanguage = /representative image direction|replace with verified|proof concept|generator notes|internal QA|include only if verified|contact options|quote requests easy to find|quote path|quote-path|website structure|customer navigation|conversion design|clear surface details|service-area copy|contact visibility|photos should look|service detail|property context|finished look|image-selection strategy/i.test(publicCandidateCopy);
   const missingBusinessBranding = !hasStyleProfile || !hasArtDirection;
   const unsupportedClaim = /\b(award-winning|certified|licensed|insured|warrant(?:y|ies)|guarantee|guarantees|five-star|best rated|family-owned|locally owned for \d+ years)\b/i.test(searchable)
     && !/\bverified|verification-ready|only when verified|supplied by the business|sample\b/i.test(searchable);
@@ -1417,7 +1417,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     trustItems,
     styleProfile,
     homepageStructure: [
-      `${artDirection.heroTreatment.replaceAll("-", " ")} hero with "${styleProfile.ctaLabel}", a strong trade photo, and business-specific service-area copy`,
+      `${artDirection.heroTreatment.replaceAll("-", " ")} hero with "${styleProfile.ctaLabel}", a strong trade photo, and practical service-area details`,
       `${playbook.services.join(", ")} organized with distinct service photos, card styles, and homeowner need`,
       noWebsiteProspect ? "Supported public business details with room for future proof once supplied" : `Support areas for ${verifiedProofAreas} without publishing claims until verified`,
       noWebsiteProspect ? "A service-photo gallery focused on common customer needs" : "A photo-led service gallery that avoids unverified project claims",

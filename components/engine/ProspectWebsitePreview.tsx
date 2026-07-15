@@ -10,7 +10,7 @@ import {
   type PreviewConcept,
   type Prospect,
 } from "@/lib/prospect-engine";
-import { resolvePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
+import { isPublicPreviewImageRelevant, resolvePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
 
 type ProspectWebsitePreviewProps = {
   prospect: Prospect;
@@ -135,10 +135,10 @@ function normalizeLocationCopy(value: string, rawCity: string, displayCity: stri
 }
 
 function trustItemDescription(item: string) {
-  if (/serving/i.test(item)) return "Service-area details are stated up front for nearby homeowners.";
-  if (/phone|contact/i.test(item)) return "A direct call option is available for questions and estimates.";
-  if (/service/i.test(item)) return "The main types of work are grouped by property need.";
-  return "An estimate starts with the property, timing, and service details.";
+  if (/serving/i.test(item)) return "Helping homeowners in the local area with the work their property needs.";
+  if (/phone|contact/i.test(item)) return "Call with questions about timing, surfaces, and the work you want priced.";
+  if (/service/i.test(item)) return "Services are organized around the parts of the property that need attention.";
+  return "Share the surface, timing, and location so the estimate can start clearly.";
 }
 
 function businessInitials(name: string) {
@@ -232,6 +232,54 @@ function quoteProcess(displayTrade: string, ctaLabel: string): [TradeProcessCopy
   ];
 }
 
+function cleanVisualCaption(trade: Prospect["trade"], displayCity: string) {
+  const byTrade: Partial<Record<Prospect["trade"], { label: string; headline: string; body: string }>> = {
+    "Pressure Washing": {
+      label: "Exterior cleaning",
+      headline: `Residential surfaces around ${displayCity} get a cleaner, brighter look.`,
+      body: "Wash away buildup from siding, concrete, patios, and roof areas that need a gentler touch.",
+    },
+    Landscaping: {
+      label: "Outdoor care",
+      headline: `Yards around ${displayCity} get a plan that fits the season.`,
+      body: "Planting, lawn care, and outdoor updates stay focused on how the property is used.",
+    },
+    Roofing: {
+      label: "Roofing service",
+      headline: `Roof concerns around ${displayCity} get a practical next step.`,
+      body: "Repair, replacement, and storm concerns can be described before scheduling an estimate.",
+    },
+    HVAC: {
+      label: "Home comfort",
+      headline: `Heating and cooling needs around ${displayCity} stay easy to explain.`,
+      body: "Repairs, maintenance, and replacement questions are grouped by the comfort issue at home.",
+    },
+  };
+  return byTrade[trade] ?? {
+    label: "Local service",
+    headline: `${displayCity} homeowners can match the property need to the right service.`,
+    body: "Share what needs work, where it is, and when you would like it looked at.",
+  };
+}
+
+function galleryLabel(trade: Prospect["trade"], index: number) {
+  const pressureWashing = ["Exterior washing", "Concrete cleaning", "Roof and soft wash"];
+  const landscaping = ["Yard care", "Planting areas", "Outdoor finish"];
+  const roofing = ["Roof surface", "Repair area", "Finished roofline"];
+  const hvac = ["System service", "Equipment care", "Comfort check"];
+  const fallback = ["Service work", "Property detail", "Finished result"];
+  const labels = trade === "Pressure Washing"
+    ? pressureWashing
+    : trade === "Landscaping"
+      ? landscaping
+      : trade === "Roofing"
+        ? roofing
+        : trade === "HVAC"
+          ? hvac
+          : fallback;
+  return labels[index] ?? fallback[index] ?? "Service photo";
+}
+
 function previewImageProps(image: ResolvedPreviewImage, slot: PreviewImageRenderSlot = image.slot) {
   return {
     alt: image.alt,
@@ -261,7 +309,16 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const faqs = faqItems(canonicalTrade, styleProfile.ctaLabel);
   const steps = quoteProcess(displayTrade, styleProfile.ctaLabel);
   const initials = businessInitials(prospect.businessName);
-  const galleryAssets = images.gallery;
+  const visualCaption = cleanVisualCaption(canonicalTrade, displayCity);
+  const imageRelevant = (image: ResolvedPreviewImage) => isPublicPreviewImageRelevant(image, canonicalTrade);
+  const heroImage = imageRelevant(images.hero) ? images.hero : images.services.find(imageRelevant) ?? images.gallery.find(imageRelevant) ?? images.hero;
+  const serviceImages = images.services.map((image) => imageRelevant(image) ? image : null);
+  const galleryAssets = images.gallery.filter(imageRelevant);
+  const proofImage = imageRelevant(images.gallery[2]) ? images.gallery[2] : galleryAssets[0] ?? images.beforeAfter;
+  const processImage = imageRelevant(images.process) ? images.process : galleryAssets[1] ?? proofImage;
+  const beforeAfterImage = imageRelevant(images.beforeAfter) ? images.beforeAfter : galleryAssets[0] ?? proofImage;
+  const ctaImage = imageRelevant(images.cta) ? images.cta : galleryAssets[0] ?? proofImage;
+  const showGallery = canonicalTrade !== "Pressure Washing" || galleryAssets.length >= 3;
   const heroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const serviceSummary = normalizeCopy(preview.hero);
   const trustItems = (preview.trustItems ?? [
@@ -334,11 +391,11 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             </div>
           </div>
           <aside className="prospect-preview-hero__visual">
-            <TradePreviewImage {...previewImageProps(images.hero, "hero")} />
+            <TradePreviewImage {...previewImageProps(heroImage, "hero")} />
             <div className="prospect-preview-visual-caption">
-              <small>{displayTrade} services</small>
-              <strong>{displayCity} homeowners can match the property need to the right service.</strong>
-              <span>Clear surface details, local service-area copy, and a direct estimate request work together.</span>
+              <small>{visualCaption.label}</small>
+              <strong>{visualCaption.headline}</strong>
+              <span>{visualCaption.body}</span>
             </div>
           </aside>
         </section>
@@ -355,8 +412,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </div>
           <div className="prospect-preview-service-list">
             {pageCopy.services.map((item, index) => (
-              <article id={`service-${index + 1}`} key={item.title}>
-                <TradePreviewImage {...previewImageProps(images.services[index], "service")} />
+              <article className={serviceImages[index] ? "" : "prospect-preview-service-card--text-only"} id={`service-${index + 1}`} key={item.title}>
+                {serviceImages[index] ? <TradePreviewImage {...previewImageProps(serviceImages[index], "service")} /> : null}
                 <div>
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
@@ -391,7 +448,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <p>{proof.intro}</p>
           </div>
           <div className="prospect-preview-proof-layout">
-            <TradePreviewImage {...previewImageProps(images.gallery[2], "proof")} />
+            <TradePreviewImage {...previewImageProps(proofImage, "proof")} />
             <div className="prospect-preview-proof-notes">
               {proof.checkpoints.map((item) => (
                 <article key={item.title}>
@@ -403,11 +460,11 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </div>
         </section>
 
-        <section className="prospect-preview-process" aria-label="Quote request process">
+        <section className="prospect-preview-process" aria-label="Service request steps">
           <div>
             <span className="prospect-preview-kicker">How to start</span>
-            <h2>Get from question to quote faster.</h2>
-            <TradePreviewImage {...previewImageProps(images.process, "proof")} />
+            <h2>Start with the surface that needs attention.</h2>
+            <TradePreviewImage {...previewImageProps(processImage, "proof")} />
           </div>
           <ol>
             {steps.map((item) => (
@@ -419,36 +476,38 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </ol>
         </section>
 
-        <section className="prospect-preview-gallery-section" id="gallery">
-          <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">Gallery</span>
-            <h2>Show the surfaces and settings people recognize.</h2>
-            <p>Photos should look like the homes, yards, rooms, and exterior surfaces customers are asking about.</p>
-          </div>
-          <div className="prospect-preview-gallery" aria-label={`${displayTrade} service gallery`}>
-            {galleryAssets.map((asset, index) => (
-              <a href={`#preview-gallery-${index + 1}`} key={asset.src}>
-                <TradePreviewImage {...previewImageProps(asset, "service")} />
-                <span>{index === 0 ? "Service detail" : index === 1 ? "Property context" : "Finished look"}</span>
-              </a>
-            ))}
-          </div>
-          {galleryAssets.map((asset, index) => (
-            <div className="prospect-preview-lightbox" id={`preview-gallery-${index + 1}`} key={`lightbox-${asset.src}`} role="dialog" aria-label={`${displayTrade} gallery image ${index + 1}`}>
-              <a className="prospect-preview-lightbox__close" href="#gallery">Close image</a>
-              <TradePreviewImage {...previewImageProps(asset, "hero")} />
+        {showGallery ? (
+          <section className="prospect-preview-gallery-section" id="gallery">
+            <div className="prospect-preview-section__intro">
+              <span className="prospect-preview-kicker">Gallery</span>
+              <h2>See the kinds of surfaces this work can refresh.</h2>
+              <p>Exterior photos help homeowners recognize the surfaces they want cleaned, repaired, or improved.</p>
             </div>
-          ))}
-        </section>
+            <div className="prospect-preview-gallery" aria-label={`${displayTrade} service gallery`}>
+              {galleryAssets.map((asset, index) => (
+                <a href={`#preview-gallery-${index + 1}`} key={asset.src}>
+                  <TradePreviewImage {...previewImageProps(asset, "service")} />
+                  <span>{galleryLabel(canonicalTrade, index)}</span>
+                </a>
+              ))}
+            </div>
+            {galleryAssets.map((asset, index) => (
+              <div className="prospect-preview-lightbox" id={`preview-gallery-${index + 1}`} key={`lightbox-${asset.src}`} role="dialog" aria-label={`${displayTrade} gallery image ${index + 1}`}>
+                <a className="prospect-preview-lightbox__close" href="#gallery">Close image</a>
+                <TradePreviewImage {...previewImageProps(asset, "hero")} />
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         <section className="prospect-preview-compare" aria-label="Service comparison slider">
           <div>
             <span className="prospect-preview-kicker">Service comparison</span>
-            <h2>Help customers picture the finished result.</h2>
-            <p>Use a simple comparison to show the kind of visible refresh the service is meant to provide.</p>
+            <h2>Picture a cleaner finish before you schedule.</h2>
+            <p>Exterior cleaning can refresh the surfaces people notice first when they pull up to the home.</p>
           </div>
           <div className="prospect-preview-slider-card">
-            <TradePreviewImage {...previewImageProps(images.beforeAfter, "service")} />
+            <TradePreviewImage {...previewImageProps(beforeAfterImage, "service")} />
             <label htmlFor="preview-before-after">Move the slider to picture the cleaning result</label>
             <input id="preview-before-after" min="0" max="100" type="range" defaultValue="58" />
             <div><span>Current condition</span><span>Cleaner finish</span></div>
@@ -482,7 +541,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>A simple path to the right next step.</h2>
             <p>Tell us what needs done, where it is, and when you would like the work estimated.</p>
-            <TradePreviewImage {...previewImageProps(images.cta, "proof")} />
+            <TradePreviewImage {...previewImageProps(ctaImage, "proof")} />
           </div>
           <form action="#contact" aria-describedby="preview-form-note">
             <label>Name<input name="name" required /></label>

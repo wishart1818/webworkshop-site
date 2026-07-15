@@ -99,7 +99,8 @@ type CatalogEntry = {
 };
 
 type CuratedStockPhoto = {
-  id: string;
+  id?: string;
+  src?: string;
   keywords: string[];
 };
 
@@ -266,12 +267,14 @@ function unsplashPhoto(id: string) {
 
 const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
   "Pressure Washing": [
-    { id: "photo-1600585154340-be6161a56a0c", keywords: ["residential exterior cleaning", "clean home exterior", "driveway", "finished home", "hero"] },
-    { id: "photo-1564013799919-ab600027ffc6", keywords: ["house washing", "siding", "brick", "stucco", "residential exterior"] },
-    { id: "photo-1600573472550-8090b5e0745e", keywords: ["house washing", "home exterior", "trim", "residential property"] },
-    { id: "photo-1597007066704-67bf2068d5b5", keywords: ["concrete cleaning", "driveway", "walkway", "patio", "residential concrete"] },
-    { id: "photo-1600566753190-17f0baa2a6c3", keywords: ["patio cleaning", "residential patio", "backyard", "walkway", "outdoor surface"] },
-    { id: "photo-1632759145355-b0c7f70a2558", keywords: ["roof soft washing", "residential roof", "roofline", "home exterior"] },
+    {
+      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Concrete_Cleaning_with_a_Surface_Cleaner.jpg/900px-Concrete_Cleaning_with_a_Surface_Cleaner.jpg",
+      keywords: ["pressure washing", "concrete cleaning", "driveway cleaning", "walkway cleaning", "residential concrete", "surface cleaner", "water spray", "verified exterior cleaning photo"],
+    },
+    {
+      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/ArborBay2.jpg/900px-ArborBay2.jpg",
+      keywords: ["soft washing", "roof cleaning", "residential roof", "roofline", "soft-wash system", "exterior cleaning", "verified exterior cleaning photo"],
+    },
   ],
   Roofing: [
     { id: "photo-1635424824849-1b09bdcc55b1", keywords: ["roofer", "roof inspection", "shingles"] },
@@ -513,7 +516,7 @@ function curatedStockSources(trade: TradeCategory, prospect: Prospect) {
   const start = seededIndex(`${prospect.businessName}|${prospect.city}|${trade}`, photos.length);
   const ordered = [...photos.slice(start), ...photos.slice(0, start)];
   return ordered.map((photo) => ({
-    src: safeImageUrl(unsplashPhoto(photo.id)),
+    src: safeImageUrl(photo.src ?? (photo.id ? unsplashPhoto(photo.id) : "")),
     keywords: photo.keywords,
   })).filter((photo) => photo.src);
 }
@@ -544,13 +547,15 @@ function photoRelevanceScore(trade: TradeCategory, intent: PreviewImageIntent, p
   const keywords = photo.keywords.join(" ").toLowerCase();
   if (trade === "Pressure Washing") {
     if (/municipal|street|sidewalk|commercial surface|industrial/.test(keywords)) score -= 30;
-    if (/house|siding|exterior/.test(service) && /house|siding|exterior|home|residential/.test(keywords)) score += 16;
-    if (/concrete|driveway|walk|patio|paver/.test(service) && /concrete|driveway|walkway|patio|paver/.test(keywords)) score += 16;
-    if (/roof|soft/.test(service) && /roof|soft|roofline/.test(keywords)) score += 16;
+    if (/architecture|interior|room|pool|luxury house|real estate|landscaping/.test(keywords)) score -= 36;
+    if (/house|siding|exterior/.test(service) && /house washing|siding washing|siding cleaning|residential siding|home exterior cleaning/.test(keywords)) score += 18;
+    if (/house|siding|exterior/.test(service) && !/house washing|siding washing|siding cleaning|water spray|pressure washing/.test(keywords)) score -= 24;
+    if (/concrete|driveway|walk|patio|paver/.test(service) && /concrete cleaning|driveway cleaning|walkway cleaning|patio cleaning|surface cleaner|pressure washing/.test(keywords)) score += 20;
+    if (/roof|soft/.test(service) && /roof cleaning|soft washing|soft-wash|roofline/.test(keywords)) score += 20;
     if (intent.slot === "hero") {
-      if (/residential exterior|home exterior|clean home|house washing|siding/.test(keywords)) score += 18;
-      if (/driveway|patio|walkway/.test(keywords)) score += 6;
-      if (/roof|roofline|soft washing/.test(keywords)) score -= 18;
+      if (/pressure washing|exterior cleaning|driveway cleaning|concrete cleaning|house washing|siding cleaning|soft washing|roof cleaning/.test(keywords)) score += 22;
+      if (/driveway|patio|walkway/.test(keywords)) score += 8;
+      if (/roof|roofline|soft washing/.test(keywords)) score -= 4;
     }
   }
   return score;
@@ -616,7 +621,7 @@ function sourceForIndex(
     usedSources.add(curatedStockPhoto.src);
     const curatedIntent = {
       ...intent,
-      keywords: [...new Set([...intent.keywords, ...curatedStockPhoto.keywords])],
+      keywords: curatedStockPhoto.keywords,
     };
     return imageFrom(prospect, curatedIntent, curatedStockPhoto.src, "curated-stock-photo-library");
   }
@@ -735,7 +740,7 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
   if (images.some((image) => image.source === "curated-trade-library")) warnings.push("One or more sections used illustration fallback instead of photography.");
   for (const image of images) {
     const service = image.serviceTitle?.toLowerCase() ?? "";
-    const blob = `${image.src} ${image.alt} ${image.intent.keywords.join(" ")}`.toLowerCase();
+    const blob = `${image.src} ${image.intent.keywords.join(" ")}`.toLowerCase();
     const pressureWashingContext = /pressure washing|house washing|concrete cleaning|soft washing|exterior cleaning/.test(blob);
     if (pressureWashingContext && /municipal|street cleaning|street sweeper|commercial surface|industrial/.test(blob)) {
       warnings.push(`${image.section} image reads as municipal, industrial, or street-cleaning instead of residential exterior cleaning.`);
@@ -743,6 +748,12 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
     if (/concrete|driveway|patio|paver/.test(service) && !/concrete|driveway|walkway|patio|paver/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match concrete or driveway cleaning.`);
     if (/house|siding/.test(service) && !/house|siding|exterior/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match house washing.`);
     if (/roof|soft/.test(service) && !/roof|soft/.test(blob)) warnings.push(`${image.serviceTitle} image does not clearly match roof or soft washing.`);
+    if (pressureWashingContext && image.slot === "hero" && !/pressure washing|exterior cleaning|driveway cleaning|concrete cleaning|house washing|siding cleaning|soft washing|roof cleaning|surface cleaner/.test(blob)) {
+      warnings.push("Pressure washing hero image reads as generic property photography instead of exterior cleaning.");
+    }
+    if (pressureWashingContext && /architecture|interior|room|pool|luxury house|real estate|landscaping/.test(blob)) {
+      warnings.push(`${image.section} image reads as architecture, interior, pool, landscaping, or real-estate photography instead of exterior cleaning.`);
+    }
   }
   return {
     ok: warnings.length === 0,
@@ -750,6 +761,23 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
     distinctImageCount: bySrc.size,
     repeatedImageCount: [...bySrc.values()].filter((count) => count > 1).length,
   };
+}
+
+export function isPublicPreviewImageRelevant(image: ResolvedPreviewImage, trade: string) {
+  const normalizedTrade = normalizeTradeCategory(trade) ?? "General Contractor";
+  if (normalizedTrade !== "Pressure Washing") return true;
+  const service = image.serviceTitle?.toLowerCase() ?? image.section.toLowerCase();
+  const blob = `${image.src} ${image.intent.keywords.join(" ")}`.toLowerCase();
+  if (/municipal|street cleaning|street-cleaning|street sweeper|commercial surface|industrial|architecture|interior|room|pool|luxury house|real estate|landscaping/.test(blob)) {
+    return false;
+  }
+  if (image.slot === "hero") {
+    return /pressure washing|exterior cleaning|driveway cleaning|concrete cleaning|house washing|siding cleaning|soft washing|roof cleaning|surface cleaner/.test(blob);
+  }
+  if (/house|siding|exterior/.test(service)) return /house washing|siding cleaning|siding washing|residential siding|home exterior cleaning/.test(blob);
+  if (/concrete|driveway|walk|patio|paver/.test(service)) return /concrete cleaning|driveway cleaning|walkway cleaning|patio cleaning|surface cleaner/.test(blob);
+  if (/roof|soft/.test(service)) return /roof cleaning|soft washing|soft-wash|roofline/.test(blob);
+  return /pressure washing|exterior cleaning|driveway cleaning|concrete cleaning|house washing|siding cleaning|soft washing|roof cleaning|surface cleaner/.test(blob);
 }
 
 export function previewImageCatalogSlugs() {
