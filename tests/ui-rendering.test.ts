@@ -378,6 +378,33 @@ test("prospect detail keeps More scoped to the mobile action menu only", () => {
   assert.doesNotMatch(detailSource.slice(detailSource.indexOf("function PreviewView")), /<summary>More<\/summary>/);
 });
 
+test("Prospects workspace menus close on outside, Escape, and prospect switching", () => {
+  const source = readFileSync("components/ProspectEngine.tsx", "utf8");
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
+
+  assert.match(source, /function ActionMenu\(\{ children, closeSignal, label \}/);
+  assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
+  assert.match(source, /document\.addEventListener\("keydown", handleKeyDown\)/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /<ActionMenu closeSignal=\{selectedId\} label="More">/);
+  assert.match(detailSource, /setMobileActionMenuOpen\(false\);[\s\S]*setPreviewOpenMessage\(""\);[\s\S]*detailBodyRef\.current\?\.scrollTo\(\{ top: 0 \}\);/);
+  assert.match(detailSource, /mobileMenuRef/);
+  assert.match(detailSource, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
+  assert.match(detailSource, /document\.addEventListener\("keydown", handleKeyDown\)/);
+});
+
+test("Prospects workspace uses independent desktop panes without document scroll jumping", () => {
+  const css = readFileSync("app/engine/engine.css", "utf8");
+
+  assert.match(css, /\.engine-workspace\s*{[\s\S]*height: calc\(100dvh - 15\.25rem\);[\s\S]*overflow: hidden;/);
+  assert.match(css, /\.engine-list-panel\s*{[\s\S]*overflow: auto;[\s\S]*overscroll-behavior: contain;/);
+  assert.match(css, /\.engine-detail\s*{[\s\S]*grid-template-rows:[\s\S]*minmax\(0, 1fr\)/);
+  assert.match(css, /\.engine-detail__body\s*{[\s\S]*overflow: auto;[\s\S]*overscroll-behavior: contain;/);
+  assert.match(css, /\.engine-table__head\s*{[\s\S]*position: sticky;[\s\S]*top: 0;/);
+  assert.match(css, /@media \(max-width: 880px\)[\s\S]*\.engine-workspace\s*{[\s\S]*display: block;/);
+  assert.match(css, /@media \(max-width: 880px\)[\s\S]*\.engine-list-panel\s*{[\s\S]*overflow: visible;/);
+});
+
 test("preview review starts with a send-worthiness verdict and focused improvement controls", () => {
   const prospect = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
   prospect.outreach!.detailed = `${prospect.outreach!.detailed}\n\nSounds good - here's the preview:\nhttps://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF`;

@@ -1563,6 +1563,9 @@ body:has(.engine-shell) {
 }
 
 .engine-table__head {
+  position: sticky;
+  z-index: 4;
+  top: 0;
   background: #f7f9f7;
   color: var(--engine-muted);
   font-size: 0.68rem;
@@ -1793,16 +1796,24 @@ body:has(.engine-shell) {
   display: grid;
   grid-template-columns: minmax(30rem, 0.9fr) minmax(25rem, 1.1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100dvh - 15.25rem);
+  min-height: 34rem;
+  overflow: hidden;
 }
 
 .engine-list-panel {
-  max-height: none;
-  overflow: visible;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .engine-detail {
+  display: grid;
+  min-height: 0;
   min-width: 0;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
 }
 
 .engine-detail__hero {
@@ -1990,6 +2001,7 @@ body:has(.engine-shell) {
   overflow-x: auto;
   border-top: 1px solid var(--engine-line);
   border-bottom: 1px solid var(--engine-line);
+  overscroll-behavior-x: contain;
 }
 
 .engine-tabs button {
@@ -2010,8 +2022,10 @@ body:has(.engine-shell) {
 }
 
 .engine-detail__body {
-  max-height: calc(100dvh - 17rem);
+  min-height: 0;
+  max-height: none;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 1rem;
 }
 

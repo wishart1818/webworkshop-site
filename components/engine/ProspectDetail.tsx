@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, type CSSProperties, type FormEvent } from "react";
+import React, { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState } from "@/components/engine/EngineStates";
 import { explainProspectBucket } from "@/lib/prospect-funnel";
 import {
@@ -137,6 +137,8 @@ export function ProspectDetail({
 }: ProspectDetailProps) {
   const [previewOpenMessage, setPreviewOpenMessage] = useState("");
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
+  const detailBodyRef = useRef<HTMLDivElement | null>(null);
+  const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const presenceLabels = prospectPresenceLabels(prospect);
   const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
@@ -158,6 +160,28 @@ export function ProspectDetail({
     }
     setPreviewOpenMessage("No public preview link is available yet. Create or refresh the Autonomous Review Package to generate the prospect-safe /p/ preview.");
   }
+
+  useEffect(() => {
+    setMobileActionMenuOpen(false);
+    setPreviewOpenMessage("");
+    detailBodyRef.current?.scrollTo({ top: 0 });
+  }, [prospect.id]);
+
+  useEffect(() => {
+    if (!mobileActionMenuOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (!mobileMenuRef.current?.contains(event.target as Node)) setMobileActionMenuOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setMobileActionMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mobileActionMenuOpen]);
 
   return (
     <aside className="engine-detail">
@@ -197,7 +221,7 @@ export function ProspectDetail({
           </button>
         ))}
       </nav>
-      <div className="engine-detail__body">
+      <div className="engine-detail__body" ref={detailBodyRef}>
         {detailTab === "Analysis" && (presenceGap
           ? <PresenceGapView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} prospect={prospect} />
           : prospect.analysis
@@ -220,7 +244,7 @@ export function ProspectDetail({
       ) : null}
       <div className="engine-mobile-action-bar" aria-label="Mobile prospect actions">
         <button className="engine-button engine-button--primary" onClick={primaryAction.action} type="button">{primaryAction.label}</button>
-        <details className="engine-action-menu engine-action-menu--up" open={mobileActionMenuOpen} onToggle={(event) => setMobileActionMenuOpen(event.currentTarget.open)}>
+        <details className="engine-action-menu engine-action-menu--up" open={mobileActionMenuOpen} onToggle={(event) => setMobileActionMenuOpen(event.currentTarget.open)} ref={mobileMenuRef}>
           <summary>More</summary>
           <div>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Outreach"); }} type="button">Open outreach</button>
