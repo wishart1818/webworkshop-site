@@ -67,6 +67,7 @@ type ProspectDetailProps = {
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
   previewRegenerating?: boolean;
+  previewImprovementSignal?: number;
   onClose?: () => void;
   note: string;
   setNote: (value: string) => void;
@@ -170,6 +171,7 @@ export function ProspectDetail({
   onPreview,
   onStatus,
   previewRegenerating = false,
+  previewImprovementSignal = 0,
   onClose,
   note,
   setNote,
@@ -178,6 +180,7 @@ export function ProspectDetail({
 }: ProspectDetailProps) {
   const [previewOpenMessage, setPreviewOpenMessage] = useState("");
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
+  const [localPreviewImprovementSignal, setLocalPreviewImprovementSignal] = useState(0);
   const detailBodyRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
   const presenceGap = prospectHasUnusableWebsite(prospect);
@@ -192,6 +195,11 @@ export function ProspectDetail({
         : !prospect.outreach.approved
           ? { label: "Review draft", action: () => setDetailTab("Outreach") }
           : { label: "Mark reviewed", action: () => onStatus("Reviewed") };
+  const mobilePrimaryAction = detailTab === "Preview" && prospect.preview
+    ? !publicPreviewUrl
+      ? { label: "Create public preview", action: onCreateReviewPackage }
+      : { label: "Improve preview", action: () => setLocalPreviewImprovementSignal(Date.now()) }
+    : primaryAction;
 
   function openPublicPreview() {
     if (publicPreviewUrl) {
@@ -272,7 +280,7 @@ export function ProspectDetail({
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
-          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} onReviewOutreach={() => setDetailTab("Outreach")} previewRegenerating={previewRegenerating} publicPreviewUrl={publicPreviewUrl} />
+          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} onReviewOutreach={() => setDetailTab("Outreach")} previewRegenerating={previewRegenerating} previewImprovementSignal={Math.max(previewImprovementSignal, localPreviewImprovementSignal)} publicPreviewUrl={publicPreviewUrl} />
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
         {detailTab === "Details" && <DetailsView prospect={prospect} />}
@@ -284,14 +292,14 @@ export function ProspectDetail({
         </div>
       ) : null}
       <div className="engine-mobile-action-bar" aria-label="Mobile prospect actions">
-        <button className="engine-button engine-button--primary" onClick={primaryAction.action} type="button">{primaryAction.label}</button>
+        <button className="engine-button engine-button--primary" onClick={mobilePrimaryAction.action} type="button">{mobilePrimaryAction.label}</button>
         <details className="engine-action-menu engine-action-menu--up" open={mobileActionMenuOpen} onToggle={(event) => setMobileActionMenuOpen(event.currentTarget.open)} ref={mobileMenuRef}>
           <summary>More</summary>
           <div>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Outreach"); }} type="button">Open outreach</button>
             <button onClick={() => { setMobileActionMenuOpen(false); openPublicPreview(); }} type="button">Open preview</button>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">View internal Preview tab</button>
-            <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">Improve preview</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); setLocalPreviewImprovementSignal(Date.now()); }} type="button">Improve preview</button>
             <button onClick={() => { setMobileActionMenuOpen(false); void onRegenerateOutreach(); }} type="button">Rewrite outreach</button>
             <button onClick={() => { setMobileActionMenuOpen(false); void onCreateReviewPackage(); }} type="button">Create review package</button>
             <button onClick={() => { setMobileActionMenuOpen(false); onStatus("Reviewed"); }} type="button">Mark reviewed</button>
@@ -550,6 +558,7 @@ function PreviewView({
   onRegeneratePreview,
   onReviewOutreach,
   previewRegenerating,
+  previewImprovementSignal,
   publicPreviewUrl,
 }: {
   prospect: Prospect;
@@ -558,6 +567,7 @@ function PreviewView({
   onRegeneratePreview: (feedback?: string) => Promise<PreviewRegenerationResult | void>;
   onReviewOutreach: () => void;
   previewRegenerating: boolean;
+  previewImprovementSignal: number;
   publicPreviewUrl: string;
 }) {
   const preview = prospect.preview!;
@@ -566,6 +576,8 @@ function PreviewView({
   const [selectedImprovements, setSelectedImprovements] = useState<string[]>([]);
   const [regenerationResult, setRegenerationResult] = useState("");
   const [regenerating, setRegenerating] = useState(false);
+  const lastPreviewImprovementSignal = useRef(0);
+  const improvementPanelRef = useRef<HTMLDivElement | null>(null);
   const styleProfile = previewStyleProfile(prospect, preview);
   const quality = preview.qualityScore;
   const artDirection = preview.artDirection;
@@ -606,6 +618,22 @@ function PreviewView({
     setRegenerationResult("");
     setImprovementPanelOpen(true);
   }
+
+  useEffect(() => {
+    if (!previewImprovementSignal || lastPreviewImprovementSignal.current === previewImprovementSignal) return;
+    lastPreviewImprovementSignal.current = previewImprovementSignal;
+    const suggested = suggestedPreviewFeedback(sendWorthiness.primaryWarning);
+    const initialOptions = initialPreviewOptions(sendWorthiness.primaryWarning);
+    setSelectedImprovements((current) => current.length ? current : initialOptions);
+    setFeedback((current) => current.trim() ? current : suggested);
+    setRegenerationResult("");
+    setImprovementPanelOpen(true);
+  }, [previewImprovementSignal, sendWorthiness.primaryWarning]);
+
+  useEffect(() => {
+    if (!improvementPanelOpen) return;
+    improvementPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [improvementPanelOpen]);
 
   function cancelImprovementPanel() {
     if (busy) return;
@@ -679,13 +707,8 @@ function PreviewView({
           <h3>{prospect.businessName}</h3>
           <p>Use focused feedback when the visible public result is not strong enough to show the prospect. Nothing is sent.</p>
         </div>
-        <div className="engine-preview-action-bar__actions">
-          <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
-          <button className="engine-button" disabled={busy} onClick={() => openImprovementPanel()} type="button">{busy ? "Regenerating preview..." : "Improve Preview"}</button>
-          <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
-        </div>
         {improvementPanelOpen ? (
-          <div className="engine-preview-improvement-panel" aria-label="Preview improvement feedback workflow">
+          <div className="engine-preview-improvement-panel" aria-label="Preview improvement feedback workflow" ref={improvementPanelRef}>
             <div>
               <span>Describe the visual fix</span>
               <h4>What should change before regenerating?</h4>
@@ -717,6 +740,13 @@ function PreviewView({
             </div>
           </div>
         ) : null}
+        <div className="engine-preview-action-bar__actions">
+          {publicPreviewUrl
+            ? <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
+            : <button className="engine-button engine-button--primary" onClick={() => void onCreateReviewPackage()} type="button">Create Public Preview</button>}
+          <button className="engine-button" disabled={busy} onClick={() => openImprovementPanel()} type="button">{busy ? "Regenerating preview..." : "Improve Preview"}</button>
+          <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
+        </div>
         {regenerationResult ? (
           <div className="engine-preview-action-alert" role="status">
             <p>{regenerationResult}</p>

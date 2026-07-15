@@ -120,6 +120,7 @@ export function ProspectEngine() {
   const [prospectView, setProspectView] = useState<ProspectView>("all");
   const [pipelineView, setPipelineView] = useState<PipelineView>("board");
   const [detailTab, setDetailTab] = useState<DetailTab>("Analysis");
+  const [previewFeedbackRequest, setPreviewFeedbackRequest] = useState<{ prospectId: string; nonce: number } | null>(null);
   const [query, setQuery] = useState("");
   const [trade, setTrade] = useState<"All" | TradeCategory>("All");
   const [status, setStatus] = useState<"All" | ProspectStatus>("All");
@@ -829,7 +830,7 @@ export function ProspectEngine() {
                   prospects={filtered.slice(0, 5)}
                   selectedId={selectedId}
                   previewRegeneratingId={previewRegeneratingId}
-                  onOpenPreviewFeedback={(id) => { setSelectedId(id); setDetailTab("Preview"); setWorkspaceTab("Prospects"); }}
+                  onOpenPreviewFeedback={(id) => { setSelectedId(id); setDetailTab("Preview"); setWorkspaceTab("Prospects"); setPreviewFeedbackRequest({ prospectId: id, nonce: Date.now() }); }}
                   onSelect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); }}
                 />
               </div>
@@ -885,12 +886,12 @@ export function ProspectEngine() {
                   prospects={filtered}
                   selectedId={selectedId}
                   previewRegeneratingId={previewRegeneratingId}
-                  onOpenPreviewFeedback={(id) => { setSelectedId(id); setDetailTab("Preview"); setWorkspaceTab("Prospects"); }}
+                  onOpenPreviewFeedback={(id) => { setSelectedId(id); setDetailTab("Preview"); setWorkspaceTab("Prospects"); setPreviewFeedbackRequest({ prospectId: id, nonce: Date.now() }); }}
                   onSelect={setSelectedId}
                 />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} previewRegenerating={previewRegeneratingId === selected.id} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} previewRegenerating={previewRegeneratingId === selected.id} previewImprovementSignal={previewFeedbackRequest?.prospectId === selected.id ? previewFeedbackRequest.nonce : 0} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
             </div>
           </div>
         )}
@@ -1428,7 +1429,7 @@ function ProspectTable({
                 {(close) => (
                   <>
                     <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Open detail</button>
-                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">{prospectNextActionLabel(prospect)}</button>
+                    <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Open detail to {prospectNextActionLabel(prospect).toLowerCase()}</button>
                     <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Rewrite outreach</button>
                     <button
                       disabled={previewRegeneratingId === prospect.id}

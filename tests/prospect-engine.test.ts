@@ -195,7 +195,7 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.equal(preview.creativeBrief?.businessName, prospect.businessName);
   assert.equal(preview.creativeBrief?.imagerySource, "curated stock photo library");
   assert.equal(preview.resolvedImages?.sourceStatus, "curated stock photo library");
-  assert.match(preview.resolvedImages?.hero.src ?? "", /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(preview.resolvedImages?.hero.src ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.ok((preview.resolvedImages?.services ?? []).every((image) => image.source === "curated-stock-photo-library"));
   assert.ok(preview.layoutDirection);
   assert.match(preview.creativeBrief?.visualDirection ?? "", /locally credible|approachable|polished|sturdy|established/i);
@@ -297,7 +297,7 @@ test("preview generation creates a structured photo-led business design brief", 
   assert.match(preview.creativeBrief?.verifiedEmailOrContactPath ?? "", /public email/);
   assert.match(preview.creativeBrief?.imageIntents.join(" ") ?? "", /Hero: .*pressure washer|Hero: .*pressure washing/i);
   assert.equal(preview.resolvedImages?.sourceStatus, "curated stock photo library");
-  assert.match(preview.resolvedImages?.hero.src ?? "", /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(preview.resolvedImages?.hero.src ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(preview.creativeBrief?.copyRestrictions.join(" ") ?? "", /Do not invent reviews/);
   assert.match(preview.heroHeadline ?? "", /Exterior cleaning for Tampa homes from MC Pressure Washing FL/i);
   assert.ok((preview.qualityScore?.imageQuality ?? 0) >= 60);

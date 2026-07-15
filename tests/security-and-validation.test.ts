@@ -40,7 +40,7 @@ test("prospect validation preserves safe preview style metadata", () => {
     assert.match(result.value.preview?.artDirection?.imageTreatment ?? "", /hero photo/i);
     assert.equal(result.value.preview?.resolvedImages?.sourceStatus, prospect.preview.resolvedImages?.sourceStatus);
     assert.equal(result.value.preview?.resolvedImages?.hero.source, "curated-stock-photo-library");
-    assert.match(result.value.preview?.resolvedImages?.hero.src ?? "", /images\.unsplash\.com\/photo-/);
+    assert.match(result.value.preview?.resolvedImages?.hero.src ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-)/);
     assert.equal(result.value.preview?.businessProfile?.officialBusinessName, prospect.preview.businessProfile?.officialBusinessName);
     assert.equal(result.value.preview?.businessProfile?.logo.status, prospect.preview.businessProfile?.logo.status);
     assert.ok((result.value.preview?.businessProfile?.sourceFacts.length ?? 0) >= 4);

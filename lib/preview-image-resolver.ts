@@ -413,6 +413,30 @@ function curatedPhoto(slug: string, slot: CatalogSlot) {
   return `/engine-preview-assets/trade-photos/${slug}-${slot}.jpg`;
 }
 
+function verifiedLocalPhotoSources(trade: TradeCategory) {
+  if (trade === "Pressure Washing") {
+    return [
+      {
+        src: curatedPhoto("power-washing", "hero"),
+        keywords: ["pressure washing", "concrete cleaning", "driveway cleaning", "residential concrete", "surface cleaner", "water spray", "verified exterior cleaning photo"],
+      },
+    ];
+  }
+  if (trade === "HVAC") {
+    return [
+      {
+        src: curatedPhoto("hvac", "hero"),
+        keywords: ["outdoor AC condenser", "hvac equipment", "cooling", "home comfort", "verified HVAC photo"],
+      },
+      {
+        src: curatedPhoto("hvac", "service"),
+        keywords: ["HVAC unit", "heat pump", "air conditioner", "system installation", "verified HVAC photo"],
+      },
+    ];
+  }
+  return [];
+}
+
 function buildIntent(
   trade: TradeCategory,
   prospect: Prospect,
@@ -515,10 +539,11 @@ function curatedStockSources(trade: TradeCategory, prospect: Prospect) {
   const photos = curatedStockCatalog[trade] ?? curatedStockCatalog["General Contractor"] ?? [];
   const start = seededIndex(`${prospect.businessName}|${prospect.city}|${trade}`, photos.length);
   const ordered = [...photos.slice(start), ...photos.slice(0, start)];
-  return ordered.map((photo) => ({
+  const remotePhotos = ordered.map((photo) => ({
     src: safeImageUrl(photo.src ?? (photo.id ? unsplashPhoto(photo.id) : "")),
     keywords: photo.keywords,
   })).filter((photo) => photo.src);
+  return [...verifiedLocalPhotoSources(trade), ...remotePhotos];
 }
 
 function textTokens(value: string) {
@@ -577,12 +602,18 @@ function selectCuratedStockPhoto(
       .filter((candidate) => candidate.score >= Math.max(6, bestScore - 22))
       .sort((a, b) => a.index - b.index);
     const heroPool = acceptableHero.filter((candidate) => !usedSources.has(candidate.photo.src));
-    const selectedPool = heroPool.length ? heroPool : acceptableHero;
+    const directLocalHero = heroPool.find((candidate) => /-hero\.(jpe?g|png|webp)$/i.test(candidate.photo.src));
+    if (directLocalHero) return directLocalHero.photo;
+    const localHeroPool = heroPool.filter((candidate) => candidate.photo.src.startsWith("/engine-preview-assets/"));
+    const selectedPool = localHeroPool.length ? localHeroPool : heroPool.length ? heroPool : acceptableHero;
     const selected = selectedPool[seededIndex(seed, selectedPool.length)] ?? selectedPool[0];
     return selected?.photo
       ?? curatedStockPhotos[0];
   }
-  return scored.find((candidate) => !usedSources.has(candidate.photo.src) || candidate.score > 0)?.photo
+  const bestScore = scored[0]?.score ?? 0;
+  const unusedRelevant = scored.find((candidate) => !usedSources.has(candidate.photo.src) && candidate.score >= Math.max(0, bestScore - 18));
+  if (unusedRelevant) return unusedRelevant.photo;
+  return scored.find((candidate) => !usedSources.has(candidate.photo.src))?.photo
     ?? curatedStockPhotos.find((photo) => !usedSources.has(photo.src))
     ?? curatedStockPhotos[0];
 }

@@ -7886,17 +7886,7 @@ body:has(.engine-shell) {
 }
 
 .prospect-preview-service-area::after {
-  content: "";
-  position: absolute;
-  right: clamp(1rem, 8vw, 8rem);
-  bottom: clamp(2rem, 6vw, 5rem);
-  width: min(28vw, 18rem);
-  height: min(28vw, 18rem);
-  border: 1px solid color-mix(in srgb, var(--prospect-line) 78%, transparent);
-  border-radius: 16px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--prospect-primary) 10%, transparent), transparent 55%),
-    color-mix(in srgb, var(--prospect-soft) 88%, white);
+  content: none;
 }
 
 .prospect-preview-contact {
@@ -8142,7 +8132,7 @@ body:has(.engine-shell) {
 .prospect-preview-contact form p {
   grid-column: 1 / -1;
   margin: 0;
-  color: color-mix(in srgb, #ffffff 82%, var(--prospect-accent));
+  color: color-mix(in srgb, var(--prospect-ink) 76%, var(--prospect-surface));
   font-size: 0.84rem;
   font-weight: 750;
   line-height: 1.45;

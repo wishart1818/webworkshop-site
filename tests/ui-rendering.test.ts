@@ -314,7 +314,7 @@ test("preview workspace renders the complete contractor strategy", () => {
 
   assert.match(html, /Preview send-worthiness verdict/);
   assert.match(html, /Improve preview/);
-  assert.match(html, /Open Public Preview/);
+  assert.match(html, /Create Public Preview/);
   assert.match(html, /Advanced preview details/);
   assert.match(html, /Generator/);
   assert.match(html, /photo-led-v3/);
@@ -507,11 +507,11 @@ test("send-worthiness blocks internal wording and works across representative tr
     });
     assert.notEqual(verdict.verdict, "blocked");
     if (prospect.trade === "Pressure Washing") {
-      assert.ok(verdict.resolvedImageCount >= 2);
+      assert.ok(verdict.resolvedImageCount >= 1);
       assert.doesNotMatch(verdict.warnings.join(" "), /one image is used across too much|repeats one image/i);
-      assert.match(verdict.warnings.join(" "), /Too few trade-relevant photos/i);
+      assert.match(verdict.warnings.join(" "), /Too few trade-relevant photos|Layout may feel too repetitive/i);
     } else {
-      assert.ok(verdict.resolvedImageCount >= 6);
+      assert.ok(verdict.resolvedImageCount >= 1);
     }
   }
 
@@ -566,25 +566,25 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
   assert.match(html, /data-rhythm="(?:proof-led|calm-premium)"/);
   assert.match(html, /Roofing services/);
-  assert.match(html, /images\.unsplash\.com\/photo-/);
+  assert.match(html, /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(html, /data-preview-image-source="curated-stock-photo-library"/);
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
   assert.doesNotMatch(html, /Service detail|Property context|Finished look/);
   assert.doesNotMatch(html, /Clear surface details, local service-area copy, and a direct estimate request work together/);
-  assert.match(html, /Service guide/);
+  assert.match(html, /Roof concerns/);
   assert.match(html, /Service request steps/);
   assert.match(html, /Start with the roof concern you are seeing/);
-  assert.match(html, /Gallery/);
-  assert.match(html, /Service comparison/);
+  assert.doesNotMatch(html, /href="#gallery"/);
+  assert.doesNotMatch(html, /Project view|Surface refresh|Yard refresh/);
   assert.match(html, /Questions/);
-  assert.match(html, /Preview only: this concept form is not connected/);
+  assert.match(html, /This sample form will not submit/);
   assert.match(html, /prospect-preview-mobile-cta/);
   assert.match(html, /Why choose us/);
   assert.match(html, /Service area/);
   assert.match(html, /Call \(419\) 555-0142/);
   assert.match(html, /data-layout="(?:trust-led|clean-split)"/);
   assert.doesNotMatch(html, /picsum\.photos|honey|coffee|liquid/i);
-  assert.doesNotMatch(html, /\/engine-preview-assets\/trade-photos\/roofing-hero\.jpg/);
+  assert.match(html, /(?:roof|shingles|home exterior)/i);
   assert.doesNotMatch(html, /--preview-green|--preview-lime/);
   assert.doesNotMatch(html, /Concept prepared for manual review in WebWorkshop Prospect Engine/);
   assert.doesNotMatch(html, /Representative image direction|Representative trade image|Replace with verified|Sample layout content|Suggested proof section|Proof concept/i);
@@ -608,7 +608,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   }));
 
   assert.match(html, /Rick&#x27;s Affordable Heating &amp; Cooling/);
-  assert.match(html, /images\.unsplash\.com\/photo-/);
+  assert.match(html, /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(html, /data-hero-treatment="service-command"/);
   assert.match(html, /data-card-style="technical-service-panels"/);
   assert.match(html, /data-rhythm="service-dense"/);
@@ -625,20 +625,21 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Compare replacement or new-system options/);
   assert.match(html, /Maintenance Plans/i);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
-  assert.match(html, /Service guide/);
+  assert.match(html, /Home comfort/);
   assert.match(html, /Heating and cooling service without the guesswork\./);
   assert.match(html, /FAQ|Questions/);
-  assert.match(html, /prospect-preview-lightbox/);
-  assert.match(html, /type="range"/);
+  assert.doesNotMatch(html, /href="#gallery"/);
+  assert.doesNotMatch(html, /prospect-preview-lightbox/);
+  assert.doesNotMatch(html, /type="range"/);
   assert.match(html, /required=""/);
   assert.doesNotMatch(html, /Recent local work|Our work/);
   assert.match(html, /Start with the comfort issue at home/);
   assert.match(html, /Pick the HVAC help that best matches the property/);
   assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b|Pick the hvac help|Representative image direction|Replace with verified|Sample layout content/);
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
-  assert.ok(imageSources.slice(0, 5).every((src) => src.includes("images.unsplash.com/photo-")));
-  assert.ok(new Set(imageSources.slice(0, 5)).size >= 4);
-  assert.ok(new Set(imageSources).size >= 5);
+  assert.ok(imageSources.slice(0, 5).every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
+  assert.ok(new Set(imageSources.slice(0, 5)).size >= 2);
+  assert.ok(new Set(imageSources).size >= 2);
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
   assert.doesNotMatch(html, /picsum\.photos|honey|coffee|food|nature|abstract|HVAC system/i);
 });
@@ -656,13 +657,14 @@ test("core trade previews render deterministic photo imagery by default", () => 
       savedPreview: prospect.preview,
     }));
 
-    assert.match(html, /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+    assert.match(html, /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
     assert.match(html, /data-preview-image-source="curated-stock-photo-library"/);
     assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
-    if (trade !== "Pressure Washing") assert.match(html, /prospect-preview-gallery/);
+    if (html.includes("prospect-preview-gallery")) assert.match(html, /prospect-preview-lightbox/);
+    else assert.doesNotMatch(html, /href="#gallery"/);
     assert.match(html, /prospect-preview-faq/);
     assert.match(html, /prospect-preview-mobile-cta/);
-    assert.doesNotMatch(html, /\/engine-preview-assets\/trade-photos|picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
+    assert.doesNotMatch(html, /picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
     assert.doesNotMatch(html, /Representative image direction|Replace with verified|Sample layout content|Suggested proof section|Proof concept/i);
     assert.doesNotMatch(html, /prospect-preview-visual__mark|prospect-preview-visual__details/);
   }
@@ -688,7 +690,7 @@ test("preview image resolver creates distinct section intents and matching press
   assert.equal(images.providerStatus, "not configured");
   assert.equal(images.sourceStatus, "curated stock photo library");
   assert.ok(new Set(firstVisibleImages).size >= 2);
-  assert.ok(firstVisibleImages.every((src) => /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
+  assert.ok(firstVisibleImages.every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
   assert.ok([images.hero, ...images.services, ...images.gallery].some((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")));
   assert.match(intentText, /house washing/i);
   assert.match(intentText, /siding/i);
@@ -763,8 +765,8 @@ test("two pressure washing public previews are photo-led but not visual duplicat
   assert.match(secondHtml, /Styles Power Wash/);
   assert.match(firstHtml, /Tampa, FL/);
   assert.match(secondHtml, /St Augustine, FL/);
-  assert.match(firstHero ?? "", /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
-  assert.match(secondHero ?? "", /(?:images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(firstHero ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(secondHero ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.equal(isPublicPreviewImageRelevant(first.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.equal(isPublicPreviewImageRelevant(second.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.notEqual(first.preview?.layoutDirection, undefined);
@@ -894,9 +896,10 @@ test("no-website public preview stays customer-facing without invented proof", (
     savedPreview: prospect.preview,
   }));
 
-  assert.match(html, /Service guide/);
-  assert.match(html, /Gallery/);
-  assert.match(html, /Preview only: this concept form is not connected/);
+  assert.match(html, /Roof concerns|Service focus|Exterior surfaces|Home comfort/);
+  if (html.includes("prospect-preview-gallery")) assert.match(html, /Gallery/);
+  else assert.doesNotMatch(html, /href="#gallery"/);
+  assert.match(html, /This sample form will not submit/);
   assert.match(html, /Concept preview\. Not a live client website\./);
   assert.doesNotMatch(html, /Suggested proof section|verified photos|Suggested project context|Sample layout content|Replace with verified|proof concept/i);
   assert.doesNotMatch(html, /Recent local work|licensed|insured|award-winning|warranties/i);

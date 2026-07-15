@@ -139,6 +139,30 @@ function words(value: string) {
   return value.toLowerCase().split(/[^a-z0-9]+/).filter((part) => part.length > 2);
 }
 
+function matchedServiceTemplate(
+  trade: Prospect["trade"],
+  title: string,
+  pageCopy: TradePageCopy,
+) {
+  const lower = title.toLowerCase();
+  if (trade === "Pressure Washing") {
+    if (/roof|soft/.test(lower)) return pageCopy.services[2];
+    if (/concrete|driveway|walk|patio|paver/.test(lower)) return pageCopy.services[1];
+    if (/house|siding|exterior|surface/.test(lower)) return pageCopy.services[0];
+  }
+  if (trade === "Landscaping") {
+    if (/plant|bed|mulch|install|garden/.test(lower)) return pageCopy.services[1] ?? pageCopy.services[0];
+    if (/patio|hardscape|outdoor/.test(lower)) return pageCopy.services[2] ?? pageCopy.services[0];
+    if (/lawn|season|maintenance|yard/.test(lower)) return pageCopy.services[0];
+  }
+  if (trade === "HVAC") {
+    if (/install|replacement|system/.test(lower)) return pageCopy.services[1] ?? pageCopy.services[0];
+    if (/maintenance|tune|season/.test(lower)) return pageCopy.services[2] ?? pageCopy.services[0];
+    if (/repair|heating|cooling|air/.test(lower)) return pageCopy.services[0];
+  }
+  return undefined;
+}
+
 function profileServiceCards(
   profile: PreviewBusinessProfile | undefined,
   pageCopy: TradePageCopy,
@@ -148,7 +172,7 @@ function profileServiceCards(
   const fallback = pageCopy.services;
   const cards = serviceNames.map((title, index) => {
     const tokens = words(title);
-    const matched = pageCopy.services.find((service) => {
+    const matched = matchedServiceTemplate(trade, title, pageCopy) ?? pageCopy.services.find((service) => {
       const haystack = words(`${service.title} ${service.description}`);
       return tokens.some((token) => haystack.includes(token));
     });
@@ -312,6 +336,88 @@ function cleanVisualCaption(trade: Prospect["trade"], displayCity: string) {
   };
 }
 
+function serviceShortcutText(trade: Prospect["trade"], index: number, displayCity: string) {
+  const pressureWashing = ["Exterior surfaces", "Driveways and patios", `${displayCity} homes`];
+  const roofing = ["Roof concerns", "Repair or replace", `${displayCity} area`];
+  const hvac = ["Comfort issues", "Repair or install", `${displayCity} homes`];
+  const landscaping = ["Yard goals", "Seasonal care", `${displayCity} properties`];
+  const fallback = ["Service need", "Project details", `${displayCity} area`];
+  const labels = trade === "Pressure Washing"
+    ? pressureWashing
+    : trade === "Roofing"
+      ? roofing
+      : trade === "HVAC"
+        ? hvac
+        : trade === "Landscaping"
+          ? landscaping
+          : fallback;
+  return labels[index] ?? fallback[index] ?? "Local service";
+}
+
+function proofKicker(trade: Prospect["trade"]) {
+  if (trade === "Pressure Washing") return "Exterior surfaces";
+  if (trade === "Landscaping") return "Outdoor spaces";
+  if (trade === "Roofing") return "Roof concerns";
+  if (trade === "HVAC") return "Home comfort";
+  return "Service focus";
+}
+
+function galleryCopy(trade: Prospect["trade"], displayCity: string) {
+  const byTrade: Partial<Record<Prospect["trade"], { headline: string; intro: string }>> = {
+    "Pressure Washing": {
+      headline: "Exterior surfaces that can make a home feel cleaner.",
+      intro: "Siding, concrete, patios, and roof areas each need the right cleaning approach.",
+    },
+    Landscaping: {
+      headline: `Outdoor spaces around ${displayCity} with room to look more cared for.`,
+      intro: "Lawns, planting beds, and hardscape areas all shape the first impression of a property.",
+    },
+    Roofing: {
+      headline: "Roof details homeowners usually want checked first.",
+      intro: "Shingles, flashing, storm concerns, and roofline details can be discussed before an estimate.",
+    },
+    HVAC: {
+      headline: "Heating and cooling details that affect comfort at home.",
+      intro: "Equipment, airflow, maintenance, and replacement needs are easier to sort when the issue is clear.",
+    },
+  };
+  return byTrade[trade] ?? {
+    headline: "A closer look at the work customers ask about.",
+    intro: "Use the service photos as a quick way to match the property need to the right estimate request.",
+  };
+}
+
+function comparisonCopy(trade: Prospect["trade"]) {
+  if (trade === "Pressure Washing") {
+    return {
+      label: "Surface refresh",
+      headline: "Picture the difference cleaner exterior surfaces can make.",
+      body: "Exterior cleaning can brighten the areas people notice first when they pull up to the home.",
+      control: "Compare current buildup with a cleaner finish",
+      before: "Buildup",
+      after: "Cleaner surface",
+    };
+  }
+  if (trade === "Landscaping") {
+    return {
+      label: "Yard refresh",
+      headline: "Picture a yard with cleaner edges and a clearer plan.",
+      body: "A focused landscaping visit can help planting beds, lawn edges, and outdoor areas feel more intentional.",
+      control: "Compare current outdoor areas with a cleaner finish",
+      before: "Before care",
+      after: "After care",
+    };
+  }
+  return {
+    label: "Project view",
+    headline: "Picture the work before requesting an estimate.",
+    body: "Use this section to understand the kind of property details that help start the conversation.",
+    control: "Compare current need with completed work",
+    before: "Current need",
+    after: "After service",
+  };
+}
+
 function galleryLabel(trade: Prospect["trade"], index: number) {
   const pressureWashing = ["Exterior washing", "Concrete cleaning", "Roof and soft wash"];
   const landscaping = ["Yard care", "Planting areas", "Outdoor finish"];
@@ -361,23 +467,49 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const businessProfile = preview.businessProfile;
   const businessName = businessProfile?.officialBusinessName ?? prospect.businessName;
   const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade);
-  const serviceArea = normalizeCopy(prospect.serviceArea || `${displayCity}, ${displayState}`);
+  const alignedServiceArea = (value: string) => {
+    const normalized = normalizeCopy(value);
+    const lower = normalized.toLowerCase();
+    return lower.includes(displayCity.toLowerCase()) || lower.includes(displayState.toLowerCase())
+      ? normalized
+      : `${displayCity}, ${displayState}`;
+  };
+  const serviceArea = alignedServiceArea(prospect.serviceArea || `${displayCity}, ${displayState}`);
   const images = preview.resolvedImages ?? resolvePreviewImages(renderProspect, serviceCards);
   const proof = proofCopy(canonicalTrade, displayTrade);
   const faqs = faqItems(canonicalTrade, styleProfile.ctaLabel);
   const steps = quoteProcess(displayTrade, styleProfile.ctaLabel);
   const visualCaption = cleanVisualCaption(canonicalTrade, displayCity);
+  const galleryText = galleryCopy(canonicalTrade, displayCity);
+  const compareText = comparisonCopy(canonicalTrade);
   const imageRelevant = (image: ResolvedPreviewImage) => isPublicPreviewImageRelevant(image, canonicalTrade);
-  const heroImage = imageRelevant(images.hero) ? images.hero : images.services.find(imageRelevant) ?? images.gallery.find(imageRelevant) ?? images.hero;
-  const serviceImages = images.services.map((image) => imageRelevant(image) ? image : null);
-  const galleryAssets = images.gallery.filter(imageRelevant);
-  const proofImage = imageRelevant(images.gallery[2]) ? images.gallery[2] : galleryAssets[0] ?? images.beforeAfter;
-  const processImage = imageRelevant(images.process) ? images.process : galleryAssets[1] ?? proofImage;
-  const beforeAfterImage = imageRelevant(images.beforeAfter) ? images.beforeAfter : galleryAssets[0] ?? proofImage;
-  const ctaImage = imageRelevant(images.cta) ? images.cta : galleryAssets[0] ?? proofImage;
-  const showGallery = canonicalTrade !== "Pressure Washing" || galleryAssets.length >= 3;
+  const dependableImage = (image: ResolvedPreviewImage) => image.source === "business-photo"
+    || image.source === "configured-stock-provider"
+    || image.src.startsWith("/engine-preview-assets/");
+  const usedImageSources = new Set<string>();
+  const takeImage = (candidates: Array<ResolvedPreviewImage | undefined | null>, options: { requireDependable?: boolean } = {}) => {
+    const selected = candidates.find((image): image is ResolvedPreviewImage => image != null
+      && imageRelevant(image)
+      && !usedImageSources.has(image.src)
+      && (!options.requireDependable || dependableImage(image)));
+    if (selected) usedImageSources.add(selected.src);
+    return selected ?? null;
+  };
+  const heroImage = takeImage([images.hero, ...images.services, ...images.gallery, images.beforeAfter]) ?? images.hero;
+  const serviceImages = images.services.map((image, index) => takeImage([image, images.gallery[index], images.beforeAfter], { requireDependable: true })) as Array<ResolvedPreviewImage | null>;
+  const galleryAssets = images.gallery.filter((image) => imageRelevant(image) && dependableImage(image) && !usedImageSources.has(image.src)).slice(0, 3);
+  galleryAssets.forEach((image) => usedImageSources.add(image.src));
+  const proofImage = takeImage([images.gallery[2], images.beforeAfter, images.process, ...images.gallery], { requireDependable: true });
+  const processImage = takeImage([images.process, images.cta, ...images.gallery], { requireDependable: true });
+  const beforeAfterImage = takeImage([images.beforeAfter, ...images.gallery], { requireDependable: true });
+  const ctaImage = takeImage([images.cta, images.process, ...images.gallery], { requireDependable: true });
+  const showGallery = galleryAssets.length >= 3;
+  const showComparison = Boolean(beforeAfterImage);
   const headline = normalizeCopy(preview.heroHeadline ?? pageCopy.heroHeadline);
-  const heroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
+  const rawHeroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
+  const heroSupporting = rawHeroSupporting.toLowerCase().includes(displayCity.toLowerCase()) || !/nearby communities|across/i.test(rawHeroSupporting)
+    ? rawHeroSupporting
+    : `${businessName} provides ${serviceCards.map((service) => service.title).join(", ")} across ${serviceArea}.`;
   const logoUrl = logoImageUrl(businessProfile);
   const trustItems = (preview.trustItems ?? [
     `Serving ${displayCity}, ${displayState}`,
@@ -428,7 +560,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </a>
           <div>
             <a href="#services">Services</a>
-            <a href="#gallery">Gallery</a>
+            {showGallery ? <a href="#gallery">Gallery</a> : null}
             <a href="#faq">FAQ</a>
             <a href="#contact">Contact</a>
           </div>
@@ -450,7 +582,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               {serviceCards.map((item, index) => (
                 <a href={`#service-${index + 1}`} key={item.title}>
                   <b>{item.title}</b>
-                  <i>{index === 0 ? "Core service" : index === 1 ? "Estimate details" : `${displayCity} area`}</i>
+                  <i>{serviceShortcutText(canonicalTrade, index, displayCity)}</i>
                 </a>
               ))}
             </div>
@@ -492,7 +624,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         <section className="prospect-preview-why">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Why choose us</span>
-            <h2>Know what kind of work to ask about.</h2>
+            <h2>Match the service to what the property needs.</h2>
             <p>{confidenceCopy(canonicalTrade, prospect.businessName)}</p>
           </div>
           <div>
@@ -508,12 +640,12 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
 
         <section className="prospect-preview-work" id="work">
           <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">Service guide</span>
+            <span className="prospect-preview-kicker">{proofKicker(canonicalTrade)}</span>
             <h2>{proof.headline}</h2>
             <p>{proof.intro}</p>
           </div>
           <div className="prospect-preview-proof-layout">
-            <TradePreviewImage {...previewImageProps(proofImage, "proof")} />
+            {proofImage ? <TradePreviewImage {...previewImageProps(proofImage, "proof")} /> : null}
             <div className="prospect-preview-proof-notes">
               {proof.checkpoints.map((item) => (
                 <article key={item.title}>
@@ -529,7 +661,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <span className="prospect-preview-kicker">How to start</span>
             <h2>{processHeadline(canonicalTrade)}</h2>
-            <TradePreviewImage {...previewImageProps(processImage, "proof")} />
+            {processImage ? <TradePreviewImage {...previewImageProps(processImage, "proof")} /> : null}
           </div>
           <ol>
             {steps.map((item) => (
@@ -545,8 +677,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <section className="prospect-preview-gallery-section" id="gallery">
             <div className="prospect-preview-section__intro">
               <span className="prospect-preview-kicker">Gallery</span>
-              <h2>See the kinds of surfaces this work can refresh.</h2>
-              <p>Different parts of the property can need different service approaches, from detailed cleanup to larger exterior work.</p>
+              <h2>{galleryText.headline}</h2>
+              <p>{galleryText.intro}</p>
             </div>
             <div className="prospect-preview-gallery" aria-label={`${displayTrade} service gallery`}>
               {galleryAssets.map((asset, index) => (
@@ -565,19 +697,19 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </section>
         ) : null}
 
-        <section className="prospect-preview-compare" aria-label="Service comparison slider">
+        {showComparison ? <section className="prospect-preview-compare" aria-label={`${displayTrade} project comparison`}>
           <div>
-            <span className="prospect-preview-kicker">Service comparison</span>
-            <h2>Picture a cleaner finish before you schedule.</h2>
-            <p>Exterior cleaning can refresh the surfaces people notice first when they pull up to the home.</p>
+            <span className="prospect-preview-kicker">{compareText.label}</span>
+            <h2>{compareText.headline}</h2>
+            <p>{compareText.body}</p>
           </div>
           <div className="prospect-preview-slider-card">
-            <TradePreviewImage {...previewImageProps(beforeAfterImage, "service")} />
-            <label htmlFor="preview-before-after">Move the slider to picture the cleaning result</label>
+            <TradePreviewImage {...previewImageProps(beforeAfterImage!, "service")} />
+            <label htmlFor="preview-before-after">{compareText.control}</label>
             <input id="preview-before-after" min="0" max="100" type="range" defaultValue="58" />
-            <div><span>Current condition</span><span>Cleaner finish</span></div>
+            <div><span>{compareText.before}</span><span>{compareText.after}</span></div>
           </div>
-        </section>
+        </section> : null}
 
         <section className="prospect-preview-service-area">
           <span className="prospect-preview-kicker">Service area</span>
@@ -606,13 +738,13 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>Request an estimate for your property.</h2>
             <p>Tell us what needs done, where it is, and when you would like the work estimated.</p>
-            <TradePreviewImage {...previewImageProps(ctaImage, "proof")} />
+            {ctaImage ? <TradePreviewImage {...previewImageProps(ctaImage, "proof")} /> : null}
           </div>
           <form action="#contact" aria-describedby="preview-form-note">
             <label>Name<input name="name" required /></label>
             <label>Phone<input name="phone" required inputMode="tel" /></label>
             <label>How can we help?<textarea name="message" required minLength={12} /></label>
-            <p id="preview-form-note">Preview only: this concept form is not connected to a live submission destination.</p>
+            <p id="preview-form-note">This sample form will not submit. Call or use the business&apos;s live website when you are ready.</p>
             <button type="submit">{styleProfile.ctaLabel}</button>
           </form>
         </section>

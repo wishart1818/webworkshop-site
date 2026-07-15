@@ -31,9 +31,9 @@ export function TradePreviewImage({ alt, section, slot, src, source }: TradePrev
       data-preview-image-state={imageState}
     >
       {imageState === "unavailable" ? (
-        <div className="prospect-preview-image__fallback" role="img" aria-label={`${alt}. Image unavailable.`}>
-          <strong>{section || "Service photo"}</strong>
-          <span>Photo unavailable</span>
+        <div className="prospect-preview-image__fallback" role="img" aria-label={`${alt}. Service image could not load.`}>
+          <strong>{section || "Service image"}</strong>
+          <span>The rest of this preview is still available.</span>
         </div>
       ) : (
         <>
@@ -42,7 +42,7 @@ export function TradePreviewImage({ alt, section, slot, src, source }: TradePrev
           <img
             alt={alt}
             decoding="async"
-            loading={slot === "hero" ? "eager" : "lazy"}
+            loading="eager"
             src={src}
             onError={handleImageError}
           />
