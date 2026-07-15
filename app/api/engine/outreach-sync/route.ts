@@ -125,7 +125,7 @@ export async function POST(request: Request) {
         previewVerdict,
         publicPreviewVerified,
         publicPreviewUrl: publicPreviewLink,
-        message: `Public preview updated. Verdict: ${previewVerdict.label}. ${previewVerdict.resolvedImageCount} images resolved. ${previewVerdict.primaryWarning} Nothing was sent.`,
+        message: `Public preview updated. ${previewVerdict.label}: ${previewVerdict.primaryWarning} Nothing was sent.`,
       });
     }
     if (payload.action === "create_autonomous_review_package") {

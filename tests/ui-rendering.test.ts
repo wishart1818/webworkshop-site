@@ -470,7 +470,13 @@ test("send-worthiness blocks internal wording and works across representative tr
       publicPreviewVerified: true,
     });
     assert.notEqual(verdict.verdict, "blocked");
-    assert.ok(verdict.resolvedImageCount >= 6);
+    if (prospect.trade === "Pressure Washing") {
+      assert.ok(verdict.resolvedImageCount >= 2);
+      assert.doesNotMatch(verdict.warnings.join(" "), /one image is used across too much|repeats one image/i);
+      assert.match(verdict.warnings.join(" "), /Too few trade-relevant photos/i);
+    } else {
+      assert.ok(verdict.resolvedImageCount >= 6);
+    }
   }
 
   const blocked = evaluatePreviewSendWorthiness(internalWording, {

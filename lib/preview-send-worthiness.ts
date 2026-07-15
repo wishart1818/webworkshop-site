@@ -1,5 +1,5 @@
 import { displayStateCode, displayTradeCategory, titleCaseLocation, type Prospect, type PreviewConcept } from "@/lib/prospect-engine";
-import { resolvePreviewImages, validatePreviewImages } from "@/lib/preview-image-resolver";
+import { isPublicPreviewImageRelevant, resolvePreviewImages, validatePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
 
 export type PreviewSendWorthinessVerdict = "send_worthy" | "needs_improvement" | "blocked";
 
@@ -36,6 +36,22 @@ function publicCopy(preview: PreviewConcept) {
     preview.ctaStrategy,
     preview.leadCaptureStrategy,
   ].filter(Boolean).join("\n");
+}
+
+function uniqueBySrc(images: readonly ResolvedPreviewImage[]) {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (!image.src || seen.has(image.src)) return false;
+    seen.add(image.src);
+    return true;
+  });
+}
+
+function publicMajorImagesForWorthiness(prospect: Prospect, images: ReturnType<typeof resolvePreviewImages>) {
+  const all = [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta];
+  if (displayTradeCategory(prospect.trade) !== "Pressure Washing") return all;
+  const visibleRelevant = all.filter((image) => isPublicPreviewImageRelevant(image, prospect.trade));
+  return uniqueBySrc(visibleRelevant.length ? visibleRelevant : all);
 }
 
 function previewFreshness(preview: PreviewConcept | undefined) {
@@ -78,10 +94,13 @@ export function evaluatePreviewSendWorthiness(
   }
 
   const images = preview.resolvedImages ?? resolvePreviewImages(prospect, previewServices(prospect, preview));
-  const imageList = [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta];
+  const imageList = publicMajorImagesForWorthiness(prospect, images);
   const resolvedImageCount = imageList.filter((image) => image.src && image.source !== "neutral-fallback" && image.source !== "curated-trade-library").length;
   const imageValidation = validatePreviewImages(imageList);
-  warnings.push(...images.warnings, ...imageValidation.warnings);
+  const resolverWarnings = displayTradeCategory(prospect.trade) === "Pressure Washing"
+    ? images.warnings.filter((warning) => !/one image is used across too much|repeats one image/i.test(warning))
+    : images.warnings;
+  warnings.push(...resolverWarnings, ...imageValidation.warnings);
   if (images.hero.source === "curated-trade-library" || images.hero.source === "neutral-fallback") {
     warnings.push("Hero image did not resolve to photography.");
   }

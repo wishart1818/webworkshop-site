@@ -2783,13 +2783,16 @@ body:has(.engine-shell) {
   z-index: 110;
   right: 1rem;
   bottom: calc(1rem + var(--engine-safe-bottom));
-  width: min(22rem, calc(100vw - 2rem));
+  width: min(24rem, calc(100vw - 2rem));
   border: 1px solid var(--engine-line);
   border-radius: var(--engine-radius-sm);
   background: #fff;
   box-shadow: var(--engine-shadow-popover);
   padding: 0.75rem;
   color: var(--engine-ink);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .engine-loading-state h3,
