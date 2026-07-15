@@ -2334,6 +2334,41 @@ body:has(.engine-shell) {
   gap: 0.4rem;
 }
 
+.engine-preview-improvement-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--engine-accent) 32%, var(--engine-line) 68%);
+  border-radius: var(--engine-radius-sm);
+  background: color-mix(in srgb, #ffffff 95%, var(--engine-accent) 5%);
+  padding: 0.85rem;
+}
+
+.engine-preview-improvement-panel > div:first-child span {
+  color: var(--engine-accent-dark);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.engine-preview-improvement-panel h4,
+.engine-preview-improvement-panel p {
+  margin: 0;
+}
+
+.engine-preview-improvement-panel h4 {
+  margin-top: 0.2rem;
+  font-size: 0.95rem;
+}
+
+.engine-preview-improvement-panel p {
+  margin-top: 0.25rem;
+  color: var(--engine-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .engine-preview-chip-grid {
   grid-column: 1 / -1;
   display: flex;
@@ -2364,6 +2399,12 @@ body:has(.engine-shell) {
   background: color-mix(in srgb, #ffffff 88%, var(--engine-accent) 12%);
 }
 
+.engine-chip-button.is-selected {
+  border-color: var(--engine-accent);
+  background: var(--engine-accent);
+  color: #fff;
+}
+
 .engine-chip-button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -2377,12 +2418,39 @@ body:has(.engine-shell) {
 
 .engine-preview-feedback textarea {
   width: 100%;
-  min-height: 4rem;
+  min-height: 6rem;
   border: 1px solid var(--engine-line-strong);
   background: #fff;
   color: var(--engine-ink);
   padding: 0.65rem;
   resize: vertical;
+}
+
+.engine-preview-improvement-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.engine-preview-action-alert {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--engine-accent) 30%, var(--engine-line) 70%);
+  border-radius: var(--engine-radius-sm);
+  background: #fff;
+  padding: 0.7rem;
+}
+
+.engine-preview-action-alert p {
+  margin: 0;
+  color: var(--engine-ink);
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
 .engine-preview-status-card {
@@ -2782,8 +2850,12 @@ body:has(.engine-shell) {
   position: fixed;
   z-index: 110;
   right: 1rem;
-  bottom: calc(1rem + var(--engine-safe-bottom));
+  top: calc(1rem + env(safe-area-inset-top));
   width: min(24rem, calc(100vw - 2rem));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: start;
   border: 1px solid var(--engine-line);
   border-radius: var(--engine-radius-sm);
   background: #fff;
@@ -2793,6 +2865,25 @@ body:has(.engine-shell) {
   font-size: 0.88rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.engine-toast button {
+  min-height: 1.8rem;
+  border: 1px solid var(--engine-line);
+  border-radius: var(--engine-radius-sm);
+  background: color-mix(in srgb, #ffffff 90%, var(--engine-accent) 10%);
+  color: var(--engine-ink);
+  padding: 0.25rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.engine-toast button:hover,
+.engine-toast button:focus-visible {
+  border-color: var(--engine-accent);
+  background: var(--engine-accent);
+  color: #fff;
 }
 
 .engine-loading-state h3,

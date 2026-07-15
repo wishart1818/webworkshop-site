@@ -175,6 +175,12 @@ export function ProspectEngine() {
     void loadProspects();
   }, [loadProspects]);
 
+  useEffect(() => {
+    if (!previewActionMessage) return;
+    const timeout = window.setTimeout(() => setPreviewActionMessage(null), previewActionMessage.tone === "error" ? 9000 : 6500);
+    return () => window.clearTimeout(timeout);
+  }, [previewActionMessage]);
+
   async function loadSystem() {
     setSystemLoading(true);
     setSystemError("");
@@ -641,14 +647,14 @@ export function ProspectEngine() {
 
   async function regenerateSelectedPreview(feedback = "", targetProspect?: Prospect) {
     const target = targetProspect ?? selected;
-    if (!target) return;
-    if (previewRegeneratingId === target.id) return;
+    if (!target) return { ok: false, message: "Select a prospect before regenerating a preview." };
+    if (previewRegeneratingId === target.id) return { ok: false, message: "Preview regeneration is already running." };
     const blockReason = previewRegenerationBlockReason(target);
     if (blockReason) {
       setDetailTab("Preview");
       setSelectedId(target.id);
       setPreviewActionMessage({ tone: "error", text: `Preview regeneration blocked: ${blockReason}. Nothing was sent.` });
-      return;
+      return { ok: false, message: `Preview regeneration blocked: ${blockReason}.` };
     }
     setSyncState("saving");
     setSyncError("");
@@ -672,12 +678,15 @@ export function ProspectEngine() {
       setSelectedId(saved.id);
       setDetailTab("Preview");
       setSyncState("saved");
-      setPreviewActionMessage({ tone: "success", text: payload.message || `Preview regenerated with ${payload.previewVersion ?? PREVIEW_GENERATOR_VERSION}. Linked review package refreshed. Nothing was sent.` });
+      const message = payload.message || `Preview regenerated with ${payload.previewVersion ?? PREVIEW_GENERATOR_VERSION}. Linked review package refreshed. Nothing was sent.`;
+      setPreviewActionMessage({ tone: "success", text: message });
+      return { ok: true, message };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to regenerate preview.";
       setSyncError(message);
       setPreviewActionMessage({ tone: "error", text: `${message} Existing public preview was preserved.` });
       setSyncState("error");
+      return { ok: false, message };
     } finally {
       setPreviewRegeneratingId("");
     }
@@ -758,7 +767,8 @@ export function ProspectEngine() {
         </header>
         {previewActionMessage ? (
           <div className={`engine-toast engine-toast--${previewActionMessage.tone}`} role={previewActionMessage.tone === "error" ? "alert" : "status"}>
-            {previewActionMessage.text}
+            <span>{previewActionMessage.text}</span>
+            <button aria-label="Dismiss notification" onClick={() => setPreviewActionMessage(null)} type="button">Close</button>
           </div>
         ) : null}
 
@@ -815,7 +825,13 @@ export function ProspectEngine() {
             <section className="engine-overview-grid">
               <div className="engine-panel">
                 <div className="engine-panel__head"><div><h2>Priority queue</h2><p>Ranked by website opportunity and business fit.</p></div><button onClick={() => setWorkspaceTab("Prospects")} type="button">View all</button></div>
-                <ProspectTable prospects={filtered.slice(0, 5)} selectedId={selectedId} previewRegeneratingId={previewRegeneratingId} onRegeneratePreview={regenerateSelectedPreview} onSelect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); }} />
+                <ProspectTable
+                  prospects={filtered.slice(0, 5)}
+                  selectedId={selectedId}
+                  previewRegeneratingId={previewRegeneratingId}
+                  onOpenPreviewFeedback={(id) => { setSelectedId(id); setDetailTab("Preview"); setWorkspaceTab("Prospects"); }}
+                  onSelect={(id) => { setSelectedId(id); setWorkspaceTab("Prospects"); }}
+                />
               </div>
               <div className="engine-panel engine-focus">
                 <div className="engine-panel__head"><div><h2>Today&apos;s focus</h2><p>Move the best-fit leads forward.</p></div></div>
@@ -865,7 +881,13 @@ export function ProspectEngine() {
             </details>
             <div className="engine-workspace">
               <section className="engine-panel engine-list-panel">
-                <ProspectTable prospects={filtered} selectedId={selectedId} previewRegeneratingId={previewRegeneratingId} onRegeneratePreview={regenerateSelectedPreview} onSelect={setSelectedId} />
+                <ProspectTable
+                  prospects={filtered}
+                  selectedId={selectedId}
+                  previewRegeneratingId={previewRegeneratingId}
+                  onOpenPreviewFeedback={(id) => { setSelectedId(id); setDetailTab("Preview"); setWorkspaceTab("Prospects"); }}
+                  onSelect={setSelectedId}
+                />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
               {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} previewRegenerating={previewRegeneratingId === selected.id} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
@@ -1374,13 +1396,13 @@ function ProspectTable({
   prospects,
   selectedId,
   previewRegeneratingId,
-  onRegeneratePreview,
+  onOpenPreviewFeedback,
   onSelect,
 }: {
   prospects: Prospect[];
   selectedId: string;
   previewRegeneratingId: string;
-  onRegeneratePreview: (feedback?: string, prospect?: Prospect) => Promise<void>;
+  onOpenPreviewFeedback: (id: string) => void;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -1412,12 +1434,11 @@ function ProspectTable({
                       disabled={previewRegeneratingId === prospect.id}
                       onClick={() => {
                         close();
-                        onSelect(prospect.id);
-                        void onRegeneratePreview("", prospect);
+                        onOpenPreviewFeedback(prospect.id);
                       }}
                       type="button"
                     >
-                      {previewRegeneratingId === prospect.id ? "Regenerating" : "Regenerate with fixes"}
+                      {previewRegeneratingId === prospect.id ? "Regenerating" : "Improve preview"}
                     </button>
                     <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Mark reviewed</button>
                     <button onClick={() => { close(); onSelect(prospect.id); }} type="button">Suppress</button>

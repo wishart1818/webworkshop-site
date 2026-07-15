@@ -212,7 +212,7 @@ test("Prospect Engine shell uses compact navigation, density, page tabs, and a s
   assert.match(source, /engine-action-label-short/);
   assert.match(source, /Open Preview/);
   assert.match(source, /Rewrite outreach/);
-  assert.match(source, /Regenerate with fixes/);
+  assert.match(source, /Improve preview/);
   assert.match(source, /activeFilterChips/);
   assert.match(source, /Email mode/);
   assert.match(source, /DMs\/forms\/calls\/Looms/);
@@ -315,8 +315,6 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Preview send-worthiness verdict/);
   assert.match(html, /Improve preview/);
   assert.match(html, /Open Public Preview/);
-  assert.match(html, /Regenerate Preview/);
-  assert.match(html, /Regenerate with feedback/);
   assert.match(html, /Advanced preview details/);
   assert.match(html, /Generator/);
   assert.match(html, /photo-led-v3/);
@@ -338,6 +336,38 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Nothing is sent/);
 });
 
+test("Improve Preview opens a guided feedback workflow before regeneration", () => {
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
+  const engineSource = readFileSync("components/ProspectEngine.tsx", "utf8");
+  const route = readFileSync("app/api/engine/outreach-sync/route.ts", "utf8");
+
+  assert.match(detailSource, /previewImprovementOptions/);
+  assert.match(detailSource, /Replace repeated images/);
+  assert.match(detailSource, /Use more relevant service photos/);
+  assert.match(detailSource, /custom feedback/i);
+  assert.match(detailSource, /aria-label="Preview improvement feedback workflow"/);
+  assert.match(detailSource, /openImprovementPanel\(\)/);
+  assert.match(detailSource, /selectedImprovements\.map/);
+  assert.match(detailSource, /feedback\.trim\(\)/);
+  assert.match(detailSource, /onRegeneratePreview\(nextFeedback\)/);
+  assert.match(detailSource, /aria-pressed=\{selectedImprovements\.includes\(option\)\}/);
+  assert.match(detailSource, /Cancel/);
+  assert.match(detailSource, /Regenerate Preview/);
+  assert.match(detailSource, /if \(regenerating \|\| previewRegenerating\) return/);
+  assert.match(detailSource, /Open Updated Preview/);
+  assert.match(detailSource, /Previous preview was retained\. Nothing was sent\./);
+  assert.doesNotMatch(detailSource, /onClick=\{\(\) => void regenerate\(option\)\}/);
+  assert.doesNotMatch(detailSource, /regenerate\(sendWorthiness\.primaryWarning\)/);
+  assert.match(engineSource, /return \{ ok: true, message \}/);
+  assert.match(engineSource, /return \{ ok: false, message/);
+  assert.match(engineSource, /window\.setTimeout\(\(\) => setPreviewActionMessage\(null\)/);
+  assert.match(engineSource, /Dismiss notification/);
+  assert.match(engineSource, /onOpenPreviewFeedback/);
+  assert.match(route, /feedbackProvided: Boolean\(payload\.feedback\?\.trim\(\)\)/);
+  assert.match(route, /revalidatePath\(`\/p\/\$\{publicPreviewToken\}`\)/);
+  assert.match(route, /Nothing was sent/);
+});
+
 test("preview regeneration controls use one protected action with loading and safe feedback", () => {
   const source = readFileSync("components/ProspectEngine.tsx", "utf8");
   const route = readFileSync("app/api/engine/outreach-sync/route.ts", "utf8");
@@ -350,9 +380,9 @@ test("preview regeneration controls use one protected action with loading and sa
   assert.match(source, /previewRegenerationBlockReason\(target\)/);
   assert.match(source, /setPreviewActionMessage\(\{ tone: "success"/);
   assert.match(source, /Existing public preview was preserved/);
-  assert.match(source, /onRegeneratePreview\("", prospect\)/);
   assert.match(source, /disabled=\{previewRegeneratingId === prospect\.id\}/);
   assert.match(source, /typeof children === "function" \? children\(close\) : children/);
+  assert.doesNotMatch(source, /onRegeneratePreview\("", prospect\)/);
   assert.doesNotMatch(handler, /const updated = regeneratePreview\(target/);
   assert.doesNotMatch(handler, /queuePersist\(updated\)/);
   assert.match(route, /if \(payload\.action === "regenerate_prospect_preview"\)/);
@@ -373,8 +403,8 @@ test("prospect detail keeps More scoped to the mobile action menu only", () => {
   const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
 
   assert.equal((html.match(/<summary>More<\/summary>/g) ?? []).length, 1);
-  assert.match(detailSource, /setMobileActionMenuOpen\(false\); void onRegeneratePreview\(\)/);
-  assert.match(detailSource, /disabled=\{previewRegenerating\}/);
+  assert.match(detailSource, /setMobileActionMenuOpen\(false\); setDetailTab\("Preview"\);/);
+  assert.doesNotMatch(detailSource, /void onRegeneratePreview\(\)/);
   assert.doesNotMatch(detailSource.slice(detailSource.indexOf("function PreviewView")), /<summary>More<\/summary>/);
 });
 
@@ -409,15 +439,17 @@ test("preview review starts with a send-worthiness verdict and focused improveme
   const prospect = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
   prospect.outreach!.detailed = `${prospect.outreach!.detailed}\n\nSounds good - here's the preview:\nhttps://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF`;
   const html = renderDetail(prospect, "Preview");
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
 
   assert.match(html, /Preview send-worthiness verdict/);
   assert.match(html, /SEND-WORTHY|NEEDS IMPROVEMENT|BLOCKED/);
   assert.match(html, /Most important issue/);
   assert.match(html, /Images resolved/);
-  assert.match(html, /Focused preview improvements/);
-  assert.match(html, /Stronger hero/);
-  assert.match(html, /Better trade-specific photos/);
-  assert.match(html, /Replace repeated images/);
+  assert.match(html, /Improve Preview/);
+  assert.match(detailSource, /Focused preview improvements/);
+  assert.match(detailSource, /Stronger hero/);
+  assert.match(detailSource, /Use more relevant service photos/);
+  assert.match(detailSource, /Replace repeated images/);
   assert.match(html, /Advanced preview details/);
   assert.match(html, /Nothing is sent/);
 });

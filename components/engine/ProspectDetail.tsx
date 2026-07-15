@@ -52,6 +52,7 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
 };
 
 export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity" | "Details";
+type PreviewRegenerationResult = { ok: boolean; message: string };
 
 type ProspectDetailProps = {
   prospect: Prospect;
@@ -61,7 +62,7 @@ type ProspectDetailProps = {
   onPresenceGap: () => void;
   onOutreach: () => void;
   onRegenerateOutreach: () => Promise<void>;
-  onRegeneratePreview: (feedback?: string) => Promise<void>;
+  onRegeneratePreview: (feedback?: string) => Promise<PreviewRegenerationResult | void>;
   onCreateReviewPackage: () => Promise<void>;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
@@ -106,6 +107,46 @@ export function publicPreviewUrlForProspect(prospect: Pick<Prospect, "outreach">
 
 function prospectLocationLine(prospect: Pick<Prospect, "trade" | "city" | "state">) {
   return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
+}
+
+const previewImprovementOptions = [
+  "Replace repeated images",
+  "Use more relevant service photos",
+  "Stronger hero",
+  "More premium design",
+  "Less template-like layout",
+  "Use branding more clearly",
+  "Reduce text",
+  "Improve mobile layout",
+];
+
+const previewImprovementFeedback: Record<string, string> = {
+  "Replace repeated images": "Replace repeated images with distinct, service-specific photos. Prefer fewer relevant photos over reusing one image across major sections.",
+  "Use more relevant service photos": "Use stronger service-specific photos that visibly match the nearby section and trade.",
+  "Stronger hero": "Make the hero feel more specific, image-led, and credible for this business.",
+  "More premium design": "Make the visual design feel more polished and premium without adding fake claims.",
+  "Less template-like layout": "Vary the section rhythm so the page feels custom instead of like repeated blocks.",
+  "Use branding more clearly": "Use the prospect-specific palette and brand direction more clearly.",
+  "Reduce text": "Tighten the copy and make the page easier to scan.",
+  "Improve mobile layout": "Improve mobile spacing, readability, and action visibility.",
+};
+
+function suggestedPreviewFeedback(primaryWarning: string) {
+  if (/one image is used across too much|repeats one image|repeated image/i.test(primaryWarning)) return previewImprovementFeedback["Replace repeated images"];
+  if (/too few trade-relevant photos|service-specific photos|image|photo/i.test(primaryWarning)) return previewImprovementFeedback["Use more relevant service photos"];
+  if (/hero/i.test(primaryWarning)) return previewImprovementFeedback["Stronger hero"];
+  if (/layout|template/i.test(primaryWarning)) return previewImprovementFeedback["Less template-like layout"];
+  if (/mobile/i.test(primaryWarning)) return previewImprovementFeedback["Improve mobile layout"];
+  return primaryWarning;
+}
+
+function initialPreviewOptions(primaryWarning: string) {
+  if (/one image is used across too much|repeats one image|repeated image/i.test(primaryWarning)) return ["Replace repeated images"];
+  if (/too few trade-relevant photos|service-specific photos|image|photo/i.test(primaryWarning)) return ["Use more relevant service photos"];
+  if (/hero/i.test(primaryWarning)) return ["Stronger hero"];
+  if (/layout|template/i.test(primaryWarning)) return ["Less template-like layout"];
+  if (/mobile/i.test(primaryWarning)) return ["Improve mobile layout"];
+  return [];
 }
 
 function ScoreRing({ value }: { value: number }) {
@@ -250,7 +291,7 @@ export function ProspectDetail({
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Outreach"); }} type="button">Open outreach</button>
             <button onClick={() => { setMobileActionMenuOpen(false); openPublicPreview(); }} type="button">Open preview</button>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">View internal Preview tab</button>
-            <button disabled={previewRegenerating} onClick={() => { setMobileActionMenuOpen(false); void onRegeneratePreview(); }} type="button">{previewRegenerating ? "Regenerating preview" : "Regenerate preview"}</button>
+            <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">Improve preview</button>
             <button onClick={() => { setMobileActionMenuOpen(false); void onRegenerateOutreach(); }} type="button">Rewrite outreach</button>
             <button onClick={() => { setMobileActionMenuOpen(false); void onCreateReviewPackage(); }} type="button">Create review package</button>
             <button onClick={() => { setMobileActionMenuOpen(false); onStatus("Reviewed"); }} type="button">Mark reviewed</button>
@@ -514,13 +555,16 @@ function PreviewView({
   prospect: Prospect;
   onCreateReviewPackage: () => Promise<void>;
   onOpenPublicPreview: () => void;
-  onRegeneratePreview: (feedback?: string) => Promise<void>;
+  onRegeneratePreview: (feedback?: string) => Promise<PreviewRegenerationResult | void>;
   onReviewOutreach: () => void;
   previewRegenerating: boolean;
   publicPreviewUrl: string;
 }) {
   const preview = prospect.preview!;
   const [feedback, setFeedback] = useState("");
+  const [improvementPanelOpen, setImprovementPanelOpen] = useState(false);
+  const [selectedImprovements, setSelectedImprovements] = useState<string[]>([]);
+  const [regenerationResult, setRegenerationResult] = useState("");
   const [regenerating, setRegenerating] = useState(false);
   const styleProfile = previewStyleProfile(prospect, preview);
   const quality = preview.qualityScore;
@@ -544,16 +588,6 @@ function PreviewView({
     publicPreviewUrl,
     publicPreviewVerified: Boolean(publicPreviewUrl),
   });
-  const improvementOptions = [
-    "Stronger hero",
-    "Better trade-specific photos",
-    "More premium design",
-    "Use branding more clearly",
-    "Reduce text",
-    "Improve mobile layout",
-    "Replace repeated images",
-    "Improve CTA",
-  ];
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -561,22 +595,64 @@ function PreviewView({
     ["Soft surface", styleProfile.softSurfaceColor],
     ["Text", styleProfile.inkColor],
   ];
-  async function regenerate(nextFeedback = "") {
+  const busy = regenerating || previewRegenerating;
+
+  function openImprovementPanel(seedFeedback = sendWorthiness.primaryWarning) {
+    const suggested = suggestedPreviewFeedback(seedFeedback);
+    const initialOptions = initialPreviewOptions(seedFeedback);
+    setSelectedImprovements((current) => current.length ? current : initialOptions);
+    setFeedback((current) => current.trim() ? current : suggested);
+    setRegenerationResult("");
+    setImprovementPanelOpen(true);
+  }
+
+  function cancelImprovementPanel() {
+    if (busy) return;
+    setImprovementPanelOpen(false);
+    setSelectedImprovements([]);
+    setFeedback("");
+  }
+
+  function toggleImprovement(option: string) {
+    if (busy) return;
+    setSelectedImprovements((current) =>
+      current.includes(option)
+        ? current.filter((item) => item !== option)
+        : [...current, option],
+    );
+  }
+
+  function combinedFeedback() {
+    const selectedFeedback = selectedImprovements.map((option) => previewImprovementFeedback[option] ?? option);
+    return [...selectedFeedback, feedback.trim()].filter(Boolean).join("\n\n");
+  }
+
+  async function regenerate(nextFeedback = combinedFeedback()) {
     if (regenerating || previewRegenerating) return;
     setRegenerating(true);
+    setRegenerationResult("");
     try {
-      await onRegeneratePreview(nextFeedback);
-      if (nextFeedback) setFeedback("");
+      const result = await onRegeneratePreview(nextFeedback);
+      if (result?.ok === false) {
+        setRegenerationResult(`${result.message} Previous preview was retained. Nothing was sent.`);
+      } else {
+        setRegenerationResult(result?.message || "Preview regeneration finished. Open the updated public preview to review it. Nothing was sent.");
+        setImprovementPanelOpen(false);
+        setSelectedImprovements([]);
+        setFeedback("");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Preview regeneration failed.";
+      setRegenerationResult(`${message} Previous preview was retained. Nothing was sent.`);
     } finally {
       setRegenerating(false);
     }
   }
-  const busy = regenerating || previewRegenerating;
   const primaryAction = !publicPreviewUrl
     ? { label: "Create public preview", action: onCreateReviewPackage, disabled: false }
     : sendWorthiness.verdict === "send_worthy"
       ? { label: "Review Outreach", action: onReviewOutreach, disabled: false }
-      : { label: busy ? "Regenerating preview..." : sendWorthiness.nextAction, action: () => void regenerate(sendWorthiness.primaryWarning), disabled: busy };
+      : { label: busy ? "Regenerating preview..." : sendWorthiness.nextAction, action: () => openImprovementPanel(), disabled: busy };
 
   return (
     <div className="engine-stack">
@@ -604,19 +680,48 @@ function PreviewView({
         </div>
         <div className="engine-preview-action-bar__actions">
           <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
-          <button className="engine-button" disabled={busy} onClick={() => void regenerate()} type="button">{busy ? "Regenerating preview..." : "Regenerate Preview"}</button>
+          <button className="engine-button" disabled={busy} onClick={() => openImprovementPanel()} type="button">{busy ? "Regenerating preview..." : "Improve Preview"}</button>
           <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
         </div>
-        <div className="engine-preview-chip-grid" aria-label="Focused preview improvements">
-          {improvementOptions.map((option) => (
-            <button className="engine-chip-button" disabled={busy} key={option} onClick={() => void regenerate(option)} type="button">{option}</button>
-          ))}
-        </div>
-        <label className="engine-preview-feedback">
-          <span>Regenerate with feedback</span>
-          <textarea onChange={(event) => setFeedback(event.target.value)} placeholder="Example: make it darker, more premium, more image-led, or emphasize concrete cleaning." value={feedback} />
-          <button className="engine-button" disabled={busy} onClick={() => void regenerate(feedback)} type="button">Apply Feedback</button>
-        </label>
+        {improvementPanelOpen ? (
+          <div className="engine-preview-improvement-panel" aria-label="Preview improvement feedback workflow">
+            <div>
+              <span>Describe the visual fix</span>
+              <h4>What should change before regenerating?</h4>
+              <p>Select one or more fixes, add details, then confirm. Nothing is sent.</p>
+            </div>
+            <div className="engine-preview-chip-grid" aria-label="Focused preview improvements">
+              {previewImprovementOptions.map((option) => (
+                <button
+                  aria-pressed={selectedImprovements.includes(option)}
+                  className={`engine-chip-button ${selectedImprovements.includes(option) ? "is-selected" : ""}`}
+                  disabled={busy}
+                  key={option}
+                  onClick={() => toggleImprovement(option)}
+                  type="button"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <label className="engine-preview-feedback">
+              <span>Custom feedback</span>
+              <textarea onChange={(event) => setFeedback(event.target.value)} placeholder="Example: replace repeated imagery, make the hero stronger, and use more service-specific photos." value={feedback} />
+            </label>
+            <div className="engine-preview-improvement-panel__actions">
+              <button className="engine-button" disabled={busy} onClick={cancelImprovementPanel} type="button">Cancel</button>
+              <button className="engine-button engine-button--primary" disabled={busy || (!selectedImprovements.length && !feedback.trim())} onClick={() => void regenerate()} type="button">
+                {busy ? "Regenerating preview..." : "Regenerate Preview"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {regenerationResult ? (
+          <div className="engine-preview-action-alert" role="status">
+            <p>{regenerationResult}</p>
+            {publicPreviewUrl ? <button className="engine-button" onClick={onOpenPublicPreview} type="button">Open Updated Preview</button> : null}
+          </div>
+        ) : null}
       </section>
       <section className="engine-preview-status-card">
         <div><span>Preview exists</span><b>Yes</b></div>
