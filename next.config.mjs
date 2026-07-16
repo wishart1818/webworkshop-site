@@ -1,5 +1,11 @@
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
 
+const sharedSecurityHeaders = [
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+];
+
 /** @type {(phase: string) => import('next').NextConfig} */
 export default function nextConfig(phase) {
   return {
@@ -13,10 +19,16 @@ export default function nextConfig(phase) {
         source: "/(.*)",
         headers: [
           { key: "Content-Security-Policy", value: "base-uri 'self'; frame-ancestors 'none'; object-src 'none'" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
+          ...sharedSecurityHeaders,
           { key: "X-Frame-Options", value: "DENY" },
+        ],
+      },
+      {
+        source: "/p/:token",
+        headers: [
+          { key: "Content-Security-Policy", value: "base-uri 'self'; frame-ancestors 'self'; object-src 'none'" },
+          ...sharedSecurityHeaders,
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
       {

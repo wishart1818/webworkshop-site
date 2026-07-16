@@ -280,10 +280,14 @@ test("private engine routes receive no-store and baseline security headers", asy
   const config = nextConfig("phase-production-build");
   const rules = await config.headers?.();
   const globalHeaders = rules?.find((rule) => rule.source === "/(.*)")?.headers ?? [];
+  const publicPreviewHeaders = rules?.find((rule) => rule.source === "/p/:token")?.headers ?? [];
   const engineHeaders = rules?.find((rule) => rule.source === "/engine/:path*")?.headers ?? [];
   const apiHeaders = rules?.find((rule) => rule.source === "/api/engine/:path*")?.headers ?? [];
 
-  assert.ok(globalHeaders.some((header) => header.key === "Content-Security-Policy"));
+  assert.ok(globalHeaders.some((header) => header.key === "Content-Security-Policy" && /frame-ancestors 'none'/.test(header.value)));
+  assert.ok(globalHeaders.some((header) => header.key === "X-Frame-Options" && header.value === "DENY"));
+  assert.ok(publicPreviewHeaders.some((header) => header.key === "Content-Security-Policy" && /frame-ancestors 'self'/.test(header.value)));
+  assert.ok(publicPreviewHeaders.some((header) => header.key === "X-Frame-Options" && header.value === "SAMEORIGIN"));
   assert.ok(globalHeaders.some((header) => header.key === "X-Content-Type-Options" && header.value === "nosniff"));
   assert.ok(engineHeaders.some((header) => header.key === "Cache-Control" && /no-store/.test(header.value)));
   assert.ok(engineHeaders.some((header) => header.key === "X-Robots-Tag" && /noindex/.test(header.value)));

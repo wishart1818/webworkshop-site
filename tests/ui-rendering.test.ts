@@ -370,6 +370,14 @@ test("Full Preview Strip appears only for valid public previews and uses safe re
   assert.match(detailSource, /engine-preview-strip-action-groups/);
   assert.match(detailSource, /Captured Image/);
   assert.match(detailSource, /ready \? \(/);
+  assert.match(detailSource, /verifyPublicPreviewResponds/);
+  assert.match(detailSource, /Public preview did not respond/);
+  assert.match(detailSource, /Public preview frame did not finish loading/);
+  assert.match(detailSource, /Preview fonts did not finish loading/);
+  assert.match(detailSource, /Preview images did not finish loading/);
+  assert.match(detailSource, /Preview height did not stabilize/);
+  assert.match(detailSource, /Screenshot generation timed out/);
+  assert.doesNotMatch(detailSource, /networkidle/i);
   assert.match(detailSource, /absolutePublicPreviewUrl/);
   assert.match(detailSource, /isSafePublicPreviewPath/);
   assert.match(detailSource, /loadPreviewFrame\(iframe, absolutePublicPreviewUrl\(publicPreviewUrl\)\)/);

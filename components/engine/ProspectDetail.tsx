@@ -54,7 +54,7 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
 export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity" | "Details";
 type PreviewRegenerationResult = { ok: boolean; message: string };
 type PreviewStripMode = "desktop" | "mobile";
-type PreviewStripStage = "idle" | "loading" | "images" | "measuring" | "capturing" | "validating" | "ready" | "error";
+type PreviewStripStage = "idle" | "preflight" | "loading" | "fonts" | "images" | "measuring" | "capturing" | "validating" | "ready" | "error";
 type PreviewStripCapture = {
   blob: Blob;
   blobUrl: string;
@@ -247,6 +247,18 @@ function wait(ms: number) {
   });
 }
 
+async function withTimeout<T>(work: Promise<T>, ms: number, message: string) {
+  let timeoutId = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 async function canvasToPngBlob(canvas: HTMLCanvasElement) {
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -282,17 +294,41 @@ function absolutePublicPreviewUrl(path: string) {
   return new URL(path, window.location.origin).href;
 }
 
+async function verifyPublicPreviewResponds(publicPreviewUrl: string) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(absolutePublicPreviewUrl(publicPreviewUrl), {
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Public preview did not respond (${response.status}).`);
+  } catch (error) {
+    if (error instanceof Error && /Public preview did not respond/.test(error.message)) throw error;
+    throw new Error("Public preview did not respond.");
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 async function waitForPreviewFrameReady(iframe: HTMLIFrameElement, publicPreviewUrl: string, setStage: (stage: PreviewStripStage) => void) {
   const expectedPath = new URL(absolutePublicPreviewUrl(publicPreviewUrl)).pathname;
-  const startedAt = Date.now();
-  while (!iframe.contentDocument || iframe.contentDocument.readyState !== "complete") {
-    if (Date.now() - startedAt > 12000) throw new Error("Capture timed out while loading the public preview.");
-    await wait(100);
-  }
+  await withTimeout((async () => {
+    while (!iframe.contentDocument || iframe.contentDocument.readyState !== "complete") {
+      await wait(100);
+    }
+  })(), 8000, "Public preview document did not become ready.");
   const doc = iframe.contentDocument;
+  if (!doc) throw new Error("Public preview document did not become ready.");
   if (doc.location.pathname !== expectedPath) throw new Error("Public preview unavailable.");
+  if (!doc.querySelector(".prospect-preview-nav")) throw new Error("Header was missing from the capture.");
+  setStage("fonts");
+  if (doc.fonts?.ready) {
+    await withTimeout(doc.fonts.ready, 3000, "Preview fonts did not finish loading.");
+  }
   setStage("images");
-  await doc.fonts?.ready;
   const win = iframe.contentWindow;
   const height = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0);
   if (win && height > 0) {
@@ -304,7 +340,7 @@ async function waitForPreviewFrameReady(iframe: HTMLIFrameElement, publicPreview
     win.scrollTo(0, 0);
   }
   const images = Array.from(doc.images);
-  await Promise.all(images.map((image) => {
+  await withTimeout(Promise.all(images.map((image) => {
     if (image.complete) return Promise.resolve();
     return new Promise<void>((resolve) => {
       const done = () => resolve();
@@ -312,10 +348,9 @@ async function waitForPreviewFrameReady(iframe: HTMLIFrameElement, publicPreview
       image.addEventListener("error", done, { once: true });
       window.setTimeout(done, 3500);
     });
-  }));
+  })), 5000, "Preview images did not finish loading.");
   const broken = images.filter((image) => !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0);
   if (broken.length > 0) throw new Error("One or more preview images failed to load.");
-  if (!doc.querySelector(".prospect-preview-nav")) throw new Error("Header was missing from the capture.");
   if (!doc.querySelector(".prospect-preview-footer")) throw new Error("Footer was missing from the capture.");
   if (doc.querySelector(".engine-shell, .engine-detail, .engine-preview-action-bar")) throw new Error("Engine controls appeared in the public preview capture.");
   if (/loading preview|loading image|skeleton/i.test(doc.body.textContent ?? "")) throw new Error("The public preview was still loading.");
@@ -325,7 +360,7 @@ async function loadPreviewFrame(iframe: HTMLIFrameElement, url: string) {
   await new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       cleanup();
-      reject(new Error("Capture timed out while loading the public preview."));
+      reject(new Error("Public preview frame did not finish loading."));
     }, 12000);
     const cleanup = () => {
       window.clearTimeout(timeout);
@@ -392,18 +427,36 @@ async function capturePublicPreviewStrip(
   const { width } = previewStripViewport(mode);
   iframe.style.width = `${width}px`;
   iframe.style.height = mode === "desktop" ? "900px" : "980px";
+  setStage("preflight");
+  await verifyPublicPreviewResponds(publicPreviewUrl);
+  setStage("loading");
   await loadPreviewFrame(iframe, absolutePublicPreviewUrl(publicPreviewUrl));
   await waitForPreviewFrameReady(iframe, publicPreviewUrl, setStage);
   const doc = iframe.contentDocument;
   if (!doc) throw new Error("Public preview unavailable.");
   setStage("measuring");
-  const height = Math.ceil(Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0));
+  const height = Math.ceil(await withTimeout((async () => {
+    let previousHeight = 0;
+    let stableCount = 0;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const nextHeight = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0);
+      if (Math.abs(nextHeight - previousHeight) <= 2 && nextHeight > 0) {
+        stableCount += 1;
+        if (stableCount >= 2) return nextHeight;
+      } else {
+        stableCount = 0;
+      }
+      previousHeight = nextHeight;
+      await wait(150);
+    }
+    throw new Error("Preview height did not stabilize.");
+  })(), 3000, "Preview height did not stabilize."));
   if (height < 900) throw new Error("The capture was too short to be a full preview.");
   if (height > 24000) throw new Error("Capture exceeded a browser image limit.");
   iframe.style.height = `${height}px`;
   await wait(150);
   setStage("capturing");
-  const clone = await clonePublicPreviewForCapture(doc);
+  const clone = await withTimeout(clonePublicPreviewForCapture(doc), 12000, "Screenshot assets could not be prepared.");
   const serialized = new XMLSerializer().serializeToString(clone);
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
@@ -414,7 +467,7 @@ async function capturePublicPreviewStrip(
   const image = new Image();
   image.decoding = "async";
   image.src = svgUrl;
-  await image.decode();
+  await withTimeout(image.decode(), 8000, "Screenshot generation timed out.");
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -422,7 +475,7 @@ async function capturePublicPreviewStrip(
   if (!context) throw new Error("Full page could not be captured.");
   context.drawImage(image, 0, 0);
   setStage("validating");
-  const blob = await canvasToPngBlob(canvas);
+  const blob = await withTimeout(canvasToPngBlob(canvas), 8000, "Screenshot generation timed out.");
   if (blob.size < 6000) throw new Error("Blank capture rejected.");
   return {
     blob,
@@ -648,7 +701,9 @@ function FullPreviewStripDialog({
 function stageLabel(stage: PreviewStripStage) {
   const labels: Record<PreviewStripStage, string> = {
     idle: "Ready to capture",
+    preflight: "Checking public preview",
     loading: "Loading public preview",
+    fonts: "Loading fonts",
     images: "Waiting for images",
     measuring: "Measuring page",
     capturing: "Capturing full page",
