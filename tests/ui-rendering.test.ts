@@ -375,6 +375,12 @@ test("Full Preview Strip appears only for valid public previews and uses safe re
   assert.match(detailSource, /Public preview frame did not finish loading/);
   assert.match(detailSource, /Preview fonts did not finish loading/);
   assert.match(detailSource, /Preview images did not finish loading/);
+  assert.match(detailSource, /isRenderedPreviewImage/);
+  assert.match(detailSource, /ensureCaptureImageReady/);
+  assert.match(detailSource, /image\.decode\(\)/);
+  assert.match(detailSource, /Array\.from\(doc\.images\)\.filter\(isRenderedPreviewImage\)/);
+  assert.match(detailSource, /captureImageSet\.has\(image\)/);
+  assert.match(detailSource, /cloneImage\.remove\(\)/);
   assert.match(detailSource, /Preview height did not stabilize/);
   assert.match(detailSource, /Screenshot generation timed out/);
   assert.doesNotMatch(detailSource, /networkidle/i);

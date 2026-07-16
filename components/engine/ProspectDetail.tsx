@@ -313,6 +313,66 @@ async function verifyPublicPreviewResponds(publicPreviewUrl: string) {
   }
 }
 
+function isRenderedPreviewImage(image: HTMLImageElement) {
+  const style = image.ownerDocument.defaultView?.getComputedStyle(image);
+  return image.getClientRects().length > 0
+    && style?.display !== "none"
+    && style?.visibility !== "hidden"
+    && style?.contentVisibility !== "hidden";
+}
+
+function imageHasDecodedPixels(image: HTMLImageElement) {
+  return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+}
+
+async function waitForCaptureImage(image: HTMLImageElement, timeoutMs: number) {
+  if (!imageHasDecodedPixels(image)) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("Preview images did not finish loading."));
+      }, timeoutMs);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        image.removeEventListener("load", handleLoad);
+        image.removeEventListener("error", handleError);
+      };
+      const handleLoad = () => {
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        reject(new Error("One or more preview images failed to load."));
+      };
+      image.addEventListener("load", handleLoad, { once: true });
+      image.addEventListener("error", handleError, { once: true });
+      if (image.complete) {
+        if (imageHasDecodedPixels(image)) handleLoad();
+        else handleError();
+      }
+    });
+  }
+  if (!imageHasDecodedPixels(image)) throw new Error("One or more preview images failed to load.");
+  if (typeof image.decode === "function") {
+    await withTimeout(image.decode(), 4000, "Preview images did not finish decoding.");
+  }
+}
+
+async function ensureCaptureImageReady(image: HTMLImageElement) {
+  try {
+    await waitForCaptureImage(image, 9000);
+  } catch {
+    const selectedSource = image.currentSrc || image.src;
+    if (!selectedSource) throw new Error("One or more preview images failed to load.");
+    image.loading = "eager";
+    image.removeAttribute("srcset");
+    image.removeAttribute("sizes");
+    image.src = selectedSource;
+    await waitForCaptureImage(image, 6000);
+  }
+}
+
 async function waitForPreviewFrameReady(iframe: HTMLIFrameElement, publicPreviewUrl: string, setStage: (stage: PreviewStripStage) => void) {
   const expectedPath = new URL(absolutePublicPreviewUrl(publicPreviewUrl)).pathname;
   await withTimeout((async () => {
@@ -339,21 +399,14 @@ async function waitForPreviewFrameReady(iframe: HTMLIFrameElement, publicPreview
     }
     win.scrollTo(0, 0);
   }
-  const images = Array.from(doc.images);
-  await withTimeout(Promise.all(images.map((image) => {
-    if (image.complete) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      const done = () => resolve();
-      image.addEventListener("load", done, { once: true });
-      image.addEventListener("error", done, { once: true });
-      window.setTimeout(done, 3500);
-    });
-  })), 5000, "Preview images did not finish loading.");
-  const broken = images.filter((image) => !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0);
+  const images = Array.from(doc.images).filter(isRenderedPreviewImage);
+  await withTimeout(Promise.all(images.map(ensureCaptureImageReady)), 16000, "Preview images did not finish loading.");
+  const broken = images.filter((image) => !imageHasDecodedPixels(image));
   if (broken.length > 0) throw new Error("One or more preview images failed to load.");
   if (!doc.querySelector(".prospect-preview-footer")) throw new Error("Footer was missing from the capture.");
   if (doc.querySelector(".engine-shell, .engine-detail, .engine-preview-action-bar")) throw new Error("Engine controls appeared in the public preview capture.");
   if (/loading preview|loading image|skeleton/i.test(doc.body.textContent ?? "")) throw new Error("The public preview was still loading.");
+  return images;
 }
 
 async function loadPreviewFrame(iframe: HTMLIFrameElement, url: string) {
@@ -381,7 +434,7 @@ async function loadPreviewFrame(iframe: HTMLIFrameElement, url: string) {
   });
 }
 
-async function clonePublicPreviewForCapture(doc: Document) {
+async function clonePublicPreviewForCapture(doc: Document, captureImages: HTMLImageElement[]) {
   const clone = doc.documentElement.cloneNode(true) as HTMLElement;
   clone.querySelectorAll("script").forEach((script) => script.remove());
   clone.querySelectorAll('link[rel="stylesheet"], link[rel="preload"], link[rel="modulepreload"]').forEach((link) => link.remove());
@@ -402,9 +455,14 @@ async function clonePublicPreviewForCapture(doc: Document) {
   clone.querySelector("head")?.append(style);
   const originalImages = Array.from(doc.images);
   const clonedImages = Array.from(clone.querySelectorAll("img"));
+  const captureImageSet = new Set(captureImages);
   await Promise.all(originalImages.map(async (image, index) => {
     const cloneImage = clonedImages[index];
     if (!cloneImage) return;
+    if (!captureImageSet.has(image)) {
+      cloneImage.remove();
+      return;
+    }
     const src = image.currentSrc || image.src;
     if (!src) return;
     cloneImage.setAttribute("src", await fetchAsDataUrl(src));
@@ -431,7 +489,7 @@ async function capturePublicPreviewStrip(
   await verifyPublicPreviewResponds(publicPreviewUrl);
   setStage("loading");
   await loadPreviewFrame(iframe, absolutePublicPreviewUrl(publicPreviewUrl));
-  await waitForPreviewFrameReady(iframe, publicPreviewUrl, setStage);
+  const captureImages = await waitForPreviewFrameReady(iframe, publicPreviewUrl, setStage);
   const doc = iframe.contentDocument;
   if (!doc) throw new Error("Public preview unavailable.");
   setStage("measuring");
@@ -456,7 +514,7 @@ async function capturePublicPreviewStrip(
   iframe.style.height = `${height}px`;
   await wait(150);
   setStage("capturing");
-  const clone = await withTimeout(clonePublicPreviewForCapture(doc), 12000, "Screenshot assets could not be prepared.");
+  const clone = await withTimeout(clonePublicPreviewForCapture(doc, captureImages), 12000, "Screenshot assets could not be prepared.");
   const serialized = new XMLSerializer().serializeToString(clone);
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
