@@ -46,6 +46,488 @@ body:has(.engine-shell) {
   color: var(--engine-ink);
 }
 
+/* Prospect-facing preview composition: profile-led branding and denser agency-style rhythm. */
+.prospect-preview-site .prospect-preview-nav {
+  align-items: center;
+  background: color-mix(in srgb, var(--prospect-surface) 94%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--prospect-primary) 14%, var(--prospect-line));
+  box-shadow: 0 10px 32px rgb(15 31 45 / 7%);
+  min-height: 78px;
+  gap: clamp(18px, 2.5vw, 38px);
+  padding: 12px clamp(24px, 4vw, 64px);
+}
+
+.prospect-preview-site .prospect-preview-nav > div {
+  align-items: center;
+  flex: 0 1 auto;
+  gap: clamp(16px, 2vw, 28px);
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.prospect-preview-site .prospect-preview-brand {
+  align-items: center;
+  display: inline-flex;
+  gap: 12px;
+  flex: 0 1 340px;
+  max-width: 360px;
+  min-width: 230px;
+}
+
+.prospect-preview-site .prospect-preview-logo-image {
+  background: transparent;
+  border-radius: 0;
+  height: 52px;
+  object-fit: contain;
+  width: 52px;
+}
+
+.prospect-preview-site .prospect-preview-brand-copy {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1;
+  min-width: 0;
+}
+
+.prospect-preview-site .prospect-preview-brand-copy strong {
+  color: var(--prospect-primary);
+  font-family: var(--prospect-heading-font);
+  font-size: clamp(1rem, 1.6vw, 1.34rem);
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  max-width: 310px;
+  overflow-wrap: anywhere;
+}
+
+.prospect-preview-site .prospect-preview-brand-copy small {
+  color: var(--prospect-muted);
+  font-family: var(--prospect-body-font);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.prospect-preview-site .prospect-preview-hero {
+  align-items: stretch;
+  background:
+    radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--prospect-accent) 23%, transparent), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, var(--prospect-primary) 97%, #0b1520), var(--prospect-primary));
+  color: #fff;
+  gap: clamp(24px, 4vw, 64px);
+  grid-template-columns: minmax(0, 0.94fr) minmax(360px, 1.06fr);
+  min-height: 540px;
+  padding-block: clamp(48px, 5.5vw, 72px);
+}
+
+.prospect-preview-site .prospect-preview-hero__content {
+  align-self: center;
+  max-width: 650px;
+}
+
+.prospect-preview-site .prospect-preview-hero__content h1 {
+  color: #fff;
+  font-size: clamp(2.65rem, 3.6vw, 4.2rem);
+  letter-spacing: -0.04em;
+  line-height: 0.98;
+  max-width: 18ch;
+  text-wrap: balance;
+}
+
+.prospect-preview-site .prospect-preview-hero__content > p {
+  color: rgb(255 255 255 / 80%);
+  font-size: clamp(1rem, 1.45vw, 1.2rem);
+  line-height: 1.62;
+  max-width: 58ch;
+}
+
+.prospect-preview-site .prospect-preview-hero .prospect-preview-kicker,
+.prospect-preview-site .prospect-preview-hero .prospect-preview-text-link {
+  color: #fff;
+}
+
+.prospect-preview-site .prospect-preview-hero .prospect-preview-button {
+  background: var(--prospect-accent);
+  color: color-mix(in srgb, var(--prospect-primary) 84%, #000);
+}
+
+.prospect-preview-site .prospect-preview-hero__visual {
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: clamp(16px, 2vw, 24px);
+  box-shadow: 0 34px 80px rgb(0 0 0 / 28%);
+  min-height: 420px;
+  overflow: hidden;
+  transform: rotate(1.2deg);
+}
+
+.prospect-preview-site .prospect-preview-hero__visual .prospect-preview-image,
+.prospect-preview-site .prospect-preview-hero__visual img {
+  height: 100%;
+  min-height: 420px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.prospect-preview-site .prospect-preview-visual-caption {
+  backdrop-filter: blur(16px);
+  background: rgb(255 255 255 / 91%);
+  border: 1px solid rgb(255 255 255 / 74%);
+  border-radius: 16px;
+  bottom: 22px;
+  box-shadow: 0 18px 36px rgb(10 20 28 / 22%);
+  color: var(--prospect-ink);
+  left: 22px;
+  max-width: min(360px, calc(100% - 44px));
+  padding: 14px 18px;
+  position: absolute;
+}
+
+.prospect-preview-site .prospect-preview-visual-caption small,
+.prospect-preview-site .prospect-preview-visual-caption strong,
+.prospect-preview-site .prospect-preview-visual-caption span {
+  color: inherit;
+}
+
+.prospect-preview-site .prospect-preview-hero__proof-strip {
+  border-color: rgb(255 255 255 / 18%);
+  margin-top: clamp(26px, 4vw, 42px);
+}
+
+.prospect-preview-site .prospect-preview-hero__proof-strip a {
+  color: var(--prospect-ink);
+}
+
+.prospect-preview-site .prospect-preview-hero__proof-strip b,
+.prospect-preview-site .prospect-preview-hero__proof-strip i {
+  color: var(--prospect-ink);
+}
+
+.prospect-preview-site .prospect-preview-hero__proof-strip i {
+  opacity: 0.7;
+}
+
+.prospect-preview-site .prospect-preview-trust {
+  background: var(--prospect-surface);
+  border-block: 1px solid var(--prospect-line);
+  gap: 0;
+  padding-block: 0;
+}
+
+.prospect-preview-site .prospect-preview-trust span {
+  min-height: 112px;
+  padding: 22px clamp(18px, 2.4vw, 34px);
+}
+
+.prospect-preview-site .prospect-preview-services,
+.prospect-preview-site .prospect-preview-why,
+.prospect-preview-site .prospect-preview-featured-service,
+.prospect-preview-site .prospect-preview-process,
+.prospect-preview-site .prospect-preview-gallery-section,
+.prospect-preview-site .prospect-preview-service-area,
+.prospect-preview-site .prospect-preview-faq,
+.prospect-preview-site .prospect-preview-contact {
+  padding-block: clamp(58px, 7vw, 104px);
+}
+
+.prospect-preview-site .prospect-preview-services {
+  background: color-mix(in srgb, var(--prospect-soft) 72%, white);
+}
+
+.prospect-preview-site .prospect-preview-service-list {
+  align-items: stretch;
+  display: grid;
+  gap: clamp(18px, 2.2vw, 30px);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.prospect-preview-site .prospect-preview-service-list article,
+.prospect-preview-site[data-card-style="layered-photo-cards"] .prospect-preview-service-list article:first-child {
+  background: var(--prospect-surface);
+  border: 1px solid color-mix(in srgb, var(--prospect-primary) 12%, var(--prospect-line));
+  border-radius: 16px;
+  box-shadow: 0 5px 8px rgb(20 36 48 / 9%);
+  display: flex;
+  flex-direction: column;
+  grid-column: auto;
+  overflow: hidden;
+}
+
+.prospect-preview-site .prospect-preview-service-list .prospect-preview-image,
+.prospect-preview-site[data-card-style="layered-photo-cards"] .prospect-preview-service-list article:first-child .prospect-preview-image--service {
+  aspect-ratio: 4 / 3;
+  height: auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.prospect-preview-site .prospect-preview-service-list article > div {
+  align-items: flex-start;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: clamp(20px, 2.3vw, 30px);
+}
+
+.prospect-preview-site .prospect-preview-service-list article > div > a {
+  margin-top: auto;
+  padding-top: 18px;
+}
+
+.prospect-preview-site .prospect-preview-featured-service {
+  align-items: center;
+  background: var(--prospect-surface);
+  display: grid;
+  gap: clamp(34px, 6vw, 86px);
+  grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+}
+
+.prospect-preview-site .prospect-preview-featured-service > .prospect-preview-image {
+  aspect-ratio: 7 / 5;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgb(23 40 52 / 14%);
+  min-height: 430px;
+  overflow: hidden;
+}
+
+.prospect-preview-site .prospect-preview-featured-service > div {
+  max-width: 560px;
+}
+
+.prospect-preview-site .prospect-preview-featured-service h2 {
+  font-size: clamp(2.25rem, 4vw, 4.4rem);
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+  margin: 14px 0 20px;
+}
+
+.prospect-preview-site .prospect-preview-featured-service p {
+  color: var(--prospect-muted);
+  font-size: 1.06rem;
+  line-height: 1.7;
+}
+
+.prospect-preview-site .prospect-preview-featured-service__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 26px 0;
+}
+
+.prospect-preview-site .prospect-preview-featured-service__links a {
+  background: var(--prospect-soft);
+  border: 1px solid var(--prospect-line);
+  border-radius: 999px;
+  color: var(--prospect-primary);
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 9px 13px;
+}
+
+.prospect-preview-site .prospect-preview-why {
+  background: var(--prospect-primary);
+  color: #fff;
+}
+
+.prospect-preview-site .prospect-preview-why h2,
+.prospect-preview-site .prospect-preview-why h3,
+.prospect-preview-site .prospect-preview-why p,
+.prospect-preview-site .prospect-preview-why .prospect-preview-kicker {
+  color: inherit;
+}
+
+.prospect-preview-site .prospect-preview-process {
+  background: color-mix(in srgb, var(--prospect-primary) 94%, #06111b);
+}
+
+.prospect-preview-site .prospect-preview-gallery {
+  gap: 14px;
+}
+
+.prospect-preview-site .prospect-preview-gallery a {
+  border-radius: 20px;
+}
+
+.prospect-preview-site .prospect-preview-service-area {
+  background: var(--prospect-accent);
+  color: color-mix(in srgb, var(--prospect-primary) 86%, #000);
+}
+
+.prospect-preview-site .prospect-preview-service-area h2,
+.prospect-preview-site .prospect-preview-service-area p,
+.prospect-preview-site .prospect-preview-service-area .prospect-preview-kicker,
+.prospect-preview-site .prospect-preview-service-area .prospect-preview-text-link {
+  color: inherit;
+}
+
+.prospect-preview-site .prospect-preview-contact {
+  background: color-mix(in srgb, var(--prospect-primary) 96%, #06111b);
+}
+
+.prospect-preview-site .prospect-preview-footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.prospect-preview-site .prospect-preview-footer-brand small {
+  color: color-mix(in srgb, currentColor 66%, transparent);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .prospect-preview-site .prospect-preview-hero,
+  .prospect-preview-site .prospect-preview-featured-service {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prospect-preview-site .prospect-preview-hero {
+    min-height: 0;
+  }
+
+  .prospect-preview-site .prospect-preview-hero__visual {
+    min-height: 390px;
+    transform: none;
+  }
+
+  .prospect-preview-site .prospect-preview-service-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prospect-preview-site .prospect-preview-service-list article:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 767px) {
+  .prospect-preview-site .prospect-preview-nav {
+    min-height: 68px;
+    padding: 9px 16px;
+  }
+
+  .prospect-preview-site .prospect-preview-brand {
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .prospect-preview-site .prospect-preview-logo-image {
+    height: 42px;
+    width: 42px;
+  }
+
+  .prospect-preview-site .prospect-preview-brand-copy strong {
+    font-size: 0.96rem;
+    max-width: 190px;
+  }
+
+  .prospect-preview-site .prospect-preview-brand-copy small {
+    font-size: 0.56rem;
+  }
+
+  .prospect-preview-site .prospect-preview-hero {
+    gap: 28px;
+    padding-block: 44px 36px;
+  }
+
+  .prospect-preview-site .prospect-preview-hero__content h1 {
+    font-size: clamp(2.35rem, 10.8vw, 3.35rem);
+    line-height: 1;
+    max-width: 14ch;
+  }
+
+  .prospect-preview-site .prospect-preview-hero__visual,
+  .prospect-preview-site .prospect-preview-hero__visual .prospect-preview-image,
+  .prospect-preview-site .prospect-preview-hero__visual img {
+    min-height: 330px;
+  }
+
+  .prospect-preview-site .prospect-preview-visual-caption {
+    bottom: 14px;
+    left: 14px;
+    max-width: calc(100% - 28px);
+    padding: 12px 14px;
+  }
+
+  .prospect-preview-site .prospect-preview-trust {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prospect-preview-site .prospect-preview-trust span {
+    min-height: 96px;
+    padding: 17px 14px;
+  }
+
+  .prospect-preview-site .prospect-preview-trust span:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .prospect-preview-site .prospect-preview-service-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prospect-preview-site .prospect-preview-service-list article:last-child {
+    grid-column: auto;
+  }
+
+  .prospect-preview-site .prospect-preview-featured-service {
+    gap: 28px;
+  }
+
+  .prospect-preview-site .prospect-preview-featured-service > .prospect-preview-image {
+    aspect-ratio: 4 / 3;
+    border-radius: 16px;
+    min-height: 0;
+  }
+
+  .prospect-preview-site .prospect-preview-featured-service h2 {
+    font-size: clamp(2.15rem, 11vw, 3.25rem);
+  }
+}
+
+/* Keep researched service sets balanced after legacy card-style variants resolve. */
+.prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list article:first-child {
+  display: flex;
+  flex-direction: column;
+  grid-column: auto;
+  grid-template-columns: none;
+}
+
+.prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list article:first-child .prospect-preview-image--service {
+  aspect-ratio: 4 / 3;
+  height: auto;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list article:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 767px) {
+  .prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-card-style] .prospect-preview-service-list article:last-child {
+    grid-column: auto;
+  }
+}
+
 .engine-shell--nav-collapsed {
   grid-template-columns: 5.25rem minmax(0, 1fr);
 }

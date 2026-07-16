@@ -165,6 +165,18 @@ async function assertRobotsAllowed(url: URL) {
   }
 }
 
+export async function fetchPublicResearchDocument(value: string) {
+  const requestedUrl = await assertPublicUrl(value);
+  await assertRobotsAllowed(requestedUrl);
+  const { response, url } = await fetchPublicPage(requestedUrl.href);
+  if (!response.ok) throw new Error(`Website returned HTTP ${response.status}.`);
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("text/html") && !contentType.includes("text/css") && !contentType.includes("text/plain")) {
+    throw new Error("Website research resource did not return HTML or CSS.");
+  }
+  return { text: await readLimitedText(response), url };
+}
+
 export type ContactDiscoveryPage = {
   url: string;
   html: string;

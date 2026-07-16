@@ -10,6 +10,7 @@ import { listProspects, saveProspect } from "@/lib/prospect-repository";
 import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, regeneratePreview } from "@/lib/prospect-engine";
 import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
 import { getPublicProspectPreview } from "@/lib/top-prospect-repository";
+import { researchProspectForPreview } from "@/lib/preview-business-research";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,8 @@ export async function POST(request: Request) {
         await safeRecordAudit({ action: "prospect_preview_regenerate", outcome: "rejected", subject: payload.prospectId, metadata: { reason: blockReason } });
         return NextResponse.json({ error: `Preview regeneration blocked: ${blockReason}.` }, { status: 409 });
       }
-      const updated = regeneratePreview(prospect, payload.feedback ?? "");
+      const researchedProspect = await researchProspectForPreview(prospect);
+      const updated = regeneratePreview(researchedProspect, payload.feedback ?? "");
       const preflightVerdict = evaluatePreviewSendWorthiness(updated, {
         publicPreviewUrl: "/p/abcdefghijklmnopqrstuvwxyzABCDEF",
         publicPreviewVerified: true,

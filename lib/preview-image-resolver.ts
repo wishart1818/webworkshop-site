@@ -382,7 +382,9 @@ function safeImageUrl(value: unknown) {
   }
 }
 
-function approvedBusinessPhotos(prospect: Prospect) {
+type BusinessPhotoCandidate = { src: string; alt: string; service: string };
+
+function approvedBusinessPhotos(prospect: Prospect): BusinessPhotoCandidate[] {
   const record = prospect as unknown as Record<string, unknown>;
   const raw = [
     record.approvedPreviewPhotos,
@@ -390,7 +392,22 @@ function approvedBusinessPhotos(prospect: Prospect) {
     record.businessPhotos,
     record.photoUrls,
   ].flatMap((value) => Array.isArray(value) ? value : []);
-  return [...new Set(raw.map(safeImageUrl).filter(Boolean))];
+  const candidates = raw.flatMap((item): BusinessPhotoCandidate[] => {
+    if (typeof item === "string") {
+      const src = safeImageUrl(item);
+      return src ? [{ src, alt: "", service: "" }] : [];
+    }
+    if (!item || typeof item !== "object") return [];
+    const photo = item as Record<string, unknown>;
+    const src = safeImageUrl(photo.src);
+    if (!src) return [];
+    return [{
+      src,
+      alt: typeof photo.alt === "string" ? photo.alt : "",
+      service: typeof photo.service === "string" ? photo.service : "",
+    }];
+  });
+  return [...new Map(candidates.map((candidate) => [candidate.src, candidate])).values()];
 }
 
 function configuredStockImages(environment: NodeJS.ProcessEnv) {
@@ -651,6 +668,25 @@ function selectConfiguredImage(images: string[], index: number, usedSources: Set
   return ordered.find((src) => !usedSources.has(src)) ?? ordered[0] ?? "";
 }
 
+function selectBusinessPhoto(images: BusinessPhotoCandidate[], intent: PreviewImageIntent, usedSources: Set<string>) {
+  if (!images.length) return undefined;
+  const intentTerms = [...intent.keywords, intent.serviceTitle, intent.section]
+    .join(" ")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length > 3);
+  const scored = images.map((image, sourceIndex) => {
+    const descriptor = `${image.src} ${image.alt} ${image.service}`.toLowerCase();
+    const semanticMatches = intentTerms.filter((term) => descriptor.includes(term)).length;
+    const serviceTitle = intent.serviceTitle?.toLowerCase() ?? "";
+    const service = image.service.toLowerCase();
+    const directServiceMatch = Boolean(serviceTitle && service && (service.includes(serviceTitle) || serviceTitle.includes(service)));
+    const heroBoost = intent.slot === "hero" && /hero|pressure|wash|service|crew|technician|exterior/.test(descriptor) ? 5 : 0;
+    return { image, sourceIndex, score: semanticMatches + (directServiceMatch ? 12 : 0) + heroBoost };
+  }).sort((a, b) => b.score - a.score || a.sourceIndex - b.sourceIndex);
+  return scored.find(({ image }) => !usedSources.has(image.src))?.image;
+}
+
 function sourceForIndex(
   prospect: Prospect,
   trade: TradeCategory,
@@ -658,15 +694,21 @@ function sourceForIndex(
   catalogEntry: CatalogEntry,
   catalogSlot: CatalogSlot,
   index: number,
-  businessPhotos: string[],
+  businessPhotos: BusinessPhotoCandidate[],
   stockPhotos: string[],
   curatedStockPhotos: Array<{ src: string; keywords: string[] }>,
   usedSources: Set<string>,
 ): ResolvedPreviewImage {
-  const businessPhoto = selectConfiguredImage(businessPhotos, index, usedSources);
+  const businessPhoto = selectBusinessPhoto(businessPhotos, intent, usedSources);
   if (businessPhoto) {
-    usedSources.add(businessPhoto);
-    return imageFrom(prospect, intent, businessPhoto, "business-photo");
+    usedSources.add(businessPhoto.src);
+    const businessIntent = {
+      ...intent,
+      serviceTitle: businessPhoto.service || intent.serviceTitle,
+      keywords: [...new Set([...intent.keywords, businessPhoto.alt, businessPhoto.service].filter(Boolean))],
+      purpose: `${intent.section} image${businessPhoto.service ? ` showing ${businessPhoto.service}` : ""}`,
+    };
+    return imageFrom(prospect, businessIntent, businessPhoto.src, "business-photo");
   }
   const stockPhoto = selectConfiguredImage(stockPhotos, index, usedSources);
   if (stockPhoto) {

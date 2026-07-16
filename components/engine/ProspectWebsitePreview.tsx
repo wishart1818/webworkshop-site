@@ -191,6 +191,8 @@ function serviceDescriptionFallback(trade: Prospect["trade"], title: string, ind
     if (/house|siding|exterior/.test(lower)) return "Wash away dirt, algae, and buildup from the exterior surfaces around the home.";
     if (/concrete|driveway|walk|patio|paver/.test(lower)) return "Clean driveways, walkways, patios, and other concrete areas that collect stains and grime.";
     if (/roof|soft/.test(lower)) return "Use a gentler wash approach for roof areas and surfaces that need lower pressure.";
+    if (/gutter/.test(lower)) return "Clear leaves and buildup from gutters so rainwater has a cleaner path away from the home.";
+    if (/window/.test(lower)) return "Clean exterior glass and frames for a brighter, clearer finish around the home.";
   }
   if (trade === "Landscaping") {
     if (/plant|bed|mulch|install/.test(lower)) return "Shape planting beds, edging, and outdoor details around the property.";
@@ -201,62 +203,24 @@ function serviceDescriptionFallback(trade: Prospect["trade"], title: string, ind
   return `Request help with ${title.toLowerCase()} and share the property details needed for an estimate.`;
 }
 
-function trustItemDescription(item: string) {
-  if (/serving/i.test(item)) return "Local service for homeowners and property owners in the area.";
-  if (/phone|contact/i.test(item)) return "Call with questions about timing, surfaces, and the work you want priced.";
-  if (/service/i.test(item)) return "Core services focus on the parts of the property that need attention.";
-  if (/review|rating/i.test(item)) return "Public provider data shows this business has activity customers can recognize.";
-  return "Share the surface, timing, and location so the estimate can start clearly.";
-}
-
-function proofCopy(trade: Prospect["trade"], displayTrade: string) {
-  const byTrade: Partial<Record<Prospect["trade"], { headline: string; intro: string; checkpoints: [TradeServiceCard, TradeServiceCard, TradeServiceCard] }>> = {
-    "Pressure Washing": {
-      headline: "Exterior surfaces homeowners care about most.",
-      intro: "House washing, concrete cleaning, and soft washing are grouped around the parts of the property that need attention.",
-      checkpoints: [
-        { title: "House exterior", description: "Siding, trim, brick, and stucco can collect algae, dirt, and weather stains." },
-        { title: "Driveways and patios", description: "Concrete, walkways, and patio areas often need a different cleaning approach than siding." },
-        { title: "Sensitive surfaces", description: "Roof areas and softer exterior materials call for lower-pressure cleaning when offered." },
-      ],
-    },
-    HVAC: {
-      headline: "Heating and cooling service without the guesswork.",
-      intro: "Repairs, replacements, and maintenance are separated by the kind of comfort issue a homeowner is dealing with.",
-      checkpoints: [
-        { title: "Repairs", description: "No-heat, no-cooling, airflow, and unusual-sound concerns can be described before service." },
-        { title: "Installation", description: "Replacement work starts with the home, comfort goals, and current system situation." },
-        { title: "Maintenance", description: "Seasonal tune-ups and routine care stay separate from urgent repair requests." },
-      ],
-    },
-    Roofing: {
-      headline: "Roof concerns sorted by the work they may need.",
-      intro: "Leaks, storm damage, missing shingles, and replacement questions each need a practical next step.",
-      checkpoints: [
-        { title: "Repair concerns", description: "Leaks, flashing, missing shingles, and roof damage can be described clearly." },
-        { title: "Replacement planning", description: "Bigger roofing projects start with materials, scope, and the home's condition." },
-        { title: "Storm review", description: "Wind and hail concerns can be separated from routine repair questions." },
-      ],
-    },
-  };
-  return byTrade[trade] ?? {
-    headline: `${displayTrade} work organized around the property need.`,
-    intro: "The service options stay focused on the work, the property details, and the estimate request.",
-    checkpoints: [
-      { title: "Choose the work", description: "The most common property needs are grouped by service type." },
-      { title: "Share the details", description: "The estimate can start with the property, timing, and scope." },
-      { title: "Request service", description: "The next step stays focused on a practical quote or estimate." },
-    ],
-  };
+function trustItemDescription(item: string, trade: Prospect["trade"]) {
+  if (/serving/i.test(item)) {
+    const service = trade === "HVAC" ? "heating and cooling" : trade.toLowerCase();
+    return `Local ${service} service across the listed area.`;
+  }
+  if (/^call\b|phone/i.test(item)) return "Talk with the team about the service your property needs.";
+  if (/review|rating/i.test(item)) return "Based on the public business listing.";
+  if (/\|/.test(item)) return "Core services available for local homes and properties.";
+  return "Request an estimate for the work that needs attention.";
 }
 
 function faqItems(trade: Prospect["trade"], ctaLabel: string): [TradeServiceCard, TradeServiceCard, TradeServiceCard] {
   const action = ctaLabel.toLowerCase();
   const byTrade: Partial<Record<Prospect["trade"], [TradeServiceCard, TradeServiceCard, TradeServiceCard]>> = {
     "Pressure Washing": [
-      { title: "What surfaces can I ask about?", description: "Share whether you need help with siding, concrete, patios, roof areas, or another exterior surface." },
-      { title: "Can I describe the property first?", description: "Yes. Include the surface type, location, and what you want cleaned." },
-      { title: "What is the next step?", description: `Use ${action} and include the surfaces, photos if available, and the best way to reach you.` },
+      { title: "What exterior surfaces can be cleaned?", description: "Common requests include siding, brick, stucco, driveways, walkways, patios, gutters, and roof areas when that service is offered." },
+      { title: "Is every surface cleaned the same way?", description: "No. Siding, concrete, roof areas, and other materials can require different pressure and cleaning methods." },
+      { title: "How do I request an estimate?", description: `Use ${action} and share the property address, surfaces you want cleaned, and the best way to reach you.` },
     ],
     HVAC: [
       { title: "Can I request repair or replacement help?", description: "Yes. Share whether the system needs urgent repair, seasonal maintenance, or replacement planning." },
@@ -271,25 +235,19 @@ function faqItems(trade: Prospect["trade"], ctaLabel: string): [TradeServiceCard
   ];
 }
 
-function confidenceCopy(trade: Prospect["trade"], businessName: string) {
-  const byTrade: Partial<Record<Prospect["trade"], string>> = {
-    "Pressure Washing": "House washing, concrete cleaning, and soft washing help refresh the exterior surfaces homeowners notice first.",
-    HVAC: "Repair, maintenance, and replacement options focus on the comfort issue in the home.",
-    Roofing: "Repair, replacement, and storm concerns stay focused on what the roof may need.",
-    Plumbing: "Leaks, drains, fixtures, and water-heater concerns can be described before the visit.",
-    Electrical: "Repairs, upgrades, lighting, and circuit work stay separated by the type of electrical help needed.",
-  };
-  return byTrade[trade] ?? `${businessName} presents the main services around the property need, timing, and estimate request.`;
-}
-
 function tradePhrase(displayTrade: string) {
   return displayTrade === "HVAC" ? "HVAC" : displayTrade.toLowerCase();
 }
 
 function quoteProcess(displayTrade: string, ctaLabel: string): [TradeProcessCopy, TradeProcessCopy, TradeProcessCopy] {
+  const projectDetails = displayTrade === "Pressure Washing"
+    ? "Include the address, surfaces that need cleaning, timing, and the best way to reach you."
+    : displayTrade === "HVAC"
+      ? "Include the address, system concern, timing, and the best way to reach you."
+      : "Include the address, project details, timing, and the best way to reach you.";
   return [
     { title: "Choose the service", description: `Choose the ${tradePhrase(displayTrade)} work that matches what needs attention.` },
-    { title: "Share the property", description: "Include the address, timing, surface or room details, and the best way to reach you." },
+    { title: "Share the property", description: projectDetails },
     { title: ctaLabel, description: "Request an estimate so the next step can be confirmed." },
   ];
 }
@@ -336,7 +294,13 @@ function cleanVisualCaption(trade: Prospect["trade"], displayCity: string) {
   };
 }
 
-function serviceShortcutText(trade: Prospect["trade"], index: number, displayCity: string) {
+function serviceShortcutText(trade: Prospect["trade"], serviceTitle: string, index: number, displayCity: string) {
+  const lower = serviceTitle.toLowerCase();
+  if (trade === "Pressure Washing") {
+    if (/roof|soft/.test(lower)) return "Gentler exterior cleaning";
+    if (/concrete|driveway|patio|walk/.test(lower)) return "Driveways and patios";
+    if (/house|siding|exterior/.test(lower)) return "Siding and home exteriors";
+  }
   const pressureWashing = ["Exterior surfaces", "Driveways and patios", `${displayCity} homes`];
   const roofing = ["Roof concerns", "Repair or replace", `${displayCity} area`];
   const hvac = ["Comfort issues", "Repair or install", `${displayCity} homes`];
@@ -352,14 +316,6 @@ function serviceShortcutText(trade: Prospect["trade"], index: number, displayCit
           ? landscaping
           : fallback;
   return labels[index] ?? fallback[index] ?? "Local service";
-}
-
-function proofKicker(trade: Prospect["trade"]) {
-  if (trade === "Pressure Washing") return "Exterior surfaces";
-  if (trade === "Landscaping") return "Outdoor spaces";
-  if (trade === "Roofing") return "Roof concerns";
-  if (trade === "HVAC") return "Home comfort";
-  return "Service focus";
 }
 
 function galleryCopy(trade: Prospect["trade"], displayCity: string) {
@@ -387,37 +343,6 @@ function galleryCopy(trade: Prospect["trade"], displayCity: string) {
   };
 }
 
-function comparisonCopy(trade: Prospect["trade"]) {
-  if (trade === "Pressure Washing") {
-    return {
-      label: "Surface refresh",
-      headline: "Freshen up the areas people notice first.",
-      body: "Exterior cleaning helps brighten siding, concrete, patios, and other visible surfaces around the home.",
-      control: "Compare current buildup with a cleaner finish",
-      before: "Buildup",
-      after: "Cleaner surface",
-    };
-  }
-  if (trade === "Landscaping") {
-    return {
-      label: "Yard refresh",
-      headline: "Picture a yard with cleaner edges and a clearer plan.",
-      body: "A focused landscaping visit can help planting beds, lawn edges, and outdoor areas feel more intentional.",
-      control: "Compare current outdoor areas with a cleaner finish",
-      before: "Before care",
-      after: "After care",
-    };
-  }
-  return {
-    label: "Project view",
-    headline: "Picture the work before requesting an estimate.",
-    body: "Use this section to understand the kind of property details that help start the conversation.",
-    control: "Compare current need with completed work",
-    before: "Current need",
-    after: "After service",
-  };
-}
-
 function galleryLabel(trade: Prospect["trade"], index: number) {
   const pressureWashing = ["Exterior washing", "Concrete cleaning", "Roof and soft wash"];
   const landscaping = ["Yard care", "Planting areas", "Outdoor finish"];
@@ -441,6 +366,22 @@ function logoImageUrl(profile: PreviewBusinessProfile | undefined) {
   return profile.logo.url;
 }
 
+function verifiedProfileFact(profile: PreviewBusinessProfile | undefined, label: string) {
+  return profile?.sourceFacts.find((fact) => fact.label === label && fact.confidence === "verified")?.value ?? "";
+}
+
+function meaningfulDifferentiators(profile: PreviewBusinessProfile | undefined) {
+  return (profile?.realDifferentiators ?? []).filter((fact) => /review|rating|quote form|contact form|address/i.test(fact.label) && fact.confidence === "verified").slice(0, 3);
+}
+
+function wordmarkDescriptor(trade: Prospect["trade"], city: string) {
+  if (trade === "Pressure Washing") return `Exterior cleaning | ${city}`;
+  if (trade === "HVAC") return `Heating & cooling | ${city}`;
+  if (trade === "Roofing") return `Roofing | ${city}`;
+  if (trade === "Landscaping") return `Outdoor spaces | ${city}`;
+  return `${displayTradeCategory(trade)} | ${city}`;
+}
+
 function heroHeadlineCopy(
   trade: Prospect["trade"],
   businessName: string,
@@ -462,13 +403,12 @@ function heroHeadlineCopy(
 
 function heroSupportingCopy(
   trade: Prospect["trade"],
-  businessName: string,
   serviceCards: [TradeServiceCard, TradeServiceCard, TradeServiceCard],
   serviceArea: string,
   fallback: string,
 ) {
   if (trade === "Pressure Washing") {
-    return `${businessName} helps homeowners with ${serviceCards.map((service) => service.title.toLowerCase()).join(", ")} across ${serviceArea}.`;
+    return `${serviceCards.map((service) => service.title).join(", ")} for homes and properties across ${serviceArea}.`;
   }
   return fallback;
 }
@@ -498,6 +438,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const pageCopy = tradePageCopy[canonicalTrade];
   const businessProfile = preview.businessProfile;
   const businessName = businessProfile?.officialBusinessName ?? prospect.businessName;
+  const officialTagline = verifiedProfileFact(businessProfile, "Official tagline");
   const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade);
   const alignedServiceArea = (value: string) => {
     const normalized = normalizeCopy(value);
@@ -508,12 +449,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   };
   const serviceArea = alignedServiceArea(prospect.serviceArea || `${displayCity}, ${displayState}`);
   const images = preview.resolvedImages ?? resolvePreviewImages(renderProspect, serviceCards);
-  const proof = proofCopy(canonicalTrade, displayTrade);
   const faqs = faqItems(canonicalTrade, styleProfile.ctaLabel);
   const steps = quoteProcess(displayTrade, styleProfile.ctaLabel);
   const visualCaption = cleanVisualCaption(canonicalTrade, displayCity);
   const galleryText = galleryCopy(canonicalTrade, displayCity);
-  const compareText = comparisonCopy(canonicalTrade);
   const imageRelevant = (image: ResolvedPreviewImage) => isPublicPreviewImageRelevant(image, canonicalTrade);
   const dependableImage = (image: ResolvedPreviewImage) => image.source === "business-photo"
     || image.source === "configured-stock-provider"
@@ -529,27 +468,55 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   };
   const heroImage = takeImage([images.hero, ...images.services, ...images.gallery, images.beforeAfter]) ?? images.hero;
   const serviceImages = images.services.map((image, index) => takeImage([image, images.gallery[index], images.beforeAfter], { requireDependable: true })) as Array<ResolvedPreviewImage | null>;
-  const galleryAssets = images.gallery.filter((image) => imageRelevant(image) && dependableImage(image) && !usedImageSources.has(image.src)).slice(0, 3);
+  const proofImage = takeImage([images.gallery[0], images.beforeAfter, images.process, ...images.gallery], { requireDependable: true });
+  const businessFirst = (candidates: Array<ResolvedPreviewImage | undefined | null>) => [
+    ...candidates.filter((image) => image?.source === "business-photo"),
+    ...candidates.filter((image) => image?.source !== "business-photo"),
+  ];
+  const processCandidates = businessFirst([images.process, images.cta, ...images.gallery]).filter((image) => image?.source !== "business-photo"
+    || /crew|team|equipment|process|service call/i.test(`${image.serviceTitle ?? ""} ${image.alt}`));
+  const processImage = images.sourceStatus === "approved business photos"
+    ? takeImage(processCandidates.filter((image) => image?.source === "business-photo"), { requireDependable: true })
+    : takeImage(processCandidates, { requireDependable: true });
+  const ctaCandidate = takeImage(businessFirst([images.cta, images.process, ...images.gallery]), { requireDependable: true });
+  const ctaImage = images.sourceStatus === "approved business photos" ? null : ctaCandidate;
+  const galleryAssets = images.gallery.filter((image) => imageRelevant(image) && dependableImage(image) && !usedImageSources.has(image.src) && (images.sourceStatus !== "approved business photos" || image.source === "business-photo")).slice(0, 3);
   galleryAssets.forEach((image) => usedImageSources.add(image.src));
-  const proofImage = takeImage([images.gallery[2], images.beforeAfter, images.process, ...images.gallery], { requireDependable: true });
-  const processImage = takeImage([images.process, images.cta, ...images.gallery], { requireDependable: true });
-  const beforeAfterImage = takeImage([images.beforeAfter, ...images.gallery], { requireDependable: true });
-  const ctaImage = takeImage([images.cta, images.process, ...images.gallery], { requireDependable: true });
   const showGallery = galleryAssets.length >= 3;
-  const showComparison = Boolean(beforeAfterImage);
-  const headline = normalizeCopy(heroHeadlineCopy(canonicalTrade, businessName, displayCity, preview.heroHeadline ?? pageCopy.heroHeadline));
+  const headline = normalizeCopy(officialTagline || heroHeadlineCopy(canonicalTrade, businessName, displayCity, preview.heroHeadline ?? pageCopy.heroHeadline));
   const rawHeroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const heroSupporting = rawHeroSupporting.toLowerCase().includes(displayCity.toLowerCase()) || !/nearby communities|across/i.test(rawHeroSupporting)
     ? rawHeroSupporting
     : `${businessName} provides ${serviceCards.map((service) => service.title).join(", ")} across ${serviceArea}.`;
-  const heroSupportingLine = normalizeCopy(heroSupportingCopy(canonicalTrade, businessName, serviceCards, serviceArea, heroSupporting));
+  const heroSupportingLine = normalizeCopy(heroSupportingCopy(canonicalTrade, serviceCards, serviceArea, heroSupporting));
   const logoUrl = logoImageUrl(businessProfile);
+  const hasOfficialResearch = Boolean(verifiedProfileFact(businessProfile, "Official website research"));
+  const differentiators = meaningfulDifferentiators(businessProfile);
+  const hasBusinessPhotos = (businessProfile?.businessPhotoSources.length ?? 0) >= 3;
   const trustItems = (preview.trustItems ?? [
     `Serving ${displayCity}, ${displayState}`,
     prospect.phone ? "Direct phone contact" : "Estimate request",
     `${displayTrade} services`,
     "Easy estimate request",
   ]).map(normalizeCopy);
+  const primaryService = serviceCards[0];
+  const featuredImageService = proofImage?.serviceTitle && (businessProfile?.verifiedServices ?? []).find((service) => {
+    const normalizedService = normalizeCopy(service).toLowerCase();
+    const normalizedImageService = normalizeCopy(proofImage.serviceTitle ?? "").toLowerCase();
+    return normalizedService === normalizedImageService
+      || normalizedService.includes(normalizedImageService)
+      || normalizedImageService.includes(normalizedService);
+  });
+  const featuredServiceName = featuredImageService || (businessProfile?.verifiedServices ?? []).find((service) => {
+    const wordsToMatch = words(service);
+    const imageTerms = proofImage?.intent.keywords.join(" ").toLowerCase() ?? "";
+    return wordsToMatch.some((word) => imageTerms.includes(word));
+  }) || primaryService.title;
+  const featuredTemplate = matchedServiceTemplate(canonicalTrade, featuredServiceName, pageCopy);
+  const featuredService = {
+    title: featuredServiceName,
+    description: featuredTemplate?.description ?? serviceDescriptionFallback(canonicalTrade, featuredServiceName, 0),
+  };
   const style = {
     "--prospect-primary": styleProfile.primaryColor,
     "--prospect-accent": styleProfile.accentColor,
@@ -585,10 +552,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element -- prospect logos can come from approved external public assets not covered by Next image domains */}
                 <img className="prospect-preview-logo-image" src={logoUrl} alt={`${businessName} logo`} />
-                <span>{businessName}</span>
+                <span className="prospect-preview-brand-copy"><strong>{businessName}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
               </>
             ) : (
-              <span className="prospect-preview-wordmark">{businessName}</span>
+              <span className="prospect-preview-brand-copy prospect-preview-wordmark"><strong>{businessName}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
             )}
           </a>
           <div>
@@ -615,7 +582,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               {serviceCards.map((item, index) => (
                 <a href={`#service-${index + 1}`} key={item.title}>
                   <b>{item.title}</b>
-                  <i>{serviceShortcutText(canonicalTrade, index, displayCity)}</i>
+                  <i>{serviceShortcutText(canonicalTrade, item.title, index, displayCity)}</i>
                 </a>
               ))}
             </div>
@@ -623,21 +590,21 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <aside className="prospect-preview-hero__visual">
             <TradePreviewImage {...previewImageProps(heroImage, "hero")} />
             <div className="prospect-preview-visual-caption">
-              <small>{visualCaption.label}</small>
-              <strong>{visualCaption.headline}</strong>
-              <span>{visualCaption.body}</span>
+              <small>{businessName}</small>
+              <strong>{primaryService.title}</strong>
+              <span>{hasBusinessPhotos ? "Official business imagery" : visualCaption.label}</span>
             </div>
           </aside>
         </section>
 
         <section className="prospect-preview-trust" aria-label="Business trust highlights">
-          {trustItems.slice(0, 4).map((item) => <span key={item}><b>{item}</b><i>{trustItemDescription(item)}</i></span>)}
+          {trustItems.slice(0, 4).map((item) => <span key={item}><b>{item}</b><i>{trustItemDescription(item, canonicalTrade)}</i></span>)}
         </section>
 
         <section className="prospect-preview-section prospect-preview-services" id="services">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Services</span>
-            <h2>{pageCopy.servicesHeadline}</h2>
+            <h2>{hasOfficialResearch && canonicalTrade === "Pressure Washing" ? `${businessName} exterior cleaning services.` : pageCopy.servicesHeadline}</h2>
             <p>{pageCopy.servicesIntro}</p>
           </div>
           <div className="prospect-preview-service-list">
@@ -654,39 +621,32 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </div>
         </section>
 
-        <section className="prospect-preview-why">
+        {differentiators.length >= 2 ? <section className="prospect-preview-why">
           <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">Why choose us</span>
-            <h2>Match the service to what the property needs.</h2>
-            <p>{confidenceCopy(canonicalTrade, prospect.businessName)}</p>
+            <span className="prospect-preview-kicker">Why {businessName}</span>
+            <h2>{officialTagline || `A local ${tradePhrase(displayTrade)} team with public proof behind the name.`}</h2>
           </div>
           <div>
-            {trustItems.slice(0, 3).map((item) => (
-              <article key={item}>
+            {differentiators.map((fact) => (
+              <article key={`${fact.label}-${fact.value}`}>
                 <span aria-hidden="true" className="prospect-preview-checkmark">Check</span>
-                <h3>{item}</h3>
-                <p>{trustItemDescription(item)}</p>
+                <h3>{fact.label}</h3>
+                <p>{fact.value}</p>
               </article>
             ))}
           </div>
-        </section>
+        </section> : null}
 
-        <section className="prospect-preview-work" id="work">
-          <div className="prospect-preview-section__intro">
-            <span className="prospect-preview-kicker">{proofKicker(canonicalTrade)}</span>
-            <h2>{proof.headline}</h2>
-            <p>{proof.intro}</p>
-          </div>
-          <div className="prospect-preview-proof-layout">
-            {proofImage ? <TradePreviewImage {...previewImageProps(proofImage, "proof")} /> : null}
-            <div className="prospect-preview-proof-notes">
-              {proof.checkpoints.map((item) => (
-                <article key={item.title}>
-                  <b>{item.title}</b>
-                  <span>{item.description}</span>
-                </article>
-              ))}
+        <section className="prospect-preview-featured-service" id="work">
+          {proofImage ? <TradePreviewImage {...previewImageProps(proofImage, "proof")} /> : null}
+          <div>
+            <span className="prospect-preview-kicker">Featured service</span>
+            <h2>{featuredService.title}</h2>
+            <p>{featuredService.description}</p>
+            <div className="prospect-preview-featured-service__links">
+              {serviceCards.slice(1).map((service) => <a href="#contact" key={service.title}>{service.title}</a>)}
             </div>
+            <a className="prospect-preview-button" href="#contact">{styleProfile.ctaLabel}</a>
           </div>
         </section>
 
@@ -731,20 +691,6 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </section>
         ) : null}
 
-        {showComparison ? <section className="prospect-preview-compare" aria-label={`${displayTrade} project comparison`}>
-          <div>
-            <span className="prospect-preview-kicker">{compareText.label}</span>
-            <h2>{compareText.headline}</h2>
-            <p>{compareText.body}</p>
-          </div>
-          <div className="prospect-preview-slider-card">
-            <TradePreviewImage {...previewImageProps(beforeAfterImage!, "service")} />
-            <label htmlFor="preview-before-after">{compareText.control}</label>
-            <input id="preview-before-after" min="0" max="100" type="range" defaultValue="58" />
-            <div><span>{compareText.before}</span><span>{compareText.after}</span></div>
-          </div>
-        </section> : null}
-
         <section className="prospect-preview-service-area">
           <span className="prospect-preview-kicker">Service area</span>
           <h2>Serving {displayCity} and nearby communities.</h2>
@@ -784,7 +730,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         </section>
 
         <footer className="prospect-preview-footer">
-          <strong>{businessName}</strong>
+          <span className="prospect-preview-footer-brand"><strong>{businessName}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
           <span>{displayTrade} | {serviceArea}</span>
           {prospect.phone && <a href={`tel:${prospect.phone}`}>{prospect.phone}</a>}
         </footer>

@@ -12,6 +12,7 @@ import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, buildFullPreviewReviewPrompt, isSafePublicPreviewPath, previewStripViewport, publicPreviewUrlForProspect, sanitizePreviewStripFilename, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, validatePreviewImages } from "../lib/preview-image-resolver";
+import { extractPreviewBusinessResearch } from "../lib/preview-business-research";
 import { evaluatePreviewSendWorthiness } from "../lib/preview-send-worthiness";
 import { recommendedMarketPresets } from "../lib/top-prospects";
 
@@ -455,7 +456,7 @@ test("preview regeneration controls use one protected action with loading and sa
   assert.doesNotMatch(handler, /queuePersist\(updated\)/);
   assert.match(route, /if \(payload\.action === "regenerate_prospect_preview"\)/);
   assert.match(route, /previewRegenerationBlockReason\(prospect\)/);
-  assert.match(route, /regeneratePreview\(prospect, payload\.feedback \?\? ""\)/);
+  assert.match(route, /regeneratePreview\(researchedProspect, payload\.feedback \?\? ""\)/);
   assert.match(route, /evaluatePreviewSendWorthiness\(updated/);
   assert.match(route, /getPublicProspectPreview\(publicPreviewToken\)/);
   assert.match(route, /publicPreviewVerified/);
@@ -629,7 +630,7 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /data-layout-direction="(?:split-photo|full-bleed-photo|image-led-grid|dark-premium|light-editorial|bold-local-service)"/);
   assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
   assert.match(html, /data-rhythm="(?:proof-led|calm-premium)"/);
-  assert.match(html, /Roofing services/);
+  assert.match(html, /Roofing help built around the condition of your home\./);
   assert.match(html, /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(html, /data-preview-image-source="curated-stock-photo-library"/);
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
@@ -638,13 +639,12 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /Roof concerns/);
   assert.match(html, /Service request steps/);
   assert.match(html, /Start with the roof concern you are seeing/);
-  assert.match(html, /href="#gallery"/);
-  assert.match(html, /prospect-preview-lightbox/);
+  assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /Project view|Surface refresh|Yard refresh/);
   assert.match(html, /Questions/);
   assert.match(html, /This sample form will not submit/);
   assert.match(html, /prospect-preview-mobile-cta/);
-  assert.match(html, /Why choose us/);
+  assert.doesNotMatch(html, /Years in business|Licensed and insured|Award-winning|Satisfaction guarantee/i);
   assert.match(html, /Service area/);
   assert.match(html, /Call \(419\) 555-0142/);
   assert.match(html, /data-layout="(?:trust-led|clean-split)"/);
@@ -684,6 +684,8 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /HVAC in Toledo, OH/);
   assert.match(html, /Heating and cooling help for Toledo homes\./);
   assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
+  assert.match(html, /Local heating and cooling service across the listed area\./);
+  assert.doesNotMatch(html, /Local exterior service|surfaces you want cleaned/);
   assert.match(html, /Heating And Cooling Repair/i);
   assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
   assert.match(html, /System Installation/i);
@@ -691,10 +693,9 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Maintenance Plans/i);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
   assert.match(html, /Home comfort/);
-  assert.match(html, /Heating and cooling service without the guesswork\./);
+  assert.match(html, /<h2>Heating And Cooling Repair<\/h2>/);
   assert.match(html, /FAQ|Questions/);
-  assert.match(html, /href="#gallery"/);
-  assert.match(html, /prospect-preview-lightbox/);
+  assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /type="range"/);
   assert.match(html, /required=""/);
   assert.doesNotMatch(html, /Recent local work|Our work/);
@@ -870,16 +871,63 @@ test("representative public previews use service-focused copy without UX wording
   assert.doesNotMatch(rendered, /municipal|street cleaning|commercial surface|honey|coffee|liquid|abstract/i);
 });
 
-test("True Clean-style pressure washing preview uses honest branding, lower-image layout, and natural copy", () => {
-  const prospect = withPreview({
+test("official website research extracts verified branding, services, and service-matched photos", () => {
+  const research = extractPreviewBusinessResearch(`
+    <html><head>
+      <meta property="og:image" content="/images/hero/pressure-washing-hero.jpg" />
+      <style>:root{--navy:#183768;--gold:#b49342;--paper:#faf5ec}</style>
+    </head><body>
+      <header><img class="site-logo" src="/_next/image?url=%2Fimages%2Flogo-coin.png&w=256&q=75" alt="True Clean ProWash logo" /></header>
+      <h1>The True Clean ProWash Method</h1>
+      <p>The wash crew you hire when you're tired of looking at it.</p>
+      <a href="/services/house-wash">House Washing</a>
+      <a href="/services/roof-cleaning">Roof Cleaning</a>
+      <a href="/services/driveway-concrete">Driveway & Concrete Cleaning</a>
+      <img src="/_next/image?url=%2Fimages%2Fservices%2Ftile-house-wash.jpg&w=1200&q=80" alt="Professional house wash service" />
+      <img src="/images/gallery/driveway-concrete-before.jpg" alt="Residential driveway before concrete cleaning" />
+      <img src="/images/services/tile-roof-cleaning.jpg" alt="Residential roof cleaning" />
+    </body></html>
+  `, "https://truecleanprowash.com/", "Pressure Washing");
+
+  assert.equal(research.logoUrl, "https://truecleanprowash.com/images/logo-coin.png");
+  assert.match(research.tagline, /wash crew you hire/i);
+  assert.deepEqual(research.services.slice(0, 3), ["House Washing", "Roof Cleaning", "Driveway & Concrete Cleaning"]);
+  assert.ok(research.brandColors.includes("#183768"));
+  assert.ok(research.photos.some((photo) => photo.service === "House Washing"));
+  assert.ok(research.photos.some((photo) => photo.src === "https://truecleanprowash.com/images/services/tile-house-wash.jpg"));
+  assert.ok(research.photos.some((photo) => photo.service === "Concrete Cleaning"));
+  assert.ok(research.sourceFacts.every((fact) => fact.confidence === "verified"));
+});
+
+test("True Clean-style pressure washing preview uses researched branding, distinct imagery, and concise public copy", () => {
+  const researchedProspect = {
     ...structuredClone(seedProspects[0]),
     businessName: "True Clean Prowash",
     trade: "Pressure Washing",
-    city: "tampa",
-    state: "FL",
-    serviceArea: "Tampa, FL",
-    phone: "(813) 555-0198",
-  });
+    city: "columbus",
+    state: "OH",
+    serviceArea: "Columbus, Hilliard, Dublin, Worthington, and nearby communities",
+    phone: "(614) 953-5570",
+    website: "https://truecleanprowash.com/",
+    websiteLogoUrl: "https://truecleanprowash.com/images/logo-coin.png",
+    previewBrandColors: ["#183768", "#b49342"],
+    verifiedPreviewServices: ["House Washing", "Roof Cleaning", "Driveway & Concrete Cleaning", "Gutter Cleaning", "Window Cleaning"],
+    approvedPreviewPhotos: [
+      { src: "https://truecleanprowash.com/images/hero/homepage-hero-poster.jpg", alt: "Professional residential exterior cleaning in progress", service: "House Washing" },
+      { src: "https://truecleanprowash.com/images/services/tile-house-wash.jpg", alt: "Professional house wash service", service: "House Washing" },
+      { src: "https://truecleanprowash.com/images/services/tile-roof-cleaning.jpg", alt: "Residential roof cleaning", service: "Roof Cleaning" },
+      { src: "https://truecleanprowash.com/images/gallery/driveway-concrete-before.jpg", alt: "Residential driveway concrete cleaning", service: "Driveway & Concrete Cleaning" },
+      { src: "https://truecleanprowash.com/images/services/tile-gutter-cleaning.jpg", alt: "Residential gutter cleaning", service: "Gutter Cleaning" },
+      { src: "https://truecleanprowash.com/images/services/tile-window-cleaning.jpg", alt: "Residential exterior window cleaning", service: "Window Cleaning" },
+    ],
+    previewResearchFacts: [
+      { label: "Official website research", value: "https://truecleanprowash.com/", source: "official website", confidence: "verified" },
+      { label: "Official tagline", value: "The wash crew you hire when you're tired of looking at it.", source: "official website", confidence: "verified" },
+      { label: "Official logo", value: "https://truecleanprowash.com/images/logo-coin.png", source: "official website", confidence: "verified" },
+    ],
+    previewResearchVerified: true,
+  } as Prospect;
+  const prospect = withPreview(researchedProspect);
   const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
     prospect,
     publicView: true,
@@ -888,19 +936,26 @@ test("True Clean-style pressure washing preview uses honest branding, lower-imag
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
 
   assert.match(html, /True Clean Prowash/);
-  assert.match(html, /prospect-preview-brand--wordmark/);
+  assert.match(html, /prospect-preview-brand--logo/);
+  assert.match(html, /logo-coin\.png/);
+  assert.match(html, /--prospect-primary:#183768/);
+  assert.match(html, /--prospect-accent:#b49342/);
   assert.doesNotMatch(html, /prospect-preview-wordmark[^>]*border-radius|business-name pill/i);
-  assert.match(html, /Cleaner exterior surfaces around Tampa\./);
-  assert.match(html, /True Clean Prowash helps homeowners with house washing, concrete cleaning, roof and soft washing across Tampa, FL\./);
+  assert.match(html, /The wash crew you hire when you&#x27;re tired of looking at it\./);
+  assert.match(html, /House Washing, Roof Cleaning, Driveway &amp; Concrete Cleaning/);
   assert.match(html, /Wash away dirt, algae, and buildup from siding, trim, brick, stucco, and other home exterior surfaces\./);
+  assert.match(html, /prospect-preview-featured-service/);
+  assert.match(html, /tile-window-cleaning[^]*?<h2>Window Cleaning<\/h2>/);
   assert.match(html, />01</);
   assert.match(html, />02</);
   assert.match(html, />03</);
   assert.doesNotMatch(html, />00</);
-  assert.doesNotMatch(html, /href="#gallery"|prospect-preview-lightbox/);
-  assert.doesNotMatch(html, /Service detail|Property context|Finished look|Photos should look|service-area copy|quote-path design|website structure|customer navigation|contact options/i);
+  assert.doesNotMatch(html, /Match the service to what the property needs|Exterior surfaces homeowners care about most/);
+  assert.doesNotMatch(html, /prospect-preview-slider-card|Compare current buildup/);
+  assert.doesNotMatch(html, /Service detail|Property context|Finished look|Photos should look|service-area copy|quote-path design|website structure|customer navigation|contact options|conversion/i);
   assert.doesNotMatch(html, /municipal|street cleaning|commercial surface|interior rooms|swimming pools|architecture portfolio/i);
-  assert.ok(new Set(imageSources).size >= 2);
+  assert.ok(new Set(imageSources).size >= 5);
+  assert.match(html, /data-preview-image-source="business-photo"/);
 });
 
 test("preview image resolver supports configured stock manifests without exposing provider secrets", () => {

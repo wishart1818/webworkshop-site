@@ -649,6 +649,8 @@ function previewCta(prospect: Prospect) {
 
 export function generateProspectStyleProfile(prospect: Prospect): PreviewStyleProfile {
   const hostname = websiteHostname(prospect.website);
+  const record = prospectRecord(prospect);
+  const researchedColors = stringListFromUnknown(record.previewBrandColors).filter((color) => /^#[0-9a-f]{6}$/i.test(color));
   const nameCue = brandCuePalettes.find(({ pattern }) => pattern.test(prospect.businessName));
   const domainCue = nameCue
     ? undefined
@@ -656,15 +658,25 @@ export function generateProspectStyleProfile(prospect: Prospect): PreviewStylePr
   const selectedCue = nameCue ?? domainCue;
   const trade = prospectTrade(prospect);
   const tradePalettes = tradePreviewPalettes[trade];
-  const palette = selectedCue?.palette ?? tradePalettes[stableIndex(`${prospect.businessName}${hostname}`, tradePalettes.length)];
+  const fallbackPalette = selectedCue?.palette ?? tradePalettes[stableIndex(`${prospect.businessName}${hostname}`, tradePalettes.length)];
+  const palette = researchedColors[0]
+    ? {
+        ...fallbackPalette,
+        label: `${prospect.businessName} website palette`,
+        primaryColor: researchedColors[0],
+        accentColor: researchedColors[1] ?? fallbackPalette.accentColor,
+      }
+    : fallbackPalette;
   const tone = previewTone(prospect);
   const typography = tone === "premium-craft"
     ? { typographyStyle: "Craft-led serif headings with plainspoken sans-serif body copy", headingFont: "Georgia, 'Times New Roman', serif", bodyFont: "Arial, Helvetica, sans-serif" }
     : tone === "local-family"
       ? { typographyStyle: "Friendly humanist sans-serif with approachable, sturdy headings", headingFont: "'Trebuchet MS', Arial, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" }
       : { typographyStyle: "Clear, sturdy sans-serif with compact high-trust headings", headingFont: "Arial, Helvetica, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" };
-  const brandSource: PreviewStyleProfile["brandSource"] = nameCue ? "business-name cue" : domainCue ? "website-domain cue" : "trade fallback";
-  const reason = selectedCue
+  const brandSource: PreviewStyleProfile["brandSource"] = researchedColors[0] ? "website-domain cue" : nameCue ? "business-name cue" : domainCue ? "website-domain cue" : "trade fallback";
+  const reason = researchedColors[0]
+    ? `Colors extracted from the official ${hostname || "business"} website informed the palette; the ${displayTradeCategory(trade).toLowerCase()} category informed the layout and service treatment.`
+    : selectedCue
     ? `${titleCase(selectedCue.cue)} informed the palette; the ${displayTradeCategory(trade).toLowerCase()} category informed the trust, service, and layout treatment.`
     : `No recognizable color cue was available, so the palette and layout use a restrained ${displayTradeCategory(trade).toLowerCase()} direction suited to a ${tone.replace("-", " ")} local business.`;
 
@@ -828,7 +840,7 @@ function prospectLogo(prospect: Prospect): PreviewBusinessProfile["logo"] {
         status: "available",
         url,
         source: candidate.source,
-        confidence: candidate.source === "operator supplied" ? "verified" : "inferred",
+        confidence: candidate.source === "operator supplied" || (candidate.source === "website" && record.previewResearchVerified === true) ? "verified" : "inferred",
         note: `Logo/profile image detected from ${candidate.source}.`,
       };
     }
@@ -844,12 +856,31 @@ function prospectLogo(prospect: Prospect): PreviewBusinessProfile["logo"] {
 
 function prospectBusinessPhotos(prospect: Prospect) {
   const record = prospectRecord(prospect);
-  return [
+  const raw = [
     ...stringListFromUnknown(record.approvedPreviewPhotos),
     ...stringListFromUnknown(record.approvedBusinessPhotos),
     ...stringListFromUnknown(record.businessPhotos),
     ...stringListFromUnknown(record.photoUrls),
-  ].map(safePublicAssetUrl).filter(Boolean);
+  ];
+  for (const value of [record.approvedPreviewPhotos, record.approvedBusinessPhotos, record.businessPhotos, record.photoUrls]) {
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (item && typeof item === "object" && typeof (item as Record<string, unknown>).src === "string") raw.push((item as Record<string, unknown>).src as string);
+    }
+  }
+  return [...new Set(raw.map(safePublicAssetUrl).filter(Boolean))];
+}
+
+function previewResearchFacts(prospect: Prospect) {
+  const value = prospectRecord(prospect).previewResearchFacts;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.label !== "string" || typeof record.value !== "string" || typeof record.source !== "string") return [];
+    const confidence = record.confidence === "verified" || record.confidence === "inferred" || record.confidence === "unavailable" ? record.confidence : "inferred";
+    return [researchFact(record.label, record.value, record.source, confidence)];
+  }).slice(0, 18);
 }
 
 function detectedBrandColorFacts(styleProfile: PreviewStyleProfile): PreviewResearchFact[] {
@@ -932,6 +963,7 @@ function buildPreviewBusinessProfile(
   const photoSources = prospectBusinessPhotos(prospect);
   const socialProfiles = officialSocialProfiles(prospect);
   const differentiators = businessDifferentiatorFacts(prospect);
+  const researchedFacts = previewResearchFacts(prospect);
   const websiteWeaknesses = previewWeaknessFacts(prospect, noWebsiteProspect);
   const sourceFacts = [
     researchFact("Business name", prospect.businessName, "provider result", "verified"),
@@ -941,6 +973,7 @@ function buildPreviewBusinessProfile(
     prospect.website ? researchFact("Official website", prospect.website, "provider result", "verified") : researchFact("Official website", "Not found", "discovery", "unavailable"),
     ...differentiators,
     ...socialProfiles,
+    ...researchedFacts,
   ].slice(0, 18);
   return {
     officialBusinessName: prospect.businessName,
@@ -979,6 +1012,8 @@ function buildPreviewBusinessProfile(
 }
 
 function businessSpecificHeroHeadline(profile: PreviewBusinessProfile) {
+  const officialTagline = profile.sourceFacts.find((fact) => fact.label === "Official tagline" && fact.confidence === "verified")?.value;
+  if (officialTagline) return officialTagline;
   const market = profile.primaryMarket.replace(/,\s*[A-Z]{2}$/i, "");
   switch (profile.trade) {
     case "Pressure Washing":
@@ -1643,14 +1678,15 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     "General Contractor": "Thoughtful construction work, from first conversation to finished space.",
   };
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
-  const services = playbook.services.map(titleCase);
+  const researchedServices = stringListFromUnknown(prospectRecord(prospect).verifiedPreviewServices).map(titleCase);
+  const services = [...new Set([...researchedServices, ...playbook.services.map(titleCase)])].slice(0, researchedServices.length ? 6 : 3);
   const businessProfile = buildPreviewBusinessProfile(prospect, styleProfile, services, serviceArea, artDirection, noWebsiteProspect);
   const trustItems = [
     `Serving ${businessProfile.primaryMarket}`,
-    prospect.phone ? "Direct phone contact" : businessProfile.verifiedPublicEmailOrContactPath.value !== "not confirmed" ? businessProfile.verifiedPublicEmailOrContactPath.value : "Estimate request",
-    `${displayTrade} services`,
-    businessProfile.realDifferentiators.find((fact) => /review|rating|address|quote form|contact form/i.test(fact.label))?.label ?? "Local service request",
-  ];
+    prospect.phone ? `Call ${prospect.phone}` : businessProfile.verifiedPublicEmailOrContactPath.value !== "not confirmed" ? businessProfile.verifiedPublicEmailOrContactPath.value : "Request an estimate",
+    businessProfile.verifiedServices.slice(0, 3).join(" | "),
+    prospect.reviewCount > 0 && prospect.rating > 0 ? `${prospect.rating.toFixed(1)} rating from ${prospect.reviewCount} public reviews` : "",
+  ].filter(Boolean);
   const preview: PreviewConcept = {
     previewVersion: "v3",
     businessProfile,
@@ -1671,7 +1707,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
       logoSource: businessProfile.logo.source === "wordmark fallback" || businessProfile.logo.source === "social profile" ? "not found" : businessProfile.logo.source,
       brandColorSource: styleProfile.brandSource,
       brandingSource: styleProfile.brandSource === "trade fallback" ? "trade fallback" : "detected cue",
-      imagerySource: "curated stock photo library",
+      imagerySource: businessProfile.businessPhotoSources.length ? "business assets" : "curated stock photo library",
       reviewSignal: prospect.reviewCount > 0 ? "public rating count only" : "not used",
       factualPublicProof: businessProfile.realDifferentiators.map((fact) => `${fact.label}: ${fact.value}`),
       contactDetails: contactDetails.length ? contactDetails : ["contact path not confirmed"],
@@ -1695,7 +1731,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     artDirection,
     hero: `${businessProfile.officialBusinessName} handles ${businessProfile.verifiedServices.join(", ")} across ${businessProfile.verifiedServiceArea}.`,
     heroHeadline: businessSpecificHeroHeadline(businessProfile) || heroHeadlines[trade],
-    heroSupporting: `${businessProfile.officialBusinessName} provides ${businessProfile.verifiedServices.join(", ")} across ${businessProfile.verifiedServiceArea}.`,
+    heroSupporting: `${businessProfile.verifiedServices.slice(0, 4).join(", ")} for homes and properties across ${businessProfile.verifiedServiceArea}.`,
     serviceHighlights: businessProfile.verifiedServices,
     trustItems,
     styleProfile,
