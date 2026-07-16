@@ -522,7 +522,7 @@ function FullPreviewStripDialog({
       setStatusMessage("Full preview copied.");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Clipboard access was denied.");
-      setStatusMessage("Image copy failed. Download PNG or Open Image in New Tab is still available.");
+      setStatusMessage("Image copy failed. Download PNG or Open Image is still available.");
     }
   }
 
@@ -584,21 +584,36 @@ function FullPreviewStripDialog({
         </header>
         <div className="engine-preview-strip-body">
           <div className="engine-preview-strip-controls">
-            <div className="engine-preview-strip-mode" role="tablist" aria-label="Preview strip mode">
-              {(["desktop", "mobile"] as PreviewStripMode[]).map((item) => (
-                <button aria-selected={mode === item} className={mode === item ? "is-active" : ""} disabled={busy} key={item} onClick={() => switchMode(item)} role="tab" type="button">
-                  {previewStripViewport(item).label}
-                </button>
-              ))}
+            <div className="engine-preview-strip-toolbar">
+              <div>
+                <span className="engine-preview-strip-kicker">Capture</span>
+                <div className="engine-preview-strip-mode" role="tablist" aria-label="Preview strip mode">
+                  {(["desktop", "mobile"] as PreviewStripMode[]).map((item) => (
+                    <button aria-selected={mode === item} className={mode === item ? "is-active" : ""} disabled={busy} key={item} onClick={() => switchMode(item)} role="tab" type="button">
+                      {previewStripViewport(item).label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="engine-preview-strip-primary-actions">
+                <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void refreshCapture()} type="button">{busy ? stageLabel(stage) : capture ? "Refresh Capture" : "Capture Strip"}</button>
+                <a className="engine-button" href={publicPreviewUrl} rel="noreferrer" target="_blank">Open Public Preview</a>
+              </div>
             </div>
-            <div className="engine-preview-strip-actions">
-              <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void refreshCapture()} type="button">{busy ? stageLabel(stage) : capture ? "Refresh Capture" : "Capture Strip"}</button>
-              <button className="engine-button" disabled={!ready} onClick={() => void copyImage()} type="button">Copy Image</button>
-              <button className="engine-button" onClick={() => void copyReviewPrompt()} type="button">Copy Review Prompt</button>
-              <button className="engine-button" onClick={() => void openChatGpt()} type="button">Open ChatGPT</button>
-              <button className="engine-button" disabled={!ready} onClick={downloadPng} type="button">Download PNG</button>
-              <button className="engine-button" disabled={!ready} onClick={openImage} type="button">Open Image in New Tab</button>
-              <a className="engine-button" href={publicPreviewUrl} rel="noreferrer" target="_blank">Open Public Preview</a>
+            <div className="engine-preview-strip-action-groups" aria-label="Preview strip actions">
+              <div className="engine-preview-strip-action-group">
+                <span>Review</span>
+                <button className="engine-button" onClick={() => void copyReviewPrompt()} type="button">Copy Review Prompt</button>
+                <button className="engine-button" onClick={() => void openChatGpt()} type="button">Open ChatGPT</button>
+              </div>
+              {ready ? (
+                <div className="engine-preview-strip-action-group">
+                  <span>Captured Image</span>
+                  <button className="engine-button" onClick={() => void copyImage()} type="button">Copy Image</button>
+                  <button className="engine-button" onClick={downloadPng} type="button">Download PNG</button>
+                  <button className="engine-button" onClick={openImage} type="button">Open Image</button>
+                </div>
+              ) : null}
             </div>
             <div className={`engine-preview-strip-status engine-preview-strip-status--${errorMessage ? "error" : stage}`}>
               <b>{statusMessage}</b>

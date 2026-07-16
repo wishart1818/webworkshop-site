@@ -366,6 +366,10 @@ test("Full Preview Strip appears only for valid public previews and uses safe re
   assert.match(prompt, /Strip mode: Desktop Strip/);
   assert.doesNotMatch(prompt, /internal prospect|suppression|score|engine/i);
   assert.match(detailSource, /capturePublicPreviewStrip/);
+  assert.match(detailSource, /engine-preview-strip-toolbar/);
+  assert.match(detailSource, /engine-preview-strip-action-groups/);
+  assert.match(detailSource, /Captured Image/);
+  assert.match(detailSource, /ready \? \(/);
   assert.match(detailSource, /absolutePublicPreviewUrl/);
   assert.match(detailSource, /isSafePublicPreviewPath/);
   assert.match(detailSource, /loadPreviewFrame\(iframe, absolutePublicPreviewUrl\(publicPreviewUrl\)\)/);

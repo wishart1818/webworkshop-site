@@ -2357,6 +2357,22 @@ body:has(.engine-shell) {
   padding: 0.85rem;
 }
 
+.engine-preview-strip-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.engine-preview-strip-kicker,
+.engine-preview-strip-action-group > span {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--engine-muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
 .engine-preview-strip-mode {
   display: flex;
   flex-wrap: wrap;
@@ -2382,10 +2398,32 @@ body:has(.engine-shell) {
   color: #07483d;
 }
 
-.engine-preview-strip-actions {
+.engine-preview-strip-primary-actions,
+.engine-preview-strip-action-groups,
+.engine-preview-strip-action-group {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+
+.engine-preview-strip-primary-actions {
+  justify-content: flex-end;
+}
+
+.engine-preview-strip-action-groups {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border-top: 1px solid var(--engine-line);
+  padding-top: 0.7rem;
+}
+
+.engine-preview-strip-action-group {
+  align-items: flex-start;
+}
+
+.engine-preview-strip-action-group > span {
+  width: 100%;
 }
 
 .engine-preview-strip-status {
@@ -8904,9 +8942,17 @@ body:has(.engine-shell) {
     padding: 0.75rem;
   }
 
-  .engine-preview-strip-actions,
-  .engine-preview-strip-actions .engine-button,
-  .engine-preview-strip-actions a.engine-button {
+  .engine-preview-strip-toolbar,
+  .engine-preview-strip-primary-actions,
+  .engine-preview-strip-action-groups,
+  .engine-preview-strip-action-group {
+    display: grid;
+    width: 100%;
+  }
+
+  .engine-preview-strip-primary-actions .engine-button,
+  .engine-preview-strip-primary-actions a.engine-button,
+  .engine-preview-strip-action-group .engine-button {
     width: 100%;
   }
 
