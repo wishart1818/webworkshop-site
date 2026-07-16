@@ -620,14 +620,52 @@ body:has(.engine-shell) {
 }
 
 .engine-nav-collapse {
+  position: relative;
+  display: flex;
   width: 100%;
-  min-height: 2.2rem;
+  min-height: 2.55rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
   border: 1px solid #25473d;
+  border-radius: 0.45rem;
   background: #10251e;
   color: #c8d5cf;
+  padding: 0.5rem 0.65rem;
   font-size: 0.72rem;
   font-weight: 850;
   cursor: pointer;
+}
+
+.engine-nav-collapse:hover {
+  border-color: #477c6d;
+  background: #163128;
+  color: white;
+}
+
+.engine-nav-collapse__icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.engine-nav-collapse__tooltip {
+  position: absolute;
+  z-index: 90;
+  top: 50%;
+  left: calc(100% + 0.55rem);
+  width: max-content;
+  max-width: 12rem;
+  border-radius: 0.4rem;
+  background: #07100d;
+  color: white;
+  padding: 0.45rem 0.6rem;
+  box-shadow: 0 4px 8px rgb(0 0 0 / 28%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-0.2rem, -50%);
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+  visibility: hidden;
+  white-space: nowrap;
 }
 
 .engine-sidebar nav {
@@ -679,7 +717,6 @@ body:has(.engine-shell) {
 }
 
 .engine-shell--nav-collapsed .engine-brand div,
-.engine-shell--nav-collapsed .engine-nav-collapse,
 .engine-shell--nav-collapsed .engine-sidebar nav button span,
 .engine-shell--nav-collapsed .engine-compliance {
   display: none;
@@ -693,6 +730,22 @@ body:has(.engine-shell) {
 .engine-shell--nav-collapsed .engine-sidebar nav button {
   justify-content: center;
   width: 3.3rem;
+}
+
+.engine-shell--nav-collapsed .engine-nav-collapse {
+  width: 3.3rem;
+  padding-inline: 0;
+}
+
+.engine-shell--nav-collapsed .engine-nav-collapse__label {
+  display: none;
+}
+
+.engine-shell--nav-collapsed .engine-nav-collapse:hover .engine-nav-collapse__tooltip,
+.engine-shell--nav-collapsed .engine-nav-collapse:focus-visible .engine-nav-collapse__tooltip {
+  opacity: 1;
+  transform: translate(0, -50%);
+  visibility: visible;
 }
 
 .engine-compliance {
@@ -8995,6 +9048,10 @@ body:has(.engine-shell) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .engine-nav-collapse__tooltip {
+    transition: none;
+  }
+
   .prospect-preview-site {
     scroll-behavior: auto;
   }

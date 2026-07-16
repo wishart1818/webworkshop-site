@@ -143,6 +143,7 @@ export function ProspectEngine() {
   const [system, setSystem] = useState<SystemPayload | null>(null);
   const [systemLoading, setSystemLoading] = useState(false);
   const [systemError, setSystemError] = useState("");
+  const sidebarToggleLabel = sidebarCollapsed ? "Expand navigation" : "Collapse navigation";
   const [selfCheckRunning, setSelfCheckRunning] = useState(false);
   const [providerSmokeTestRunning, setProviderSmokeTestRunning] = useState(false);
   const [providerSmokeTest, setProviderSmokeTest] = useState<ProviderSmokeTestPayload | null>(null);
@@ -717,8 +718,22 @@ export function ProspectEngine() {
     <div className={`engine-shell engine-density--${density} ${sidebarCollapsed ? "engine-shell--nav-collapsed" : ""}`}>
       <aside className="engine-sidebar">
         <div className="engine-brand"><span>W</span><div><b>WebWorkshop</b><small>Prospect Engine</small></div></div>
-        <button className="engine-nav-collapse" aria-pressed={sidebarCollapsed} onClick={() => setSidebarCollapsed((current) => !current)} type="button">
-          {sidebarCollapsed ? "Expand" : "Collapse"}
+        <button
+          aria-expanded={!sidebarCollapsed}
+          aria-label={sidebarToggleLabel}
+          className="engine-nav-collapse"
+          onClick={() => setSidebarCollapsed((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            setSidebarCollapsed((current) => !current);
+          }}
+          title={sidebarCollapsed ? sidebarToggleLabel : undefined}
+          type="button"
+        >
+          <span aria-hidden="true" className="engine-nav-collapse__icon">{sidebarCollapsed ? "›" : "‹"}</span>
+          <span className="engine-nav-collapse__label">{sidebarToggleLabel}</span>
+          <span aria-hidden="true" className="engine-nav-collapse__tooltip" role="tooltip">{sidebarToggleLabel}</span>
         </button>
         <nav aria-label="Prospect Engine" className="engine-desktop-nav">
           {workspaceTabs.map((tab) => (

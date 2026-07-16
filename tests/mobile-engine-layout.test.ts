@@ -62,6 +62,26 @@ test("engine phone controls and navigation account for iPhone interaction constr
   assert.match(mobileCss, /\.engine-prospect-labels span,/);
 });
 
+test("desktop navigation collapse toggle remains visible, accessible, and reversible", () => {
+  const toggleMarkup = prospectEngineWorkspace.match(/<button\s+aria-expanded=\{!sidebarCollapsed\}[\s\S]*?className="engine-nav-collapse"[\s\S]*?<\/button>/)?.[0] ?? "";
+
+  assert.ok(toggleMarkup, "expected one persistent navigation toggle");
+  assert.equal((prospectEngineWorkspace.match(/className="engine-nav-collapse"/g) ?? []).length, 1);
+  assert.match(prospectEngineWorkspace, /sidebarToggleLabel = sidebarCollapsed \? "Expand navigation" : "Collapse navigation"/);
+  assert.match(toggleMarkup, /aria-label=\{sidebarToggleLabel\}/);
+  assert.match(toggleMarkup, /aria-expanded=\{!sidebarCollapsed\}/);
+  assert.match(toggleMarkup, /title=\{sidebarCollapsed \? sidebarToggleLabel : undefined\}/);
+  assert.match(toggleMarkup, /onClick=\{\(\) => setSidebarCollapsed\(\(current\) => !current\)\}/);
+  assert.match(toggleMarkup, /event\.key !== "Enter" && event\.key !== " "/);
+  assert.match(toggleMarkup, /event\.preventDefault\(\)/);
+  assert.match(toggleMarkup, /type="button"/);
+  assert.doesNotMatch(toggleMarkup, /navigateWorkspace|window\.location|href=/);
+  assert.match(prospectEngineWorkspace, /className=\{workspaceTab === tab \? "is-active" : ""\}/);
+  assert.doesNotMatch(css, /\.engine-shell--nav-collapsed \.engine-nav-collapse(?:,|\s*\{)[^}]*display:\s*none/);
+  assert.match(css, /\.engine-shell--nav-collapsed \.engine-nav-collapse\s*\{\s*width: 3\.3rem;/);
+  assert.match(css, /\.engine-shell--nav-collapsed \.engine-nav-collapse:hover \.engine-nav-collapse__tooltip,[\s\S]*\.engine-shell--nav-collapsed \.engine-nav-collapse:focus-visible \.engine-nav-collapse__tooltip\s*\{[\s\S]*visibility: visible;/);
+});
+
 test("engine phone command center and overview stay compact", () => {
   assert.match(css, /\.engine-command-bar\s*{\s*display: grid;\s*grid-template-columns: minmax\(16rem, 1fr\) auto auto auto auto auto;/);
   assert.match(mobileCss, /\.engine-command-center__summary\s*{\s*display: block;/);
