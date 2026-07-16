@@ -4,7 +4,6 @@ import { TradePreviewImage, type PreviewImageRenderSlot } from "@/components/eng
 import {
   displayStateCode,
   displayTradeCategory,
-  generatePreview,
   normalizeTradeCategory,
   previewRenderPlan,
   previewStyleProfile,
@@ -393,12 +392,12 @@ function logoImageUrl(profile: PreviewBusinessProfile | undefined) {
 }
 
 function verifiedProfileFact(profile: PreviewBusinessProfile | undefined, label: string) {
-  return profile?.sourceFacts.find((fact) => fact.label === label && fact.confidence === "verified")?.value ?? "";
+  return profile?.sourceFacts.find((fact) => fact.label === label && fact.confidence === "verified" && fact.verificationStatus !== "disputed" && !(fact.conflicts?.length))?.value ?? "";
 }
 
 function meaningfulDifferentiators(profile: PreviewBusinessProfile | undefined) {
   return (profile?.realDifferentiators ?? []).filter((fact) => /review|rating|years|license|certif|warrant|guarantee|insured|award|locally owned|family owned/i.test(fact.label)
-    && fact.confidence === "verified").slice(0, 3);
+    && fact.confidence === "verified" && fact.verificationStatus !== "disputed" && !(fact.conflicts?.length)).slice(0, 3);
 }
 
 function wordmarkDescriptor(trade: Prospect["trade"], city: string) {
@@ -471,7 +470,8 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
   const canonicalTrade = normalizeTradeName(prospect.trade);
   const displayTrade = displayTradeCategory(canonicalTrade);
   const renderProspect = canonicalTrade === prospect.trade ? prospect : { ...prospect, trade: canonicalTrade };
-  const preview = savedPreview ?? generatePreview(renderProspect);
+  if (!savedPreview) throw new Error("A saved preview package is required for read-only rendering.");
+  const preview = savedPreview;
   const styleProfile = previewStyleProfile(renderProspect, preview);
   const artDirection = preview.artDirection;
   const displayCity = titleCaseLocation(prospect.city);
@@ -482,6 +482,11 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
   const pageCopy = tradePageCopy[canonicalTrade];
   const businessProfile = preview.businessProfile;
   const businessName = businessProfile?.officialBusinessName ?? prospect.businessName;
+  const verifiedPhone = businessProfile
+    ? businessProfile.verifiedPhone.verificationStatus === "verified" && businessProfile.verifiedPhone.confidence === "verified"
+      ? businessProfile.verifiedPhone.value
+      : ""
+    : prospect.phone;
   const officialTagline = verifiedProfileFact(businessProfile, "Official tagline");
   const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade, preview.creativeBrief?.services, preview.serviceHierarchy, !preview.renderPlan);
   const alignedServiceArea = (value: string) => {
@@ -548,7 +553,7 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
   const differentiators = meaningfulDifferentiators(businessProfile);
   const trustItems = (preview.trustItems ?? [
     `Serving ${displayCity}, ${displayState}`,
-    prospect.phone ? "Direct phone contact" : "Estimate request",
+    verifiedPhone ? "Direct phone contact" : "Estimate request",
     `${displayTrade} services`,
     "Easy estimate request",
   ]).map(normalizeCopy);
@@ -637,8 +642,8 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
             <p>{heroSupportingLine}</p>
             <div className="prospect-preview-actions">
               <a className="prospect-preview-button" href="#contact">{ctaLabel}</a>
-              {prospect.phone
-                ? <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>
+              {verifiedPhone
+                ? <a className="prospect-preview-text-link" href={`tel:${verifiedPhone}`}>Call {verifiedPhone}</a>
                 : <a className="prospect-preview-text-link" href="#services">Explore services</a>}
             </div>
             {serviceCards.length > 1 ? (
@@ -763,7 +768,7 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
           <span className="prospect-preview-kicker">Service area</span>
           <h2>Serving {displayCity} and nearby communities.</h2>
           <p>{groundedCopy?.serviceAreaCopy ?? `${businessName} serves ${serviceArea}. Contact the team to confirm availability for your property and project.`}</p>
-          {prospect.phone && <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>}
+          {verifiedPhone && <a className="prospect-preview-text-link" href={`tel:${verifiedPhone}`}>Call {verifiedPhone}</a>}
         </section> : null}
 
         {sectionEnabled("faq") ? <section className="prospect-preview-faq" id="faq">
@@ -800,7 +805,7 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
         <footer className="prospect-preview-footer">
           <span className="prospect-preview-footer-brand"><strong>{wordmark.lead}{wordmark.qualifier ? ` ${wordmark.qualifier}` : ""}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
           <span>{displayTrade} | {serviceArea}</span>
-          {prospect.phone && <a href={`tel:${prospect.phone}`}>{prospect.phone}</a>}
+          {verifiedPhone && <a href={`tel:${verifiedPhone}`}>{verifiedPhone}</a>}
         </footer>
         <a className="prospect-preview-mobile-cta" href="#contact">{ctaLabel}</a>
       </div>
@@ -815,7 +820,6 @@ function PreviewUnavailable({ message, prospect, publicView }: { message: string
         <span>Preview unavailable</span>
         <h1>{prospect.businessName}</h1>
         <p>{message}</p>
-        {prospect.phone ? <a className="prospect-preview-button" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a> : null}
         {!publicView ? <a className="prospect-preview-text-link" href={`/engine?prospect=${encodeURIComponent(prospect.id)}&tab=Preview`}>Return to Preview review</a> : null}
       </section>
     </main>
@@ -823,7 +827,8 @@ function PreviewUnavailable({ message, prospect, publicView }: { message: string
 }
 
 export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
-  const sourcePreview = savedPreview ?? generatePreview(prospect);
+  const sourcePreview = savedPreview ?? prospect.preview;
+  if (!sourcePreview) return <PreviewUnavailable message="No saved preview package is available. Nothing was generated or sent." prospect={prospect} publicView={publicView} />;
   const compatibility = normalizePreviewForRender(prospect, sourcePreview);
   const fallbackMessage = compatibility.ok
     ? "This preview could not be displayed. The saved preview was retained, and nothing was sent."

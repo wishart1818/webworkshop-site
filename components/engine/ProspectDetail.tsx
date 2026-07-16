@@ -8,7 +8,6 @@ import {
   activity,
   displayStateCode,
   displayTradeCategory,
-  generatePreview,
   previewStyleProfile,
   PREVIEW_GENERATOR_VERSION,
   OUTREACH_COPY_VERSION,
@@ -22,6 +21,7 @@ import {
   titleCaseLocation,
   websiteAvailabilityLabels,
   type Prospect,
+  type PreviewConcept,
   type ProspectClassification,
   type ProspectStatus,
   type RecommendedContactMethod,
@@ -31,6 +31,19 @@ import { resolvePreviewImages } from "@/lib/preview-image-resolver";
 import { normalizePreviewForRender } from "@/lib/preview-compatibility";
 import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
 import { calculateNoWebsitePresenceScores } from "@/lib/top-prospects";
+
+const readOnlyUnavailablePreview: PreviewConcept = {
+  direction: "Unavailable saved preview",
+  visualStyleDirection: "Unavailable saved preview",
+  hero: "Unavailable saved preview",
+  homepageStructure: [],
+  ctaStrategy: "Unavailable",
+  servicePageStructure: [],
+  portfolioDirection: "Unavailable",
+  trustStrategy: "Unavailable",
+  leadCaptureStrategy: "Unavailable",
+  generatedAt: new Date(0).toISOString(),
+};
 
 const classificationLabels: Record<ProspectClassification, string> = {
   website_redesign: "Website Redesign Prospect",
@@ -1217,7 +1230,7 @@ function PreviewView({
   publicPreviewUrl: string;
 }) {
   const compatibility = normalizePreviewForRender(prospect, prospect.preview);
-  const preview = compatibility.ok ? compatibility.preview : generatePreview(prospect);
+  const preview = compatibility.ok ? compatibility.preview : readOnlyUnavailablePreview;
   const previewProspect = compatibility.ok ? { ...prospect, preview } : prospect;
   const [feedback, setFeedback] = useState("");
   const [improvementPanelOpen, setImprovementPanelOpen] = useState(false);

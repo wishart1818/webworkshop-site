@@ -170,6 +170,7 @@ export type OutreachDraft = {
 
 export type PreviewConcept = {
   previewVersion?: "v2" | "v3";
+  packageSnapshot?: PreviewPackageSnapshot;
   creativeBrief?: PreviewCreativeBrief;
   businessProfile?: PreviewBusinessProfile;
   renderPlan?: PreviewRenderPlan;
@@ -340,9 +341,59 @@ export type PreviewFactConfidence = "verified" | "inferred" | "unavailable";
 export type PreviewFactProvenance =
   | "verified official source"
   | "verified provider source"
+  | "unverified provider source"
   | "inferred creative direction"
   | "trade fallback"
   | "unavailable";
+
+export type PreviewFactType =
+  | "business_name"
+  | "trade"
+  | "market"
+  | "website"
+  | "phone"
+  | "contact_path"
+  | "service_area"
+  | "service"
+  | "logo"
+  | "brand_color"
+  | "review_platform"
+  | "review_rating"
+  | "review_count"
+  | "tagline"
+  | "photo"
+  | "social_profile"
+  | "certification"
+  | "license"
+  | "insurance"
+  | "guarantee"
+  | "warranty"
+  | "ownership"
+  | "years_in_business"
+  | "differentiator"
+  | "website_condition"
+  | "other";
+
+export type PreviewFactSourceType =
+  | "official_website"
+  | "official_social"
+  | "provider"
+  | "website_scan"
+  | "operator"
+  | "prospect_record"
+  | "trade_fallback"
+  | "inferred"
+  | "unavailable";
+
+export type PreviewFactVerificationStatus = "verified" | "inferred" | "disputed" | "unavailable";
+
+export type PreviewFactConflict = {
+  value: string;
+  sourceType: PreviewFactSourceType;
+  sourceLocation: string;
+  verificationStatus: PreviewFactVerificationStatus;
+  confidence: PreviewFactConfidence;
+};
 
 export type PreviewResearchFact = {
   label: string;
@@ -350,9 +401,43 @@ export type PreviewResearchFact = {
   source: string;
   confidence: PreviewFactConfidence;
   provenance?: PreviewFactProvenance;
+  factType?: PreviewFactType;
+  sourceType?: PreviewFactSourceType;
+  sourceLocation?: string;
+  sourceIdentifier?: string;
+  verificationStatus?: PreviewFactVerificationStatus;
+  researchedAt?: string;
+  conflicts?: PreviewFactConflict[];
+};
+
+export type PreviewReviewProof = {
+  status: "coherent" | "conflicted" | "unavailable";
+  platform?: PreviewResearchFact;
+  rating?: PreviewResearchFact;
+  reviewCount?: PreviewResearchFact;
+  publicStatement?: string;
+  conflicts: PreviewFactConflict[];
+};
+
+export type PreviewPackageSnapshot = {
+  version: "business-package-v1";
+  generationId: string;
+  generatedAt: string;
+  researchStatus: "succeeded" | "timed_out" | "failed" | "not_applicable";
+  factualStatus: "coherent" | "blocked";
+  sendWorthinessResult: "blocked" | "pending_public_verification";
+  blockers: string[];
+  componentGenerationIds: {
+    businessProfile: string;
+    serviceHierarchy: string;
+    creativeBrief: string;
+    renderPlan: string;
+    quality: string;
+  };
 };
 
 export type PreviewBusinessProfile = {
+  snapshotId?: string;
   officialBusinessName: string;
   trade: TradeCategory;
   primaryMarket: string;
@@ -372,15 +457,20 @@ export type PreviewBusinessProfile = {
     confidence: PreviewFactConfidence;
     provenance?: PreviewFactProvenance;
     note: string;
+    fact?: PreviewResearchFact;
   };
   businessPhotoSources: PreviewResearchFact[];
   detectedBrandColors: PreviewResearchFact[];
+  brandColorClassification?: "verified_official" | "verified_logo_derived" | "inferred" | "trade_fallback";
   brandPersonality: string;
   recurringPublicReviewThemes: PreviewResearchFact[];
+  reviewProof?: PreviewReviewProof;
   realDifferentiators: PreviewResearchFact[];
   currentWebsiteWeaknesses: PreviewResearchFact[];
   recommendedDesignDirection: string;
   sourceFacts: PreviewResearchFact[];
+  materialConflicts?: PreviewResearchFact[];
+  factualBlockers?: string[];
   confidenceSummary: string;
   uncertainFactsExcluded: string[];
   researchStatus?: "succeeded" | "timed_out" | "failed" | "not_applicable";
@@ -925,18 +1015,85 @@ function factProvenance(source: string, confidence: PreviewFactConfidence): Prev
   if (confidence === "unavailable") return "unavailable";
   if (/official website|business asset|operator supplied/i.test(source) && confidence === "verified") return "verified official source";
   if (/provider|contact discovery|prospect record|website scan|discovery/i.test(source) && confidence === "verified") return "verified provider source";
+  if (/provider|contact discovery|prospect record|website scan|discovery/i.test(source)) return "unverified provider source";
   if (/fallback/i.test(source)) return "trade fallback";
   return "inferred creative direction";
 }
 
-function researchFact(
+function factTypeFromLabel(label: string): PreviewFactType {
+  if (/business name/i.test(label)) return "business_name";
+  if (/^trade$/i.test(label)) return "trade";
+  if (/market/i.test(label)) return "market";
+  if (/website/i.test(label) && !/condition|weakness/i.test(label)) return "website";
+  if (/phone/i.test(label)) return "phone";
+  if (/contact|email|quote form/i.test(label)) return "contact_path";
+  if (/service area/i.test(label)) return "service_area";
+  if (/service/i.test(label) && !/area/i.test(label)) return "service";
+  if (/logo|wordmark/i.test(label)) return "logo";
+  if (/color|palette/i.test(label)) return "brand_color";
+  if (/review platform/i.test(label)) return "review_platform";
+  if (/review count/i.test(label)) return "review_count";
+  if (/rating/i.test(label)) return "review_rating";
+  if (/tagline/i.test(label)) return "tagline";
+  if (/photo|image/i.test(label)) return "photo";
+  if (/facebook|instagram|linkedin|twitter|youtube|social/i.test(label)) return "social_profile";
+  if (/certif/i.test(label)) return "certification";
+  if (/licen/i.test(label)) return "license";
+  if (/insur/i.test(label)) return "insurance";
+  if (/guarantee/i.test(label)) return "guarantee";
+  if (/warrant/i.test(label)) return "warranty";
+  if (/family|veteran|locally owned|ownership/i.test(label)) return "ownership";
+  if (/years|since/i.test(label)) return "years_in_business";
+  if (/condition|weakness/i.test(label)) return "website_condition";
+  if (/estimate|emergency|special/i.test(label)) return "differentiator";
+  return "other";
+}
+
+function sourceTypeFromFact(source: string, provenance: PreviewFactProvenance): PreviewFactSourceType {
+  if (provenance === "verified official source") return /social/i.test(source) ? "official_social" : "official_website";
+  if (provenance === "verified provider source" || provenance === "unverified provider source") {
+    return /website scan/i.test(source) ? "website_scan" : /prospect record/i.test(source) ? "prospect_record" : "provider";
+  }
+  if (provenance === "trade fallback") return "trade_fallback";
+  if (provenance === "unavailable") return "unavailable";
+  if (/operator/i.test(source)) return "operator";
+  return "inferred";
+}
+
+export function researchFact(
   label: string,
   value: string,
   source: string,
   confidence: PreviewFactConfidence,
   provenance: PreviewFactProvenance = factProvenance(source, confidence),
+  metadata: Partial<Pick<PreviewResearchFact, "factType" | "sourceType" | "sourceLocation" | "sourceIdentifier" | "verificationStatus" | "researchedAt" | "conflicts">> = {},
 ): PreviewResearchFact {
-  return { label, value: value.trim(), source, confidence, provenance };
+  return {
+    label,
+    value: value.trim(),
+    source,
+    confidence,
+    provenance,
+    factType: metadata.factType ?? factTypeFromLabel(label),
+    sourceType: metadata.sourceType ?? sourceTypeFromFact(source, provenance),
+    sourceLocation: metadata.sourceLocation ?? source,
+    sourceIdentifier: metadata.sourceIdentifier,
+    verificationStatus: metadata.verificationStatus ?? (confidence === "verified" ? "verified" : confidence === "unavailable" ? "unavailable" : "inferred"),
+    researchedAt: metadata.researchedAt,
+    conflicts: metadata.conflicts,
+  };
+}
+
+function factWithSnapshot(fact: PreviewResearchFact, researchedAt: string): PreviewResearchFact {
+  return researchFact(fact.label, fact.value, fact.source, fact.confidence, fact.provenance ?? factProvenance(fact.source, fact.confidence), {
+    factType: fact.factType,
+    sourceType: fact.sourceType,
+    sourceLocation: fact.sourceLocation,
+    sourceIdentifier: fact.sourceIdentifier,
+    verificationStatus: fact.verificationStatus,
+    researchedAt: fact.researchedAt ?? researchedAt,
+    conflicts: fact.conflicts,
+  });
 }
 
 function safePublicAssetUrl(value: unknown) {
@@ -968,13 +1125,14 @@ function stringListFromUnknown(value: unknown) {
 function prospectLogo(prospect: Prospect): PreviewBusinessProfile["logo"] {
   const record = prospectRecord(prospect);
   const candidates: Array<{ value: unknown; source: PreviewBusinessProfile["logo"]["source"] }> = [
+    ...(record.previewResearchVerified === true ? [{ value: record.websiteLogoUrl, source: "website" as const }] : []),
+    { value: record.operatorLogoUrl, source: "operator supplied" },
     { value: record.logoUrl, source: "business asset" },
     { value: record.businessLogoUrl, source: "business asset" },
     { value: record.logo, source: "business asset" },
-    { value: record.websiteLogoUrl, source: "website" },
+    ...(record.previewResearchVerified === true ? [] : [{ value: record.websiteLogoUrl, source: "website" as const }]),
     { value: record.profileImageUrl, source: "social profile" },
     { value: record.socialProfileImageUrl, source: "social profile" },
-    { value: record.operatorLogoUrl, source: "operator supplied" },
   ];
   for (const candidate of candidates) {
     const url = safePublicAssetUrl(candidate.value);
@@ -1033,8 +1191,31 @@ function previewResearchFacts(prospect: Prospect) {
       || record.provenance === "unavailable"
       ? record.provenance
       : factProvenance(record.source, confidence);
-    return [researchFact(record.label, record.value, record.source, confidence, provenance)];
-  }).slice(0, 18);
+    const factType = typeof record.factType === "string" ? record.factType as PreviewFactType : undefined;
+    const sourceType = typeof record.sourceType === "string" ? record.sourceType as PreviewFactSourceType : undefined;
+    const verificationStatus = typeof record.verificationStatus === "string" ? record.verificationStatus as PreviewFactVerificationStatus : undefined;
+    const conflicts = Array.isArray(record.conflicts) ? record.conflicts.flatMap((conflict) => {
+      if (!conflict || typeof conflict !== "object") return [];
+      const value = conflict as Record<string, unknown>;
+      if (typeof value.value !== "string" || typeof value.sourceLocation !== "string") return [];
+      return [{
+        value: value.value,
+        sourceType: (typeof value.sourceType === "string" ? value.sourceType : "provider") as PreviewFactSourceType,
+        sourceLocation: value.sourceLocation,
+        verificationStatus: (typeof value.verificationStatus === "string" ? value.verificationStatus : "disputed") as PreviewFactVerificationStatus,
+        confidence: (value.confidence === "verified" || value.confidence === "unavailable" ? value.confidence : "inferred") as PreviewFactConfidence,
+      }];
+    }) : undefined;
+    return [researchFact(record.label, record.value, record.source, confidence, provenance, {
+      factType,
+      sourceType,
+      sourceLocation: typeof record.sourceLocation === "string" ? record.sourceLocation : undefined,
+      sourceIdentifier: typeof record.sourceIdentifier === "string" ? record.sourceIdentifier : undefined,
+      verificationStatus,
+      researchedAt: typeof record.researchedAt === "string" ? record.researchedAt : undefined,
+      conflicts,
+    })];
+  }).slice(0, 40);
 }
 
 function detectedBrandColorFacts(styleProfile: PreviewStyleProfile): PreviewResearchFact[] {
@@ -1080,30 +1261,89 @@ function previewWeaknessFacts(prospect: Prospect, noWebsiteProspect: boolean): P
   return facts;
 }
 
-function businessDifferentiatorFacts(prospect: Prospect): PreviewResearchFact[] {
-  const coherentReviewProof = Number.isFinite(prospect.rating)
-    && prospect.rating >= 1
-    && prospect.rating <= 5
-    && Number.isInteger(prospect.reviewCount)
-    && prospect.reviewCount > 0;
-  const facts = [
-    prospect.phone ? researchFact("Direct phone", prospect.phone, "provider/contact discovery", "verified") : null,
-    prospect.email ? researchFact("Public email", prospect.email, "website/contact discovery", "verified") : null,
-    prospect.quoteFormDetected ? researchFact("Quote form", prospect.quoteFormUrl || "Quote form detected", "website scan", "verified") : null,
-    prospect.contactFormDetected ? researchFact("Contact form", prospect.contactFormUrl || "Contact form detected", "website scan", "verified") : null,
-    coherentReviewProof ? researchFact("Public rating", `${prospect.rating.toFixed(1)} from ${prospect.reviewCount} public reviews`, "provider result", "verified") : null,
-    prospect.address ? researchFact("Public address", prospect.address, "provider result", "verified") : null,
-  ].filter((item): item is PreviewResearchFact => Boolean(item));
-  return facts.slice(0, 8);
+function businessDifferentiatorFacts(researchedFacts: PreviewResearchFact[]): PreviewResearchFact[] {
+  const supportedTypes = new Set<PreviewFactType>([
+    "certification", "license", "insurance", "guarantee", "warranty", "ownership", "years_in_business", "differentiator",
+  ]);
+  return researchedFacts
+    .filter((fact) => supportedTypes.has(fact.factType ?? factTypeFromLabel(fact.label)))
+    .filter((fact) => fact.verificationStatus === "verified" && fact.confidence === "verified" && !(fact.conflicts?.length))
+    .slice(0, 10);
 }
 
-function reviewThemeFacts(prospect: Prospect): PreviewResearchFact[] {
-  const themes = prospect.activitySignals.filter((signal) => /review|recent|rating|active|photo/i.test(signal)).slice(0, 3);
-  if (themes.length) return themes.map((theme) => researchFact("Public activity signal", theme, "provider/activity signal", "inferred", "inferred creative direction"));
-  if (prospect.rating >= 1 && prospect.rating <= 5 && Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0) {
-    return [researchFact("Review signal", `${prospect.rating.toFixed(1)} from ${prospect.reviewCount} public reviews`, "provider result", "verified")];
+function reviewThemeFacts(researchedFacts: PreviewResearchFact[]): PreviewResearchFact[] {
+  return researchedFacts
+    .filter((fact) => /review theme/i.test(fact.label) && fact.verificationStatus === "verified" && !(fact.conflicts?.length))
+    .slice(0, 3);
+}
+
+function normalizedFactValue(fact: PreviewResearchFact) {
+  const value = fact.value.trim().toLowerCase();
+  if (fact.factType === "phone") return value.replace(/\D/g, "").slice(-10);
+  if (fact.factType === "website" || fact.factType === "logo") {
+    try { return new URL(value).hostname.replace(/^www\./, "") + new URL(value).pathname.replace(/\/$/, ""); } catch { return value; }
   }
-  return [];
+  if (fact.factType === "business_name") return value.replace(/\b(?:llc|inc|corp|company|co|ltd)\b/g, "").replace(/[^a-z0-9]/g, "");
+  return value.replace(/\s+/g, " ");
+}
+
+function reconcileMaterialConflicts(facts: PreviewResearchFact[]) {
+  const singularTypes = new Set<PreviewFactType>(["business_name", "website", "phone", "logo", "review_platform", "review_rating", "review_count"]);
+  const conflicts: PreviewResearchFact[] = [];
+  const grouped = new Map<PreviewFactType, PreviewResearchFact[]>();
+  for (const fact of facts) {
+    const type = fact.factType ?? factTypeFromLabel(fact.label);
+    if (!singularTypes.has(type) || fact.verificationStatus !== "verified" || fact.confidence !== "verified") continue;
+    grouped.set(type, [...(grouped.get(type) ?? []), fact]);
+  }
+  for (const [type, values] of grouped) {
+    const distinct = [...new Map(values.map((fact) => [normalizedFactValue(fact), fact])).values()];
+    if (distinct.length < 2) continue;
+    for (const fact of distinct) {
+      const alternatives = distinct.filter((candidate) => candidate !== fact).map((candidate): PreviewFactConflict => ({
+        value: candidate.value,
+        sourceType: candidate.sourceType ?? sourceTypeFromFact(candidate.source, candidate.provenance ?? factProvenance(candidate.source, candidate.confidence)),
+        sourceLocation: candidate.sourceLocation ?? candidate.source,
+        verificationStatus: "disputed",
+        confidence: candidate.confidence,
+      }));
+      conflicts.push({ ...fact, factType: type, verificationStatus: "disputed", conflicts: alternatives });
+    }
+  }
+  return conflicts;
+}
+
+function conflictForType(conflicts: PreviewResearchFact[], type: PreviewFactType) {
+  return conflicts.some((fact) => fact.factType === type);
+}
+
+function buildReviewProof(prospect: Prospect, researchedFacts: PreviewResearchFact[], conflicts: PreviewResearchFact[], generatedAt: string): PreviewReviewProof {
+  const providerRating = Number.isFinite(prospect.rating) && prospect.rating >= 1 && prospect.rating <= 5
+    ? researchFact("Review rating", prospect.rating.toFixed(1), "provider result", "verified", "verified provider source", { factType: "review_rating", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt })
+    : undefined;
+  const providerCount = Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0
+    ? researchFact("Review count", String(prospect.reviewCount), "provider result", "verified", "verified provider source", { factType: "review_count", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt })
+    : undefined;
+  const ratingFacts = [...researchedFacts.filter((fact) => fact.factType === "review_rating"), ...(providerRating ? [providerRating] : [])];
+  const countFacts = [...researchedFacts.filter((fact) => fact.factType === "review_count"), ...(providerCount ? [providerCount] : [])];
+  const reviewConflicts = conflicts.filter((fact) => fact.factType === "review_rating" || fact.factType === "review_count" || fact.factType === "review_platform");
+  const explicitConflicts = [...ratingFacts, ...countFacts].flatMap((fact) => fact.conflicts ?? []);
+  if (reviewConflicts.length || explicitConflicts.length) return { status: "conflicted", conflicts: [...explicitConflicts, ...reviewConflicts.flatMap((fact) => fact.conflicts ?? [])] };
+  const rating = ratingFacts.find((fact) => fact.confidence === "verified" && fact.verificationStatus === "verified");
+  const reviewCount = countFacts.find((fact) => fact.confidence === "verified" && fact.verificationStatus === "verified");
+  if (!rating || !reviewCount) return { status: "unavailable", conflicts: [] };
+  const platform = researchedFacts.find((fact) => fact.factType === "review_platform" && fact.confidence === "verified" && fact.verificationStatus === "verified");
+  const platformName = platform?.value.trim();
+  return {
+    status: "coherent",
+    platform,
+    rating,
+    reviewCount,
+    publicStatement: platformName
+      ? `Rated ${rating.value} on ${platformName} based on ${reviewCount.value} reviews.`
+      : `Rated ${rating.value} based on ${reviewCount.value} public reviews.`,
+    conflicts: [],
+  };
 }
 
 function customerTypeLabel(audience: PreviewCreativeBrief["customerAudience"], trade: TradeCategory) {
@@ -1119,15 +1359,17 @@ function buildPreviewBusinessProfile(
   serviceArea: string,
   artDirection: PreviewArtDirection,
   noWebsiteProspect: boolean,
+  generatedAt: string,
+  snapshotId: string,
 ): PreviewBusinessProfile {
   const trade = prospectTrade(prospect);
   const market = `${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
   const audience = prospectAudience(prospect);
-  const logo = prospectLogo(prospect);
+  const logoCandidate = prospectLogo(prospect);
   const photoSources = prospectBusinessPhotos(prospect);
-  const socialProfiles = officialSocialProfiles(prospect);
-  const differentiators = businessDifferentiatorFacts(prospect);
-  const researchedFacts = previewResearchFacts(prospect);
+  const socialProfiles = officialSocialProfiles(prospect).map((fact) => factWithSnapshot(fact, generatedAt));
+  const researchedFacts = previewResearchFacts(prospect).map((fact) => factWithSnapshot(fact, generatedAt));
+  const differentiators = businessDifferentiatorFacts(researchedFacts);
   const websiteWeaknesses = previewWeaknessFacts(prospect, noWebsiteProspect);
   const record = prospectRecord(prospect);
   const researchStatus = record.previewResearchStatus === "succeeded"
@@ -1156,29 +1398,82 @@ function buildPreviewBusinessProfile(
         prospect.website,
         officialWebsiteResearch ? "official website" : "provider result",
         officialWebsiteResearch ? "verified" : "inferred",
-        officialWebsiteResearch ? "verified official source" : "verified provider source",
+        officialWebsiteResearch ? "verified official source" : "unverified provider source",
+        { factType: "website", sourceType: officialWebsiteResearch ? "official_website" : "provider", sourceLocation: prospect.website, verificationStatus: officialWebsiteResearch ? "verified" : "inferred", researchedAt: generatedAt },
       )
-    : researchFact("Official website", "Not found", "discovery", "unavailable");
-  const sourceFacts = [
-    researchFact("Business name", prospect.businessName, "provider result", "verified"),
-    researchFact("Trade", displayTradeCategory(trade), "provider result", "verified"),
-    researchFact("Market", market, "provider result", "verified"),
-    researchFact("Service area", serviceArea, prospect.serviceArea ? "prospect record" : "city/state fallback", prospect.serviceArea ? "verified" : "inferred"),
-    websiteFact,
-    ...differentiators,
-    ...socialProfiles,
+    : researchFact("Official website", "Not found", "discovery", "unavailable", "unavailable", { factType: "website", sourceType: "unavailable", sourceLocation: "discovery", verificationStatus: "unavailable", researchedAt: generatedAt });
+  const providerRatingFact = prospect.rating >= 1 && prospect.rating <= 5
+    ? researchFact("Review rating", prospect.rating.toFixed(1), "provider result", "verified", "verified provider source", { factType: "review_rating", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt })
+    : null;
+  const providerReviewCountFact = Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0
+    ? researchFact("Review count", String(prospect.reviewCount), "provider result", "verified", "verified provider source", { factType: "review_count", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt })
+    : null;
+  const rawSourceFacts = [
     ...researchedFacts,
-  ].slice(0, 18);
+    researchFact("Business name", prospect.businessName, "provider result", "verified", "verified provider source", { factType: "business_name", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt }),
+    researchFact("Trade", displayTradeCategory(trade), "provider result", "verified", "verified provider source", { factType: "trade", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt }),
+    researchFact("Market", market, "provider result", "verified", "verified provider source", { factType: "market", sourceType: "provider", sourceLocation: "provider result", verificationStatus: "verified", researchedAt: generatedAt }),
+    researchFact("Service area", serviceArea, prospect.serviceArea ? "prospect record" : "city/state fallback", prospect.serviceArea ? "verified" : "inferred", prospect.serviceArea ? "verified provider source" : "trade fallback", { factType: "service_area", sourceType: prospect.serviceArea ? "prospect_record" : "trade_fallback", sourceLocation: prospect.serviceArea ? "prospect record" : "city/state fallback", verificationStatus: prospect.serviceArea ? "verified" : "inferred", researchedAt: generatedAt }),
+    websiteFact,
+    prospect.phone ? researchFact("Phone", prospect.phone, "provider/contact discovery", "verified", "verified provider source", { factType: "phone", sourceType: "provider", sourceLocation: "provider/contact discovery", verificationStatus: "verified", researchedAt: generatedAt }) : null,
+    verifiedContactPath(prospect) !== "not confirmed" ? researchFact("Best contact path", verifiedContactPath(prospect), "contact discovery", "verified", "verified provider source", { factType: "contact_path", sourceType: "provider", sourceLocation: "contact discovery", verificationStatus: "verified", researchedAt: generatedAt }) : null,
+    providerRatingFact,
+    providerReviewCountFact,
+    ...services.map((service) => {
+      const official = (prospect.verifiedPreviewServices ?? []).some((value) => value.toLowerCase() === service.toLowerCase());
+      const provider = (prospect.providerPreviewServices ?? []).some((value) => value.toLowerCase() === service.toLowerCase());
+      return researchFact("Service", service, official ? "official website" : provider ? "provider result" : "trade fallback", official || provider ? "verified" : "inferred", official ? "verified official source" : provider ? "verified provider source" : "trade fallback", {
+        factType: "service", sourceType: official ? "official_website" : provider ? "provider" : "trade_fallback", sourceLocation: official ? prospect.website || "official website" : provider ? "provider result" : "trade fallback", verificationStatus: official || provider ? "verified" : "inferred", researchedAt: generatedAt,
+      });
+    }),
+    ...socialProfiles,
+  ].filter((fact): fact is PreviewResearchFact => Boolean(fact)).map((fact) => factWithSnapshot(fact, generatedAt)).slice(0, 40);
+  const materialConflicts = reconcileMaterialConflicts(rawSourceFacts);
+  const sourceFacts = rawSourceFacts.map((fact) => {
+    const conflicted = materialConflicts.find((candidate) => candidate.factType === fact.factType
+      && candidate.sourceLocation === fact.sourceLocation
+      && normalizedFactValue(candidate) === normalizedFactValue(fact));
+    return conflicted ? { ...fact, verificationStatus: "disputed" as const, conflicts: conflicted.conflicts } : fact;
+  });
+  const officialNameFact = sourceFacts.find((fact) => fact.factType === "business_name" && fact.provenance === "verified official source" && fact.verificationStatus === "verified");
+  const officialLogoFact = sourceFacts.find((fact) => fact.factType === "logo" && fact.provenance === "verified official source" && fact.verificationStatus === "verified");
+  const logo = {
+    ...logoCandidate,
+    fact: officialLogoFact ?? (logoCandidate.status === "available"
+      ? researchFact("Logo asset", logoCandidate.url, logoCandidate.source, logoCandidate.confidence, logoCandidate.provenance ?? factProvenance(logoCandidate.source, logoCandidate.confidence), { factType: "logo", sourceType: logoCandidate.source === "operator supplied" ? "operator" : logoCandidate.source === "social profile" ? "official_social" : "inferred", sourceLocation: logoCandidate.source, verificationStatus: logoCandidate.confidence === "verified" ? "verified" : "inferred", researchedAt: generatedAt })
+      : researchFact("Fallback wordmark", prospect.businessName, "wordmark fallback", "unavailable", "trade fallback", { factType: "logo", sourceType: "trade_fallback", sourceLocation: "generated preview", verificationStatus: "unavailable", researchedAt: generatedAt })),
+  };
+  const phoneConflict = conflictForType(materialConflicts, "phone");
+  const websiteConflict = conflictForType(materialConflicts, "website");
+  const identityConflict = conflictForType(materialConflicts, "business_name");
+  const logoConflict = conflictForType(materialConflicts, "logo");
+  const verifiedPhone = phoneConflict
+    ? researchFact("Phone", "Not confirmed", "conflicting sources", "unavailable", "unavailable", { factType: "phone", sourceType: "unavailable", sourceLocation: "conflicting sources", verificationStatus: "disputed", researchedAt: generatedAt, conflicts: materialConflicts.filter((fact) => fact.factType === "phone").flatMap((fact) => fact.conflicts ?? []) })
+    : sourceFacts.find((fact) => fact.factType === "phone" && fact.provenance === "verified official source")
+      ?? sourceFacts.find((fact) => fact.factType === "phone" && fact.verificationStatus === "verified")
+      ?? researchFact("Phone", "Not confirmed", "contact discovery", "unavailable", "unavailable", { factType: "phone", sourceType: "unavailable", sourceLocation: "contact discovery", verificationStatus: "unavailable", researchedAt: generatedAt });
+  const contactFact = sourceFacts.find((fact) => fact.factType === "contact_path" && fact.provenance === "verified official source")
+    ?? sourceFacts.find((fact) => fact.factType === "contact_path" && fact.verificationStatus === "verified")
+    ?? researchFact("Best contact path", "not confirmed", "contact discovery", "unavailable", "unavailable", { factType: "contact_path", sourceType: "unavailable", sourceLocation: "contact discovery", verificationStatus: "unavailable", researchedAt: generatedAt });
+  const reviewProof = buildReviewProof(prospect, sourceFacts, materialConflicts, generatedAt);
+  const officialLogoLost = Boolean(officialLogoFact) && (logo.status !== "available" || safePublicAssetUrl(logo.url) !== safePublicAssetUrl(officialLogoFact?.value));
+  const factualBlockers = [
+    identityConflict ? "Business identity conflicts across verified sources." : "",
+    phoneConflict ? "Primary phone conflicts across verified sources." : "",
+    websiteConflict ? "Official website conflicts across verified sources." : "",
+    logoConflict ? "Official logo authenticity conflicts across verified sources." : "",
+    officialLogoLost ? "A verified official logo was lost or replaced before rendering." : "",
+    reviewProof.status === "conflicted" ? "Review rating, count, or platform conflicts across verified sources." : "",
+  ].filter(Boolean);
   return {
-    officialBusinessName: prospect.businessName,
+    snapshotId,
+    officialBusinessName: identityConflict ? prospect.businessName : officialNameFact?.value ?? prospect.businessName,
     trade,
     primaryMarket: market,
     verifiedServiceArea: serviceArea,
-    verifiedPhone: prospect.phone
-      ? researchFact("Phone", prospect.phone, "provider/contact discovery", "verified")
-      : researchFact("Phone", "Not confirmed", "contact discovery", "unavailable"),
-    verifiedPublicEmailOrContactPath: researchFact("Best contact path", verifiedContactPath(prospect), "contact discovery", verifiedContactPath(prospect) === "not confirmed" ? "unavailable" : "verified"),
-    officialWebsite: websiteFact,
+    verifiedPhone,
+    verifiedPublicEmailOrContactPath: contactFact,
+    officialWebsite: websiteConflict ? researchFact("Official website", "Not confirmed", "conflicting sources", "unavailable", "unavailable", { factType: "website", sourceType: "unavailable", sourceLocation: "conflicting sources", verificationStatus: "disputed", researchedAt: generatedAt }) : websiteFact,
     officialSocialProfiles: socialProfiles,
     customerType: audience,
     verifiedServices: services,
@@ -1191,14 +1486,25 @@ function buildPreviewBusinessProfile(
       record.previewResearchVerified === true ? "official website" : "prospect photo source",
       record.previewResearchVerified === true ? "verified" : "inferred",
       record.previewResearchVerified === true ? "verified official source" : "inferred creative direction",
+      { factType: "photo", sourceType: record.previewResearchVerified === true ? "official_website" : "inferred", sourceLocation: photo, verificationStatus: record.previewResearchVerified === true ? "verified" : "inferred", researchedAt: generatedAt },
     )).slice(0, 6),
-    detectedBrandColors: detectedBrandColorFacts(styleProfile),
+    detectedBrandColors: detectedBrandColorFacts(styleProfile).map((fact) => factWithSnapshot(fact, generatedAt)),
+    brandColorClassification: researchedFacts.some((fact) => fact.factType === "brand_color" && /official logo/i.test(`${fact.source} ${fact.label}`) && fact.verificationStatus === "verified")
+      ? "verified_logo_derived"
+      : styleProfile.brandSource === "official website"
+        ? "verified_official"
+        : styleProfile.brandSource === "trade fallback"
+          ? "trade_fallback"
+          : "inferred",
     brandPersonality: `${styleProfile.tone.replace("-", " ")} contractor style with ${artDirection.visualVoice.toLowerCase()}`,
-    recurringPublicReviewThemes: reviewThemeFacts(prospect),
+    recurringPublicReviewThemes: reviewThemeFacts(researchedFacts),
+    reviewProof,
     realDifferentiators: differentiators,
     currentWebsiteWeaknesses: websiteWeaknesses,
     recommendedDesignDirection: `${artDirection.name}: ${artDirection.visualVoice}`,
     sourceFacts,
+    materialConflicts,
+    factualBlockers,
     confidenceSummary: researchStatus === "succeeded"
       ? "Built from verified official website research and verified provider/contact records. Inferred design choices remain labeled separately."
       : "Official website research was unavailable. The preview uses verified provider facts plus clearly inferred or trade-fallback creative direction.",
@@ -1243,9 +1549,10 @@ function previewPlanInputs(prospect: Prospect, preview: PreviewConcept): Preview
   const allImages = images ? [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta] : [];
   const dependableSources = new Set(["business-photo", "configured-stock-provider", "curated-stock-photo-library"]);
   const usableImages = allImages.filter((image) => dependableSources.has(image.source) && isPublicPreviewImageRelevant(image, prospect.trade));
-  const verifiedTrustLabels = new Set(["Direct phone", "Quote form", "Contact form", "Public rating"]);
   const verifiedTrustFactCount = [
-    ...(profile?.realDifferentiators ?? []).filter((fact) => fact.confidence === "verified" && verifiedTrustLabels.has(fact.label)),
+    ...(profile?.realDifferentiators ?? []).filter((fact) => fact.confidence === "verified" && fact.verificationStatus === "verified" && !(fact.conflicts?.length)),
+    ...(profile?.reviewProof?.status === "coherent" ? [profile.reviewProof] : []),
+    ...(profile?.verifiedPhone.confidence === "verified" && profile.verifiedPhone.verificationStatus === "verified" ? [profile.verifiedPhone] : []),
     ...(profile?.sourceFacts ?? []).filter((fact) => fact.confidence === "verified" && fact.provenance === "verified official source" && fact.label === "Service area"),
   ].length;
   return {
@@ -1257,7 +1564,7 @@ function previewPlanInputs(prospect: Prospect, preview: PreviewConcept): Preview
     verifiedTrustFactCount,
     officialLogoAvailable: profile?.logo.status === "available" && profile.logo.confidence === "verified",
     verifiedBrandColorsAvailable: Boolean(profile?.detectedBrandColors.some((fact) => fact.confidence === "verified" && fact.provenance === "verified official source")),
-    usableContactPath: Boolean(prospect.phone || prospect.email || prospect.quoteFormDetected || prospect.contactFormDetected || prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl),
+    usableContactPath: Boolean((profile?.verifiedPhone.verificationStatus === "verified" && profile.verifiedPhone.confidence === "verified") || prospect.email || prospect.quoteFormDetected || prospect.contactFormDetected || prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl),
   };
 }
 
@@ -1274,7 +1581,7 @@ function renderDirectionFor(prospect: Prospect, preview: PreviewConcept, inputs:
     + (tone === "premium-craft" ? 1 : 0);
   const serviceScore = (fastServiceTrades.has(trade) ? 5 : 0)
     + (inputs.usableContactPath ? 2 : 0)
-    + (prospect.phone ? 1 : 0)
+    + (profile?.verifiedPhone.verificationStatus === "verified" && profile.verifiedPhone.confidence === "verified" ? 1 : 0)
     + (inputs.verifiedServiceCount >= 3 ? 3 : inputs.verifiedServiceCount >= 2 ? 1 : 0);
   const trustScore = (inputs.verifiedTrustFactCount >= 2 ? 4 : inputs.verifiedTrustFactCount ? 1 : 0)
     + (inputs.usableImageCount <= 2 ? 3 : 0)
@@ -1344,7 +1651,7 @@ export function buildPreviewRenderPlan(prospect: Prospect, preview: PreviewConce
     trustStrategy: includeTrust ? "verified-proof" : inputs.usableContactPath ? "contact-first" : "compact-local-facts",
     ctaStrategy: {
       label: preview.styleProfile?.ctaLabel ?? preview.creativeBrief?.ctaStrategy ?? "Request an estimate",
-      phonePriority: Boolean(prospect.phone),
+      phonePriority: Boolean(preview.businessProfile?.verifiedPhone.verificationStatus === "verified" && preview.businessProfile.verifiedPhone.confidence === "verified"),
       placement: direction === "service-command" ? "persistent" : direction === "project-showcase" ? "hero-and-final" : "header-and-hero",
     },
     headerTreatment: inputs.officialLogoAvailable ? "official-logo" : direction === "trust-led-local" ? "compact-wordmark" : "structured-wordmark",
@@ -1979,6 +2286,8 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
 }
 
 export function generatePreview(prospect: Prospect): PreviewConcept {
+  const generatedAt = now();
+  const generationId = `${prospect.id}:${generatedAt}`;
   const trade = prospectTrade(prospect);
   const displayTrade = displayTradeCategory(trade);
   const tradeLower = displayTrade.toLowerCase();
@@ -1992,15 +2301,6 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     : `${displayCity}, ${displayState}`;
   const artDirection = previewArtDirection(prospect, styleProfile);
   const verifiedProofAreas = playbook.trustProof.map((item) => `verified ${item}`).join(", ");
-  const contactDetails = [
-    prospect.phone ? "phone" : "",
-    prospect.email ? "email" : "",
-    prospect.contactFormDetected ? "contact form" : "",
-    prospect.quoteFormDetected ? "quote form" : "",
-    prospect.facebookUrl ? "Facebook" : "",
-    prospect.instagramUrl ? "Instagram" : "",
-    prospect.linkedinUrl ? "LinkedIn" : "",
-  ].filter(Boolean);
   const heroHeadlines: Record<TradeCategory, string> = {
     Roofing: "Roofing work that protects your home and earns your confidence.",
     HVAC: "Heating and cooling help without the runaround.",
@@ -2020,25 +2320,40 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
   const serviceHierarchy = buildPreviewServiceHierarchy(prospect, trade);
   const services = serviceHierarchy.map((service) => service.title);
-  const businessProfile = buildPreviewBusinessProfile(prospect, styleProfile, services, serviceArea, artDirection, noWebsiteProspect);
-  const coherentReviewProof = prospect.rating >= 1 && prospect.rating <= 5 && Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0;
+  const businessProfile = buildPreviewBusinessProfile(prospect, styleProfile, services, serviceArea, artDirection, noWebsiteProspect, generatedAt, generationId);
+  const verifiedPhoneValue = businessProfile.verifiedPhone.verificationStatus === "verified" && businessProfile.verifiedPhone.confidence === "verified"
+    ? businessProfile.verifiedPhone.value
+    : "";
+  const verifiedContactValue = businessProfile.verifiedPublicEmailOrContactPath.verificationStatus === "verified"
+    ? businessProfile.verifiedPublicEmailOrContactPath.value
+    : "not confirmed";
+  const contactDetails = [
+    verifiedPhoneValue ? "phone" : "",
+    prospect.email && verifiedContactValue !== "not confirmed" ? "email" : "",
+    prospect.contactFormDetected ? "contact form" : "",
+    prospect.quoteFormDetected ? "quote form" : "",
+    prospect.facebookUrl ? "Facebook" : "",
+    prospect.instagramUrl ? "Instagram" : "",
+    prospect.linkedinUrl ? "LinkedIn" : "",
+  ].filter(Boolean);
+  const coherentReviewProof = businessProfile.reviewProof?.status === "coherent" ? businessProfile.reviewProof.publicStatement ?? "" : "";
   const trustItems = [
     `Serving ${businessProfile.primaryMarket}`,
-    prospect.phone ? `Call ${prospect.phone}` : businessProfile.verifiedPublicEmailOrContactPath.value !== "not confirmed" ? businessProfile.verifiedPublicEmailOrContactPath.value : "Request an estimate",
+    verifiedPhoneValue ? `Call ${verifiedPhoneValue}` : verifiedContactValue !== "not confirmed" ? verifiedContactValue : "Request an estimate",
     services.slice(0, 3).join(" | "),
-    coherentReviewProof ? `${prospect.rating.toFixed(1)} rating from ${prospect.reviewCount} public reviews` : "",
+    coherentReviewProof,
   ].filter(Boolean);
   const preview: PreviewConcept = {
     previewVersion: "v3",
     businessProfile,
     creativeBrief: {
-      businessName: prospect.businessName,
+      businessName: businessProfile.officialBusinessName,
       trade,
       city: displayCity,
-      serviceArea,
-      phone: prospect.phone || "not confirmed",
-      verifiedEmailOrContactPath: verifiedContactPath(prospect),
-      existingWebsite: prospect.website || prospect.profileUrl || "not found",
+      serviceArea: businessProfile.verifiedServiceArea,
+      phone: verifiedPhoneValue || "not confirmed",
+      verifiedEmailOrContactPath: verifiedContactValue,
+      existingWebsite: businessProfile.officialWebsite.verificationStatus === "disputed" ? "not found" : businessProfile.officialWebsite.value,
       services,
       primaryService: services[0] ?? displayTrade,
       secondaryServices: services.slice(1),
@@ -2096,7 +2411,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
       ? "Use only supported public business details, then label any future proof, certification, or review areas as content the business must verify."
       : `Create spaces for ${verifiedProofAreas} beside the decisions they support, but include those claims only when the business verifies them.`,
     leadCaptureStrategy: `Keep the first step focused on ${playbook.leadDetails.join(", ")} and contact details.`,
-    generatedAt: now(),
+    generatedAt,
   };
   const previewWithImages = attachResolvedPreviewImages(prospect, preview);
   const hierarchyWithImages = serviceHierarchyWithImages(serviceHierarchy, previewWithImages.resolvedImages!);
@@ -2133,9 +2448,34 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     serviceFidelity,
     visualAssetQa: buildPreviewVisualAssetQa(prospect, { ...plannedPreview, serviceFidelity }),
   };
+  const packageBlockers = [
+    ...(businessProfile.factualBlockers ?? []),
+    serviceFidelity.status === "failed" ? "Verified service fidelity was lost between preparation and rendering." : "",
+    ...(previewWithQa.visualAssetQa?.criticalFailures ?? []),
+  ].filter(Boolean);
+  const packageSnapshot: PreviewPackageSnapshot = {
+    version: "business-package-v1",
+    generationId,
+    generatedAt,
+    researchStatus: businessProfile.researchStatus ?? "not_applicable",
+    factualStatus: packageBlockers.length ? "blocked" : "coherent",
+    sendWorthinessResult: packageBlockers.length ? "blocked" : "pending_public_verification",
+    blockers: [...new Set(packageBlockers)],
+    componentGenerationIds: {
+      businessProfile: generationId,
+      serviceHierarchy: generationId,
+      creativeBrief: generationId,
+      renderPlan: generationId,
+      quality: generationId,
+    },
+  };
+  const previewWithSnapshot = { ...previewWithQa, packageSnapshot };
+  const qualityScore = scorePreviewQuality(prospect, previewWithSnapshot);
   return {
-    ...previewWithQa,
-    qualityScore: scorePreviewQuality(prospect, previewWithQa),
+    ...previewWithSnapshot,
+    qualityScore: packageBlockers.length
+      ? { ...qualityScore, factualSafety: Math.min(qualityScore.factualSafety ?? 100, 40), safetyTruthfulness: Math.min(qualityScore.safetyTruthfulness, 40), status: "Blocked by factual or technical issue", notes: [...new Set([...packageBlockers, ...qualityScore.notes])] }
+      : qualityScore,
   };
 }
 

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildPreviewRenderPlan,
   generatePreview,
@@ -18,6 +20,7 @@ import { evaluateServiceFidelity } from "../lib/preview-fidelity";
 import { evaluatePreviewSendWorthiness } from "../lib/preview-send-worthiness";
 import { classifyRenderedImageEvidence } from "../components/engine/TradePreviewImage";
 import { assessSemanticImage } from "../lib/preview-image-resolver";
+import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePreview";
 
 function groundedProspect(overrides: Partial<Prospect> & Record<string, unknown>): Prospect {
   return {
@@ -64,7 +67,7 @@ test("bounded research timeout keeps provider facts, records lower confidence, a
 
   assert.equal(prepared.researchStatus, "timed_out");
   assert.equal(prepared.preview.businessProfile?.researchStatus, "timed_out");
-  assert.equal(prepared.preview.businessProfile?.officialWebsite.provenance, "verified provider source");
+  assert.equal(prepared.preview.businessProfile?.officialWebsite.provenance, "unverified provider source");
   assert.equal(prepared.preview.businessProfile?.officialWebsite.confidence, "inferred");
   assert.deepEqual(prepared.prospect.outreach, existingOutreach);
   assert.equal(prepared.preview.renderPlan?.version, "render-plan-v1");
@@ -109,7 +112,7 @@ test("official source identity is reconciled before research is treated as verif
 test("verified facts remain distinct from inferred branding and contradictory review data", () => {
   const inferred = generatePreview({ ...structuredClone(seedProspects[0]), website: "https://blue-line.example", businessName: "Blue Line Roofing", rating: 4.9, reviewCount: 0 });
   assert.equal(inferred.businessProfile?.officialWebsite.confidence, "inferred");
-  assert.equal(inferred.businessProfile?.officialWebsite.provenance, "verified provider source");
+  assert.equal(inferred.businessProfile?.officialWebsite.provenance, "unverified provider source");
   assert.equal(inferred.businessProfile?.logo.status, "wordmark_fallback");
   assert.equal(inferred.businessProfile?.logo.provenance, "trade fallback");
   assert.ok(inferred.businessProfile?.detectedBrandColors.every((fact) => fact.confidence === "inferred"));
@@ -126,6 +129,114 @@ test("verified facts remain distinct from inferred branding and contradictory re
   }));
   assert.equal(official.businessProfile?.logo.provenance, "verified official source");
   assert.equal(official.businessProfile?.detectedBrandColors[0]?.provenance, "verified official source");
+});
+
+test("generation saves one coherent factual snapshot with material provenance", async () => {
+  const researchedAt = "2026-07-16T12:00:00.000Z";
+  const prospect = groundedProspect({
+    businessName: "Harbor Exterior Care",
+    trade: "Pressure Washing",
+    rating: 4.9,
+    reviewCount: 87,
+    websiteLogoUrl: "https://example.com/harbor-logo.png",
+    previewBrandColors: ["#123456", "#e7a51a"],
+    verifiedPreviewServices: ["House Washing", "Concrete Cleaning"],
+    previewResearchFacts: [
+      { label: "Official website research", value: "https://example.com", source: "official website", confidence: "verified", provenance: "verified official source", factType: "website", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified", researchedAt },
+      { label: "Official logo", value: "https://example.com/harbor-logo.png", source: "official website", confidence: "verified", provenance: "verified official source", factType: "logo", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified", researchedAt },
+      { label: "Review rating", value: "4.9", source: "official website structured data", confidence: "verified", provenance: "verified official source", factType: "review_rating", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified", researchedAt },
+      { label: "Review count", value: "87", source: "official website structured data", confidence: "verified", provenance: "verified official source", factType: "review_count", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified", researchedAt },
+      { label: "Free estimates", value: "Free estimates", source: "official website", confidence: "verified", provenance: "verified official source", factType: "differentiator", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified", researchedAt },
+    ],
+  });
+  const prepared = await prepareProspectForPreview(prospect, { researcher: async (value) => ({ prospect: value, status: "succeeded", note: "Fixture research complete." }) });
+  const snapshot = prepared.preview.packageSnapshot;
+  assert.equal(snapshot?.version, "business-package-v1");
+  assert.equal(snapshot?.factualStatus, "coherent");
+  assert.equal(new Set(Object.values(snapshot?.componentGenerationIds ?? {})).size, 1);
+  assert.equal(prepared.preview.businessProfile?.snapshotId, snapshot?.generationId);
+  assert.ok(prepared.preview.businessProfile?.sourceFacts.every((fact) => fact.factType && fact.sourceType && fact.verificationStatus && fact.researchedAt));
+  assert.equal(prepared.preview.businessProfile?.logo.fact?.value, "https://example.com/harbor-logo.png");
+  assert.equal(prepared.preview.businessProfile?.reviewProof?.publicStatement, "Rated 4.9 based on 87 public reviews.");
+  assert.equal(prepared.preview.businessProfile?.realDifferentiators[0]?.sourceLocation, "https://example.com");
+  const html = renderToStaticMarkup(React.createElement(ProspectWebsitePreview, { prospect: prepared.prospect, savedPreview: prepared.preview, publicView: true }));
+  assert.match(html, /Rated 4\.9 based on 87 public reviews\./);
+  assert.doesNotMatch(html, /rating recorded|reviews recorded/i);
+});
+
+test("material review conflicts are preserved, omitted publicly, and block send-worthiness", () => {
+  const prospect = groundedProspect({
+    businessName: "Conflicted Roofing",
+    trade: "Roofing",
+    rating: 4.9,
+    reviewCount: 100,
+    previewResearchFacts: [
+      { label: "Official website research", value: "https://example.com", source: "official website", confidence: "verified", provenance: "verified official source" },
+      { label: "Review rating", value: "4.6", source: "official website structured data", confidence: "verified", provenance: "verified official source", factType: "review_rating", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified" },
+      { label: "Review count", value: "72", source: "official website structured data", confidence: "verified", provenance: "verified official source", factType: "review_count", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified" },
+    ],
+  });
+  const preview = generatePreview(prospect);
+  assert.equal(preview.businessProfile?.reviewProof?.status, "conflicted");
+  assert.ok(preview.businessProfile?.sourceFacts.filter((fact) => fact.factType === "review_rating" || fact.factType === "review_count").every((fact) => fact.verificationStatus === "disputed"));
+  assert.equal(preview.businessProfile?.reviewProof?.publicStatement, undefined);
+  assert.equal(preview.packageSnapshot?.factualStatus, "blocked");
+  assert.equal(preview.trustItems?.some((item) => /rating|reviews?/i.test(item)), false);
+  const result = evaluatePreviewSendWorthiness({ ...prospect, preview }, { publicPreviewUrl: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", publicPreviewVerified: true });
+  assert.equal(result.verdict, "blocked");
+  assert.match(result.warnings.join(" "), /review/i);
+});
+
+test("conflicting verified contact information is preserved internally and withheld publicly", () => {
+  const prospect = groundedProspect({
+    phone: "419-555-0101",
+    previewResearchFacts: [
+      { label: "Official website research", value: "https://example.com", source: "official website", confidence: "verified", provenance: "verified official source" },
+      { label: "Official phone", value: "419-555-9999", source: "official website", confidence: "verified", provenance: "verified official source", factType: "phone", sourceType: "official_website", sourceLocation: "https://example.com/contact", verificationStatus: "verified" },
+    ],
+  });
+  const preview = generatePreview(prospect);
+  assert.equal(preview.businessProfile?.verifiedPhone.verificationStatus, "disputed");
+  assert.equal(preview.businessProfile?.materialConflicts?.some((fact) => fact.factType === "phone"), true);
+  assert.equal(preview.packageSnapshot?.factualStatus, "blocked");
+  const html = renderToStaticMarkup(React.createElement(ProspectWebsitePreview, { prospect: { ...prospect, preview }, savedPreview: preview, publicView: true }));
+  assert.doesNotMatch(html, /419-555-0101|419-555-9999/);
+});
+
+test("verified logo loss blocks while missing logos remain honest wordmark fallbacks", () => {
+  const officialProspect = groundedProspect({
+    websiteLogoUrl: "https://example.com/official-logo.png",
+    previewResearchFacts: [
+      { label: "Official website research", value: "https://example.com", source: "official website", confidence: "verified", provenance: "verified official source" },
+      { label: "Official logo", value: "https://example.com/official-logo.png", source: "official website", confidence: "verified", provenance: "verified official source", factType: "logo", sourceType: "official_website", sourceLocation: "https://example.com", verificationStatus: "verified" },
+    ],
+  });
+  const official = generatePreview(officialProspect);
+  const lostLogo = { ...official, businessProfile: { ...official.businessProfile!, logo: { ...official.businessProfile!.logo, status: "wordmark_fallback" as const, url: "", source: "wordmark fallback" as const } } };
+  const verdict = evaluatePreviewSendWorthiness({ ...officialProspect, preview: lostLogo }, { publicPreviewUrl: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", publicPreviewVerified: true });
+  assert.equal(verdict.verdict, "blocked");
+  assert.match(verdict.warnings.join(" "), /official logo/i);
+
+  const fallback = generatePreview(groundedProspect({ websiteLogoUrl: "", previewResearchFacts: [] }));
+  assert.equal(fallback.businessProfile?.logo.status, "wordmark_fallback");
+  assert.equal(fallback.businessProfile?.logo.fact?.verificationStatus, "unavailable");
+  assert.equal(fallback.businessProfile?.logo.provenance, "trade fallback");
+});
+
+test("public and internal preview rendering consume saved packages without generation or mutation", () => {
+  const prospect = groundedProspect({ verifiedPreviewServices: ["Roof Repair", "Roof Replacement"] });
+  const preview = generatePreview(prospect);
+  const before = JSON.stringify(preview);
+  const publicHtml = renderToStaticMarkup(React.createElement(ProspectWebsitePreview, { prospect: { ...prospect, preview }, savedPreview: preview, publicView: true }));
+  const internalHtml = renderToStaticMarkup(React.createElement(ProspectWebsitePreview, { prospect: { ...prospect, preview }, savedPreview: preview, publicView: false }));
+  assert.match(publicHtml, /Roof Repair/);
+  assert.match(internalHtml, /Roof Replacement/);
+  assert.equal(JSON.stringify(preview), before);
+  const rendererSource = readFileSync("components/engine/ProspectWebsitePreview.tsx", "utf8");
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
+  assert.doesNotMatch(rendererSource, /\bgeneratePreview\(/);
+  assert.doesNotMatch(detailSource, /\bgeneratePreview\(/);
+  assert.doesNotMatch(`${rendererSource}\n${detailSource}`, /prepareProspectForPreview|researchProspectForPreview/);
 });
 
 test("render-plan selection is deterministic and responds to business content", () => {

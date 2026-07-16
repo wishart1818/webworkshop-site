@@ -24,7 +24,13 @@ import {
   type PreviewBusinessProfile,
   type PreviewCreativeBrief,
   type PreviewFactConfidence,
+  type PreviewFactConflict,
   type PreviewFactProvenance,
+  type PreviewFactSourceType,
+  type PreviewFactType,
+  type PreviewFactVerificationStatus,
+  type PreviewPackageSnapshot,
+  type PreviewReviewProof,
   type PreviewLayoutDirection,
   type PreviewQualityScore,
   type PreviewRenderPlan,
@@ -268,20 +274,54 @@ function previewFactConfidenceValue(value: unknown, field: string): PreviewFactC
 function previewFactProvenanceValue(value: unknown, field: string): PreviewFactProvenance | undefined {
   if (value === undefined) return undefined;
   const provenance = text(value, field, 50) as PreviewFactProvenance;
-  if (!["verified official source", "verified provider source", "inferred creative direction", "trade fallback", "unavailable"].includes(provenance)) {
+  if (!["verified official source", "verified provider source", "unverified provider source", "inferred creative direction", "trade fallback", "unavailable"].includes(provenance)) {
     throw new Error(`${field} is not supported.`);
   }
   return provenance;
 }
 
+const previewFactTypes: PreviewFactType[] = ["business_name", "trade", "market", "website", "phone", "contact_path", "service_area", "service", "logo", "brand_color", "review_platform", "review_rating", "review_count", "tagline", "photo", "social_profile", "certification", "license", "insurance", "guarantee", "warranty", "ownership", "years_in_business", "differentiator", "website_condition", "other"];
+const previewFactSourceTypes: PreviewFactSourceType[] = ["official_website", "official_social", "provider", "website_scan", "operator", "prospect_record", "trade_fallback", "inferred", "unavailable"];
+const previewFactVerificationStatuses: PreviewFactVerificationStatus[] = ["verified", "inferred", "disputed", "unavailable"];
+
+function previewFactConflictValue(value: unknown, field: string): PreviewFactConflict {
+  if (!isRecord(value)) throw new Error(`${field} must be valid.`);
+  const sourceType = text(value.sourceType, `${field} source type`, 40) as PreviewFactSourceType;
+  const verificationStatus = text(value.verificationStatus, `${field} verification status`, 20) as PreviewFactVerificationStatus;
+  if (!previewFactSourceTypes.includes(sourceType) || !previewFactVerificationStatuses.includes(verificationStatus)) throw new Error(`${field} is not supported.`);
+  return {
+    value: text(value.value, `${field} value`, 2048),
+    sourceType,
+    sourceLocation: text(value.sourceLocation, `${field} source location`, 2048),
+    verificationStatus,
+    confidence: previewFactConfidenceValue(value.confidence, `${field} confidence`),
+  };
+}
+
 function previewResearchFactValue(value: unknown, field: string): PreviewResearchFact {
   if (!isRecord(value)) throw new Error(`${field} must be a valid object.`);
+  const factType = value.factType === undefined ? undefined : text(value.factType, `${field} fact type`, 40) as PreviewFactType;
+  const sourceType = value.sourceType === undefined ? undefined : text(value.sourceType, `${field} source type`, 40) as PreviewFactSourceType;
+  const verificationStatus = value.verificationStatus === undefined ? undefined : text(value.verificationStatus, `${field} verification status`, 20) as PreviewFactVerificationStatus;
+  if (factType && !previewFactTypes.includes(factType)) throw new Error(`${field} fact type is not supported.`);
+  if (sourceType && !previewFactSourceTypes.includes(sourceType)) throw new Error(`${field} source type is not supported.`);
+  if (verificationStatus && !previewFactVerificationStatuses.includes(verificationStatus)) throw new Error(`${field} verification status is not supported.`);
   return {
     label: text(value.label, `${field} label`, 120),
     value: text(value.value, `${field} value`, 2048),
     source: text(value.source, `${field} source`, 240),
     confidence: previewFactConfidenceValue(value.confidence, `${field} confidence`),
     provenance: previewFactProvenanceValue(value.provenance, `${field} provenance`),
+    factType,
+    sourceType,
+    sourceLocation: value.sourceLocation === undefined ? undefined : text(value.sourceLocation, `${field} source location`, 2048),
+    sourceIdentifier: value.sourceIdentifier === undefined ? undefined : text(value.sourceIdentifier, `${field} source identifier`, 240),
+    verificationStatus,
+    researchedAt: value.researchedAt === undefined ? undefined : dateText(value.researchedAt, `${field} researched date`),
+    conflicts: value.conflicts === undefined ? undefined : (() => {
+      if (!Array.isArray(value.conflicts) || value.conflicts.length > 12) throw new Error(`${field} conflicts must be a valid list.`);
+      return value.conflicts.map((conflict, index) => previewFactConflictValue(conflict, `${field} conflict ${index + 1}`));
+    })(),
   };
 }
 
@@ -289,6 +329,20 @@ function previewResearchFactArray(value: unknown, field: string, maxItems = 24) 
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > maxItems) throw new Error(`${field} must be a valid list.`);
   return value.map((item, index) => previewResearchFactValue(item, `${field} ${index + 1}`));
+}
+
+function previewReviewProofValue(value: unknown): PreviewReviewProof | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !["coherent", "conflicted", "unavailable"].includes(String(value.status))) throw new Error("Preview review proof must be valid.");
+  if (!Array.isArray(value.conflicts) || value.conflicts.length > 20) throw new Error("Preview review conflicts must be a valid list.");
+  return {
+    status: value.status as PreviewReviewProof["status"],
+    platform: value.platform === undefined ? undefined : previewResearchFactValue(value.platform, "Preview review platform"),
+    rating: value.rating === undefined ? undefined : previewResearchFactValue(value.rating, "Preview review rating"),
+    reviewCount: value.reviewCount === undefined ? undefined : previewResearchFactValue(value.reviewCount, "Preview review count"),
+    publicStatement: value.publicStatement === undefined ? undefined : text(value.publicStatement, "Preview review public statement", 300),
+    conflicts: value.conflicts.map((conflict, index) => previewFactConflictValue(conflict, `Preview review conflict ${index + 1}`)),
+  };
 }
 
 function previewBusinessProfileValue(value: unknown): PreviewBusinessProfile | undefined {
@@ -308,6 +362,7 @@ function previewBusinessProfileValue(value: unknown): PreviewBusinessProfile | u
   if (logoUrl) previewImageUrl(logoUrl, "Preview business profile logo URL");
   const verifiedServices = stringArray(value.verifiedServices, "Preview business profile verified services", 12, 200);
   return {
+    snapshotId: value.snapshotId === undefined ? undefined : text(value.snapshotId, "Preview business profile snapshot ID", 240),
     officialBusinessName: text(value.officialBusinessName, "Preview business profile business name", 160),
     trade,
     primaryMarket: text(value.primaryMarket, "Preview business profile market", 160),
@@ -327,15 +382,24 @@ function previewBusinessProfileValue(value: unknown): PreviewBusinessProfile | u
       confidence: previewFactConfidenceValue(logo.confidence, "Preview business profile logo confidence"),
       provenance: previewFactProvenanceValue(logo.provenance, "Preview business profile logo provenance"),
       note: text(logo.note, "Preview business profile logo note", 500),
+      fact: logo.fact === undefined ? undefined : previewResearchFactValue(logo.fact, "Preview business profile logo fact"),
     },
     businessPhotoSources: previewResearchFactArray(value.businessPhotoSources, "Preview business profile photo sources", 12),
     detectedBrandColors: previewResearchFactArray(value.detectedBrandColors, "Preview business profile brand colors", 8),
+    brandColorClassification: value.brandColorClassification === undefined ? undefined : (() => {
+      const classification = text(value.brandColorClassification, "Preview business profile brand-color classification", 40) as NonNullable<PreviewBusinessProfile["brandColorClassification"]>;
+      if (!["verified_official", "verified_logo_derived", "inferred", "trade_fallback"].includes(classification)) throw new Error("Preview business profile brand-color classification is not supported.");
+      return classification;
+    })(),
     brandPersonality: text(value.brandPersonality, "Preview business profile brand personality", 500),
     recurringPublicReviewThemes: previewResearchFactArray(value.recurringPublicReviewThemes, "Preview business profile review themes", 8),
+    reviewProof: previewReviewProofValue(value.reviewProof),
     realDifferentiators: previewResearchFactArray(value.realDifferentiators, "Preview business profile differentiators", 12),
     currentWebsiteWeaknesses: previewResearchFactArray(value.currentWebsiteWeaknesses, "Preview business profile website weaknesses", 12),
     recommendedDesignDirection: text(value.recommendedDesignDirection, "Preview business profile design direction", 500),
-    sourceFacts: previewResearchFactArray(value.sourceFacts, "Preview business profile source facts", 24),
+    sourceFacts: previewResearchFactArray(value.sourceFacts, "Preview business profile source facts", 40),
+    materialConflicts: value.materialConflicts === undefined ? undefined : previewResearchFactArray(value.materialConflicts, "Preview business profile material conflicts", 20),
+    factualBlockers: value.factualBlockers === undefined ? undefined : stringArray(value.factualBlockers, "Preview business profile factual blockers", 20, 500),
     confidenceSummary: text(value.confidenceSummary, "Preview business profile confidence summary", 500),
     uncertainFactsExcluded: value.uncertainFactsExcluded === undefined ? [] : stringArray(value.uncertainFactsExcluded, "Preview business profile excluded facts", 20, 500),
     researchStatus: value.researchStatus === undefined ? undefined : (() => {
@@ -629,6 +693,34 @@ function previewVisualAssetQaValue(value: unknown): PreviewVisualAssetQa | undef
   };
 }
 
+function previewPackageSnapshotValue(value: unknown): PreviewPackageSnapshot | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || value.version !== "business-package-v1" || !isRecord(value.componentGenerationIds)) throw new Error("Preview business package snapshot must be valid.");
+  const researchStatus = text(value.researchStatus, "Preview package research status", 30) as PreviewPackageSnapshot["researchStatus"];
+  const factualStatus = text(value.factualStatus, "Preview package factual status", 20) as PreviewPackageSnapshot["factualStatus"];
+  const sendWorthinessResult = text(value.sendWorthinessResult, "Preview package send-worthiness result", 40) as PreviewPackageSnapshot["sendWorthinessResult"];
+  if (!["succeeded", "timed_out", "failed", "not_applicable"].includes(researchStatus)) throw new Error("Preview package research status is not supported.");
+  if (!["coherent", "blocked"].includes(factualStatus)) throw new Error("Preview package factual status is not supported.");
+  if (!["blocked", "pending_public_verification"].includes(sendWorthinessResult)) throw new Error("Preview package send-worthiness result is not supported.");
+  const generationId = text(value.generationId, "Preview package generation ID", 240);
+  return {
+    version: "business-package-v1",
+    generationId,
+    generatedAt: dateText(value.generatedAt, "Preview package generated date"),
+    researchStatus,
+    factualStatus,
+    sendWorthinessResult,
+    blockers: stringArray(value.blockers, "Preview package blockers", 30, 500),
+    componentGenerationIds: {
+      businessProfile: text(value.componentGenerationIds.businessProfile, "Preview business-profile generation ID", 240),
+      serviceHierarchy: text(value.componentGenerationIds.serviceHierarchy, "Preview service-hierarchy generation ID", 240),
+      creativeBrief: text(value.componentGenerationIds.creativeBrief, "Preview creative-brief generation ID", 240),
+      renderPlan: text(value.componentGenerationIds.renderPlan, "Preview render-plan generation ID", 240),
+      quality: text(value.componentGenerationIds.quality, "Preview quality generation ID", 240),
+    },
+  };
+}
+
 function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
@@ -636,6 +728,7 @@ function previewValue(value: unknown): PreviewConcept | undefined {
   if (layoutDirection && !["split-photo", "full-bleed-photo", "image-led-grid", "dark-premium", "light-editorial", "bold-local-service"].includes(layoutDirection)) throw new Error("Preview layout direction is not supported.");
   return {
     previewVersion: value.previewVersion === "v3" ? "v3" : value.previewVersion === "v2" ? "v2" : undefined,
+    packageSnapshot: previewPackageSnapshotValue(value.packageSnapshot),
     creativeBrief: creativeBriefValue(value.creativeBrief),
     businessProfile: previewBusinessProfileValue(value.businessProfile),
     renderPlan: previewRenderPlanValue(value.renderPlan),

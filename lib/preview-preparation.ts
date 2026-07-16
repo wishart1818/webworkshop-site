@@ -66,9 +66,16 @@ export async function prepareProspectForPreview(
     timeoutMs,
     options.researcher ?? researchProspectForPreviewOutcome,
   );
-  const preparedProspect = options.mode === "regenerate"
-    ? regeneratePreview(research.prospect, options.feedback ?? "")
-    : { ...research.prospect, preview: generatePreview(research.prospect) };
+  let preparedProspect: Prospect;
+  try {
+    preparedProspect = options.mode === "regenerate"
+      ? regeneratePreview(research.prospect, options.feedback ?? "")
+      : { ...research.prospect, preview: generatePreview(research.prospect) };
+  } catch (error) {
+    const stage = options.mode === "regenerate" ? "coherent preview regeneration" : "coherent preview generation";
+    const detail = error instanceof Error && error.message ? error.message : "Preview package assembly failed.";
+    throw new Error(`Preview preparation failed during ${stage}: ${detail}`);
+  }
   if (!preparedProspect.preview) throw new Error("Preview preparation did not produce a preview.");
   return {
     prospect: preparedProspect,

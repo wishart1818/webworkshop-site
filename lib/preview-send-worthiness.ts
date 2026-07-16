@@ -98,6 +98,20 @@ export function evaluatePreviewSendWorthiness(
     };
   }
   const preview = compatibility.preview;
+  const snapshot = preview.packageSnapshot;
+  if (snapshot?.factualStatus === "blocked") warnings.push(...snapshot.blockers.map((blocker) => `Business package blocked: ${blocker}`));
+  if (snapshot) {
+    const componentIds = Object.values(snapshot.componentGenerationIds);
+    if (componentIds.some((id) => id !== snapshot.generationId) || preview.businessProfile?.snapshotId !== snapshot.generationId) {
+      warnings.push("Business package components came from inconsistent generation states.");
+    }
+  }
+  if (preview.businessProfile?.factualBlockers?.length) warnings.push(...preview.businessProfile.factualBlockers.map((blocker) => `Factual fidelity failed: ${blocker}`));
+  const officialLogo = preview.businessProfile?.sourceFacts.find((fact) => fact.factType === "logo" && fact.provenance === "verified official source" && fact.verificationStatus === "verified");
+  if (officialLogo && (preview.businessProfile?.logo.status !== "available" || preview.businessProfile.logo.url !== officialLogo.value)) {
+    warnings.push("Verified official logo was lost or replaced by fallback branding.");
+  }
+  if (preview.businessProfile?.reviewProof?.status === "conflicted") warnings.push("Verified review proof conflicts materially and cannot be published.");
 
   const publicPreviewUrl = options.publicPreviewUrl?.trim() ?? "";
   if (!publicPreviewUrl || !/\/p\/[A-Za-z0-9_-]{24,}/.test(publicPreviewUrl)) {
@@ -131,6 +145,7 @@ export function evaluatePreviewSendWorthiness(
   if (preview.visualAssetQa?.semanticRelevance === "rejected") warnings.push("The rendered hero image is semantically unrelated to the business.");
 
   const copy = publicCopy(preview);
+  if (/\b(?:rating|reviews?) recorded\b/i.test(copy)) warnings.push("Raw review database wording appears in public-facing preview copy.");
   if (!copy.includes(prospect.businessName)) warnings.push("Business name is not clearly represented in the preview copy.");
   if (!new RegExp(displayTradeCategory(prospect.trade), "i").test(copy)) warnings.push("Trade is not clearly represented in the preview copy.");
   const locationCopy = `${titleCaseLocation(prospect.city)} ${displayStateCode(prospect.state)} ${prospect.serviceArea}`;
@@ -151,7 +166,7 @@ export function evaluatePreviewSendWorthiness(
 
   const uniqueWarnings = [...new Set(warnings.filter(Boolean))];
   const blockingWarning = uniqueWarnings.find((warning) =>
-    /No prospect-safe public|could not be verified|Internal or placeholder|Unsupported factual|No preview exists|factual-safety|Service fidelity failed|rendered hero|critical|semantically unrelated/i.test(warning),
+    /No prospect-safe public|could not be verified|Internal or placeholder|Unsupported factual|No preview exists|factual-safety|Service fidelity failed|Factual fidelity failed|Business package blocked|inconsistent generation|official logo|review proof conflicts|Raw review database|rendered hero|critical|semantically unrelated/i.test(warning),
   );
   const score = preview.qualityScore?.overall ?? 0;
   const qualityStatus = preview.qualityScore?.status ?? "";

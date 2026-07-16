@@ -1,4 +1,4 @@
-import { displayTradeCategory, normalizeTradeCategory, type PreviewResearchFact, type Prospect } from "@/lib/prospect-engine";
+import { displayTradeCategory, normalizeTradeCategory, researchFact, type PreviewResearchFact, type Prospect } from "@/lib/prospect-engine";
 import { fetchPublicResearchDocument } from "@/lib/site-analysis";
 
 export type PreviewPhotoResearchCandidate = {
@@ -10,10 +10,15 @@ export type PreviewPhotoResearchCandidate = {
 
 export type PreviewBusinessResearch = {
   websiteUrl: string;
+  officialBusinessName: string;
+  officialPhone: string;
+  officialEmail: string;
   logoUrl: string;
   brandColors: string[];
   services: string[];
   tagline: string;
+  differentiators: PreviewResearchFact[];
+  reviewFacts: PreviewResearchFact[];
   photos: PreviewPhotoResearchCandidate[];
   sourceFacts: PreviewResearchFact[];
 };
@@ -159,6 +164,88 @@ function extractTagline(html: string) {
   return "";
 }
 
+function firstMetaContent(html: string, key: string) {
+  const tag = [...html.matchAll(/<meta\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .find((candidate) => new RegExp(`(?:property|name)=["']${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`, "i").test(candidate));
+  return tag ? plainText(attribute(tag, "content")) : "";
+}
+
+function officialBusinessName(html: string) {
+  const socialName = firstMetaContent(html, "og:site_name");
+  if (socialName && socialName.length <= 160) return socialName;
+  return "";
+}
+
+function officialContacts(html: string, pageUrl: string) {
+  const phoneMatch = [...html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']tel:([^"']+)["'][^>]*>/gi)][0];
+  const emailMatch = [...html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']mailto:([^"'?]+)[^"']*["'][^>]*>/gi)][0];
+  const phone = decodeURIComponent(phoneMatch?.[1] ?? "").replace(/[^+\d]/g, "").trim();
+  const email = decodeURIComponent(emailMatch?.[1] ?? "").trim().toLowerCase();
+  return {
+    phone: phone.length >= 10 && phone.length <= 16 ? phone : "",
+    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "",
+    sourceLocation: pageUrl,
+  };
+}
+
+function extractVerifiedDifferentiators(html: string, pageUrl: string, researchedAt: string) {
+  const text = plainText(html);
+  const patterns: Array<{ label: string; value: string; pattern: RegExp }> = [
+    { label: "Licensed and insured", value: "Licensed and insured", pattern: /\blicensed\s+(?:and|&)\s+insured\b/i },
+    { label: "Locally owned", value: "Locally owned", pattern: /\blocally[- ]owned\b/i },
+    { label: "Family owned", value: "Family owned", pattern: /\bfamily[- ]owned\b/i },
+    { label: "Veteran owned", value: "Veteran owned", pattern: /\bveteran[- ]owned\b/i },
+    { label: "Free estimates", value: "Free estimates", pattern: /\bfree estimates?\b/i },
+    { label: "Emergency service", value: "Emergency service available", pattern: /\b(?:24\s*\/\s*7\s+)?emergency service\b/i },
+    { label: "Warranty", value: "Warranty available", pattern: /\b(?:workmanship|service|labor) warranty\b/i },
+    { label: "Guarantee", value: "Service guarantee", pattern: /\b(?:satisfaction|service|workmanship) guarantee(?:d)?\b/i },
+  ];
+  const facts = patterns.filter((item) => item.pattern.test(text)).map((item) => researchFact(
+    item.label,
+    item.value,
+    "official website",
+    "verified",
+    "verified official source",
+    { factType: item.label === "Warranty" ? "warranty" : item.label === "Guarantee" ? "guarantee" : item.label.includes("owned") ? "ownership" : item.label.includes("Licensed") ? "license" : "differentiator", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt },
+  ));
+  const years = text.match(/\b(?:serving|in business|experience)[^.!?]{0,40}\b(\d{1,3})\+?\s+years\b/i);
+  if (years?.[1]) facts.push(researchFact("Years in business", `${years[1]} years`, "official website", "verified", "verified official source", {
+    factType: "years_in_business", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt,
+  }));
+  return facts.slice(0, 10);
+}
+
+function extractOfficialReviewFacts(html: string, pageUrl: string, researchedAt: string) {
+  const facts: PreviewResearchFact[] = [];
+  for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const root = JSON.parse(decodeHtml(match[1] ?? ""));
+      const queue: unknown[] = [root];
+      while (queue.length) {
+        const value = queue.shift();
+        if (Array.isArray(value)) { queue.push(...value); continue; }
+        if (!value || typeof value !== "object") continue;
+        const record = value as Record<string, unknown>;
+        if (String(record["@type"] ?? "").toLowerCase() === "aggregaterating") {
+          const rating = Number(record.ratingValue);
+          const count = Number(record.reviewCount ?? record.ratingCount);
+          if (Number.isFinite(rating) && rating >= 1 && rating <= 5) facts.push(researchFact("Review rating", rating.toFixed(1), "official website structured data", "verified", "verified official source", {
+            factType: "review_rating", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt,
+          }));
+          if (Number.isInteger(count) && count > 0) facts.push(researchFact("Review count", String(count), "official website structured data", "verified", "verified official source", {
+            factType: "review_count", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt,
+          }));
+        }
+        queue.push(...Object.values(record));
+      }
+    } catch {
+      // Invalid third-party structured data is ignored rather than treated as proof.
+    }
+  }
+  return facts.slice(0, 2);
+}
+
 function colorMetrics(hex: string) {
   const value = hex.slice(1);
   const expanded = value.length === 3 ? value.split("").map((part) => part + part).join("") : value.slice(0, 6);
@@ -216,19 +303,29 @@ export function officialWebsiteMatchesProspect(prospect: Pick<Prospect, "busines
 }
 
 export function extractPreviewBusinessResearch(html: string, pageUrl: string, trade: string, stylesheets: string[] = []): PreviewBusinessResearch {
+  const researchedAt = new Date().toISOString();
   const services = extractServices(html, pageUrl);
   const logoUrl = extractLogo(html, pageUrl);
   const tagline = extractTagline(html);
+  const name = officialBusinessName(html);
+  const contacts = officialContacts(html, pageUrl);
   const brandColors = extractBrandColors(html, ...stylesheets);
   const photos = extractImages(html, pageUrl, trade).filter((photo) => photo.src !== logoUrl);
+  const differentiators = extractVerifiedDifferentiators(html, pageUrl, researchedAt);
+  const reviewFacts = extractOfficialReviewFacts(html, pageUrl, researchedAt);
   const sourceFacts: PreviewResearchFact[] = [
-    { label: "Official website research", value: pageUrl, source: "official website", confidence: "verified", provenance: "verified official source" },
-    tagline ? { label: "Official tagline", value: tagline, source: "official website", confidence: "verified", provenance: "verified official source" } : null,
-    ...services.map((service) => ({ label: "Verified service", value: service, source: "official website", confidence: "verified", provenance: "verified official source" } as PreviewResearchFact)),
-    logoUrl ? { label: "Official logo", value: logoUrl, source: "official website", confidence: "verified", provenance: "verified official source" } : null,
-    brandColors.length ? { label: "Official website palette", value: brandColors.join(", "), source: "official website stylesheet", confidence: "verified", provenance: "verified official source" } : null,
+    researchFact("Official website research", pageUrl, "official website", "verified", "verified official source", { factType: "website", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }),
+    name ? researchFact("Official business name", name, "official website", "verified", "verified official source", { factType: "business_name", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }) : null,
+    contacts.phone ? researchFact("Official phone", contacts.phone, "official website", "verified", "verified official source", { factType: "phone", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }) : null,
+    contacts.email ? researchFact("Official public email", contacts.email, "official website", "verified", "verified official source", { factType: "contact_path", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }) : null,
+    tagline ? researchFact("Official tagline", tagline, "official website", "verified", "verified official source", { factType: "tagline", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }) : null,
+    ...services.map((service) => researchFact("Verified service", service, "official website", "verified", "verified official source", { factType: "service", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt })),
+    logoUrl ? researchFact("Official logo", logoUrl, "official website", "verified", "verified official source", { factType: "logo", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }) : null,
+    brandColors.length ? researchFact("Official website palette", brandColors.join(", "), "official website stylesheet", "verified", "verified official source", { factType: "brand_color", sourceType: "official_website", sourceLocation: pageUrl, verificationStatus: "verified", researchedAt }) : null,
+    ...differentiators,
+    ...reviewFacts,
   ].filter((fact): fact is PreviewResearchFact => Boolean(fact));
-  return { websiteUrl: pageUrl, logoUrl, brandColors, services, tagline, photos, sourceFacts };
+  return { websiteUrl: pageUrl, officialBusinessName: name, officialPhone: contacts.phone, officialEmail: contacts.email, logoUrl, brandColors, services, tagline, differentiators, reviewFacts, photos, sourceFacts };
 }
 
 function withResearchStatus(prospect: Prospect, status: PreviewResearchStatus, note: string) {
