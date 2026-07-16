@@ -1,5 +1,6 @@
 import { displayStateCode, displayTradeCategory, titleCaseLocation, type Prospect, type PreviewConcept } from "@/lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, validatePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
+import { normalizePreviewForRender } from "@/lib/preview-compatibility";
 
 export type PreviewSendWorthinessVerdict = "send_worthy" | "needs_improvement" | "blocked";
 
@@ -67,10 +68,10 @@ export function evaluatePreviewSendWorthiness(
   prospect: Prospect,
   options: { publicPreviewUrl?: string; publicPreviewVerified?: boolean } = {},
 ): PreviewSendWorthiness {
-  const preview = prospect.preview;
+  const savedPreview = prospect.preview;
   const warnings: string[] = [];
 
-  if (!preview) {
+  if (!savedPreview) {
     return {
       verdict: "blocked",
       label: "BLOCKED",
@@ -82,6 +83,21 @@ export function evaluatePreviewSendWorthiness(
       warnings: ["No preview exists."],
     };
   }
+
+  const compatibility = normalizePreviewForRender(prospect, savedPreview);
+  if (!compatibility.ok) {
+    return {
+      verdict: "blocked",
+      label: "BLOCKED",
+      description: "Do not send. The saved preview could not be displayed safely.",
+      primaryWarning: compatibility.message,
+      nextAction: "Resolve Issue",
+      freshness: previewFreshness(savedPreview),
+      resolvedImageCount: 0,
+      warnings: [compatibility.message],
+    };
+  }
+  const preview = compatibility.preview;
 
   const publicPreviewUrl = options.publicPreviewUrl?.trim() ?? "";
   if (!publicPreviewUrl || !/\/p\/[A-Za-z0-9_-]{24,}/.test(publicPreviewUrl)) {

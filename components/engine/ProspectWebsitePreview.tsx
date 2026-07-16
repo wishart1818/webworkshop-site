@@ -1,4 +1,5 @@
 import React, { type CSSProperties } from "react";
+import { PreviewRenderBoundary } from "@/components/engine/PreviewRenderBoundary";
 import { TradePreviewImage, type PreviewImageRenderSlot } from "@/components/engine/TradePreviewImage";
 import {
   displayStateCode,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
 import { groundedPreviewCopy } from "@/lib/preview-fidelity";
+import { normalizePreviewForRender } from "@/lib/preview-compatibility";
 
 type ProspectWebsitePreviewProps = {
   prospect: Prospect;
@@ -465,7 +467,7 @@ function previewImageProps(image: ResolvedPreviewImage, slot: PreviewImageRender
   };
 }
 
-export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
+function renderProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
   const canonicalTrade = normalizeTradeName(prospect.trade);
   const displayTrade = displayTradeCategory(canonicalTrade);
   const renderProspect = canonicalTrade === prospect.trade ? prospect : { ...prospect, trade: canonicalTrade };
@@ -804,4 +806,39 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
       </div>
     </main>
   );
+}
+
+function PreviewUnavailable({ message, prospect, publicView }: { message: string; prospect: Prospect; publicView: boolean }) {
+  return (
+    <main className="prospect-site-preview protected-prospect-preview" data-preview-access={publicView ? "public" : "protected"}>
+      <section className="prospect-preview-safe-failure" role="alert">
+        <span>Preview unavailable</span>
+        <h1>{prospect.businessName}</h1>
+        <p>{message}</p>
+        {prospect.phone ? <a className="prospect-preview-button" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a> : null}
+        {!publicView ? <a className="prospect-preview-text-link" href={`/engine?prospect=${encodeURIComponent(prospect.id)}&tab=Preview`}>Return to Preview review</a> : null}
+      </section>
+    </main>
+  );
+}
+
+export function ProspectWebsitePreview({ prospect, publicView = false, savedPreview }: ProspectWebsitePreviewProps) {
+  const sourcePreview = savedPreview ?? generatePreview(prospect);
+  const compatibility = normalizePreviewForRender(prospect, sourcePreview);
+  const fallbackMessage = compatibility.ok
+    ? "This preview could not be displayed. The saved preview was retained, and nothing was sent."
+    : `${compatibility.message} The saved preview was retained, and nothing was sent.`;
+  const fallback = <PreviewUnavailable message={fallbackMessage} prospect={prospect} publicView={publicView} />;
+  if (!compatibility.ok) return fallback;
+  try {
+    const content = renderProspectWebsitePreview({ prospect, publicView, savedPreview: compatibility.preview });
+    return (
+      <PreviewRenderBoundary fallback={fallback} resetKey={`${prospect.id}:${compatibility.preview.generatedAt ?? "legacy"}`}>
+        {content}
+      </PreviewRenderBoundary>
+    );
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") console.error("Preview renderer failed safely during development.", error);
+    return fallback;
+  }
 }

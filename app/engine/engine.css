@@ -8958,6 +8958,42 @@ body:has(.engine-shell) {
   box-shadow: 0 10px 18px color-mix(in srgb, var(--prospect-primary) 24%, transparent);
 }
 
+.prospect-preview-safe-failure {
+  align-items: flex-start;
+  background: #f7f8f6;
+  color: #17211d;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+  min-height: min(42rem, 100svh);
+  padding: clamp(2rem, 8vw, 6rem);
+}
+
+.prospect-preview-safe-failure > * {
+  margin: 0;
+  max-width: 42rem;
+}
+
+.prospect-preview-safe-failure > span {
+  color: #52625b;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.prospect-preview-safe-failure h1 {
+  font-size: clamp(2rem, 6vw, 4.5rem);
+  line-height: 0.98;
+}
+
+.prospect-preview-safe-failure p {
+  color: #52625b;
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .prospect-preview-site {
     scroll-behavior: auto;

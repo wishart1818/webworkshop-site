@@ -2,11 +2,13 @@
 
 import React, { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { EmptyState } from "@/components/engine/EngineStates";
+import { PreviewRenderBoundary } from "@/components/engine/PreviewRenderBoundary";
 import { explainProspectBucket } from "@/lib/prospect-funnel";
 import {
   activity,
   displayStateCode,
   displayTradeCategory,
+  generatePreview,
   previewStyleProfile,
   PREVIEW_GENERATOR_VERSION,
   OUTREACH_COPY_VERSION,
@@ -26,6 +28,7 @@ import {
   type ScoreKey,
 } from "@/lib/prospect-engine";
 import { resolvePreviewImages } from "@/lib/preview-image-resolver";
+import { normalizePreviewForRender } from "@/lib/preview-compatibility";
 import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
 import { calculateNoWebsitePresenceScores } from "@/lib/top-prospects";
 
@@ -894,7 +897,12 @@ export function ProspectDetail({
           ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
-          ? <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} onReviewOutreach={() => setDetailTab("Outreach")} previewRegenerating={previewRegenerating} previewImprovementSignal={Math.max(previewImprovementSignal, localPreviewImprovementSignal)} publicPreviewUrl={publicPreviewUrl} />
+          ? <PreviewRenderBoundary
+              fallback={<PreviewWorkspaceFailure onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} publicPreviewUrl={publicPreviewUrl} prospect={prospect} />}
+              resetKey={`${prospect.id}:${prospect.preview.generatedAt ?? "legacy"}`}
+            >
+              <PreviewView prospect={prospect} onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={openPublicPreview} onRegeneratePreview={onRegeneratePreview} onReviewOutreach={() => setDetailTab("Outreach")} previewRegenerating={previewRegenerating} previewImprovementSignal={Math.max(previewImprovementSignal, localPreviewImprovementSignal)} publicPreviewUrl={publicPreviewUrl} />
+            </PreviewRenderBoundary>
           : <EmptyState title="No preview concept yet" body="Create a contractor-specific page structure, visual direction, trust strategy, and lead-capture plan." action={onPreview} actionLabel="Generate preview concept" />)}
         {detailTab === "Activity" && <ActivityView prospect={prospect} note={note} setNote={setNote} addNote={addNote} />}
         {detailTab === "Details" && <DetailsView prospect={prospect} />}
@@ -1165,6 +1173,30 @@ function DraftSection({ approved, copied, label, onCopy, value }: {
   );
 }
 
+function PreviewWorkspaceFailure({
+  onCreateReviewPackage,
+  onOpenPublicPreview,
+  prospect,
+  publicPreviewUrl,
+}: {
+  onCreateReviewPackage: () => Promise<void>;
+  onOpenPublicPreview: () => void;
+  prospect: Prospect;
+  publicPreviewUrl: string;
+}) {
+  return (
+    <section className="engine-empty" role="alert">
+      <span>Preview unavailable</span>
+      <h3>{prospect.businessName} preview could not be displayed</h3>
+      <p>The saved preview was retained. Create or refresh the review package to repair it safely. Nothing was sent.</p>
+      <div className="engine-row-actions">
+        <button className="engine-button engine-button--primary" onClick={() => void onCreateReviewPackage()} type="button">Create/Refresh Review Package</button>
+        {publicPreviewUrl ? <button className="engine-button" onClick={onOpenPublicPreview} type="button">Open Public Preview</button> : null}
+      </div>
+    </section>
+  );
+}
+
 function PreviewView({
   prospect,
   onCreateReviewPackage,
@@ -1184,7 +1216,9 @@ function PreviewView({
   previewImprovementSignal: number;
   publicPreviewUrl: string;
 }) {
-  const preview = prospect.preview!;
+  const compatibility = normalizePreviewForRender(prospect, prospect.preview);
+  const preview = compatibility.ok ? compatibility.preview : generatePreview(prospect);
+  const previewProspect = compatibility.ok ? { ...prospect, preview } : prospect;
   const [feedback, setFeedback] = useState("");
   const [improvementPanelOpen, setImprovementPanelOpen] = useState(false);
   const [selectedImprovements, setSelectedImprovements] = useState<string[]>([]);
@@ -1202,7 +1236,7 @@ function PreviewView({
     ? preview.serviceHierarchy.map(({ title, description }) => ({ title, description }))
     : (preview.serviceHighlights?.length ? preview.serviceHighlights : [displayTradeCategory(prospect.trade)])
       .map((title) => ({ title, description: `Request an estimate for ${title.toLowerCase()}.` }));
-  const imageSet = prospect.preview?.resolvedImages ?? resolvePreviewImages(prospect, services);
+  const imageSet = preview.resolvedImages ?? resolvePreviewImages(prospect, services);
   const imageSummary = [
     imageSet.hero,
     ...imageSet.services,
@@ -1211,10 +1245,19 @@ function PreviewView({
     imageSet.process,
     imageSet.cta,
   ];
-  const sendWorthiness = evaluatePreviewSendWorthiness(prospect, {
+  const sendWorthiness = compatibility.ok ? evaluatePreviewSendWorthiness(previewProspect, {
     publicPreviewUrl,
     publicPreviewVerified: Boolean(publicPreviewUrl),
-  });
+  }) : {
+    verdict: "blocked" as const,
+    label: "BLOCKED" as const,
+    description: "Do not send. The saved preview could not be displayed safely.",
+    primaryWarning: compatibility.message,
+    nextAction: "Resolve Issue" as const,
+    freshness: "Not available",
+    resolvedImageCount: 0,
+    warnings: [compatibility.message],
+  };
   const palette = [
     ["Primary", styleProfile.primaryColor],
     ["Accent", styleProfile.accentColor],
@@ -1296,6 +1339,10 @@ function PreviewView({
     : sendWorthiness.verdict === "send_worthy"
       ? { label: "Review Outreach", action: onReviewOutreach, disabled: false }
       : { label: busy ? "Regenerating preview..." : sendWorthiness.nextAction, action: () => openImprovementPanel(), disabled: busy };
+
+  if (!compatibility.ok) {
+    return <PreviewWorkspaceFailure onCreateReviewPackage={onCreateReviewPackage} onOpenPublicPreview={onOpenPublicPreview} prospect={prospect} publicPreviewUrl={publicPreviewUrl} />;
+  }
 
   return (
     <div className="engine-stack">

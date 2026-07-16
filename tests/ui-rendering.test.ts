@@ -13,6 +13,7 @@ import { ProspectDetail, buildFullPreviewReviewPrompt, isSafePublicPreviewPath, 
 import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, validatePreviewImages } from "../lib/preview-image-resolver";
 import { extractPreviewBusinessResearch } from "../lib/preview-business-research";
+import { normalizePreviewForRender } from "../lib/preview-compatibility";
 import { evaluatePreviewSendWorthiness } from "../lib/preview-send-worthiness";
 import { recommendedMarketPresets } from "../lib/top-prospects";
 
@@ -51,6 +52,110 @@ function renderDetail(prospect: Prospect, detailTab: DetailTab) {
     updateSelected: () => undefined,
   }));
 }
+
+function legacyPreviewFixture() {
+  const prospect = withPreview({
+    ...structuredClone(seedProspects[0]),
+    id: "legacy-preview-before-0da5c17",
+    businessName: "Legacy Roofing Preview",
+  });
+  const preview = structuredClone(prospect.preview!);
+  const imageSet = preview.resolvedImages as unknown as Record<string, unknown>;
+  delete imageSet.heroCandidates;
+  delete imageSet.omittedAssets;
+  for (const image of [imageSet.hero, ...((imageSet.services as unknown[]) ?? []), ...((imageSet.gallery as unknown[]) ?? [])]) {
+    if (!image || typeof image !== "object") continue;
+    delete (image as Record<string, unknown>).semanticStatus;
+    delete (image as Record<string, unknown>).semanticReasons;
+    delete (image as Record<string, unknown>).metadata;
+  }
+  delete preview.serviceHierarchy;
+  delete preview.serviceFidelity;
+  delete preview.visualAssetQa;
+  const renderPlan = preview.renderPlan as unknown as Record<string, unknown>;
+  delete renderPlan.pageMode;
+  delete renderPlan.copyStrategy;
+  prospect.preview = preview;
+  return prospect;
+}
+
+test("legacy preview normalization restores post-0da5c17 fields without mutating saved JSON", () => {
+  const prospect = legacyPreviewFixture();
+  const before = structuredClone(prospect.preview);
+  const heroSrc = prospect.preview!.resolvedImages!.hero.src;
+  const compatibility = normalizePreviewForRender(prospect, prospect.preview);
+
+  assert.equal(compatibility.ok, true);
+  if (!compatibility.ok) return;
+  assert.equal(compatibility.preview.resolvedImages?.hero.src, heroSrc);
+  assert.deepEqual(compatibility.preview.resolvedImages?.heroCandidates.map((image) => image.src), [heroSrc]);
+  assert.deepEqual(compatibility.preview.resolvedImages?.omittedAssets, []);
+  assert.ok(compatibility.preview.resolvedImages?.hero.semanticStatus);
+  assert.ok(compatibility.preview.resolvedImages?.hero.metadata);
+  assert.equal(compatibility.preview.serviceHierarchy, undefined);
+  assert.ok(compatibility.preview.renderPlan?.pageMode);
+  assert.ok(compatibility.preview.renderPlan?.copyStrategy);
+  assert.deepEqual(prospect.preview, before);
+});
+
+test("legacy preview renders through public and internal Preview surfaces", () => {
+  const prospect = legacyPreviewFixture();
+  const publicHtml = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    publicView: true,
+    savedPreview: prospect.preview,
+  }));
+  const internalHtml = renderDetail(prospect, "Preview");
+
+  assert.match(publicHtml, /Legacy Roofing Preview/);
+  assert.match(publicHtml, /data-preview-access="public"/);
+  assert.doesNotMatch(publicHtml, /Preview unavailable|could not be displayed/);
+  assert.match(internalHtml, /Preview send-worthiness verdict|Preview quality check/);
+  assert.doesNotMatch(internalHtml, /preview could not be displayed/);
+});
+
+test("legacy preview send-worthiness remains safe and view-only", () => {
+  const prospect = legacyPreviewFixture();
+  const before = structuredClone(prospect);
+  const result = evaluatePreviewSendWorthiness(prospect, {
+    publicPreviewUrl: "/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+    publicPreviewVerified: true,
+  });
+
+  assert.notEqual(result.description, "Do not send. The saved preview could not be displayed safely.");
+  assert.deepEqual(prospect, before);
+});
+
+test("current preview keeps hero candidates and fidelity gates after compatibility normalization", () => {
+  const prospect = withPreview(structuredClone(seedProspects[0]));
+  const compatibility = normalizePreviewForRender(prospect, prospect.preview);
+
+  assert.equal(compatibility.ok, true);
+  if (!compatibility.ok) return;
+  assert.deepEqual(
+    compatibility.preview.resolvedImages?.heroCandidates.map((image) => image.src),
+    prospect.preview?.resolvedImages?.heroCandidates.map((image) => image.src),
+  );
+  assert.equal(compatibility.preview.serviceFidelity?.status, prospect.preview?.serviceFidelity?.status);
+  assert.deepEqual(compatibility.preview.visualAssetQa?.criticalFailures, prospect.preview?.visualAssetQa?.criticalFailures);
+});
+
+test("malformed preview data produces a contained safe error", () => {
+  const prospect = withPreview(structuredClone(seedProspects[0]));
+  (prospect.preview as unknown as Record<string, unknown>).resolvedImages = "malformed legacy images";
+  const publicHtml = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect,
+    publicView: true,
+    savedPreview: prospect.preview,
+  }));
+  const internalHtml = renderDetail(prospect, "Preview");
+
+  assert.match(publicHtml, /Preview unavailable/);
+  assert.match(publicHtml, /saved preview was retained/i);
+  assert.doesNotMatch(publicHtml, /engine\?|stack|token/i);
+  assert.match(internalHtml, /Create\/Refresh Review Package/);
+  assert.match(internalHtml, /Nothing was sent/);
+});
 
 test("prospect details explain missing public contact data", () => {
   const prospect = { ...structuredClone(seedProspects[1]), phone: "", email: "" };
