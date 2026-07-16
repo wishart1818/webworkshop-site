@@ -7,10 +7,10 @@ import {
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { safeRecordAudit } from "@/lib/operational-controls";
 import { listProspects, saveProspect } from "@/lib/prospect-repository";
-import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, regeneratePreview } from "@/lib/prospect-engine";
+import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason } from "@/lib/prospect-engine";
+import { prepareProspectForPreview } from "@/lib/preview-preparation";
 import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
 import { getPublicProspectPreview } from "@/lib/top-prospect-repository";
-import { researchProspectForPreview } from "@/lib/preview-business-research";
 
 export const dynamic = "force-dynamic";
 
@@ -54,8 +54,8 @@ export async function POST(request: Request) {
         await safeRecordAudit({ action: "prospect_preview_regenerate", outcome: "rejected", subject: payload.prospectId, metadata: { reason: blockReason } });
         return NextResponse.json({ error: `Preview regeneration blocked: ${blockReason}.` }, { status: 409 });
       }
-      const researchedProspect = await researchProspectForPreview(prospect);
-      const updated = regeneratePreview(researchedProspect, payload.feedback ?? "");
+      const preparation = await prepareProspectForPreview(prospect, { mode: "regenerate", feedback: payload.feedback ?? "" });
+      const updated = preparation.prospect;
       const preflightVerdict = evaluatePreviewSendWorthiness(updated, {
         publicPreviewUrl: "/p/abcdefghijklmnopqrstuvwxyzABCDEF",
         publicPreviewVerified: true,
@@ -115,6 +115,7 @@ export async function POST(request: Request) {
           previewVersion: PREVIEW_GENERATOR_VERSION,
           queueItemId: queueItem?.id ?? "",
           feedbackProvided: Boolean(payload.feedback?.trim()),
+          researchStatus: preparation.researchStatus,
           previewVerdict: previewVerdict.label,
           resolvedImageCount: previewVerdict.resolvedImageCount,
           publicPreviewVerified,

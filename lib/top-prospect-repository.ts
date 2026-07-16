@@ -22,13 +22,13 @@ import {
   normalizeTopProspectWorkflowType,
   parseTopProspectCityTargets,
   outreachPackageActionAllowed,
-  prepareTopProspectArtifacts,
   publicProspectPreviewLink,
   topProspectNextRunRecommendations,
   topProspectResultBucket,
   topProspectResultDisposition,
   validPublicPreviewToken,
 } from "@/lib/top-prospects";
+import { prepareTopProspectArtifactsWithResearch } from "@/lib/top-prospect-preview-preparation";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const resultInclude = { prospect: true } satisfies Prisma.TopProspectResultInclude;
@@ -416,7 +416,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
 
   if (action === "generate") {
     const publicPreviewToken = result.publicPreviewToken ?? createPublicPreviewToken();
-    const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken), normalizeOutreachPreference(result.job?.outreachPreference));
+    const prepared = await prepareTopProspectArtifactsWithResearch(prospect, publicProspectPreviewLink(publicPreviewToken), normalizeOutreachPreference(result.job?.outreachPreference));
     const saved = await saveProspect({
       ...prepared.prospect,
       activities: [

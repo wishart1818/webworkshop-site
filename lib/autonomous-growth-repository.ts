@@ -37,13 +37,15 @@ import {
   type OutreachQueueStatus,
   type SmartRunSummary,
 } from "@/lib/autonomous-growth";
-import { activity, createProspect, generateOutreach, normalizeTradeCategory, prospectWrittenContactMethodIsUsable, withPreview, type Prospect } from "@/lib/prospect-engine";
+import { activity, createProspect, generateOutreach, normalizeTradeCategory, prospectWrittenContactMethodIsUsable, type Prospect } from "@/lib/prospect-engine";
+import { prepareProspectForPreview } from "@/lib/preview-preparation";
 import { getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
-import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, type OutreachPreference } from "@/lib/top-prospects";
+import { evaluateOutreachEmailQuality, publicProspectPreviewLink, type OutreachPreference } from "@/lib/top-prospects";
+import { prepareTopProspectArtifactsWithResearch } from "@/lib/top-prospect-preview-preparation";
 import {
   attachAutopilotRunReport,
   buildAutopilotDashboard,
@@ -441,7 +443,7 @@ async function syncTopProspectResultIntoQueue(
   const previewLink = topProspectHasPublicPreview(result.previewLink)
     ? result.previewLink
     : publicProspectPreviewLink(createPublicPreviewToken());
-  const prepared = prepareTopProspectArtifacts(result.prospect, previewLink, outreachPreference);
+  const prepared = await prepareTopProspectArtifactsWithResearch(result.prospect, previewLink, outreachPreference);
   const saved = hasDatabase
     ? await saveProspect(prepared.prospect)
     : prepared.prospect;
@@ -1640,7 +1642,7 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
   if (!prospect) return null;
   const previewInfo = await publicPreviewForProspect(prospect.id);
   const nowIso = new Date().toISOString();
-  const prospectWithPreview = prospect.preview ? prospect : withPreview(prospect);
+  const prospectWithPreview = prospect.preview ? prospect : (await prepareProspectForPreview(prospect)).prospect;
   const outreach = {
     ...generateOutreach(prospectWithPreview, previewInfo.previewLink),
     approved: false,

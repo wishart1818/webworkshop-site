@@ -1136,7 +1136,12 @@ export function generateWebsiteBuildPrompt(prospect: Prospect, assessment: Oppor
   ].join("\n\n");
 }
 
-export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: string, outreachPreference: OutreachPreference = "written_only") {
+export function prepareTopProspectArtifactsFromPreview(
+  prospect: Prospect,
+  preview: NonNullable<Prospect["preview"]>,
+  previewLink: string,
+  outreachPreference: OutreachPreference,
+) {
   if (!isPublicPreviewLink(previewLink)) {
     throw new Error("A public /p/ preview link is required before generating prospect-facing outreach artifacts.");
   }
@@ -1144,7 +1149,7 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
   let withArtifacts = {
     ...prospect,
     outreach,
-    preview: generatePreview(prospect),
+    preview,
   };
   let emailQuality = evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference);
   if (emailQuality.readinessLabel === "Unsupported claim") {
@@ -1162,6 +1167,10 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
     previewLink,
     emailQuality,
   };
+}
+
+export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: string, outreachPreference: OutreachPreference = "written_only") {
+  return prepareTopProspectArtifactsFromPreview(prospect, generatePreview(prospect), previewLink, outreachPreference);
 }
 
 const stateCodePattern = /^[A-Za-z]{2}$/;

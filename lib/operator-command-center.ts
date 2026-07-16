@@ -7,7 +7,8 @@ import { createOrRefreshAutonomousReviewPackageForProspect, getAutonomousGrowthD
 import { autonomousGrowthModes, type AutonomousGrowthMode, type AutonomousGrowthSettings } from "@/lib/autonomous-growth";
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { listProspects, saveProspect } from "@/lib/prospect-repository";
-import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, regeneratePreview, type Prospect } from "@/lib/prospect-engine";
+import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, type Prospect } from "@/lib/prospect-engine";
+import { prepareProspectForPreview } from "@/lib/preview-preparation";
 import { prospectCurrentBucket } from "@/lib/prospect-funnel";
 
 export const operatorCommandTypes = [
@@ -995,30 +996,30 @@ export async function executeOperatorCommand(commandText: string, options: { mod
             relatedProspectIds: [prospect.id],
           });
         } else {
-        const updated = regeneratePreview(prospect, previewSafeFeedback(preview.parsedParameters.FEEDBACK));
-        const saved = await saveProspect(updated);
-        const queueItem = await createOrRefreshAutonomousReviewPackageForProspect(saved.id);
-        receipt = makeReceipt({
-          commandText: preview.commandText,
-          commandType: preview.commandType,
-          status: "completed",
-          confirmedAt: new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          plannedActions: preview.plannedActions,
-          whatChanged: [
-            `Preview regenerated for ${saved.businessName}.`,
-            `Generator: ${PREVIEW_GENERATOR_VERSION}.`,
-            `QA score: ${saved.preview?.qualityScore?.overall ?? "N/A"}.`,
-            `QA status: ${saved.preview?.qualityScore?.status ?? "Not scored"}.`,
-            queueItem ? `Linked unsent review package refreshed: ${queueItem.id}.` : "No eligible linked review package was refreshed.",
-          ],
-          whatDidNotChange: ["Public preview record identity was retained.", "No outreach was sent.", "Contact/suppression/sent history was not rewritten."],
-          recordsAffected: 1,
-          testsTriggered: [],
-          nextRecommendedAction: "Open the Prospect Preview tab and inspect the public preview.",
-          relatedPage: "Prospects",
-          relatedProspectIds: [saved.id],
-        });
+          const preparedPreview = await prepareProspectForPreview(prospect, { mode: "regenerate", feedback: previewSafeFeedback(preview.parsedParameters.FEEDBACK) });
+          const saved = await saveProspect(preparedPreview.prospect);
+          const queueItem = await createOrRefreshAutonomousReviewPackageForProspect(saved.id);
+          receipt = makeReceipt({
+            commandText: preview.commandText,
+            commandType: preview.commandType,
+            status: "completed",
+            confirmedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            plannedActions: preview.plannedActions,
+            whatChanged: [
+              `Preview regenerated for ${saved.businessName}.`,
+              `Generator: ${PREVIEW_GENERATOR_VERSION}.`,
+              `QA score: ${saved.preview?.qualityScore?.overall ?? "N/A"}.`,
+              `QA status: ${saved.preview?.qualityScore?.status ?? "Not scored"}.`,
+              queueItem ? `Linked unsent review package refreshed: ${queueItem.id}.` : "No eligible linked review package was refreshed.",
+            ],
+            whatDidNotChange: ["Public preview record identity was retained.", "No outreach was sent.", "Contact/suppression/sent history was not rewritten."],
+            recordsAffected: 1,
+            testsTriggered: [],
+            nextRecommendedAction: "Open the Prospect Preview tab and inspect the public preview.",
+            relatedPage: "Prospects",
+            relatedProspectIds: [saved.id],
+          });
         }
       }
     } else if (preview.commandType === "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS") {
@@ -1029,8 +1030,8 @@ export async function executeOperatorCommand(commandText: string, options: { mod
       const failed: string[] = [];
       for (const row of summary.eligible) {
         try {
-          const updated = regeneratePreview(row.prospect);
-          const saved = await saveProspect(updated);
+          const preparedPreview = await prepareProspectForPreview(row.prospect, { mode: "regenerate" });
+          const saved = await saveProspect(preparedPreview.prospect);
           regenerated.push(saved.businessName);
         } catch (error) {
           failed.push(`${row.prospect.businessName}: ${safeOperatorText(error instanceof Error ? error.message : "safe failure")}`);

@@ -166,6 +166,7 @@ export type PreviewConcept = {
   previewVersion?: "v2" | "v3";
   creativeBrief?: PreviewCreativeBrief;
   businessProfile?: PreviewBusinessProfile;
+  renderPlan?: PreviewRenderPlan;
   regenerationFeedbackHistory?: string[];
   layoutDirection?: PreviewLayoutDirection;
   resolvedImages?: PreviewImageSet;
@@ -196,6 +197,57 @@ export type PreviewLayoutDirection =
   | "light-editorial"
   | "bold-local-service";
 
+export type PreviewDesignDirection = "service-command" | "project-showcase" | "trust-led-local";
+
+export type PreviewSectionId =
+  | "hero"
+  | "trust"
+  | "services"
+  | "featured-service"
+  | "project-proof"
+  | "gallery"
+  | "process"
+  | "service-area"
+  | "faq"
+  | "final-cta"
+  | "footer";
+
+export type PreviewSectionDecision = {
+  id: PreviewSectionId;
+  status: "required" | "optional" | "omitted";
+  reason: string;
+};
+
+export type PreviewRenderPlan = {
+  version: "render-plan-v1";
+  direction: PreviewDesignDirection;
+  selectionRationale: string;
+  heroVariant: "compact-service" | "image-led" | "local-proof";
+  servicePresentation: "balanced-grid" | "featured-plus-secondary" | "compact-list" | "image-led-services" | "alternating-service-spotlights";
+  orderedSections: PreviewSectionId[];
+  sectionDecisions: PreviewSectionDecision[];
+  density: "compact" | "balanced" | "spacious";
+  imageStrategy: "business-photo-led" | "trade-photo-led" | "restrained-imagery";
+  trustStrategy: "verified-proof" | "compact-local-facts" | "contact-first";
+  ctaStrategy: {
+    label: string;
+    phonePriority: boolean;
+    placement: "header-and-hero" | "hero-and-final" | "persistent";
+  };
+  headerTreatment: "official-logo" | "structured-wordmark" | "compact-wordmark";
+  mobilePriorities: string[];
+  avoidPatterns: string[];
+  inputs: {
+    usableImageCount: number;
+    businessPhotoCount: number;
+    verifiedServiceCount: number;
+    verifiedTrustFactCount: number;
+    officialLogoAvailable: boolean;
+    verifiedBrandColorsAvailable: boolean;
+    usableContactPath: boolean;
+  };
+};
+
 export type PreviewCreativeBrief = {
   businessName: string;
   trade: TradeCategory;
@@ -212,7 +264,7 @@ export type PreviewCreativeBrief = {
   logoStatus: "not available" | "available";
   logoSource: "not found" | "website" | "business asset" | "operator supplied";
   brandColorSource: PreviewStyleProfile["brandSource"];
-  brandingSource: "detected cue" | "trade fallback";
+  brandingSource: "verified official source" | "inferred cue" | "detected cue" | "trade fallback";
   imagerySource: "curated stock photo library" | "trade photo library" | "business assets" | "configured stock provider";
   reviewSignal: "not used" | "public rating count only";
   factualPublicProof: string[];
@@ -230,11 +282,19 @@ export type PreviewCreativeBrief = {
 
 export type PreviewFactConfidence = "verified" | "inferred" | "unavailable";
 
+export type PreviewFactProvenance =
+  | "verified official source"
+  | "verified provider source"
+  | "inferred creative direction"
+  | "trade fallback"
+  | "unavailable";
+
 export type PreviewResearchFact = {
   label: string;
   value: string;
   source: string;
   confidence: PreviewFactConfidence;
+  provenance?: PreviewFactProvenance;
 };
 
 export type PreviewBusinessProfile = {
@@ -255,6 +315,7 @@ export type PreviewBusinessProfile = {
     url: string;
     source: "website" | "business asset" | "operator supplied" | "social profile" | "wordmark fallback";
     confidence: PreviewFactConfidence;
+    provenance?: PreviewFactProvenance;
     note: string;
   };
   businessPhotoSources: PreviewResearchFact[];
@@ -267,6 +328,8 @@ export type PreviewBusinessProfile = {
   sourceFacts: PreviewResearchFact[];
   confidenceSummary: string;
   uncertainFactsExcluded: string[];
+  researchStatus?: "succeeded" | "timed_out" | "failed" | "not_applicable";
+  researchNote?: string;
 };
 
 export type PreviewQualityScore = {
@@ -309,7 +372,7 @@ export type PreviewStyleProfile = {
   layoutStyle: "trust-led" | "service-led" | "project-led" | "clean-split";
   ctaLabel: string;
   styleReason: string;
-  brandSource: "business-name cue" | "website-domain cue" | "trade fallback";
+  brandSource: "official website" | "business-name cue" | "website-domain cue" | "trade fallback";
 };
 
 export type PreviewArtDirection = {
@@ -650,7 +713,9 @@ function previewCta(prospect: Prospect) {
 export function generateProspectStyleProfile(prospect: Prospect): PreviewStyleProfile {
   const hostname = websiteHostname(prospect.website);
   const record = prospectRecord(prospect);
-  const researchedColors = stringListFromUnknown(record.previewBrandColors).filter((color) => /^#[0-9a-f]{6}$/i.test(color));
+  const researchedColors = record.previewResearchVerified === true
+    ? stringListFromUnknown(record.previewBrandColors).filter((color) => /^#[0-9a-f]{6}$/i.test(color))
+    : [];
   const nameCue = brandCuePalettes.find(({ pattern }) => pattern.test(prospect.businessName));
   const domainCue = nameCue
     ? undefined
@@ -673,7 +738,7 @@ export function generateProspectStyleProfile(prospect: Prospect): PreviewStylePr
     : tone === "local-family"
       ? { typographyStyle: "Friendly humanist sans-serif with approachable, sturdy headings", headingFont: "'Trebuchet MS', Arial, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" }
       : { typographyStyle: "Clear, sturdy sans-serif with compact high-trust headings", headingFont: "Arial, Helvetica, sans-serif", bodyFont: "Arial, Helvetica, sans-serif" };
-  const brandSource: PreviewStyleProfile["brandSource"] = researchedColors[0] ? "website-domain cue" : nameCue ? "business-name cue" : domainCue ? "website-domain cue" : "trade fallback";
+  const brandSource: PreviewStyleProfile["brandSource"] = researchedColors[0] ? "official website" : nameCue ? "business-name cue" : domainCue ? "website-domain cue" : "trade fallback";
   const reason = researchedColors[0]
     ? `Colors extracted from the official ${hostname || "business"} website informed the palette; the ${displayTradeCategory(trade).toLowerCase()} category informed the layout and service treatment.`
     : selectedCue
@@ -726,7 +791,7 @@ function previewArtDirection(prospect: Prospect, styleProfile: PreviewStyleProfi
   const voiceByTone: Record<PreviewStyleProfile["tone"], string> = {
     practical: "sturdy, direct, and easy to hire",
     "modern-practical": "crisp, current, and locally credible",
-    "local-family": "warm, approachable, and owner-operated",
+    "local-family": "warm, approachable, and community-minded",
     "premium-craft": "polished, material-aware, and higher-end",
     "high-trust": "established, proof-forward, and reassuring",
   };
@@ -792,8 +857,22 @@ function previewImageIntentSummary(trade: TradeCategory, services: readonly stri
   ];
 }
 
-function researchFact(label: string, value: string, source: string, confidence: PreviewFactConfidence): PreviewResearchFact {
-  return { label, value: value.trim(), source, confidence };
+function factProvenance(source: string, confidence: PreviewFactConfidence): PreviewFactProvenance {
+  if (confidence === "unavailable") return "unavailable";
+  if (/official website|business asset|operator supplied/i.test(source) && confidence === "verified") return "verified official source";
+  if (/provider|contact discovery|prospect record|website scan|discovery/i.test(source) && confidence === "verified") return "verified provider source";
+  if (/fallback/i.test(source)) return "trade fallback";
+  return "inferred creative direction";
+}
+
+function researchFact(
+  label: string,
+  value: string,
+  source: string,
+  confidence: PreviewFactConfidence,
+  provenance: PreviewFactProvenance = factProvenance(source, confidence),
+): PreviewResearchFact {
+  return { label, value: value.trim(), source, confidence, provenance };
 }
 
 function safePublicAssetUrl(value: unknown) {
@@ -841,6 +920,9 @@ function prospectLogo(prospect: Prospect): PreviewBusinessProfile["logo"] {
         url,
         source: candidate.source,
         confidence: candidate.source === "operator supplied" || (candidate.source === "website" && record.previewResearchVerified === true) ? "verified" : "inferred",
+        provenance: candidate.source === "operator supplied" || (candidate.source === "website" && record.previewResearchVerified === true)
+          ? "verified official source"
+          : "inferred creative direction",
         note: `Logo/profile image detected from ${candidate.source}.`,
       };
     }
@@ -850,6 +932,7 @@ function prospectLogo(prospect: Prospect): PreviewBusinessProfile["logo"] {
     url: "",
     source: "wordmark fallback",
     confidence: "unavailable",
+    provenance: "trade fallback",
     note: "No legitimate logo asset was available, so the preview uses a text wordmark instead of inventing a logo.",
   };
 }
@@ -879,16 +962,29 @@ function previewResearchFacts(prospect: Prospect) {
     const record = item as Record<string, unknown>;
     if (typeof record.label !== "string" || typeof record.value !== "string" || typeof record.source !== "string") return [];
     const confidence = record.confidence === "verified" || record.confidence === "inferred" || record.confidence === "unavailable" ? record.confidence : "inferred";
-    return [researchFact(record.label, record.value, record.source, confidence)];
+    const provenance = record.provenance === "verified official source"
+      || record.provenance === "verified provider source"
+      || record.provenance === "inferred creative direction"
+      || record.provenance === "trade fallback"
+      || record.provenance === "unavailable"
+      ? record.provenance
+      : factProvenance(record.source, confidence);
+    return [researchFact(record.label, record.value, record.source, confidence, provenance)];
   }).slice(0, 18);
 }
 
 function detectedBrandColorFacts(styleProfile: PreviewStyleProfile): PreviewResearchFact[] {
-  const confidence: PreviewFactConfidence = styleProfile.brandSource === "trade fallback" ? "inferred" : "verified";
+  const verified = styleProfile.brandSource === "official website";
+  const confidence: PreviewFactConfidence = verified ? "verified" : "inferred";
+  const provenance: PreviewFactProvenance = verified
+    ? "verified official source"
+    : styleProfile.brandSource === "trade fallback"
+      ? "trade fallback"
+      : "inferred creative direction";
   return [
-    researchFact("Primary color", styleProfile.primaryColor, styleProfile.brandSource, confidence),
-    researchFact("Accent color", styleProfile.accentColor, styleProfile.brandSource, confidence),
-    researchFact("Surface color", styleProfile.surfaceColor, styleProfile.brandSource, confidence),
+    researchFact("Primary color", styleProfile.primaryColor, styleProfile.brandSource, confidence, provenance),
+    researchFact("Accent color", styleProfile.accentColor, styleProfile.brandSource, confidence, provenance),
+    researchFact("Surface color", styleProfile.surfaceColor, styleProfile.brandSource, confidence, provenance),
   ];
 }
 
@@ -921,13 +1017,17 @@ function previewWeaknessFacts(prospect: Prospect, noWebsiteProspect: boolean): P
 }
 
 function businessDifferentiatorFacts(prospect: Prospect): PreviewResearchFact[] {
+  const coherentReviewProof = Number.isFinite(prospect.rating)
+    && prospect.rating >= 1
+    && prospect.rating <= 5
+    && Number.isInteger(prospect.reviewCount)
+    && prospect.reviewCount > 0;
   const facts = [
     prospect.phone ? researchFact("Direct phone", prospect.phone, "provider/contact discovery", "verified") : null,
     prospect.email ? researchFact("Public email", prospect.email, "website/contact discovery", "verified") : null,
     prospect.quoteFormDetected ? researchFact("Quote form", prospect.quoteFormUrl || "Quote form detected", "website scan", "verified") : null,
     prospect.contactFormDetected ? researchFact("Contact form", prospect.contactFormUrl || "Contact form detected", "website scan", "verified") : null,
-    prospect.reviewCount > 0 ? researchFact("Public review count", `${prospect.reviewCount} reviews recorded`, "provider result", "verified") : null,
-    prospect.rating > 0 ? researchFact("Public rating", `${prospect.rating} rating recorded`, "provider result", "verified") : null,
+    coherentReviewProof ? researchFact("Public rating", `${prospect.rating.toFixed(1)} from ${prospect.reviewCount} public reviews`, "provider result", "verified") : null,
     prospect.address ? researchFact("Public address", prospect.address, "provider result", "verified") : null,
   ].filter((item): item is PreviewResearchFact => Boolean(item));
   return facts.slice(0, 8);
@@ -935,9 +1035,9 @@ function businessDifferentiatorFacts(prospect: Prospect): PreviewResearchFact[] 
 
 function reviewThemeFacts(prospect: Prospect): PreviewResearchFact[] {
   const themes = prospect.activitySignals.filter((signal) => /review|recent|rating|active|photo/i.test(signal)).slice(0, 3);
-  if (themes.length) return themes.map((theme) => researchFact("Public activity signal", theme, "provider/activity signal", "inferred"));
-  if (prospect.reviewCount > 0) {
-    return [researchFact("Review signal", `${prospect.reviewCount} public reviews are recorded. No review text is quoted or invented.`, "provider result", "verified")];
+  if (themes.length) return themes.map((theme) => researchFact("Public activity signal", theme, "provider/activity signal", "inferred", "inferred creative direction"));
+  if (prospect.rating >= 1 && prospect.rating <= 5 && Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0) {
+    return [researchFact("Review signal", `${prospect.rating.toFixed(1)} from ${prospect.reviewCount} public reviews`, "provider result", "verified")];
   }
   return [];
 }
@@ -965,12 +1065,42 @@ function buildPreviewBusinessProfile(
   const differentiators = businessDifferentiatorFacts(prospect);
   const researchedFacts = previewResearchFacts(prospect);
   const websiteWeaknesses = previewWeaknessFacts(prospect, noWebsiteProspect);
+  const record = prospectRecord(prospect);
+  const researchStatus = record.previewResearchStatus === "succeeded"
+    || record.previewResearchStatus === "timed_out"
+    || record.previewResearchStatus === "failed"
+    || record.previewResearchStatus === "not_applicable"
+    ? record.previewResearchStatus
+    : record.previewResearchVerified === true
+      ? "succeeded"
+      : prospect.website
+        ? "failed"
+        : "not_applicable";
+  const researchNote = typeof record.previewResearchNote === "string" && record.previewResearchNote.trim()
+    ? record.previewResearchNote.trim()
+    : researchStatus === "succeeded"
+      ? "Official website research completed."
+      : researchStatus === "timed_out"
+        ? "Official website research reached its time limit; provider facts and honest fallbacks were retained."
+        : researchStatus === "failed"
+          ? "Official website research was unavailable; provider facts and honest fallbacks were retained."
+          : "No public website was available for bounded research.";
+  const officialWebsiteResearch = researchedFacts.find((fact) => fact.label === "Official website research" && fact.confidence === "verified");
+  const websiteFact = prospect.website
+    ? researchFact(
+        officialWebsiteResearch ? "Official website" : "Provider website",
+        prospect.website,
+        officialWebsiteResearch ? "official website" : "provider result",
+        officialWebsiteResearch ? "verified" : "inferred",
+        officialWebsiteResearch ? "verified official source" : "verified provider source",
+      )
+    : researchFact("Official website", "Not found", "discovery", "unavailable");
   const sourceFacts = [
     researchFact("Business name", prospect.businessName, "provider result", "verified"),
     researchFact("Trade", displayTradeCategory(trade), "provider result", "verified"),
     researchFact("Market", market, "provider result", "verified"),
     researchFact("Service area", serviceArea, prospect.serviceArea ? "prospect record" : "city/state fallback", prospect.serviceArea ? "verified" : "inferred"),
-    prospect.website ? researchFact("Official website", prospect.website, "provider result", "verified") : researchFact("Official website", "Not found", "discovery", "unavailable"),
+    websiteFact,
     ...differentiators,
     ...socialProfiles,
     ...researchedFacts,
@@ -984,16 +1114,20 @@ function buildPreviewBusinessProfile(
       ? researchFact("Phone", prospect.phone, "provider/contact discovery", "verified")
       : researchFact("Phone", "Not confirmed", "contact discovery", "unavailable"),
     verifiedPublicEmailOrContactPath: researchFact("Best contact path", verifiedContactPath(prospect), "contact discovery", verifiedContactPath(prospect) === "not confirmed" ? "unavailable" : "verified"),
-    officialWebsite: prospect.website
-      ? researchFact("Website", prospect.website, "provider result", "verified")
-      : researchFact("Website", "Not found", "discovery", "unavailable"),
+    officialWebsite: websiteFact,
     officialSocialProfiles: socialProfiles,
     customerType: audience,
     verifiedServices: services,
     primaryService: services[0] ?? displayTradeCategory(trade),
     secondaryServices: services.slice(1),
     logo,
-    businessPhotoSources: photoSources.map((photo) => researchFact("Approved business photo", photo, "prospect photo source", "verified")).slice(0, 6),
+    businessPhotoSources: photoSources.map((photo) => researchFact(
+      "Approved business photo",
+      photo,
+      record.previewResearchVerified === true ? "official website" : "prospect photo source",
+      record.previewResearchVerified === true ? "verified" : "inferred",
+      record.previewResearchVerified === true ? "verified official source" : "inferred creative direction",
+    )).slice(0, 6),
     detectedBrandColors: detectedBrandColorFacts(styleProfile),
     brandPersonality: `${styleProfile.tone.replace("-", " ")} contractor style with ${artDirection.visualVoice.toLowerCase()}`,
     recurringPublicReviewThemes: reviewThemeFacts(prospect),
@@ -1001,13 +1135,16 @@ function buildPreviewBusinessProfile(
     currentWebsiteWeaknesses: websiteWeaknesses,
     recommendedDesignDirection: `${artDirection.name}: ${artDirection.visualVoice}`,
     sourceFacts,
-    confidenceSummary: sourceFacts.some((fact) => fact.confidence === "verified")
-      ? "Built from verified provider/contact records plus inferred design choices where branding was unavailable."
-      : "Limited public data was available; the preview avoids unsupported claims and uses trade-specific fallback direction.",
+    confidenceSummary: researchStatus === "succeeded"
+      ? "Built from verified official website research and verified provider/contact records. Inferred design choices remain labeled separately."
+      : "Official website research was unavailable. The preview uses verified provider facts plus clearly inferred or trade-fallback creative direction.",
     uncertainFactsExcluded: [
       "Reviews, testimonials, certifications, insurance, licenses, years in business, guarantees, financing, awards, and project outcomes are excluded unless verified.",
       photoSources.length ? "Business photos are used only when supplied as approved public assets." : "No approved business photos were available, so imagery uses vetted trade-relevant stock or fewer image sections.",
-    ],
+      prospect.reviewCount > 0 !== (prospect.rating > 0) ? "Rating and review-count data were incomplete, so no combined public review proof was used." : "",
+    ].filter(Boolean),
+    researchStatus,
+    researchNote,
   };
 }
 
@@ -1033,16 +1170,145 @@ function businessSpecificHeroHeadline(profile: PreviewBusinessProfile) {
   }
 }
 
-function choosePreviewLayoutDirection(prospect: Prospect, artDirection: PreviewArtDirection): PreviewLayoutDirection {
-  const optionsByHero: Record<PreviewArtDirection["heroTreatment"], PreviewLayoutDirection[]> = {
-    "photo-led-overlap": ["split-photo", "full-bleed-photo", "image-led-grid", "bold-local-service"],
-    "service-command": ["image-led-grid", "split-photo", "light-editorial", "bold-local-service"],
-    "proof-forward": ["full-bleed-photo", "image-led-grid", "dark-premium", "split-photo"],
-    "clean-editorial": ["light-editorial", "split-photo", "image-led-grid", "bold-local-service"],
+const visualProjectTrades = new Set<TradeCategory>(["Pressure Washing", "Landscaping", "Roofing", "Painting", "Remodeling", "Concrete", "Flooring", "Fencing", "Tree Service"]);
+const fastServiceTrades = new Set<TradeCategory>(["HVAC", "Plumbing", "Electrical", "Cleaning"]);
+
+function previewPlanInputs(prospect: Prospect, preview: PreviewConcept): PreviewRenderPlan["inputs"] {
+  const profile = preview.businessProfile;
+  const images = preview.resolvedImages;
+  const allImages = images ? [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta] : [];
+  const dependableSources = new Set(["business-photo", "configured-stock-provider", "curated-stock-photo-library"]);
+  const usableImages = allImages.filter((image) => dependableSources.has(image.source) && isPublicPreviewImageRelevant(image, prospect.trade));
+  const verifiedTrustLabels = new Set(["Direct phone", "Quote form", "Contact form", "Public rating"]);
+  const verifiedTrustFactCount = [
+    ...(profile?.realDifferentiators ?? []).filter((fact) => fact.confidence === "verified" && verifiedTrustLabels.has(fact.label)),
+    ...(profile?.sourceFacts ?? []).filter((fact) => fact.confidence === "verified" && fact.provenance === "verified official source" && fact.label === "Service area"),
+  ].length;
+  return {
+    usableImageCount: new Set(usableImages.map((image) => image.src)).size,
+    businessPhotoCount: new Set(usableImages.filter((image) => image.source === "business-photo").map((image) => image.src)).size,
+    verifiedServiceCount: profile?.verifiedServices.length ?? 0,
+    verifiedTrustFactCount,
+    officialLogoAvailable: profile?.logo.status === "available" && profile.logo.confidence === "verified",
+    verifiedBrandColorsAvailable: Boolean(profile?.detectedBrandColors.some((fact) => fact.confidence === "verified" && fact.provenance === "verified official source")),
+    usableContactPath: Boolean(prospect.phone || prospect.email || prospect.quoteFormDetected || prospect.contactFormDetected || prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl),
   };
-  const options = optionsByHero[artDirection.heroTreatment] ?? ["split-photo", "image-led-grid", "light-editorial"];
-  const index = seededScore(`${prospect.businessName}|${prospect.trade}|${prospect.city}|${artDirection.name}`, options.length);
-  return options[index] ?? "split-photo";
+}
+
+function renderDirectionFor(prospect: Prospect, preview: PreviewConcept, inputs: PreviewRenderPlan["inputs"]): PreviewDesignDirection {
+  const trade = prospectTrade(prospect);
+  const profile = preview.businessProfile;
+  const customerType = profile?.customerType ?? prospectAudience(prospect);
+  const tone = preview.styleProfile?.tone ?? generateProspectStyleProfile(prospect).tone;
+  const projectScore = (visualProjectTrades.has(trade) ? 5 : 0)
+    + (inputs.usableImageCount >= 5 ? 3 : inputs.usableImageCount >= 3 ? 1 : 0)
+    + (inputs.businessPhotoCount >= 3 ? 2 : 0)
+    + (inputs.verifiedServiceCount >= 3 ? 2 : inputs.verifiedServiceCount >= 2 ? 1 : 0)
+    + (customerType !== "commercial" ? 1 : 0)
+    + (tone === "premium-craft" ? 1 : 0);
+  const serviceScore = (fastServiceTrades.has(trade) ? 5 : 0)
+    + (inputs.usableContactPath ? 2 : 0)
+    + (prospect.phone ? 1 : 0)
+    + (inputs.verifiedServiceCount >= 3 ? 3 : inputs.verifiedServiceCount >= 2 ? 1 : 0);
+  const trustScore = (inputs.verifiedTrustFactCount >= 2 ? 4 : inputs.verifiedTrustFactCount ? 1 : 0)
+    + (inputs.usableImageCount <= 2 ? 3 : 0)
+    + (inputs.officialLogoAvailable ? 1 : 0)
+    + (inputs.verifiedBrandColorsAvailable ? 1 : 0)
+    + (tone === "high-trust" || tone === "local-family" ? 1 : 0)
+    + (!visualProjectTrades.has(trade) && !fastServiceTrades.has(trade) ? 2 : 0);
+  const ranked: Array<[PreviewDesignDirection, number]> = [
+    ["project-showcase", projectScore],
+    ["service-command", serviceScore],
+    ["trust-led-local", trustScore],
+  ];
+  return ranked.sort((left, right) => right[1] - left[1])[0][0];
+}
+
+function sectionDecision(id: PreviewSectionId, status: PreviewSectionDecision["status"], reason: string): PreviewSectionDecision {
+  return { id, status, reason };
+}
+
+export function buildPreviewRenderPlan(prospect: Prospect, preview: PreviewConcept): PreviewRenderPlan {
+  const inputs = previewPlanInputs(prospect, preview);
+  const direction = renderDirectionFor(prospect, preview, inputs);
+  const servicePresentation: PreviewRenderPlan["servicePresentation"] = direction === "project-showcase"
+    ? inputs.verifiedServiceCount >= 4 && inputs.usableImageCount >= 5 ? "alternating-service-spotlights" : "image-led-services"
+    : direction === "service-command"
+      ? inputs.verifiedServiceCount >= 3 ? "balanced-grid" : "compact-list"
+      : inputs.verifiedServiceCount >= 3 ? "featured-plus-secondary" : "compact-list";
+  const includeTrust = inputs.verifiedTrustFactCount >= 2;
+  const includeGallery = direction === "project-showcase" && inputs.usableImageCount >= 6;
+  const includeFeaturedService = inputs.verifiedServiceCount >= 2 && direction === "project-showcase";
+  const includeProjectProof = direction === "project-showcase" && inputs.businessPhotoCount >= 2;
+  const includeFaq = inputs.verifiedServiceCount >= 2;
+  const includeProcess = direction === "service-command" || (inputs.verifiedServiceCount >= 2 && inputs.usableContactPath);
+  const decisions: PreviewSectionDecision[] = [
+    sectionDecision("hero", "required", "Every preview needs a clear business identity, service promise, and next action."),
+    sectionDecision("trust", includeTrust ? "optional" : "omitted", includeTrust ? "At least two coherent verified trust facts are available." : "Fewer than two coherent verified trust facts are available."),
+    sectionDecision("services", "required", inputs.verifiedServiceCount ? "Verified service content is available." : "A concise trade-level service summary is used without inventing subservices."),
+    sectionDecision("featured-service", includeFeaturedService ? "optional" : "omitted", includeFeaturedService ? "Visual service content supports a focused feature." : "A featured service would repeat the main service presentation."),
+    sectionDecision("project-proof", includeProjectProof ? "optional" : "omitted", includeProjectProof ? "Multiple approved business photos support a factual project-proof area." : "Approved business project imagery is insufficient."),
+    sectionDecision("gallery", includeGallery ? "optional" : "omitted", includeGallery ? "At least six distinct usable images support a concise gallery." : "Gallery-quality image coverage is insufficient."),
+    sectionDecision("process", includeProcess ? (direction === "service-command" ? "required" : "optional") : "omitted", includeProcess ? "The contact and service flow benefits from a short process." : "A process section would add filler without enough service detail."),
+    sectionDecision("service-area", "required", "Local market context is a verified or clearly labeled provider fact."),
+    sectionDecision("faq", includeFaq ? "optional" : "omitted", includeFaq ? "Multiple verified services support useful customer questions." : "FAQ content would only lengthen the page."),
+    sectionDecision("final-cta", "required", "The page needs one clear estimate or service action."),
+    sectionDecision("footer", "required", "Business identity and service area need a concise close."),
+  ];
+  const orderedSections = decisions.filter((decision) => decision.status !== "omitted").map((decision) => decision.id);
+  const selectionRationale = direction === "project-showcase"
+    ? `Project showcase selected because ${inputs.usableImageCount} distinct usable images and ${inputs.verifiedServiceCount} verified services support a visual service story.`
+    : direction === "service-command"
+      ? `Service command selected because ${inputs.verifiedServiceCount} verified services and a usable contact path support fast service navigation and action.`
+      : `Trust-led local selected because imagery or verified service depth is limited while ${inputs.verifiedTrustFactCount} coherent trust facts can support a concise local page.`;
+  return {
+    version: "render-plan-v1",
+    direction,
+    selectionRationale,
+    heroVariant: direction === "project-showcase" ? "image-led" : direction === "service-command" ? "compact-service" : "local-proof",
+    servicePresentation,
+    orderedSections,
+    sectionDecisions: decisions,
+    density: direction === "service-command" ? "compact" : direction === "project-showcase" ? "spacious" : "balanced",
+    imageStrategy: inputs.businessPhotoCount >= 3 ? "business-photo-led" : inputs.usableImageCount >= 4 ? "trade-photo-led" : "restrained-imagery",
+    trustStrategy: includeTrust ? "verified-proof" : inputs.usableContactPath ? "contact-first" : "compact-local-facts",
+    ctaStrategy: {
+      label: preview.styleProfile?.ctaLabel ?? preview.creativeBrief?.ctaStrategy ?? "Request an estimate",
+      phonePriority: Boolean(prospect.phone),
+      placement: direction === "service-command" ? "persistent" : direction === "project-showcase" ? "hero-and-final" : "header-and-hero",
+    },
+    headerTreatment: inputs.officialLogoAvailable ? "official-logo" : direction === "trust-led-local" ? "compact-wordmark" : "structured-wordmark",
+    mobilePriorities: [
+      "Keep business identity and the primary action visible without horizontal overflow.",
+      direction === "service-command" ? "Stack service navigation and contact actions before supporting content." : "Keep the strongest relevant image near the primary service message.",
+      "Omit sections that do not have enough verified content.",
+    ],
+    avoidPatterns: ["forced gallery", "unsupported trust claims", "repeated filler cards", "empty media panels", "conflicting section-level styles"],
+    inputs,
+  };
+}
+
+function legacyRenderPlan(prospect: Prospect, preview: PreviewConcept): PreviewRenderPlan {
+  const plan = buildPreviewRenderPlan(prospect, preview);
+  const legacySections: PreviewSectionId[] = ["hero", "trust", "services", "featured-service", "process", "service-area", "faq", "final-cta", "footer"];
+  return {
+    ...plan,
+    selectionRationale: "Legacy preview compatibility plan derived at render time without mutating the saved preview.",
+    orderedSections: legacySections,
+    sectionDecisions: legacySections.map((id) => sectionDecision(id, "required", "Preserved for backward-compatible legacy rendering.")),
+    servicePresentation: "balanced-grid",
+    density: "balanced",
+  };
+}
+
+export function previewRenderPlan(prospect: Prospect, preview: PreviewConcept): PreviewRenderPlan {
+  return preview.renderPlan ?? legacyRenderPlan(prospect, preview);
+}
+
+function legacyLayoutDirectionForPlan(plan: PreviewRenderPlan): PreviewLayoutDirection {
+  if (plan.direction === "project-showcase") return "full-bleed-photo";
+  if (plan.direction === "service-command") return "bold-local-service";
+  return "light-editorial";
 }
 
 function boundedQuality(value: number) {
@@ -1650,7 +1916,6 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     ? escapedCity ? prospect.serviceArea.replace(new RegExp(escapedCity, "gi"), displayCity) : prospect.serviceArea
     : `${displayCity}, ${displayState}`;
   const artDirection = previewArtDirection(prospect, styleProfile);
-  const layoutDirection = choosePreviewLayoutDirection(prospect, artDirection);
   const verifiedProofAreas = playbook.trustProof.map((item) => `verified ${item}`).join(", ");
   const contactDetails = [
     prospect.phone ? "phone" : "",
@@ -1678,14 +1943,18 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     "General Contractor": "Thoughtful construction work, from first conversation to finished space.",
   };
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
-  const researchedServices = stringListFromUnknown(prospectRecord(prospect).verifiedPreviewServices).map(titleCase);
-  const services = [...new Set([...researchedServices, ...playbook.services.map(titleCase)])].slice(0, researchedServices.length ? 6 : 3);
+  const record = prospectRecord(prospect);
+  const researchedServices = record.previewResearchVerified === true
+    ? stringListFromUnknown(record.verifiedPreviewServices).map(titleCase)
+    : [];
+  const services = researchedServices.length ? [...new Set(researchedServices)].slice(0, 6) : [displayTrade];
   const businessProfile = buildPreviewBusinessProfile(prospect, styleProfile, services, serviceArea, artDirection, noWebsiteProspect);
+  const coherentReviewProof = prospect.rating >= 1 && prospect.rating <= 5 && Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0;
   const trustItems = [
     `Serving ${businessProfile.primaryMarket}`,
     prospect.phone ? `Call ${prospect.phone}` : businessProfile.verifiedPublicEmailOrContactPath.value !== "not confirmed" ? businessProfile.verifiedPublicEmailOrContactPath.value : "Request an estimate",
-    businessProfile.verifiedServices.slice(0, 3).join(" | "),
-    prospect.reviewCount > 0 && prospect.rating > 0 ? `${prospect.rating.toFixed(1)} rating from ${prospect.reviewCount} public reviews` : "",
+    services.slice(0, 3).join(" | "),
+    coherentReviewProof ? `${prospect.rating.toFixed(1)} rating from ${prospect.reviewCount} public reviews` : "",
   ].filter(Boolean);
   const preview: PreviewConcept = {
     previewVersion: "v3",
@@ -1706,9 +1975,13 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
       logoStatus: businessProfile.logo.status === "available" ? "available" : "not available",
       logoSource: businessProfile.logo.source === "wordmark fallback" || businessProfile.logo.source === "social profile" ? "not found" : businessProfile.logo.source,
       brandColorSource: styleProfile.brandSource,
-      brandingSource: styleProfile.brandSource === "trade fallback" ? "trade fallback" : "detected cue",
+      brandingSource: styleProfile.brandSource === "official website"
+        ? "verified official source"
+        : styleProfile.brandSource === "trade fallback"
+          ? "trade fallback"
+          : "inferred cue",
       imagerySource: businessProfile.businessPhotoSources.length ? "business assets" : "curated stock photo library",
-      reviewSignal: prospect.reviewCount > 0 ? "public rating count only" : "not used",
+      reviewSignal: coherentReviewProof ? "public rating count only" : "not used",
       factualPublicProof: businessProfile.realDifferentiators.map((fact) => `${fact.label}: ${fact.value}`),
       contactDetails: contactDetails.length ? contactDetails : ["contact path not confirmed"],
       businessTone: styleProfile.tone,
@@ -1725,7 +1998,6 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
       ],
       ctaStrategy: artDirection.ctaTreatment,
     },
-    layoutDirection,
     direction: `A research-backed, local-first ${tradeLower} website concept for ${businessProfile.officialBusinessName}: ${businessProfile.recommendedDesignDirection}.`,
     visualStyleDirection: `${styleProfile.name}. ${playbook.visualCue} ${artDirection.imageTreatment} Use ${styleProfile.primaryColor} as the primary brand color and ${styleProfile.accentColor} only for focused emphasis. Keep the public page focused on verified services, service area, approved photos, and supported contact actions.`,
     artDirection,
@@ -1737,7 +2009,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     styleProfile,
     homepageStructure: [
       `${artDirection.heroTreatment.replaceAll("-", " ")} hero with "${styleProfile.ctaLabel}", a strong trade photo, and practical service-area details`,
-      `${playbook.services.join(", ")} organized with distinct service photos, card styles, and homeowner need`,
+      `${services.join(", ")} organized around verified service depth and available imagery`,
       noWebsiteProspect ? "Supported public business details with room for future proof once supplied" : `Support areas for ${verifiedProofAreas} without publishing claims until verified`,
       noWebsiteProspect ? "A service-photo gallery focused on common customer needs" : "A photo-led service gallery that avoids unverified project claims",
       `${artDirection.sectionFlow} Service areas, practical FAQs, and lead form`,
@@ -1754,9 +2026,27 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     generatedAt: now(),
   };
   const previewWithImages = attachResolvedPreviewImages(prospect, preview);
-  return {
+  const renderPlan = buildPreviewRenderPlan(prospect, previewWithImages);
+  const plannedArtDirection: PreviewArtDirection = {
+    ...artDirection,
+    heroTreatment: renderPlan.direction === "project-showcase" ? "photo-led-overlap" : renderPlan.direction === "service-command" ? "service-command" : "proof-forward",
+    layoutRhythm: renderPlan.density === "compact" ? "service-dense" : renderPlan.density === "spacious" ? "bold-asymmetric" : "proof-led",
+    cardStyle: renderPlan.servicePresentation === "image-led-services" || renderPlan.servicePresentation === "alternating-service-spotlights"
+      ? "layered-photo-cards"
+      : renderPlan.direction === "service-command"
+        ? "technical-service-panels"
+        : "clean-proof-tiles",
+    sectionFlow: renderPlan.orderedSections.join(" -> "),
+  };
+  const plannedPreview: PreviewConcept = {
     ...previewWithImages,
-    qualityScore: scorePreviewQuality(prospect, previewWithImages),
+    renderPlan,
+    layoutDirection: legacyLayoutDirectionForPlan(renderPlan),
+    artDirection: plannedArtDirection,
+  };
+  return {
+    ...plannedPreview,
+    qualityScore: scorePreviewQuality(prospect, plannedPreview),
   };
 }
 
@@ -1835,6 +2125,7 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
   if (!safeFeedback) return preview;
   const lower = safeFeedback.toLowerCase();
   const artDirection = preview.artDirection ? { ...preview.artDirection } : undefined;
+  const renderPlan = preview.renderPlan ? { ...preview.renderPlan } : undefined;
   let layoutDirection = preview.layoutDirection;
   if (artDirection) {
     if (/premium|upscale|dramatic|bold|cinematic|image-led|photo/.test(lower)) {
@@ -1843,6 +2134,11 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
       artDirection.cardStyle = "layered-photo-cards";
       artDirection.imageTreatment = "Use a more dramatic photo-led hero, larger imagery, deeper contrast, and fewer text-heavy blocks.";
       layoutDirection = "full-bleed-photo";
+      if (renderPlan) {
+        renderPlan.heroVariant = "image-led";
+        renderPlan.density = "spacious";
+        renderPlan.selectionRationale = `${renderPlan.selectionRationale} Operator feedback requested a stronger photo-led treatment.`;
+      }
     }
     if (/darker|dark|black|moody/.test(lower)) {
       artDirection.ctaTreatment = "Use a high-contrast estimate CTA with a darker premium surface and a clear phone option.";
@@ -1859,6 +2155,7 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
   return {
     ...preview,
     artDirection,
+    renderPlan,
     layoutDirection,
     regenerationFeedbackHistory: [safeFeedback, ...(preview.regenerationFeedbackHistory ?? [])].slice(0, 8),
   };
@@ -1867,7 +2164,7 @@ function applyPreviewFeedback(preview: PreviewConcept, feedback: string): Previe
 export function regeneratePreview(prospect: Prospect, feedback = ""): Prospect {
   const blockReason = previewRegenerationBlockReason(prospect);
   if (blockReason) throw new Error(`Preview regeneration blocked: ${blockReason}.`);
-  const generated = attachResolvedPreviewImages(prospect, applyPreviewFeedback(generatePreview(prospect), feedback));
+  const generated = applyPreviewFeedback(generatePreview(prospect), feedback);
   return {
     ...prospect,
     preview: {

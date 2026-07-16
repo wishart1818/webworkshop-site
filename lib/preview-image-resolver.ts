@@ -268,7 +268,7 @@ function unsplashPhoto(id: string) {
 const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
   "Pressure Washing": [
     {
-      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/ArborBay2.jpg/900px-ArborBay2.jpg",
+      src: "/engine-preview-assets/trade-photos/power-washing-service.jpg",
       keywords: ["soft washing", "roof cleaning", "residential roof", "roofline", "soft-wash system", "exterior cleaning", "verified exterior cleaning photo"],
     },
   ],

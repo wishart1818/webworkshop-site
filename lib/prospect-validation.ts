@@ -24,8 +24,10 @@ import {
   type PreviewBusinessProfile,
   type PreviewCreativeBrief,
   type PreviewFactConfidence,
+  type PreviewFactProvenance,
   type PreviewLayoutDirection,
   type PreviewQualityScore,
+  type PreviewRenderPlan,
   type PreviewResearchFact,
   type PreviewStyleProfile,
   type Prospect,
@@ -137,7 +139,7 @@ function styleProfileValue(value: unknown): PreviewStyleProfile | undefined {
     throw new Error("Preview layout style is not supported.");
   }
   const brandSource = text(value.brandSource, "Preview brand source", 30) as PreviewStyleProfile["brandSource"];
-  if (!["business-name cue", "website-domain cue", "trade fallback"].includes(brandSource)) {
+  if (!["official website", "business-name cue", "website-domain cue", "trade fallback"].includes(brandSource)) {
     throw new Error("Preview brand source is not supported.");
   }
   return {
@@ -199,11 +201,11 @@ function creativeBriefValue(value: unknown): PreviewCreativeBrief | undefined {
   const logoStatus = text(value.logoStatus, "Preview logo status", 30) as PreviewCreativeBrief["logoStatus"];
   if (!["not available", "available"].includes(logoStatus)) throw new Error("Preview logo status is not supported.");
   const brandColorSource = text(value.brandColorSource, "Preview brand color source", 30) as PreviewStyleProfile["brandSource"];
-  if (!["business-name cue", "website-domain cue", "trade fallback"].includes(brandColorSource)) {
+  if (!["official website", "business-name cue", "website-domain cue", "trade fallback"].includes(brandColorSource)) {
     throw new Error("Preview brand color source is not supported.");
   }
   const brandingSource = text(value.brandingSource, "Preview branding source", 30) as PreviewCreativeBrief["brandingSource"];
-  if (!["detected cue", "trade fallback"].includes(brandingSource)) throw new Error("Preview branding source is not supported.");
+  if (!["verified official source", "inferred cue", "detected cue", "trade fallback"].includes(brandingSource)) throw new Error("Preview branding source is not supported.");
   const imagerySource = text(value.imagerySource, "Preview imagery source", 40) as PreviewCreativeBrief["imagerySource"];
   if (!["curated stock photo library", "trade photo library", "business assets", "configured stock provider"].includes(imagerySource)) throw new Error("Preview imagery source is not supported.");
   const reviewSignal = text(value.reviewSignal, "Preview review signal", 40) as PreviewCreativeBrief["reviewSignal"];
@@ -260,6 +262,15 @@ function previewFactConfidenceValue(value: unknown, field: string): PreviewFactC
   return confidence;
 }
 
+function previewFactProvenanceValue(value: unknown, field: string): PreviewFactProvenance | undefined {
+  if (value === undefined) return undefined;
+  const provenance = text(value, field, 50) as PreviewFactProvenance;
+  if (!["verified official source", "verified provider source", "inferred creative direction", "trade fallback", "unavailable"].includes(provenance)) {
+    throw new Error(`${field} is not supported.`);
+  }
+  return provenance;
+}
+
 function previewResearchFactValue(value: unknown, field: string): PreviewResearchFact {
   if (!isRecord(value)) throw new Error(`${field} must be a valid object.`);
   return {
@@ -267,6 +278,7 @@ function previewResearchFactValue(value: unknown, field: string): PreviewResearc
     value: text(value.value, `${field} value`, 2048),
     source: text(value.source, `${field} source`, 240),
     confidence: previewFactConfidenceValue(value.confidence, `${field} confidence`),
+    provenance: previewFactProvenanceValue(value.provenance, `${field} provenance`),
   };
 }
 
@@ -310,6 +322,7 @@ function previewBusinessProfileValue(value: unknown): PreviewBusinessProfile | u
       url: logoUrl,
       source: logoSource,
       confidence: previewFactConfidenceValue(logo.confidence, "Preview business profile logo confidence"),
+      provenance: previewFactProvenanceValue(logo.provenance, "Preview business profile logo provenance"),
       note: text(logo.note, "Preview business profile logo note", 500),
     },
     businessPhotoSources: previewResearchFactArray(value.businessPhotoSources, "Preview business profile photo sources", 12),
@@ -322,6 +335,12 @@ function previewBusinessProfileValue(value: unknown): PreviewBusinessProfile | u
     sourceFacts: previewResearchFactArray(value.sourceFacts, "Preview business profile source facts", 24),
     confidenceSummary: text(value.confidenceSummary, "Preview business profile confidence summary", 500),
     uncertainFactsExcluded: value.uncertainFactsExcluded === undefined ? [] : stringArray(value.uncertainFactsExcluded, "Preview business profile excluded facts", 20, 500),
+    researchStatus: value.researchStatus === undefined ? undefined : (() => {
+      const status = text(value.researchStatus, "Preview business profile research status", 30) as PreviewBusinessProfile["researchStatus"];
+      if (!["succeeded", "timed_out", "failed", "not_applicable"].includes(status ?? "")) throw new Error("Preview business profile research status is not supported.");
+      return status;
+    })(),
+    researchNote: value.researchNote === undefined ? undefined : text(value.researchNote, "Preview business profile research note", 500),
   };
 }
 
@@ -433,6 +452,84 @@ function previewImageSetValue(value: unknown): PreviewImageSet | undefined {
   };
 }
 
+const previewSectionIds = ["hero", "trust", "services", "featured-service", "project-proof", "gallery", "process", "service-area", "faq", "final-cta", "footer"] as const;
+
+function previewRenderPlanValue(value: unknown): PreviewRenderPlan | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview render plan must be a valid object.");
+  if (value.version !== "render-plan-v1") throw new Error("Preview render plan version is not supported.");
+  const direction = text(value.direction, "Preview render plan direction", 40) as PreviewRenderPlan["direction"];
+  if (!["service-command", "project-showcase", "trust-led-local"].includes(direction)) throw new Error("Preview render plan direction is not supported.");
+  const heroVariant = text(value.heroVariant, "Preview render plan hero variant", 40) as PreviewRenderPlan["heroVariant"];
+  if (!["compact-service", "image-led", "local-proof"].includes(heroVariant)) throw new Error("Preview render plan hero variant is not supported.");
+  const servicePresentation = text(value.servicePresentation, "Preview render plan service presentation", 50) as PreviewRenderPlan["servicePresentation"];
+  if (!["balanced-grid", "featured-plus-secondary", "compact-list", "image-led-services", "alternating-service-spotlights"].includes(servicePresentation)) {
+    throw new Error("Preview render plan service presentation is not supported.");
+  }
+  const density = text(value.density, "Preview render plan density", 20) as PreviewRenderPlan["density"];
+  if (!["compact", "balanced", "spacious"].includes(density)) throw new Error("Preview render plan density is not supported.");
+  const imageStrategy = text(value.imageStrategy, "Preview render plan image strategy", 40) as PreviewRenderPlan["imageStrategy"];
+  if (!["business-photo-led", "trade-photo-led", "restrained-imagery"].includes(imageStrategy)) throw new Error("Preview render plan image strategy is not supported.");
+  const trustStrategy = text(value.trustStrategy, "Preview render plan trust strategy", 40) as PreviewRenderPlan["trustStrategy"];
+  if (!["verified-proof", "compact-local-facts", "contact-first"].includes(trustStrategy)) throw new Error("Preview render plan trust strategy is not supported.");
+  const orderedSections = stringArray(value.orderedSections, "Preview render plan ordered sections", 16, 40) as PreviewRenderPlan["orderedSections"];
+  if (orderedSections.some((id) => !previewSectionIds.includes(id))) throw new Error("Preview render plan section is not supported.");
+  if (!Array.isArray(value.sectionDecisions) || value.sectionDecisions.length > 16) throw new Error("Preview render plan section decisions must be a valid list.");
+  const sectionDecisions = value.sectionDecisions.map((decision, index) => {
+    if (!isRecord(decision)) throw new Error(`Preview render plan section decision ${index + 1} must be a valid object.`);
+    const id = text(decision.id, `Preview render plan section decision ${index + 1} ID`, 40) as PreviewRenderPlan["sectionDecisions"][number]["id"];
+    const status = text(decision.status, `Preview render plan section decision ${index + 1} status`, 20) as PreviewRenderPlan["sectionDecisions"][number]["status"];
+    if (!previewSectionIds.includes(id)) throw new Error("Preview render plan section decision ID is not supported.");
+    if (!["required", "optional", "omitted"].includes(status)) throw new Error("Preview render plan section decision status is not supported.");
+    return { id, status, reason: text(decision.reason, `Preview render plan section decision ${index + 1} reason`, 500) };
+  });
+  if (!isRecord(value.ctaStrategy)) throw new Error("Preview render plan CTA strategy must be a valid object.");
+  const placement = text(value.ctaStrategy.placement, "Preview render plan CTA placement", 40) as PreviewRenderPlan["ctaStrategy"]["placement"];
+  if (!["header-and-hero", "hero-and-final", "persistent"].includes(placement)) throw new Error("Preview render plan CTA placement is not supported.");
+  if (typeof value.ctaStrategy.phonePriority !== "boolean") throw new Error("Preview render plan phone priority must be true or false.");
+  const headerTreatment = text(value.headerTreatment, "Preview render plan header treatment", 40) as PreviewRenderPlan["headerTreatment"];
+  if (!["official-logo", "structured-wordmark", "compact-wordmark"].includes(headerTreatment)) throw new Error("Preview render plan header treatment is not supported.");
+  if (!isRecord(value.inputs)) throw new Error("Preview render plan inputs must be a valid object.");
+  const count = (input: unknown, field: string) => {
+    const result = Number(input);
+    if (!Number.isInteger(result) || result < 0 || result > 100) throw new Error(`${field} must be a safe count.`);
+    return result;
+  };
+  const flag = (input: unknown, field: string) => {
+    if (typeof input !== "boolean") throw new Error(`${field} must be true or false.`);
+    return input;
+  };
+  return {
+    version: "render-plan-v1",
+    direction,
+    selectionRationale: text(value.selectionRationale, "Preview render plan selection rationale", 1000),
+    heroVariant,
+    servicePresentation,
+    orderedSections,
+    sectionDecisions,
+    density,
+    imageStrategy,
+    trustStrategy,
+    ctaStrategy: {
+      label: text(value.ctaStrategy.label, "Preview render plan CTA label", 100),
+      phonePriority: value.ctaStrategy.phonePriority,
+      placement,
+    },
+    headerTreatment,
+    mobilePriorities: stringArray(value.mobilePriorities, "Preview render plan mobile priorities", 10, 300),
+    avoidPatterns: stringArray(value.avoidPatterns, "Preview render plan avoid patterns", 12, 200),
+    inputs: {
+      usableImageCount: count(value.inputs.usableImageCount, "Preview render plan usable image count"),
+      businessPhotoCount: count(value.inputs.businessPhotoCount, "Preview render plan business photo count"),
+      verifiedServiceCount: count(value.inputs.verifiedServiceCount, "Preview render plan verified service count"),
+      verifiedTrustFactCount: count(value.inputs.verifiedTrustFactCount, "Preview render plan verified trust fact count"),
+      officialLogoAvailable: flag(value.inputs.officialLogoAvailable, "Preview render plan official logo availability"),
+      verifiedBrandColorsAvailable: flag(value.inputs.verifiedBrandColorsAvailable, "Preview render plan verified brand-color availability"),
+      usableContactPath: flag(value.inputs.usableContactPath, "Preview render plan usable contact path"),
+    },
+  };
+}
+
 function previewValue(value: unknown): PreviewConcept | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("Preview concept must be a valid object.");
@@ -442,6 +539,7 @@ function previewValue(value: unknown): PreviewConcept | undefined {
     previewVersion: value.previewVersion === "v3" ? "v3" : value.previewVersion === "v2" ? "v2" : undefined,
     creativeBrief: creativeBriefValue(value.creativeBrief),
     businessProfile: previewBusinessProfileValue(value.businessProfile),
+    renderPlan: previewRenderPlanValue(value.renderPlan),
     regenerationFeedbackHistory: value.regenerationFeedbackHistory === undefined ? undefined : stringArray(value.regenerationFeedbackHistory, "Preview regeneration feedback history", 8, 240),
     layoutDirection,
     resolvedImages: previewImageSetValue(value.resolvedImages),

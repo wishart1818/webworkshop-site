@@ -204,7 +204,8 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.ok(preview.qualityScore.visualPolish >= 85);
   assert.ok(preview.qualityScore.safetyTruthfulness >= 90);
   assert.match(preview.artDirection?.imageTreatment ?? "", /large landscaping hero photo|distinct service/i);
-  assert.match(preview.artDirection?.sectionFlow ?? "", /Dublin|proof layout|service-area CTA|service details|estimate CTA/i);
+  assert.match(preview.artDirection?.sectionFlow ?? "", /hero -> services/);
+  assert.equal(preview.renderPlan?.version, "render-plan-v1");
   assert.ok((preview.artDirection?.imageryPlan ?? []).length >= 5);
   assert.match(preview.artDirection?.interactiveFeatures.join(" ") ?? "", /FAQ accordion|gallery lightbox|quote form browser validation|sticky mobile quote CTA/i);
   assert.match(preview.qualityScore.notes.join(" "), /prospect-specific style rationale|stronger CTA treatment/i);
@@ -287,13 +288,13 @@ test("preview generation creates a structured photo-led business design brief", 
   assert.equal(preview.previewVersion, "v3");
   assert.equal(preview.businessProfile?.officialBusinessName, "MC Pressure Washing FL");
   assert.equal(preview.businessProfile?.primaryMarket, "Tampa, FL");
-  assert.equal(preview.businessProfile?.primaryService, "House Washing");
+  assert.equal(preview.businessProfile?.primaryService, "Pressure Washing");
   assert.equal(preview.businessProfile?.logo.status, "wordmark_fallback");
   assert.match(preview.businessProfile?.logo.note ?? "", /instead of inventing a logo/i);
   assert.ok((preview.businessProfile?.sourceFacts.length ?? 0) >= 4);
   assert.ok(preview.businessProfile?.sourceFacts.every((fact) => ["verified", "inferred", "unavailable"].includes(fact.confidence)));
   assert.equal(preview.creativeBrief?.businessName, "MC Pressure Washing FL");
-  assert.equal(preview.creativeBrief?.primaryService, "House Washing");
+  assert.equal(preview.creativeBrief?.primaryService, "Pressure Washing");
   assert.match(preview.creativeBrief?.verifiedEmailOrContactPath ?? "", /public email/);
   assert.match(preview.creativeBrief?.imageIntents.join(" ") ?? "", /Hero: .*pressure washer|Hero: .*pressure washing/i);
   assert.equal(preview.resolvedImages?.sourceStatus, "curated stock photo library");

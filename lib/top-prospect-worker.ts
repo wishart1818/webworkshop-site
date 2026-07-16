@@ -36,13 +36,13 @@ import {
   normalizeWebsite,
   parseTopProspectCityTargets,
   citySearchBudgets,
-  prepareTopProspectArtifacts,
   publicProspectPreviewLink,
   type CitySearchTarget,
   type OutreachPreference,
   type ProspectMode,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
+import { prepareTopProspectArtifactsWithResearch } from "@/lib/top-prospect-preview-preparation";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import {
   encodeTopProspectJobFailure,
@@ -653,7 +653,7 @@ async function saveTopProspectResult(
     select: { publicPreviewToken: true },
   });
   const publicPreviewToken = existingResult?.publicPreviewToken ?? createPublicPreviewToken();
-  const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink(publicPreviewToken), outreachPreference);
+  const prepared = await prepareTopProspectArtifactsWithResearch(prospect, publicProspectPreviewLink(publicPreviewToken), outreachPreference);
   const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode, outreachPreference);
   const scores = prepared.assessment.salesScores;
   await saveProspect({

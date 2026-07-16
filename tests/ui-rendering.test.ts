@@ -456,7 +456,7 @@ test("preview regeneration controls use one protected action with loading and sa
   assert.doesNotMatch(handler, /queuePersist\(updated\)/);
   assert.match(route, /if \(payload\.action === "regenerate_prospect_preview"\)/);
   assert.match(route, /previewRegenerationBlockReason\(prospect\)/);
-  assert.match(route, /regeneratePreview\(researchedProspect, payload\.feedback \?\? ""\)/);
+  assert.match(route, /prepareProspectForPreview\(prospect, \{ mode: "regenerate", feedback: payload\.feedback \?\? "" \}\)/);
   assert.match(route, /evaluatePreviewSendWorthiness\(updated/);
   assert.match(route, /getPublicProspectPreview\(publicPreviewToken\)/);
   assert.match(route, /publicPreviewVerified/);
@@ -626,10 +626,10 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /--prospect-primary:#174b78/);
   assert.match(html, /--prospect-accent:#2c94c6/);
   assert.match(html, /Request an estimate/);
-  assert.match(html, /data-hero-treatment="(?:proof-forward|clean-editorial)"/);
+  assert.match(html, /data-hero-treatment="(?:photo-led-overlap|proof-forward|clean-editorial)"/);
   assert.match(html, /data-layout-direction="(?:split-photo|full-bleed-photo|image-led-grid|dark-premium|light-editorial|bold-local-service)"/);
   assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
-  assert.match(html, /data-rhythm="(?:proof-led|calm-premium)"/);
+  assert.match(html, /data-rhythm="(?:bold-asymmetric|proof-led|calm-premium)"/);
   assert.match(html, /Roofing help built around the condition of your home\./);
   assert.match(html, /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(html, /data-preview-image-source="curated-stock-photo-library"/);
@@ -637,11 +637,10 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.doesNotMatch(html, /Service detail|Property context|Finished look/);
   assert.doesNotMatch(html, /Clear surface details, local service-area copy, and a direct estimate request work together/);
   assert.match(html, /Roof concerns/);
-  assert.match(html, /Service request steps/);
-  assert.match(html, /Start with the roof concern you are seeing/);
+  assert.doesNotMatch(html, /href="#faq"/);
   assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /Project view|Surface refresh|Yard refresh/);
-  assert.match(html, /Questions/);
+  assert.doesNotMatch(html, /prospect-preview-faq/);
   assert.match(html, /This sample form will not submit/);
   assert.match(html, /prospect-preview-mobile-cta/);
   assert.doesNotMatch(html, /Years in business|Licensed and insured|Award-winning|Satisfaction guarantee/i);
@@ -664,6 +663,8 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
     city: "toledo",
     state: "oh",
     serviceArea: "toledo and nearby communities",
+    previewResearchVerified: true,
+    verifiedPreviewServices: ["Heating and cooling repair", "System installation", "Maintenance plans"],
   });
   prospect.trade = "hvac" as Prospect["trade"];
   const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
@@ -684,7 +685,6 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /HVAC in Toledo, OH/);
   assert.match(html, /Heating and cooling help for Toledo homes\./);
   assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
-  assert.match(html, /Local heating and cooling service across the listed area\./);
   assert.doesNotMatch(html, /Local exterior service|surfaces you want cleaned/);
   assert.match(html, /Heating And Cooling Repair/i);
   assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
@@ -693,7 +693,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Maintenance Plans/i);
   assert.match(html, /Plan seasonal system checks, filter and airflow review/);
   assert.match(html, /Home comfort/);
-  assert.match(html, /<h2>Heating And Cooling Repair<\/h2>/);
+  assert.match(html, /<h3>Heating And Cooling Repair<\/h3>/);
   assert.match(html, /FAQ|Questions/);
   assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /type="range"/);
@@ -728,7 +728,11 @@ test("core trade previews render deterministic photo imagery by default", () => 
     assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
     if (html.includes("prospect-preview-gallery")) assert.match(html, /prospect-preview-lightbox/);
     else assert.doesNotMatch(html, /href="#gallery"/);
-    assert.match(html, /prospect-preview-faq/);
+    if (prospect.preview?.renderPlan?.sectionDecisions.find((section) => section.id === "faq")?.status === "omitted") {
+      assert.doesNotMatch(html, /href="#faq"/);
+    } else {
+      assert.match(html, /prospect-preview-faq/);
+    }
     assert.match(html, /prospect-preview-mobile-cta/);
     assert.doesNotMatch(html, /picsum\.photos|loremflickr|placehold|honey|coffee|liquid|abstract/i);
     assert.doesNotMatch(html, /Representative image direction|Replace with verified|Sample layout content|Suggested proof section|Proof concept/i);

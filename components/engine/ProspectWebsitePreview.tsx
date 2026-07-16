@@ -5,10 +5,12 @@ import {
   displayTradeCategory,
   generatePreview,
   normalizeTradeCategory,
+  previewRenderPlan,
   previewStyleProfile,
   titleCaseLocation,
   type PreviewConcept,
   type PreviewBusinessProfile,
+  type PreviewSectionId,
   type Prospect,
 } from "@/lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
@@ -167,8 +169,10 @@ function profileServiceCards(
   profile: PreviewBusinessProfile | undefined,
   pageCopy: TradePageCopy,
   trade: Prospect["trade"],
-): [TradeServiceCard, TradeServiceCard, TradeServiceCard] {
-  const serviceNames = (profile?.verifiedServices?.length ? profile.verifiedServices : pageCopy.services.map((service) => service.title)).slice(0, 3);
+  plannedServices: string[] = [],
+  padToThree = true,
+): TradeServiceCard[] {
+  const serviceNames = (plannedServices.length ? plannedServices : profile?.verifiedServices?.length ? profile.verifiedServices : pageCopy.services.map((service) => service.title)).slice(0, 3);
   const fallback = pageCopy.services;
   const cards = serviceNames.map((title, index) => {
     const tokens = words(title);
@@ -181,8 +185,14 @@ function profileServiceCards(
       description: matched?.description ?? serviceDescriptionFallback(trade, title, index),
     };
   });
-  while (cards.length < 3) cards.push(fallback[cards.length] ?? fallback[0]);
-  return cards.slice(0, 3) as [TradeServiceCard, TradeServiceCard, TradeServiceCard];
+  if (padToThree) while (cards.length < 3) cards.push(fallback[cards.length] ?? fallback[0]);
+  return cards.slice(0, 3);
+}
+
+function imageResolverServices(cards: TradeServiceCard[], fallback: TradePageCopy["services"]): [TradeServiceCard, TradeServiceCard, TradeServiceCard] {
+  const services = [...cards];
+  while (services.length < 3) services.push(fallback[services.length] ?? fallback[0]);
+  return services.slice(0, 3) as [TradeServiceCard, TradeServiceCard, TradeServiceCard];
 }
 
 function serviceDescriptionFallback(trade: Prospect["trade"], title: string, index: number) {
@@ -416,7 +426,7 @@ function heroHeadlineCopy(
 
 function heroSupportingCopy(
   trade: Prospect["trade"],
-  serviceCards: [TradeServiceCard, TradeServiceCard, TradeServiceCard],
+  serviceCards: readonly TradeServiceCard[],
   serviceArea: string,
   fallback: string,
 ) {
@@ -452,7 +462,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const businessProfile = preview.businessProfile;
   const businessName = businessProfile?.officialBusinessName ?? prospect.businessName;
   const officialTagline = verifiedProfileFact(businessProfile, "Official tagline");
-  const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade);
+  const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade, preview.creativeBrief?.services, !preview.renderPlan);
   const alignedServiceArea = (value: string) => {
     const normalized = normalizeCopy(value);
     const lower = normalized.toLowerCase();
@@ -461,9 +471,13 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
       : `${displayCity}, ${displayState}`;
   };
   const serviceArea = alignedServiceArea(prospect.serviceArea || `${displayCity}, ${displayState}`);
-  const images = preview.resolvedImages ?? resolvePreviewImages(renderProspect, serviceCards);
-  const faqs = faqItems(canonicalTrade, styleProfile.ctaLabel);
-  const steps = quoteProcess(displayTrade, styleProfile.ctaLabel);
+  const images = preview.resolvedImages ?? resolvePreviewImages(renderProspect, imageResolverServices(serviceCards, pageCopy.services));
+  const renderPlan = previewRenderPlan(renderProspect, preview);
+  const ctaLabel = renderPlan.ctaStrategy.label || styleProfile.ctaLabel;
+  const faqs = faqItems(canonicalTrade, ctaLabel);
+  const steps = quoteProcess(displayTrade, ctaLabel);
+  const sectionEnabled = (id: PreviewSectionId) =>
+    renderPlan.sectionDecisions.find((decision) => decision.id === id)?.status !== "omitted";
   const visualCaption = cleanVisualCaption(canonicalTrade, displayCity);
   const galleryText = galleryCopy(canonicalTrade, displayCity);
   const imageRelevant = (image: ResolvedPreviewImage) => isPublicPreviewImageRelevant(image, canonicalTrade);
@@ -495,7 +509,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const ctaImage = images.sourceStatus === "approved business photos" ? null : ctaCandidate;
   const galleryAssets = images.gallery.filter((image) => imageRelevant(image) && dependableImage(image) && !usedImageSources.has(image.src) && (images.sourceStatus !== "approved business photos" || image.source === "business-photo")).slice(0, 3);
   galleryAssets.forEach((image) => usedImageSources.add(image.src));
-  const showGallery = galleryAssets.length >= 3;
+  const showGallery = galleryAssets.length >= 3 && sectionEnabled("gallery");
   const headline = normalizeCopy(officialTagline || heroHeadlineCopy(canonicalTrade, businessName, displayCity, preview.heroHeadline ?? pageCopy.heroHeadline));
   const rawHeroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const heroSupporting = rawHeroSupporting.toLowerCase().includes(displayCity.toLowerCase()) || !/nearby communities|across/i.test(rawHeroSupporting)
@@ -552,15 +566,19 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
       <div
         className="prospect-preview-site"
         data-card-style={artDirection?.cardStyle ?? "layered-photo-cards"}
+        data-density={renderPlan.density}
         data-hero-treatment={artDirection?.heroTreatment ?? "clean-editorial"}
+        data-header-treatment={renderPlan.headerTreatment}
         data-layout={styleProfile.layoutStyle}
         data-layout-direction={preview.layoutDirection ?? "split-photo"}
+        data-render-direction={renderPlan.direction}
         data-rhythm={artDirection?.layoutRhythm ?? "calm-premium"}
+        data-service-presentation={renderPlan.servicePresentation}
         data-tone={styleProfile.tone}
         style={style}
       >
         <nav className="prospect-preview-nav" aria-label={`${businessName} concept navigation`}>
-          <a className={`prospect-preview-brand ${logoUrl ? "prospect-preview-brand--logo" : "prospect-preview-brand--wordmark"}`} href="#top">
+          <a className={`prospect-preview-brand ${logoUrl ? "prospect-preview-brand--logo" : "prospect-preview-brand--wordmark"} prospect-preview-brand--${renderPlan.headerTreatment}`} href="#top">
             {logoUrl ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element -- prospect logos can come from approved external public assets not covered by Next image domains */}
@@ -574,10 +592,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <a href="#services">Services</a>
             {showGallery ? <a href="#gallery">Gallery</a> : null}
-            <a href="#faq">FAQ</a>
+            {sectionEnabled("faq") ? <a href="#faq">FAQ</a> : null}
             <a href="#contact">Contact</a>
           </div>
-          <a className="prospect-preview-button" href="#contact">{styleProfile.ctaLabel}</a>
+          <a className="prospect-preview-button" href="#contact">{ctaLabel}</a>
         </nav>
 
         <section className="prospect-preview-hero" id="top">
@@ -586,7 +604,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <h1>{headline}</h1>
             <p>{heroSupportingLine}</p>
             <div className="prospect-preview-actions">
-              <a className="prospect-preview-button" href="#contact">{styleProfile.ctaLabel}</a>
+              <a className="prospect-preview-button" href="#contact">{ctaLabel}</a>
               {prospect.phone
                 ? <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>
                 : <a className="prospect-preview-text-link" href="#services">Explore services</a>}
@@ -613,9 +631,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </aside>
         </section>
 
-        <section className="prospect-preview-trust" aria-label="Business trust highlights">
+        {sectionEnabled("trust") ? <section className="prospect-preview-trust" aria-label="Business trust highlights">
           {trustItems.slice(0, 4).map((item) => <span key={item}><b>{item}</b><i>{trustItemDescription(item, canonicalTrade)}</i></span>)}
-        </section>
+        </section> : null}
 
         <section className="prospect-preview-section prospect-preview-services" id="services">
           <div className="prospect-preview-section__intro">
@@ -630,7 +648,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
                 <div>
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
-                  <a href="#contact">{styleProfile.ctaLabel}</a>
+                  <a href="#contact">{ctaLabel}</a>
                 </div>
               </article>
             ))}
@@ -653,7 +671,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </div>
         </section> : null}
 
-        <section className="prospect-preview-featured-service" id="work">
+        {sectionEnabled("featured-service") ? <section className="prospect-preview-featured-service" id="work">
           {proofImage ? <TradePreviewImage {...previewImageProps(proofImage, "proof")} /> : null}
           <div>
             <span className="prospect-preview-kicker">Featured service</span>
@@ -662,11 +680,11 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <div className="prospect-preview-featured-service__links">
               {serviceCards.slice(1).map((service) => <a href="#contact" key={service.title}>{service.title}</a>)}
             </div>
-            <a className="prospect-preview-button" href="#contact">{styleProfile.ctaLabel}</a>
+            <a className="prospect-preview-button" href="#contact">{ctaLabel}</a>
           </div>
-        </section>
+        </section> : null}
 
-        <section className="prospect-preview-process" aria-label="Service request steps">
+        {sectionEnabled("process") ? <section className="prospect-preview-process" aria-label="Service request steps">
           <div>
             <span className="prospect-preview-kicker">How to start</span>
             <h2>{processHeadline(canonicalTrade)}</h2>
@@ -681,7 +699,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               </li>
             ))}
           </ol>
-        </section>
+        </section> : null}
 
         {showGallery ? (
           <section className="prospect-preview-gallery-section" id="gallery">
@@ -707,14 +725,14 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </section>
         ) : null}
 
-        <section className="prospect-preview-service-area">
+        {sectionEnabled("service-area") ? <section className="prospect-preview-service-area">
           <span className="prospect-preview-kicker">Service area</span>
           <h2>Serving {displayCity} and nearby communities.</h2>
           <p>{businessName} serves {serviceArea}. Contact the team to confirm availability for your property and project.</p>
           {prospect.phone && <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>}
-        </section>
+        </section> : null}
 
-        <section className="prospect-preview-faq" id="faq">
+        {sectionEnabled("faq") ? <section className="prospect-preview-faq" id="faq">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Questions</span>
             <h2>Questions homeowners usually ask.</h2>
@@ -727,7 +745,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               </details>
             ))}
           </div>
-        </section>
+        </section> : null}
 
         <section className="prospect-preview-contact" id="contact">
           <div>
@@ -741,7 +759,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <label>Phone<input name="phone" required inputMode="tel" /></label>
             <label>How can we help?<textarea name="message" required minLength={12} /></label>
             <p id="preview-form-note">This sample form will not submit. Call or use the business&apos;s live website when you are ready.</p>
-            <button type="submit">{styleProfile.ctaLabel}</button>
+            <button type="submit">{ctaLabel}</button>
           </form>
         </section>
 
@@ -750,7 +768,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <span>{displayTrade} | {serviceArea}</span>
           {prospect.phone && <a href={`tel:${prospect.phone}`}>{prospect.phone}</a>}
         </footer>
-        <a className="prospect-preview-mobile-cta" href="#contact">{styleProfile.ctaLabel}</a>
+        <a className="prospect-preview-mobile-cta" href="#contact">{ctaLabel}</a>
       </div>
     </main>
   );

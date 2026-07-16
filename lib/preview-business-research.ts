@@ -18,6 +18,14 @@ export type PreviewBusinessResearch = {
   sourceFacts: PreviewResearchFact[];
 };
 
+export type PreviewResearchStatus = "succeeded" | "timed_out" | "failed" | "not_applicable";
+
+export type PreviewResearchOutcome = {
+  prospect: Prospect;
+  status: PreviewResearchStatus;
+  note: string;
+};
+
 const genericImageSignals = /(?:avatar|icon|favicon|sprite|payment|badge|social|author|pixel|tracking|placeholder)/i;
 const serviceImageSignals = /(?:wash|clean|roof|siding|house|driveway|concrete|patio|deck|fence|gutter|window|landscap|lawn|garden|plant|hvac|furnace|condenser|thermostat|duct|plumb|pipe|sink|water-heater|electric|panel|wiring|lighting|paint|tree|floor|remodel|project|gallery|crew|technician)/i;
 
@@ -186,6 +194,27 @@ function extractStylesheets(html: string, pageUrl: string) {
     .slice(0, 1);
 }
 
+const identityNoise = new Set([
+  "and", "company", "co", "corp", "corporation", "inc", "llc", "ltd", "services", "service",
+  "the", "of", "home", "local", "roofing", "landscaping", "hvac", "heating", "cooling", "plumbing",
+  "electrical", "painting", "cleaning", "pressure", "washing", "contractor", "construction",
+]);
+
+function identityTokens(value: string) {
+  return value.toLowerCase().replace(/&amp;|&/g, " and ").split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3 && !identityNoise.has(token));
+}
+
+export function officialWebsiteMatchesProspect(prospect: Pick<Prospect, "businessName" | "trade">, html: string, pageUrl: string) {
+  const businessTokens = [...new Set(identityTokens(prospect.businessName))];
+  const domainTokens = identityTokens(new URL(pageUrl).hostname.replace(/^www\./, ""));
+  const visibleTokens = new Set(identityTokens(plainText(html).slice(0, 80_000)));
+  const domainMatches = businessTokens.filter((token) => domainTokens.includes(token));
+  const visibleMatches = businessTokens.filter((token) => visibleTokens.has(token));
+  if (!businessTokens.length) return plainText(html).toLowerCase().includes(displayTradeCategory(normalizeTradeCategory(prospect.trade) ?? "General Contractor").toLowerCase());
+  return domainMatches.length >= 1 || visibleMatches.length >= Math.min(2, businessTokens.length);
+}
+
 export function extractPreviewBusinessResearch(html: string, pageUrl: string, trade: string, stylesheets: string[] = []): PreviewBusinessResearch {
   const services = extractServices(html, pageUrl);
   const logoUrl = extractLogo(html, pageUrl);
@@ -193,19 +222,34 @@ export function extractPreviewBusinessResearch(html: string, pageUrl: string, tr
   const brandColors = extractBrandColors(html, ...stylesheets);
   const photos = extractImages(html, pageUrl, trade).filter((photo) => photo.src !== logoUrl);
   const sourceFacts: PreviewResearchFact[] = [
-    { label: "Official website research", value: pageUrl, source: "official website", confidence: "verified" },
-    tagline ? { label: "Official tagline", value: tagline, source: "official website", confidence: "verified" } : null,
-    ...services.map((service) => ({ label: "Verified service", value: service, source: "official website", confidence: "verified" } as PreviewResearchFact)),
-    logoUrl ? { label: "Official logo", value: logoUrl, source: "official website", confidence: "verified" } : null,
-    brandColors.length ? { label: "Official website palette", value: brandColors.join(", "), source: "official website stylesheet", confidence: "verified" } : null,
+    { label: "Official website research", value: pageUrl, source: "official website", confidence: "verified", provenance: "verified official source" },
+    tagline ? { label: "Official tagline", value: tagline, source: "official website", confidence: "verified", provenance: "verified official source" } : null,
+    ...services.map((service) => ({ label: "Verified service", value: service, source: "official website", confidence: "verified", provenance: "verified official source" } as PreviewResearchFact)),
+    logoUrl ? { label: "Official logo", value: logoUrl, source: "official website", confidence: "verified", provenance: "verified official source" } : null,
+    brandColors.length ? { label: "Official website palette", value: brandColors.join(", "), source: "official website stylesheet", confidence: "verified", provenance: "verified official source" } : null,
   ].filter((fact): fact is PreviewResearchFact => Boolean(fact));
   return { websiteUrl: pageUrl, logoUrl, brandColors, services, tagline, photos, sourceFacts };
 }
 
-export async function researchProspectForPreview(prospect: Prospect) {
-  if (!prospect.website?.trim()) return prospect;
+function withResearchStatus(prospect: Prospect, status: PreviewResearchStatus, note: string) {
+  return {
+    ...prospect,
+    previewResearchStatus: status,
+    previewResearchNote: note,
+  } as Prospect;
+}
+
+export async function researchProspectForPreviewOutcome(prospect: Prospect): Promise<PreviewResearchOutcome> {
+  if (!prospect.website?.trim()) {
+    const note = "No public website was available for bounded preview research.";
+    return { prospect: withResearchStatus(prospect, "not_applicable", note), status: "not_applicable", note };
+  }
   try {
     const document = await fetchPublicResearchDocument(prospect.website);
+    if (!officialWebsiteMatchesProspect(prospect, document.text, document.url.href)) {
+      const note = "The provider website could not be reconciled confidently with the business identity, so it was not treated as an official source.";
+      return { prospect: withResearchStatus(prospect, "failed", note), status: "failed", note };
+    }
     const stylesheetUrls = extractStylesheets(document.text, document.url.href);
     const stylesheetDocuments = await Promise.all(stylesheetUrls.map(async (url) => {
       try {
@@ -215,7 +259,8 @@ export async function researchProspectForPreview(prospect: Prospect) {
       }
     }));
     const research = extractPreviewBusinessResearch(document.text, document.url.href, prospect.trade, stylesheetDocuments);
-    return {
+    const note = "Official website research completed within the bounded preview-preparation step.";
+    const researchedProspect = {
       ...prospect,
       website: document.url.href,
       websiteLogoUrl: research.logoUrl,
@@ -224,8 +269,20 @@ export async function researchProspectForPreview(prospect: Prospect) {
       approvedPreviewPhotos: research.photos,
       previewResearchFacts: research.sourceFacts,
       previewResearchVerified: true,
+      previewResearchStatus: "succeeded",
+      previewResearchNote: note,
     } as Prospect;
-  } catch {
-    return prospect;
+    return { prospect: researchedProspect, status: "succeeded", note };
+  } catch (error) {
+    const signal = `${error instanceof Error ? error.name : ""} ${error instanceof Error ? error.message : ""}`.toLowerCase();
+    const status: PreviewResearchStatus = /timeout|abort/.test(signal) ? "timed_out" : "failed";
+    const note = status === "timed_out"
+      ? "Official website research reached its time limit; provider facts and honest fallbacks were retained."
+      : "Official website research was unavailable; provider facts and honest fallbacks were retained.";
+    return { prospect: withResearchStatus(prospect, status, note), status, note };
   }
+}
+
+export async function researchProspectForPreview(prospect: Prospect) {
+  return (await researchProspectForPreviewOutcome(prospect)).prospect;
 }
