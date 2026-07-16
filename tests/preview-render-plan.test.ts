@@ -13,6 +13,11 @@ import {
 import { officialWebsiteMatchesProspect, type PreviewResearchOutcome } from "../lib/preview-business-research";
 import { prepareProspectForPreview } from "../lib/preview-preparation";
 import { prepareTopProspectArtifactsWithResearch } from "../lib/top-prospect-preview-preparation";
+import { validateProspect } from "../lib/prospect-validation";
+import { evaluateServiceFidelity } from "../lib/preview-fidelity";
+import { evaluatePreviewSendWorthiness } from "../lib/preview-send-worthiness";
+import { classifyRenderedImageEvidence } from "../components/engine/TradePreviewImage";
+import { assessSemanticImage } from "../lib/preview-image-resolver";
 
 function groundedProspect(overrides: Partial<Prospect> & Record<string, unknown>): Prospect {
   return {
@@ -195,4 +200,110 @@ test("legacy previews derive a non-mutating compatibility plan and blocked regen
     researcher: async (value) => ({ prospect: value, status: "failed", note: "Research unavailable." }),
   }), /regeneration blocked/i);
   assert.deepEqual(contacted.preview, legacy);
+});
+
+test("researched service hierarchy survives validation, preparation, persistence, and rendering inputs", async () => {
+  const source = groundedProspect({
+    businessName: "Clear View Exterior Care",
+    trade: "Pressure Washing",
+    verifiedPreviewServices: ["House Washing", "Concrete Cleaning", "Gutter Cleaning"],
+    providerPreviewServices: ["Window Cleaning"],
+    approvedPreviewPhotos: [
+      photo("https://example.com/house-washing.jpg", "House Washing"),
+      photo("https://example.com/concrete-cleaning.jpg", "Concrete Cleaning"),
+      photo("https://example.com/gutter-cleaning.jpg", "Gutter Cleaning"),
+    ],
+  });
+  const validated = validateProspect(source);
+  assert.equal(validated.ok, true);
+  if (!validated.ok) return;
+  assert.deepEqual(validated.value.verifiedPreviewServices, ["House Washing", "Concrete Cleaning", "Gutter Cleaning"]);
+  assert.deepEqual(validated.value.providerPreviewServices, ["Window Cleaning"]);
+
+  const prepared = await prepareProspectForPreview(validated.value, {
+    researcher: async (prospect) => ({ prospect, status: "succeeded", note: "Research retained." }),
+  });
+  const expected = ["House Washing", "Concrete Cleaning", "Gutter Cleaning", "Window Cleaning"];
+  assert.deepEqual(prepared.preview.serviceHierarchy?.map((service) => service.title), expected);
+  assert.deepEqual(prepared.preview.businessProfile?.verifiedServices, expected);
+  assert.deepEqual(prepared.preview.creativeBrief?.services, expected);
+  assert.equal(prepared.preview.serviceFidelity?.status, "passed");
+  assert.deepEqual(prepared.prospect.preview?.serviceHierarchy?.map((service) => service.title), expected);
+});
+
+test("service-fidelity loss records the stage and blocks send-worthiness", () => {
+  const prospect = groundedProspect({
+    verifiedPreviewServices: ["Roof Repair", "Roof Replacement"],
+    trade: "Roofing",
+  });
+  const preview = generatePreview(prospect);
+  const hierarchy = preview.serviceHierarchy ?? [];
+  const fidelity = evaluateServiceFidelity(prospect, hierarchy, [{
+    stage: "renderer",
+    values: ["Roof Repair"],
+    rule: "Test fixture simulates an accidental renderer collapse.",
+  }]);
+  assert.equal(fidelity.status, "failed");
+  assert.deepEqual(fidelity.transformations[0]?.before, ["Roof Repair", "Roof Replacement"]);
+  assert.deepEqual(fidelity.transformations[0]?.after, ["Roof Repair"]);
+  assert.equal(fidelity.transformations[0]?.stage, "renderer");
+  const verdict = evaluatePreviewSendWorthiness({ ...prospect, preview: { ...preview, serviceFidelity: fidelity } }, {
+    publicPreviewUrl: "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF",
+    publicPreviewVerified: true,
+  });
+  assert.equal(verdict.verdict, "blocked");
+  assert.match(verdict.primaryWarning, /Service fidelity failed/i);
+});
+
+test("one and two grounded services stay unpadded and select intentional density", () => {
+  const single = generatePreview(groundedProspect({ trade: "Plumbing", verifiedPreviewServices: ["Drain Repair"], approvedPreviewPhotos: [] }));
+  const dual = generatePreview(groundedProspect({ trade: "Painting", verifiedPreviewServices: ["Interior Painting", "Exterior Painting"], approvedPreviewPhotos: [] }));
+  assert.deepEqual(single.serviceHierarchy?.map((service) => service.title), ["Drain Repair"]);
+  assert.deepEqual(dual.serviceHierarchy?.map((service) => service.title), ["Interior Painting", "Exterior Painting"]);
+  assert.equal(single.serviceHierarchy?.some((service) => /service planning|estimate request/i.test(service.title)), false);
+  assert.equal(dual.serviceHierarchy?.some((service) => /service planning|estimate request/i.test(service.title)), false);
+});
+
+test("rendered hero evidence combines load, crop, and pixel signals", () => {
+  const base = { loaded: true, naturalWidth: 1800, naturalHeight: 1200, renderedWidth: 720, renderedHeight: 520 };
+  assert.equal(classifyRenderedImageEvidence({ ...base, naturalWidth: 0 }), "unavailable");
+  assert.equal(classifyRenderedImageEvidence({ ...base, luminanceVariance: 12, edgeDensity: 0.01, dominantColorConcentration: 0.9 }), "unavailable");
+  assert.equal(classifyRenderedImageEvidence({ ...base, naturalWidth: 4200, naturalHeight: 500 }), "unavailable");
+  assert.equal(classifyRenderedImageEvidence({ ...base, luminanceVariance: 60, edgeDensity: 0.02, dominantColorConcentration: 0.4 }), "uncertain");
+  assert.equal(classifyRenderedImageEvidence({ ...base, luminanceVariance: 900, edgeDensity: 0.14, dominantColorConcentration: 0.18 }), "accepted");
+});
+
+test("representative visual-review failures cannot return to critical trade placements", () => {
+  const cases = [
+    ["Electrical", "https://images.unsplash.com/photo-1518770660439-4636190af475", ["circuit", "wiring", "technical detail"]],
+    ["HVAC", "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158", ["technician", "service call", "equipment"]],
+    ["Concrete", "https://images.unsplash.com/photo-1599995903128-531fc7fb694b", ["concrete", "walkway", "patio"]],
+    ["Concrete", "https://images.unsplash.com/photo-1600585154340-be6161a56a0c", ["house", "driveway", "residential exterior"]],
+    ["Painting", "https://images.unsplash.com/photo-1589939705384-5185137a7f0f", ["paint", "construction site"]],
+    ["Roofing", "https://images.unsplash.com/photo-1621947081720-86970823b77a", ["roof", "interior scaffolding"]],
+  ] as const;
+
+  for (const [trade, src, keywords] of cases) {
+    const result = assessSemanticImage(trade, {
+      id: `${trade}-hero`,
+      slot: "hero",
+      section: "hero",
+      purpose: `${trade} hero`,
+      query: `${trade} residential service`,
+      keywords: [...keywords],
+    }, src, "curated-stock-photo-library", {
+      keywords: [...keywords],
+      context: "residential",
+      kind: "photo",
+      attribution: "curated test asset",
+    });
+    assert.equal(result.semanticStatus, "rejected", `${trade} reviewed asset should stay rejected`);
+  }
+});
+
+test("runtime image failure produces an intentional low-image composition without public placeholders", () => {
+  const css = readFileSync("app/engine/engine.css", "utf8");
+  assert.match(css, /prospect-preview-hero:has\(\.prospect-preview-image\[data-preview-image-state="unavailable"\]\)/);
+  assert.match(css, /grid-template-columns:\s*minmax\(0, 760px\)/);
+  assert.match(css, /prospect-preview-image\[data-preview-image-state="unavailable"\][^{]*\{[^}]*display:\s*none/s);
 });

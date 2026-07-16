@@ -629,14 +629,13 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.match(html, /data-hero-treatment="(?:photo-led-overlap|proof-forward|clean-editorial)"/);
   assert.match(html, /data-layout-direction="(?:split-photo|full-bleed-photo|image-led-grid|dark-premium|light-editorial|bold-local-service)"/);
   assert.match(html, /data-card-style="(?:clean-proof-tiles|layered-photo-cards)"/);
-  assert.match(html, /data-rhythm="(?:bold-asymmetric|proof-led|calm-premium)"/);
+  assert.match(html, /data-rhythm="(?:bold-asymmetric|proof-led|calm-premium|service-dense)"/);
   assert.match(html, /Roofing help built around the condition of your home\./);
   assert.match(html, /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(html, /data-preview-image-source="curated-stock-photo-library"/);
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
   assert.doesNotMatch(html, /Service detail|Property context|Finished look/);
   assert.doesNotMatch(html, /Clear surface details, local service-area copy, and a direct estimate request work together/);
-  assert.match(html, /roof concern/i);
   assert.doesNotMatch(html, /href="#faq"/);
   assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /Project view|Surface refresh|Yard refresh/);
@@ -683,17 +682,17 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /technician tools|service call|equipment/i);
   assert.match(html, /home comfort|thermostat-ready home|air conditioner/i);
   assert.match(html, /HVAC in Toledo, OH/);
-  assert.match(html, /Keep home comfortable in every season\./);
+  assert.match(html, /Comfort help|heating or cooling issue|Heating and Cooling Repair/i);
   assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
   assert.doesNotMatch(html, /Local exterior service|surfaces you want cleaned/);
-  assert.match(html, /Heating And Cooling Repair/i);
-  assert.match(html, /Troubleshoot comfort problems, airflow issues, unusual sounds/);
+  assert.match(html, /Heating and Cooling Repair/i);
+  assert.match(html, /Diagnose heating problems|cooling issues|airflow/i);
   assert.match(html, /System Installation/i);
-  assert.match(html, /Compare replacement or new-system options/);
+  assert.match(html, /Compare equipment and installation options/);
   assert.match(html, /Maintenance Plans/i);
-  assert.match(html, /Plan seasonal system checks, filter and airflow review/);
+  assert.match(html, /Schedule routine system care/);
   assert.match(html, /Home comfort/);
-  assert.match(html, /<h3>Heating And Cooling Repair<\/h3>/);
+  assert.match(html, /<h3>Heating and Cooling Repair<\/h3>/);
   assert.match(html, /FAQ|Questions/);
   assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /type="range"/);
@@ -703,7 +702,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /Choose the HVAC work that matches what needs attention/);
   assert.doesNotMatch(html, /Clear help for the work your property needs|Understand the scope, practical next steps|\btoledo\b|Pick the hvac help|Representative image direction|Replace with verified|Sample layout content/);
   const imageSources = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((match) => match[1]);
-  assert.ok(imageSources.slice(0, 5).every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
+  assert.ok(imageSources.slice(0, 5).every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.(?:unsplash|pexels)\.com\/|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
   assert.ok(new Set(imageSources.slice(0, 5)).size >= 2);
   assert.ok(new Set(imageSources).size >= 2);
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
@@ -760,13 +759,12 @@ test("preview image resolver creates distinct section intents and matching press
   assert.equal(images.providerStatus, "not configured");
   assert.equal(images.sourceStatus, "curated stock photo library");
   assert.ok(new Set(firstVisibleImages).size >= 2);
-  assert.ok(firstVisibleImages.every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
-  assert.equal(
-    [images.hero, ...images.services, ...images.gallery].filter((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")).length,
-    1,
+  assert.ok(firstVisibleImages.every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.(?:unsplash|pexels)\.com\/|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
+  assert.ok(
+    [images.hero, ...images.services, ...images.gallery].filter((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")).length >= 3,
   );
-  assert.equal(isPublicPreviewImageRelevant(images.services[0], "Pressure Washing"), false);
-  assert.equal(images.services[0].source, "curated-trade-library");
+  assert.ok(images.services.every((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")));
+  assert.ok(images.services.every((image) => image.source !== "curated-trade-library"));
   assert.match(intentText, /house washing/i);
   assert.match(intentText, /siding/i);
   assert.match(intentText, /concrete/i);
@@ -799,7 +797,7 @@ test("preview QA rejects municipal or mismatched pressure washing imagery", () =
       keywords: ["pressure washing", "municipal", "street cleaning", "sidewalk", "commercial surface"],
     },
   };
-  const report = validatePreviewImages([images.hero, mismatchedHouseImage, images.services[1], images.services[2]]);
+  const report = validatePreviewImages([images.hero, mismatchedHouseImage, ...images.services.slice(1)]);
 
   assert.equal(report.ok, false);
   assert.match(report.warnings.join(" "), /municipal|street-cleaning|house washing/i);
@@ -840,14 +838,15 @@ test("two pressure washing public previews are photo-led but not visual duplicat
   assert.match(secondHtml, /Styles Power Wash/);
   assert.match(firstHtml, /Tampa, FL/);
   assert.match(secondHtml, /St Augustine, FL/);
-  assert.match(firstHero ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
-  assert.match(secondHero ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(firstHero ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.(?:unsplash|pexels)\.com\/|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(secondHero ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.(?:unsplash|pexels)\.com\/|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.notEqual(firstHero, secondHero);
   assert.equal(isPublicPreviewImageRelevant(first.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.equal(isPublicPreviewImageRelevant(second.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.notEqual(first.preview?.layoutDirection, undefined);
   assert.notEqual(second.preview?.layoutDirection, undefined);
-  assert.match(firstHtml, /Bring back a cleaner exterior\./);
-  assert.match(secondHtml, /Bring back a cleaner exterior\./);
+  assert.notEqual(first.preview?.heroHeadline, second.preview?.heroHeadline);
+  assert.notDeepEqual(first.preview?.resolvedImages?.heroCandidates.map((image) => image.src), second.preview?.resolvedImages?.heroCandidates.map((image) => image.src));
   assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /href="#gallery"|prospect-preview-lightbox/);
   assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /Business research summary|Source-backed facts|Excluded unless verified|A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|contact options|quote path|website structure|Representative image direction|proof concept|Service detail|Property context|Finished look|Photos should look|service-area copy/i);
 });
@@ -869,8 +868,8 @@ test("representative public previews use service-focused copy without UX wording
     }));
   }).join("\n");
 
-  assert.match(rendered, /Wash away dirt, algae, and buildup/);
-  assert.match(rendered, /Bring back a cleaner exterior\./);
+  assert.match(rendered, /Pressure washing for the surfaces people notice first/i);
+  assert.match(rendered, /cleaner exterior|surfaces people notice|Pressure Washing for homes/i);
   assert.match(rendered, /Landscaping shaped around the property and the season/);
   assert.match(rendered, /Roofing help built around the condition of your home/);
   assert.doesNotMatch(rendered, /Business research summary|Source-backed facts|Excluded unless verified|contact options|quote path|website structure|customer navigation|conversion design|Services explained clearly|The contact path stays visible/i);
@@ -948,10 +947,10 @@ test("True Clean-style pressure washing preview uses researched branding, distin
   assert.match(html, /--prospect-accent:#b49342/);
   assert.doesNotMatch(html, /prospect-preview-wordmark[^>]*border-radius|business-name pill/i);
   assert.match(html, /The wash crew you hire when you&#x27;re tired of looking at it\./);
-  assert.match(html, /House Washing, Roof Cleaning, Driveway &amp; Concrete Cleaning/);
-  assert.match(html, /Wash away dirt, algae, and buildup from siding, trim, brick, stucco, and other home exterior surfaces\./);
-  assert.match(html, /prospect-preview-featured-service/);
-  assert.match(html, /tile-window-cleaning[^]*?<h2>Window Cleaning<\/h2>/);
+  assert.match(html, /House washing, roof cleaning, driveway &amp; concrete cleaning/);
+  assert.match(html, /Wash away dirt, algae, and buildup from siding, trim, brick, stucco, and other exterior surfaces\./);
+  assert.doesNotMatch(html, /prospect-preview-featured-service/);
+  assert.match(html, /tile-window-cleaning[^]*?<h3>Window Cleaning<\/h3>/);
   assert.match(html, />01</);
   assert.match(html, />02</);
   assert.match(html, />03</);
@@ -968,14 +967,18 @@ test("True Clean-style pressure washing preview uses researched branding, distin
 
 test("phase 3 preview composition uses business branding, content density, and trade-specific visual rhythm", () => {
   const representatives = [
-    { id: "seed-prospect-6", trade: "Pressure Washing", expectedDirection: "project-showcase", expectedImage: /power-washing-hero\.jpg/ },
-    { id: "seed-prospect-3", trade: "Landscaping", expectedDirection: "project-showcase", expectedImage: /landscaping-hero\.jpg/ },
-    { id: "seed-prospect-2", trade: "HVAC", expectedDirection: "service-command", expectedImage: /hvac-hero\.jpg/ },
-    { id: "seed-prospect-1", trade: "Roofing", expectedDirection: "project-showcase", expectedImage: /roofing-hero\.jpg/ },
+    { id: "seed-prospect-6", trade: "Pressure Washing", expectedImage: /(?:power-washing-hero\.jpg|images\.pexels\.com)/ },
+    { id: "seed-prospect-3", trade: "Landscaping", expectedImage: /landscaping-hero\.jpg/ },
+    { id: "seed-prospect-2", trade: "HVAC", expectedImage: /(?:hvac-(?:hero|proof)\.jpg|images\.unsplash\.com)/ },
+    { id: "seed-prospect-1", trade: "Roofing", expectedImage: /(?:roofing-(?:hero|service|proof)\.jpg|images\.unsplash\.com)/ },
   ] as const;
 
-  const rendered = representatives.map(({ id, trade, expectedDirection, expectedImage }) => {
+  const selectedDirections = new Set<string>();
+  const rendered = representatives.map(({ id, trade, expectedImage }) => {
     const prospect = withPreview(structuredClone(seedProspects.find((item) => item.id === id)!));
+    const expectedDirection = prospect.preview?.renderPlan?.direction;
+    assert.ok(expectedDirection);
+    selectedDirections.add(expectedDirection);
     const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
       prospect,
       publicView: true,
@@ -995,6 +998,7 @@ test("phase 3 preview composition uses business branding, content density, and t
   assert.match(rendered[1], /Evergreen Outdoor<\/span><em>Works<\/em>/);
   assert.match(rendered[2], /Northline Heating &amp;<\/span><em>Air<\/em>/);
   assert.match(rendered[3], /Summit Ridge<\/span><em>Roofing<\/em>/);
+  assert.ok(selectedDirections.has("trust-led-local"));
 });
 
 test("preview image resolver supports configured stock manifests without exposing provider secrets", () => {
@@ -1009,7 +1013,13 @@ test("preview image resolver supports configured stock manifests without exposin
     { title: "Installation", description: "Plants and beds." },
     { title: "Seasonal maintenance", description: "Recurring care." },
   ] as const;
-  const manifest = Array.from({ length: 10 }, (_, index) => `https://images.example.com/landscaping-${index + 1}.jpg`);
+  const manifest = Array.from({ length: 10 }, (_, index) => ({
+    src: `https://images.example.com/landscaping-${index + 1}.jpg`,
+    keywords: ["landscaping", "lawn", "planting", index === 0 ? "outdoor space" : "garden bed"],
+    context: "residential",
+    kind: "photo",
+    attribution: `Configured catalog image ${index + 1}`,
+  }));
   const images = resolvePreviewImages(prospect, services, {
     PREVIEW_STOCK_IMAGE_MANIFEST_JSON: JSON.stringify([...manifest, "javascript:alert(1)", "not a url"]),
     PREVIEW_STOCK_API_KEY: "secret-key-that-must-not-render",

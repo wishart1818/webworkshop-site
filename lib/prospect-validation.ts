@@ -29,6 +29,9 @@ import {
   type PreviewQualityScore,
   type PreviewRenderPlan,
   type PreviewResearchFact,
+  type PreviewServiceFidelityResult,
+  type PreviewServiceHierarchyItem,
+  type PreviewVisualAssetQa,
   type PreviewStyleProfile,
   type Prospect,
   type ProspectStatus,
@@ -410,6 +413,16 @@ function resolvedPreviewImageValue(value: unknown): ResolvedPreviewImage {
   if (!["hero", "service", "gallery", "beforeAfter", "process", "cta"].includes(slot)) throw new Error("Resolved preview image slot is not supported.");
   const source = text(value.source, "Resolved preview image source", 60) as PreviewImageSource;
   if (!["business-photo", "configured-stock-provider", "curated-stock-photo-library", "curated-trade-library", "neutral-fallback"].includes(source)) throw new Error("Resolved preview image source is not supported.");
+  const intent = previewImageIntentValue(value.intent);
+  const semanticStatus = ["accepted", "uncertain", "rejected"].includes(String(value.semanticStatus))
+    ? value.semanticStatus as ResolvedPreviewImage["semanticStatus"]
+    : source === "curated-trade-library" || source === "neutral-fallback" ? "rejected" : "uncertain";
+  const metadata = isRecord(value.metadata) ? value.metadata : {};
+  const trade = normalizeTradeCategory(typeof metadata.trade === "string" ? metadata.trade : "") ?? "General Contractor";
+  const context = ["residential", "commercial", "mixed", "unknown"].includes(String(metadata.context)) ? metadata.context as ResolvedPreviewImage["metadata"]["context"] : "unknown";
+  const kind = ["photo", "illustration", "abstract", "unknown"].includes(String(metadata.kind)) ? metadata.kind as ResolvedPreviewImage["metadata"]["kind"] : "unknown";
+  const confidence = ["high", "medium", "low"].includes(String(metadata.confidence)) ? metadata.confidence as ResolvedPreviewImage["metadata"]["confidence"] : "low";
+  const cropSuitability = ["suitable", "uncertain", "unsuitable"].includes(String(metadata.cropSuitability)) ? metadata.cropSuitability as ResolvedPreviewImage["metadata"]["cropSuitability"] : "uncertain";
   return {
     id: text(value.id, "Resolved preview image ID", 120),
     slot,
@@ -418,17 +431,25 @@ function resolvedPreviewImageValue(value: unknown): ResolvedPreviewImage {
     src: previewImageUrl(value.src, "Resolved preview image URL"),
     alt: text(value.alt, "Resolved preview image alt text", 500),
     source,
-    intent: previewImageIntentValue(value.intent),
+    intent,
+    semanticStatus,
+    semanticReasons: value.semanticReasons === undefined ? [] : stringArray(value.semanticReasons, "Resolved preview image semantic reasons", 10, 300),
+    metadata: {
+      trade,
+      supportedServices: metadata.supportedServices === undefined ? intent.keywords : stringArray(metadata.supportedServices, "Resolved preview image supported services", 24, 120),
+      intendedSections: metadata.intendedSections === undefined ? [slot] : stringArray(metadata.intendedSections, "Resolved preview image intended sections", 8, 30) as PreviewImageSlot[],
+      context,
+      kind,
+      confidence,
+      cropSuitability,
+      usagePath: typeof metadata.usagePath === "string" ? text(metadata.usagePath, "Resolved preview image usage path", 160) : source,
+    },
   };
 }
 
-function imageTuple(value: unknown, field: string): [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage] {
-  if (!Array.isArray(value) || value.length < 3) throw new Error(`${field} must include three images.`);
-  return [
-    resolvedPreviewImageValue(value[0]),
-    resolvedPreviewImageValue(value[1]),
-    resolvedPreviewImageValue(value[2]),
-  ];
+function imageList(value: unknown, field: string): ResolvedPreviewImage[] {
+  if (!Array.isArray(value) || value.length > 20) throw new Error(`${field} must be a valid image list.`);
+  return value.map(resolvedPreviewImageValue);
 }
 
 function previewImageSetValue(value: unknown): PreviewImageSet | undefined {
@@ -437,10 +458,12 @@ function previewImageSetValue(value: unknown): PreviewImageSet | undefined {
   const providerStatus = text(value.providerStatus ?? "not configured", "Preview image provider status", 30) as PreviewImageSet["providerStatus"];
   if (!["not configured", "configured"].includes(providerStatus)) throw new Error("Preview image provider status is not supported.");
   const intents = Array.isArray(value.intents) ? value.intents.slice(0, 20).map(previewImageIntentValue) : [];
+  const hero = resolvedPreviewImageValue(value.hero);
   return {
-    hero: resolvedPreviewImageValue(value.hero),
-    services: imageTuple(value.services, "Preview service images"),
-    gallery: imageTuple(value.gallery, "Preview gallery images"),
+    hero,
+    heroCandidates: value.heroCandidates === undefined ? [hero] : imageList(value.heroCandidates, "Preview hero candidates"),
+    services: imageList(value.services, "Preview service images"),
+    gallery: imageList(value.gallery, "Preview gallery images"),
     beforeAfter: resolvedPreviewImageValue(value.beforeAfter),
     process: resolvedPreviewImageValue(value.process),
     cta: resolvedPreviewImageValue(value.cta),
@@ -448,6 +471,10 @@ function previewImageSetValue(value: unknown): PreviewImageSet | undefined {
     sourceStatus: text(value.sourceStatus ?? "not recorded", "Preview image source status", 120),
     providerStatus,
     warnings: value.warnings === undefined ? [] : stringArray(value.warnings, "Preview image warnings", 20, 500),
+    omittedAssets: Array.isArray(value.omittedAssets) ? value.omittedAssets.slice(0, 30).map((asset, index) => {
+      if (!isRecord(asset)) throw new Error(`Preview omitted asset ${index + 1} must be valid.`);
+      return { src: previewImageUrl(asset.src, `Preview omitted asset ${index + 1} URL`), reason: text(asset.reason, `Preview omitted asset ${index + 1} reason`, 500) };
+    }) : [],
     resolvedAt: value.resolvedAt === undefined ? undefined : dateText(value.resolvedAt, "Preview images resolved date"),
   };
 }
@@ -516,6 +543,10 @@ function previewRenderPlanValue(value: unknown): PreviewRenderPlan | undefined {
       placement,
     },
     headerTreatment,
+    pageMode: value.pageMode === "concise" ? "concise" : "full",
+    copyStrategy: isRecord(value.copyStrategy) && ["direct-service", "visual-results", "local-assurance"].includes(String(value.copyStrategy.voice))
+      ? { voice: value.copyStrategy.voice as PreviewRenderPlan["copyStrategy"]["voice"], variant: Math.max(0, Math.min(2, Number(value.copyStrategy.variant) || 0)) }
+      : { voice: direction === "service-command" ? "direct-service" : direction === "project-showcase" ? "visual-results" : "local-assurance", variant: 0 },
     mobilePriorities: stringArray(value.mobilePriorities, "Preview render plan mobile priorities", 10, 300),
     avoidPatterns: stringArray(value.avoidPatterns, "Preview render plan avoid patterns", 12, 200),
     inputs: {
@@ -527,6 +558,74 @@ function previewRenderPlanValue(value: unknown): PreviewRenderPlan | undefined {
       verifiedBrandColorsAvailable: flag(value.inputs.verifiedBrandColorsAvailable, "Preview render plan verified brand-color availability"),
       usableContactPath: flag(value.inputs.usableContactPath, "Preview render plan usable contact path"),
     },
+  };
+}
+
+function previewServiceHierarchyValue(value: unknown): PreviewServiceHierarchyItem[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 12) throw new Error("Preview service hierarchy must be a valid list.");
+  return value.map((item, index) => {
+    if (!isRecord(item)) throw new Error(`Preview service ${index + 1} must be valid.`);
+    const role = text(item.role, `Preview service ${index + 1} role`, 20) as PreviewServiceHierarchyItem["role"];
+    const confidence = text(item.confidence, `Preview service ${index + 1} confidence`, 20) as PreviewServiceHierarchyItem["confidence"];
+    const provenance = text(item.provenance, `Preview service ${index + 1} provenance`, 40) as PreviewServiceHierarchyItem["provenance"];
+    if (!["primary", "secondary", "specialty"].includes(role)) throw new Error("Preview service role is not supported.");
+    if (!["verified", "inferred"].includes(confidence)) throw new Error("Preview service confidence is not supported.");
+    if (!["verified official source", "verified provider source", "trade fallback"].includes(provenance)) throw new Error("Preview service provenance is not supported.");
+    const displayPriority = Number(item.displayPriority);
+    if (!Number.isInteger(displayPriority) || displayPriority < 1 || displayPriority > 20) throw new Error("Preview service priority must be valid.");
+    return {
+      title: text(item.title, `Preview service ${index + 1} title`, 160),
+      description: text(item.description, `Preview service ${index + 1} description`, 1000),
+      role,
+      confidence,
+      provenance,
+      source: text(item.source, `Preview service ${index + 1} source`, 300),
+      displayPriority,
+      imageAvailable: Boolean(item.imageAvailable),
+    };
+  });
+}
+
+function previewServiceFidelityValue(value: unknown): PreviewServiceFidelityResult | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !["passed", "failed"].includes(String(value.status))) throw new Error("Preview service fidelity must be valid.");
+  return {
+    status: value.status as PreviewServiceFidelityResult["status"],
+    groundedInput: stringArray(value.groundedInput, "Preview grounded services", 12, 160),
+    savedServices: stringArray(value.savedServices, "Preview saved services", 12, 160),
+    transformations: Array.isArray(value.transformations) ? value.transformations.slice(0, 12).map((item, index) => {
+      if (!isRecord(item)) throw new Error(`Preview service transformation ${index + 1} must be valid.`);
+      return {
+        stage: text(item.stage, `Preview service transformation ${index + 1} stage`, 100),
+        before: stringArray(item.before, `Preview service transformation ${index + 1} before`, 12, 160),
+        after: stringArray(item.after, `Preview service transformation ${index + 1} after`, 12, 160),
+        rule: text(item.rule, `Preview service transformation ${index + 1} rule`, 500),
+      };
+    }) : [],
+  };
+}
+
+function previewVisualAssetQaValue(value: unknown): PreviewVisualAssetQa | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Preview visual asset QA must be valid.");
+  const selectedHeroStatus = text(value.selectedHeroStatus, "Preview hero status", 20) as PreviewVisualAssetQa["selectedHeroStatus"];
+  const cropSuitability = text(value.cropSuitability, "Preview crop suitability", 20) as PreviewVisualAssetQa["cropSuitability"];
+  const semanticRelevance = text(value.semanticRelevance, "Preview semantic relevance", 20) as PreviewVisualAssetQa["semanticRelevance"];
+  if (!["accepted", "replaced", "uncertain", "low-image", "blocked"].includes(selectedHeroStatus)) throw new Error("Preview hero status is not supported.");
+  if (!["suitable", "uncertain", "unsuitable"].includes(cropSuitability)) throw new Error("Preview crop suitability is not supported.");
+  if (!["accepted", "uncertain", "rejected"].includes(semanticRelevance)) throw new Error("Preview semantic relevance is not supported.");
+  return {
+    selectedHeroStatus,
+    selectedHeroSource: text(value.selectedHeroSource, "Preview hero source", 120),
+    brokenImage: Boolean(value.brokenImage),
+    visuallyBlank: Boolean(value.visuallyBlank),
+    cropSuitability,
+    semanticRelevance,
+    distinctMajorImageCount: Math.max(0, Number(value.distinctMajorImageCount) || 0),
+    omittedUncertainAssets: value.omittedUncertainAssets === undefined ? [] : stringArray(value.omittedUncertainAssets, "Preview omitted uncertain assets", 30, 2048),
+    criticalFailures: value.criticalFailures === undefined ? [] : stringArray(value.criticalFailures, "Preview critical asset failures", 20, 500),
+    lowImageMode: Boolean(value.lowImageMode),
   };
 }
 
@@ -543,6 +642,9 @@ function previewValue(value: unknown): PreviewConcept | undefined {
     regenerationFeedbackHistory: value.regenerationFeedbackHistory === undefined ? undefined : stringArray(value.regenerationFeedbackHistory, "Preview regeneration feedback history", 8, 240),
     layoutDirection,
     resolvedImages: previewImageSetValue(value.resolvedImages),
+    serviceHierarchy: previewServiceHierarchyValue(value.serviceHierarchy),
+    serviceFidelity: previewServiceFidelityValue(value.serviceFidelity),
+    visualAssetQa: previewVisualAssetQaValue(value.visualAssetQa),
     direction: text(value.direction, "Preview direction", 5000),
     visualStyleDirection: text(value.visualStyleDirection ?? "Practical contractor visual direction.", "Visual style direction", 5000),
     artDirection: artDirectionValue(value.artDirection),
@@ -668,6 +770,15 @@ export function validateProspect(input: unknown): ValidationResult {
       if (!Number.isInteger(count) || count < 0) throw new Error(`${field} must be a non-negative integer.`);
       return count;
     };
+    const approvedPreviewPhotos: Prospect["approvedPreviewPhotos"] = Array.isArray(input.approvedPreviewPhotos) ? input.approvedPreviewPhotos.slice(0, 30).flatMap((item, index): NonNullable<Prospect["approvedPreviewPhotos"]> => {
+      if (typeof item === "string") return [previewImageUrl(item, `Approved preview photo ${index + 1}`)];
+      if (!isRecord(item)) return [];
+      return [{
+        src: previewImageUrl(item.src, `Approved preview photo ${index + 1}`),
+        alt: typeof item.alt === "string" ? text(item.alt, `Approved preview photo ${index + 1} alt`, 500, false) : undefined,
+        service: typeof item.service === "string" ? text(item.service, `Approved preview photo ${index + 1} service`, 160, false) : undefined,
+      }];
+    }) : undefined;
 
     return {
       ok: true,
@@ -717,6 +828,15 @@ export function validateProspect(input: unknown): ValidationResult {
         analysis: analysisValue(input.analysis),
         outreach: outreachValue(input.outreach),
         preview: previewValue(input.preview),
+        verifiedPreviewServices: input.verifiedPreviewServices === undefined ? undefined : stringArray(input.verifiedPreviewServices, "Verified preview services", 12, 160),
+        providerPreviewServices: input.providerPreviewServices === undefined ? undefined : stringArray(input.providerPreviewServices, "Provider preview services", 12, 160),
+        approvedPreviewPhotos,
+        previewBrandColors: input.previewBrandColors === undefined ? undefined : stringArray(input.previewBrandColors, "Preview brand colors", 8, 20),
+        websiteLogoUrl: input.websiteLogoUrl === undefined || String(input.websiteLogoUrl).trim() === "" ? undefined : previewImageUrl(input.websiteLogoUrl, "Website logo URL"),
+        previewResearchFacts: input.previewResearchFacts === undefined ? undefined : previewResearchFactArray(input.previewResearchFacts, "Preview research facts", 30),
+        previewResearchVerified: input.previewResearchVerified === undefined ? undefined : Boolean(input.previewResearchVerified),
+        previewResearchStatus: ["succeeded", "timed_out", "failed", "not_applicable"].includes(String(input.previewResearchStatus)) ? input.previewResearchStatus as Prospect["previewResearchStatus"] : undefined,
+        previewResearchNote: input.previewResearchNote === undefined ? undefined : text(input.previewResearchNote, "Preview research note", 1000, false),
         createdAt: dateText(input.createdAt, "Created date"),
       },
     };

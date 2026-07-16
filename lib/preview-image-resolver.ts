@@ -1,4 +1,4 @@
-import type { Prospect, PreviewConcept, TradeCategory } from "@/lib/prospect-engine";
+import type { Prospect, PreviewConcept, PreviewVisualAssetQa, TradeCategory } from "@/lib/prospect-engine";
 
 const tradeCategories = [
   "Roofing",
@@ -69,12 +69,25 @@ export type ResolvedPreviewImage = {
   alt: string;
   source: PreviewImageSource;
   intent: PreviewImageIntent;
+  semanticStatus: "accepted" | "uncertain" | "rejected";
+  semanticReasons: string[];
+  metadata: {
+    trade: TradeCategory;
+    supportedServices: string[];
+    intendedSections: PreviewImageSlot[];
+    context: "residential" | "commercial" | "mixed" | "unknown";
+    kind: "photo" | "illustration" | "abstract" | "unknown";
+    confidence: "high" | "medium" | "low";
+    cropSuitability: "suitable" | "uncertain" | "unsuitable";
+    usagePath: string;
+  };
 };
 
 export type PreviewImageSet = {
   hero: ResolvedPreviewImage;
-  services: [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
-  gallery: [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
+  heroCandidates: ResolvedPreviewImage[];
+  services: ResolvedPreviewImage[];
+  gallery: ResolvedPreviewImage[];
   beforeAfter: ResolvedPreviewImage;
   process: ResolvedPreviewImage;
   cta: ResolvedPreviewImage;
@@ -82,6 +95,7 @@ export type PreviewImageSet = {
   sourceStatus: string;
   providerStatus: "not configured" | "configured";
   warnings: string[];
+  omittedAssets: Array<{ src: string; reason: string }>;
   resolvedAt?: string;
 };
 
@@ -102,6 +116,9 @@ type CuratedStockPhoto = {
   id?: string;
   src?: string;
   keywords: string[];
+  context?: "residential" | "commercial" | "mixed" | "unknown";
+  kind?: "photo" | "illustration" | "abstract" | "unknown";
+  attribution?: string;
 };
 
 const catalog: Record<TradeCategory, CatalogEntry> = {
@@ -266,19 +283,32 @@ function unsplashPhoto(id: string) {
 }
 
 const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
+  "Pressure Washing": [
+    {
+      src: "https://images.pexels.com/photos/5652626/pexels-photo-5652626.jpeg?auto=compress&cs=tinysrgb&w=1800",
+      keywords: ["pressure washing", "house washing", "residential siding", "home exterior cleaning", "water spray"],
+      context: "residential",
+      kind: "photo",
+      attribution: "Pexels photo 5652626 by Caitlin Whealy",
+    },
+    {
+      src: "https://images.pexels.com/photos/35153375/pexels-photo-35153375.jpeg?auto=compress&cs=tinysrgb&w=1800",
+      keywords: ["pressure washing", "gutter cleaning", "residential exterior", "water spray", "exterior cleaning"],
+      context: "residential",
+      kind: "photo",
+      attribution: "Pexels photo 35153375 by Revive Wash",
+    },
+  ],
   Roofing: [
     { id: "photo-1635424824849-1b09bdcc55b1", keywords: ["roofer", "roof inspection", "shingles"] },
     { id: "photo-1635424709845-3a85ad5e1f5e", keywords: ["roofing crew", "roof repair", "roofline"] },
     { id: "photo-1632759145355-b0c7f70a2558", keywords: ["roof", "shingles", "home exterior"] },
     { id: "photo-1599139574071-585d8cf395f0", keywords: ["shingle roof", "roof detail", "exterior"] },
-    { id: "photo-1600573472550-8090b5e0745e", keywords: ["finished home", "roofline", "residential exterior"] },
   ],
   HVAC: [
     { id: "photo-1718203862467-c33159fdc504", keywords: ["outdoor AC condenser", "hvac equipment", "cooling"] },
     { id: "photo-1700124113583-81aa99ea2aa2", keywords: ["HVAC unit", "air conditioner", "service"] },
-    { id: "photo-1581092160562-40aa08e78837", keywords: ["technician tools", "maintenance", "mechanical service"] },
     { id: "photo-1581091226825-a6a2a5aee158", keywords: ["technician", "service call", "equipment"] },
-    { id: "photo-1600566752355-35792bedcfea", keywords: ["home comfort", "interior", "thermostat-ready home"] },
   ],
   Landscaping: [
     { id: "photo-1734079692160-fcbe4be6ab96", keywords: ["landscaping worker", "wheelbarrow", "lawn"] },
@@ -299,21 +329,15 @@ const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> =
     { id: "photo-1509391366360-2e959784a276", keywords: ["electrical", "solar panel", "power"] },
     { id: "photo-1518770660439-4636190af475", keywords: ["circuit", "wiring", "technical detail"] },
     { id: "photo-1558618666-fcd25c85cd64", keywords: ["lighting", "installation", "interior"] },
-    { id: "photo-1581092160562-40aa08e78837", keywords: ["tools", "technician", "safe work"] },
   ],
   Concrete: [
-    { id: "photo-1621947081720-86970823b77a", keywords: ["concrete", "driveway", "finished surface"] },
     { id: "photo-1599995903128-531fc7fb694b", keywords: ["concrete", "walkway", "patio"] },
-    { id: "photo-1590644365607-1c5a939a6f38", keywords: ["concrete", "surface", "flatwork"] },
     { id: "photo-1597007066704-67bf2068d5b5", keywords: ["driveway", "home exterior", "concrete"] },
     { id: "photo-1600585154340-be6161a56a0c", keywords: ["house", "driveway", "residential exterior"] },
   ],
   Painting: [
-    { id: "photo-1742900280861-32bed068938b", keywords: ["exterior painting", "ladder", "paint roller"] },
     { id: "photo-1717281234297-3def5ae3eee1", keywords: ["interior painter", "wall painting", "prep"] },
-    { id: "photo-1589939705384-5185137a7f0f", keywords: ["paint roller", "wall", "interior painting"] },
     { id: "photo-1562259949-e8e7689d7828", keywords: ["paint", "roller", "home improvement"] },
-    { id: "photo-1503387762-592deb58ef4e", keywords: ["interior", "wall finish", "painting"] },
   ],
   Cleaning: [
     { id: "photo-1581578731548-c64695cc6952", keywords: ["cleaning", "supplies", "interior"] },
@@ -404,13 +428,30 @@ function approvedBusinessPhotos(prospect: Prospect): BusinessPhotoCandidate[] {
   return [...new Map(candidates.map((candidate) => [candidate.src, candidate])).values()];
 }
 
-function configuredStockImages(environment: NodeJS.ProcessEnv) {
+function configuredStockImages(environment: NodeJS.ProcessEnv): CuratedStockPhoto[] {
   const raw = environment.PREVIEW_STOCK_IMAGE_MANIFEST_JSON || environment.PREVIEW_STOCK_IMAGE_MANIFEST || "";
   if (!raw.trim()) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return [...new Set(parsed.map(safeImageUrl).filter(Boolean))];
+    const candidates = parsed.flatMap((item): CuratedStockPhoto[] => {
+      if (typeof item === "string") {
+        const src = safeImageUrl(item);
+        return src ? [{ src, keywords: [], context: "unknown", kind: "photo" }] : [];
+      }
+      if (!item || typeof item !== "object") return [];
+      const value = item as Record<string, unknown>;
+      const src = safeImageUrl(value.src);
+      if (!src) return [];
+      return [{
+        src,
+        keywords: Array.isArray(value.keywords) ? value.keywords.filter((keyword): keyword is string => typeof keyword === "string") : [],
+        context: ["residential", "commercial", "mixed", "unknown"].includes(String(value.context)) ? value.context as CuratedStockPhoto["context"] : "unknown",
+        kind: ["photo", "illustration", "abstract", "unknown"].includes(String(value.kind)) ? value.kind as CuratedStockPhoto["kind"] : "photo",
+        attribution: typeof value.attribution === "string" ? value.attribution : "configured stock manifest",
+      }];
+    });
+    return [...new Map(candidates.map((candidate) => [candidate.src, candidate])).values()];
   } catch {
     return [];
   }
@@ -530,6 +571,44 @@ function serviceSpecificKeywords(trade: TradeCategory, serviceTitle: string) {
     if (/concrete|driveway|walk|patio|paver/.test(title)) return ["driveway cleaning", "concrete surface", "walkway wash"];
     if (/roof|soft/.test(title)) return ["roof soft washing", "roofline", "low-pressure cleaning"];
   }
+  if (trade === "Landscaping") {
+    if (/design|plan/.test(title)) return ["landscape design", "planting plan", "outdoor space"];
+    if (/plant|bed|mulch/.test(title)) return ["planting bed", "garden", "mulch", "landscape detail"];
+    if (/lawn|maintenance|season/.test(title)) return ["lawn care", "yard maintenance", "landscaping crew"];
+    if (/patio|hardscape|outdoor living/.test(title)) return ["patio", "hardscape", "outdoor living"];
+  }
+  if (trade === "HVAC") {
+    if (/heat|furnace/.test(title)) return ["furnace", "heating", "HVAC technician"];
+    if (/cool|air condition|\bac\b/.test(title)) return ["air conditioner", "condenser", "cooling service"];
+    if (/install|replace|system/.test(title)) return ["HVAC unit", "air handler", "system installation"];
+    if (/maintenance|tune/.test(title)) return ["HVAC maintenance", "equipment inspection", "technician service call"];
+  }
+  if (trade === "Roofing") {
+    if (/repair|leak/.test(title)) return ["roof repair", "shingles", "flashing"];
+    if (/replace|install|new roof/.test(title)) return ["roof replacement", "roofing crew", "shingles"];
+    if (/storm|inspection/.test(title)) return ["roof inspection", "roof damage", "shingles"];
+  }
+  if (trade === "Plumbing") {
+    if (/leak|pipe|repair/.test(title)) return ["plumber", "under sink", "pipe repair"];
+    if (/drain|clog/.test(title)) return ["drain cleaning", "sink drain", "clogged pipe"];
+    if (/water heater|hot water/.test(title)) return ["water heater", "hot water equipment", "plumber"];
+    if (/fixture|faucet|sink|toilet/.test(title)) return ["faucet", "sink", "plumbing fixture"];
+  }
+  if (trade === "Electrical") {
+    if (/panel|breaker|service/.test(title)) return ["breaker panel", "electrical panel", "electrician"];
+    if (/light|fixture/.test(title)) return ["lighting installation", "light fixture", "electrician"];
+    if (/repair|wiring|outlet|switch/.test(title)) return ["electrical repair", "wiring", "outlet", "electrician"];
+  }
+  if (trade === "Painting") {
+    if (/interior|room|wall|ceiling/.test(title)) return ["interior painter", "wall painting", "paint roller"];
+    if (/exterior|siding/.test(title)) return ["exterior painting", "house painter", "siding paint"];
+    if (/cabinet|trim/.test(title)) return ["cabinet painting", "trim painting", "paint finish"];
+  }
+  if (trade === "Concrete") {
+    if (/driveway|flatwork/.test(title)) return ["concrete driveway", "flatwork", "residential concrete"];
+    if (/patio|walkway|sidewalk/.test(title)) return ["concrete patio", "walkway", "residential concrete"];
+    if (/repair|resurface/.test(title)) return ["concrete repair", "surface repair", "flatwork"];
+  }
   if (/emergency/.test(title)) return ["urgent service", "service call", "technician"];
   if (/maintenance|tune/.test(title)) return ["maintenance", "inspection", "equipment check"];
   return [];
@@ -545,12 +624,77 @@ function imageAlt(prospect: Prospect, intent: PreviewImageIntent) {
   return `${service} service photo${details ? ` with ${details}` : ""}${city ? ` for ${city} customers` : ""}`;
 }
 
+const knownRejectedAssetPattern = /photo-(?:1518770660439-4636190af475|1581092160562-40aa08e78837|1581091226825-a6a2a5aee158|1599995903128-531fc7fb694b|1600573472550-8090b5e0745e|1742900280861-32bed068938b|1589939705384-5185137a7f0f|1503387762-592deb58ef4e|1590644365607-1c5a939a6f38|1621947081720-86970823b77a)/i;
+
+const semanticRules: Partial<Record<TradeCategory, { required: RegExp; rejected: RegExp }>> = {
+  "Pressure Washing": { required: /pressure wash|exterior clean|house wash|siding clean|driveway clean|concrete clean|surface cleaner|soft wash|roof clean|water spray/, rejected: /municipal|street|industrial|architecture|interior|room|pool|real estate|landscap/ },
+  Landscaping: { required: /landscap|lawn|plant|garden|mulch|hardscape|patio|yard/, rejected: /office|interior|roof|plumb|electrical panel/ },
+  HVAC: { required: /hvac|heating|cooling|furnace|air condition|condenser|thermostat|duct|air handler|technician/, rejected: /office planning|design board|architecture|roofing|landscap/ },
+  Roofing: { required: /roof|roofer|shingle|flashing|gutter/, rejected: /interior scaffolding|room|office|plumb|landscap/ },
+  Plumbing: { required: /plumb|pipe|sink|faucet|fixture|water heater|drain/, rejected: /roof|landscap|office planning|abstract/ },
+  Electrical: { required: /electric|breaker|panel|wiring|outlet|lighting|circuit/, rejected: /plumb|roof|landscap|abstract/ },
+  Painting: { required: /paint|roller|brush|wall finish|trim|surface prep/, rejected: /construction framing|construction site|abstract|roof|plumb/ },
+  Concrete: { required: /concrete|driveway|walkway|patio|flatwork|trowel|surface finish/, rejected: /abstract|graphic|interior room|roof|plumb/ },
+};
+
+export function assessSemanticImage(
+  trade: TradeCategory,
+  intent: PreviewImageIntent,
+  src: string,
+  source: PreviewImageSource,
+  input: Pick<CuratedStockPhoto, "keywords" | "context" | "kind" | "attribution"> = { keywords: [] },
+) {
+  const rules = semanticRules[trade];
+  const blob = `${src} ${input.keywords.join(" ")}`.toLowerCase();
+  const reasons: string[] = [];
+  const kind = input.kind ?? (source === "curated-trade-library" || source === "neutral-fallback" ? "illustration" : "photo");
+  if (knownRejectedAssetPattern.test(src)) reasons.push("Asset failed representative rendered or semantic review.");
+  if (trade === "Concrete" && /photo-1600585154340-be6161a56a0c/i.test(src)) {
+    reasons.push("Generic property photography does not establish visible concrete work or a concrete surface as the subject.");
+  }
+  if (kind === "abstract" || kind === "illustration") reasons.push("Abstract or illustration media cannot act as contractor service proof.");
+  if (rules?.rejected.test(blob)) reasons.push("Asset metadata conflicts with the trade or intended section.");
+  const hasSpecificMetadata = input.keywords.length > 0;
+  const relevant = !rules || rules.required.test(blob);
+  if (!relevant) reasons.push("Asset metadata does not establish trade relevance.");
+  if (trade === "HVAC" && intent.slot === "hero" && !/hvac|furnace|air condition|condenser|air handler|technician|heat pump/.test(blob)) {
+    reasons.push("HVAC hero metadata does not establish visible equipment or technician context.");
+  }
+  const establishesElectricalService = /electrician|breaker|electrical panel|service panel|wiring|outlet|lighting|service call/.test(blob);
+  const isSolarOnlyElectricalContext = /solar panel/.test(blob) && !establishesElectricalService;
+  if (trade === "Electrical" && intent.slot === "hero" && (!establishesElectricalService || isSolarOnlyElectricalContext)) {
+    reasons.push("Electrical hero metadata does not establish visible electrician, panel, wiring, outlet, or lighting context.");
+  }
+  if (intent.slot === "hero" && input.context === "commercial" && /home|residential|homeowner/.test(intent.query.toLowerCase())) {
+    reasons.push("Commercial imagery does not match the residential hero context.");
+  }
+  const rejected = reasons.some((reason) => /failed|cannot|conflicts|does not match|does not establish visible/.test(reason));
+  const officialEvidence = source === "business-photo" && hasSpecificMetadata && relevant;
+  const uncertain = !rejected && (!hasSpecificMetadata || !relevant || (input.context === "unknown" && !officialEvidence));
+  return {
+    semanticStatus: rejected ? "rejected" as const : uncertain ? "uncertain" as const : "accepted" as const,
+    semanticReasons: reasons,
+    metadata: {
+      trade,
+      supportedServices: input.keywords,
+      intendedSections: [intent.slot],
+      context: input.context ?? "unknown",
+      kind,
+      confidence: rejected ? "low" as const : uncertain ? "medium" as const : "high" as const,
+      cropSuitability: knownRejectedAssetPattern.test(src) ? "unsuitable" as const : "uncertain" as const,
+      usagePath: input.attribution ? `${source}: ${input.attribution}` : source,
+    },
+  };
+}
+
 function imageFrom(
   prospect: Prospect,
   intent: PreviewImageIntent,
   src: string,
   source: PreviewImageSource,
+  metadata: Pick<CuratedStockPhoto, "keywords" | "context" | "kind" | "attribution"> = { keywords: intent.keywords },
 ): ResolvedPreviewImage {
+  const trade = normalizeTradeCategory(prospect.trade) ?? "General Contractor";
   return {
     id: intent.id,
     slot: intent.slot,
@@ -560,6 +704,7 @@ function imageFrom(
     alt: imageAlt(prospect, intent),
     source,
     intent,
+    ...assessSemanticImage(trade, intent, src, source, metadata),
   };
 }
 
@@ -579,8 +724,14 @@ function curatedStockSources(trade: TradeCategory, prospect: Prospect) {
   const remotePhotos = ordered.map((photo) => ({
     src: safeImageUrl(photo.src ?? (photo.id ? unsplashPhoto(photo.id) : "")),
     keywords: photo.keywords,
+    context: photo.context ?? "residential" as const,
+    kind: photo.kind ?? "photo" as const,
+    attribution: photo.attribution ?? (photo.id ? `Unsplash ${photo.id}` : "curated stock catalog"),
   })).filter((photo) => photo.src);
-  return [...verifiedLocalPhotoSources(trade), ...remotePhotos];
+  const localPhotos = verifiedLocalPhotoSources(trade).map((photo) => ({ ...photo, context: "residential" as const, kind: "photo" as const, attribution: "curated local trade asset" }));
+  const combined = [...localPhotos, ...remotePhotos];
+  const combinedStart = seededIndex(`${prospect.id}|${prospect.website}|${prospect.city}|${trade}|media`, combined.length);
+  return [...combined.slice(combinedStart), ...combined.slice(0, combinedStart)];
 }
 
 function textTokens(value: string) {
@@ -624,7 +775,7 @@ function photoRelevanceScore(trade: TradeCategory, intent: PreviewImageIntent, p
 }
 
 function minimumPhotoRelevanceScore(trade: TradeCategory, intent: PreviewImageIntent) {
-  if (trade !== "Pressure Washing") return 0;
+  if (trade !== "Pressure Washing") return intent.slot === "service" && intent.serviceTitle ? 3 : 0;
   const service = (intent.serviceTitle ?? intent.section).toLowerCase();
   if (intent.slot === "hero") return 12;
   if (/house|siding|exterior/.test(service)) return 18;
@@ -657,12 +808,13 @@ function pressureWashingPhotoMatchesIntent(intent: PreviewImageIntent, photo: { 
 function selectCuratedStockPhoto(
   trade: TradeCategory,
   intent: PreviewImageIntent,
-  curatedStockPhotos: Array<{ src: string; keywords: string[] }>,
+  curatedStockPhotos: Array<{ src: string; keywords: string[]; context?: CuratedStockPhoto["context"]; kind?: CuratedStockPhoto["kind"]; attribution?: string }>,
   usedSources: Set<string>,
   seed: string,
 ) {
   const scored = curatedStockPhotos
     .map((photo, index) => ({ photo, index, score: photoRelevanceScore(trade, intent, photo, usedSources) }))
+    .filter(({ photo }) => assessSemanticImage(trade, intent, photo.src, "curated-stock-photo-library", photo).semanticStatus === "accepted")
     .filter((candidate) => trade !== "Pressure Washing" || pressureWashingPhotoMatchesIntent(intent, candidate.photo))
     .sort((a, b) => b.score - a.score || a.index - b.index);
   const minimumScore = minimumPhotoRelevanceScore(trade, intent);
@@ -672,26 +824,28 @@ function selectCuratedStockPhoto(
       .filter((candidate) => candidate.score >= Math.max(minimumScore, bestScore - 22))
       .sort((a, b) => a.index - b.index);
     const heroPool = acceptableHero.filter((candidate) => !usedSources.has(candidate.photo.src));
-    const directLocalHero = heroPool.find((candidate) => /-hero\.(jpe?g|png|webp)$/i.test(candidate.photo.src));
-    if (directLocalHero) return directLocalHero.photo;
-    const localHeroPool = heroPool.filter((candidate) => candidate.photo.src.startsWith("/engine-preview-assets/"));
-    const selectedPool = localHeroPool.length ? localHeroPool : heroPool.length ? heroPool : acceptableHero;
+    const selectedPool = heroPool.length ? heroPool : acceptableHero;
     const selected = selectedPool[seededIndex(seed, selectedPool.length)] ?? selectedPool[0];
     return selected?.photo;
   }
   const bestScore = scored[0]?.score ?? 0;
   const eligible = scored.filter((candidate) => !usedSources.has(candidate.photo.src) && candidate.score >= Math.max(minimumScore, bestScore - 12));
-  const unusedRelevant = eligible.find((candidate) => candidate.photo.src.startsWith("/engine-preview-assets/"))
-    ?? eligible[0];
+  const unusedRelevant = eligible[0];
   if (unusedRelevant) return unusedRelevant.photo;
   return undefined;
 }
 
-function selectConfiguredImage(images: string[], index: number, usedSources: Set<string>) {
-  if (!images.length) return "";
+function selectConfiguredImage(images: CuratedStockPhoto[], trade: TradeCategory, intent: PreviewImageIntent, index: number, usedSources: Set<string>) {
+  if (!images.length) return undefined;
   const start = index % images.length;
   const ordered = [...images.slice(start), ...images.slice(0, start)];
-  return ordered.find((src) => !usedSources.has(src)) ?? ordered[0] ?? "";
+  return ordered.find((photo) => {
+    const source = photo.src;
+    if (!source) return false;
+    return !usedSources.has(source)
+      && assessSemanticImage(trade, intent, source, "configured-stock-provider", photo).semanticStatus === "accepted"
+      && photoRelevanceScore(trade, intent, { ...photo, src: source }, usedSources) >= minimumPhotoRelevanceScore(trade, intent);
+  });
 }
 
 function selectBusinessPhoto(images: BusinessPhotoCandidate[], intent: PreviewImageIntent, usedSources: Set<string>) {
@@ -710,7 +864,11 @@ function selectBusinessPhoto(images: BusinessPhotoCandidate[], intent: PreviewIm
     const heroBoost = intent.slot === "hero" && /hero|pressure|wash|service|crew|technician|exterior/.test(descriptor) ? 5 : 0;
     return { image, sourceIndex, score: semanticMatches + (directServiceMatch ? 12 : 0) + heroBoost };
   }).sort((a, b) => b.score - a.score || a.sourceIndex - b.sourceIndex);
-  return scored.find(({ image }) => !usedSources.has(image.src))?.image;
+  const unused = scored.filter(({ image }) => !usedSources.has(image.src));
+  const direct = unused.find(({ score }) => score >= 12);
+  if (direct) return direct.image;
+  if (intent.slot === "hero") return unused.find(({ score }) => score >= 3)?.image;
+  return undefined;
 }
 
 function sourceForIndex(
@@ -721,8 +879,8 @@ function sourceForIndex(
   catalogSlot: CatalogSlot,
   index: number,
   businessPhotos: BusinessPhotoCandidate[],
-  stockPhotos: string[],
-  curatedStockPhotos: Array<{ src: string; keywords: string[] }>,
+  stockPhotos: CuratedStockPhoto[],
+  curatedStockPhotos: Array<{ src: string; keywords: string[]; context?: CuratedStockPhoto["context"]; kind?: CuratedStockPhoto["kind"]; attribution?: string }>,
   usedSources: Set<string>,
 ): ResolvedPreviewImage {
   const businessPhoto = selectBusinessPhoto(businessPhotos, intent, usedSources);
@@ -734,33 +892,39 @@ function sourceForIndex(
       keywords: [...new Set([...intent.keywords, businessPhoto.alt, businessPhoto.service].filter(Boolean))],
       purpose: `${intent.section} image${businessPhoto.service ? ` showing ${businessPhoto.service}` : ""}`,
     };
-    return imageFrom(prospect, businessIntent, businessPhoto.src, "business-photo");
+    return imageFrom(prospect, businessIntent, businessPhoto.src, "business-photo", {
+      keywords: [...businessIntent.keywords, businessPhoto.alt, businessPhoto.service].filter(Boolean),
+      context: /home|residential|house|siding|roof|driveway|patio/i.test(`${businessPhoto.alt} ${businessPhoto.service}`) ? "residential" : "unknown",
+      kind: "photo",
+      attribution: "approved official business photo",
+    });
   }
-  const stockPhoto = selectConfiguredImage(stockPhotos, index, usedSources);
-  if (stockPhoto) {
-    usedSources.add(stockPhoto);
-    return imageFrom(prospect, intent, stockPhoto, "configured-stock-provider");
+  const stockPhoto = selectConfiguredImage(stockPhotos, trade, intent, index, usedSources);
+  if (stockPhoto?.src) {
+    usedSources.add(stockPhoto.src);
+    return imageFrom(prospect, intent, stockPhoto.src, "configured-stock-provider", stockPhoto);
   }
-  const curatedStockPhoto = selectCuratedStockPhoto(trade, intent, curatedStockPhotos, usedSources, `${prospect.businessName}|${prospect.city}|${prospect.state}|${intent.id}|${index}`);
+  const curatedStockPhoto = selectCuratedStockPhoto(trade, intent, curatedStockPhotos, usedSources, `${prospect.id}|${prospect.businessName}|${prospect.city}|${prospect.state}|${intent.id}|${index}`);
   if (curatedStockPhoto?.src) {
     usedSources.add(curatedStockPhoto.src);
     const curatedIntent = {
       ...intent,
       keywords: curatedStockPhoto.keywords,
     };
-    return imageFrom(prospect, curatedIntent, curatedStockPhoto.src, "curated-stock-photo-library");
+    return imageFrom(prospect, curatedIntent, curatedStockPhoto.src, "curated-stock-photo-library", curatedStockPhoto);
   }
   return imageFrom(
     prospect,
     intent,
     curatedPhoto(catalogEntry.slug, catalogSlot),
-    trade === "Pressure Washing" ? "curated-trade-library" : "curated-stock-photo-library",
+    "curated-trade-library",
+    { keywords: intent.keywords, context: "unknown", kind: "illustration" },
   );
 }
 
 export function resolvePreviewImages(
   prospect: Prospect,
-  services: readonly [ServiceInput, ServiceInput, ServiceInput],
+  services: readonly ServiceInput[],
   environment: NodeJS.ProcessEnv = process.env,
 ): PreviewImageSet {
   const trade = normalizeTradeCategory(prospect.trade) ?? "General Contractor";
@@ -776,17 +940,17 @@ export function resolvePreviewImages(
     const slot = serviceCatalogSlot(trade, service.title, index);
     const intent = buildIntent(trade, prospect, service.title, "service", slot, service.title);
     return { ...intent, keywords: [...new Set([...serviceSpecificKeywords(trade, service.title), ...intent.keywords])] };
-  }) as [PreviewImageIntent, PreviewImageIntent, PreviewImageIntent];
+  });
   const proofIntent = buildIntent(trade, prospect, "Service results", "gallery", "proof");
-  const beforeAfterIntent = buildIntent(trade, prospect, "Comparison", "beforeAfter", "proof", services[0].title);
+  const beforeAfterIntent = buildIntent(trade, prospect, "Comparison", "beforeAfter", "proof", services[0]?.title ?? displayTradeCategory(trade));
   const processIntent = buildIntent(trade, prospect, "Process", "process", "support");
   const ctaIntent = buildIntent(trade, prospect, "Quote request", "cta", "detail");
 
   const hero = sourceForIndex(prospect, trade, heroIntent, entry, "hero", 0, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
   const resolvedServices = serviceIntents.map((intent, index) => {
-    const slot = serviceCatalogSlot(trade, services[index].title, index);
+    const slot = serviceCatalogSlot(trade, services[index]?.title ?? displayTradeCategory(trade), index);
     return sourceForIndex(prospect, trade, intent, entry, slot, index + 1, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
-  }) as [ResolvedPreviewImage, ResolvedPreviewImage, ResolvedPreviewImage];
+  }).filter((image) => image.semanticStatus === "accepted");
   const gallery = [
     sourceForIndex(prospect, trade, buildIntent(trade, prospect, "Gallery detail", "gallery", "detail"), entry, "detail", 4, businessPhotos, stockPhotos, curatedStockPhotos, usedSources),
     sourceForIndex(prospect, trade, buildIntent(trade, prospect, "Gallery equipment", "gallery", "support"), entry, "support", 5, businessPhotos, stockPhotos, curatedStockPhotos, usedSources),
@@ -797,9 +961,20 @@ export function resolvePreviewImages(
   const cta = sourceForIndex(prospect, trade, ctaIntent, entry, "detail", 9, businessPhotos, stockPhotos, curatedStockPhotos, usedSources);
   const all = [hero, ...resolvedServices, ...gallery, beforeAfter, process, cta];
   const warnings = validatePreviewImages(all).warnings;
+  const heroAlternatives = curatedStockPhotos
+    .filter((photo) => photo.src && photo.src !== hero.src)
+    .map((photo) => imageFrom(prospect, { ...heroIntent, keywords: photo.keywords }, photo.src, "curated-stock-photo-library", photo))
+    .filter((image) => image.semanticStatus === "accepted")
+    .slice(0, 4);
+  const heroCandidates = [hero, ...heroAlternatives].filter((image, index, items) => items.findIndex((candidate) => candidate.src === image.src) === index);
+  const omittedAssets = all.filter((image) => image.semanticStatus !== "accepted").map((image) => ({
+    src: image.src,
+    reason: image.semanticReasons[0] ?? "Semantic evidence was insufficient for public placement.",
+  }));
 
   return {
     hero,
+    heroCandidates,
     services: resolvedServices,
     gallery,
     beforeAfter,
@@ -815,6 +990,7 @@ export function resolvePreviewImages(
           : "curated trade fallback library",
     providerStatus,
     warnings,
+    omittedAssets,
     resolvedAt: new Date().toISOString(),
   };
 }
@@ -824,11 +1000,10 @@ export function attachResolvedPreviewImages(
   preview: PreviewConcept,
   environment: NodeJS.ProcessEnv = process.env,
 ): PreviewConcept {
-  const services = [
-    { title: preview.serviceHighlights?.[0] ?? displayTradeCategory(prospect.trade), description: "Primary service." },
-    { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
-    { title: preview.serviceHighlights?.[2] ?? "Estimate request", description: "Supporting service." },
-  ] as const;
+  const services = preview.serviceHierarchy?.length
+    ? preview.serviceHierarchy.map(({ title, description }) => ({ title, description }))
+    : (preview.serviceHighlights?.length ? preview.serviceHighlights : [displayTradeCategory(prospect.trade)])
+      .map((title) => ({ title, description: `Request an estimate for ${title.toLowerCase()}.` }));
   const resolvedImages = resolvePreviewImages(prospect, services, environment);
   return {
     ...preview,
@@ -868,6 +1043,8 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
   if (images.some((image) => !safeImageUrl(image.src))) warnings.push("One or more preview image URLs are unsafe.");
   if (images.some((image) => image.source === "neutral-fallback")) warnings.push("A photographic image was unavailable for at least one section.");
   if (images.some((image) => image.source === "curated-trade-library")) warnings.push("One or more sections used illustration fallback instead of photography.");
+  if (images.some((image) => image.semanticStatus === "rejected")) warnings.push("One or more image candidates failed semantic relevance checks.");
+  if (images[0]?.semanticStatus !== "accepted") warnings.push("Hero image does not have sufficient semantic evidence for critical placement.");
   for (const image of images) {
     const service = image.serviceTitle?.toLowerCase() ?? "";
     const blob = `${image.src} ${image.intent.keywords.join(" ")}`.toLowerCase();
@@ -895,6 +1072,7 @@ export function validatePreviewImages(images: readonly ResolvedPreviewImage[]) {
 
 export function isPublicPreviewImageRelevant(image: ResolvedPreviewImage, trade: string) {
   const normalizedTrade = normalizeTradeCategory(trade) ?? "General Contractor";
+  if (image.semanticStatus !== "accepted") return false;
   if (normalizedTrade !== "Pressure Washing") return true;
   if (image.source === "curated-trade-library" || image.source === "neutral-fallback") return false;
   const service = image.serviceTitle?.toLowerCase() ?? image.section.toLowerCase();
@@ -913,4 +1091,33 @@ export function isPublicPreviewImageRelevant(image: ResolvedPreviewImage, trade:
 
 export function previewImageCatalogSlugs() {
   return Object.fromEntries(Object.entries(catalog).map(([trade, entry]) => [trade, entry.slug])) as Record<TradeCategory, string>;
+}
+
+export function buildPreviewVisualAssetQa(prospect: Prospect, preview: PreviewConcept): PreviewVisualAssetQa {
+  const images = preview.resolvedImages ?? resolvePreviewImages(
+    prospect,
+    (preview.serviceHierarchy ?? []).map(({ title, description }) => ({ title, description })),
+  );
+  const effectiveHero = images.heroCandidates.find((image) => image.semanticStatus === "accepted" && image.metadata.kind === "photo");
+  const major = [effectiveHero, ...images.services, ...images.gallery.slice(0, 3)]
+    .filter((image): image is ResolvedPreviewImage => Boolean(image))
+    .filter((image) => image.semanticStatus === "accepted" && image.source !== "curated-trade-library" && image.source !== "neutral-fallback");
+  const distinctMajorImageCount = new Set(major.map((image) => image.src)).size;
+  const criticalFailures: string[] = [];
+  if (!effectiveHero) criticalFailures.push("No hero candidate has sufficient semantic evidence for critical placement.");
+  if (effectiveHero?.metadata.cropSuitability === "unsuitable") criticalFailures.push("Selected hero failed crop suitability review.");
+  if (preview.serviceFidelity?.status === "failed") criticalFailures.push("Grounded services changed before public rendering.");
+  const lowImageMode = major.length < 3;
+  return {
+    selectedHeroStatus: !effectiveHero ? "blocked" : effectiveHero.src === images.hero.src ? "accepted" : "replaced",
+    selectedHeroSource: effectiveHero?.source ?? images.hero.source,
+    brokenImage: false,
+    visuallyBlank: false,
+    cropSuitability: effectiveHero?.metadata.cropSuitability ?? images.hero.metadata.cropSuitability,
+    semanticRelevance: effectiveHero?.semanticStatus ?? images.hero.semanticStatus,
+    distinctMajorImageCount,
+    omittedUncertainAssets: images.omittedAssets.map((asset) => asset.src),
+    criticalFailures,
+    lowImageMode,
+  };
 }

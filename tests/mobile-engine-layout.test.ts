@@ -236,7 +236,7 @@ test("protected prospect previews remain readable and business-themed on phones"
   assert.match(prospectWebsitePreview, /previewImageProps/);
   assert.match(tradePreviewImage, /data-preview-image-source/);
   assert.match(tradePreviewImage, /onError={handleImageError}/);
-  assert.match(tradePreviewImage, /The rest of this preview is still available/);
+  assert.doesNotMatch(tradePreviewImage, /Image unavailable|The rest of this preview is still available/);
   assert.doesNotMatch(tradePreviewImage, /fallbackSrc|data-fallback-src/);
   assert.match(css, /contain: layout paint;/);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*\.prospect-preview-process,\s*\.prospect-preview-proof-layout\s*{\s*grid-template-columns: minmax\(0, 1fr\);/);

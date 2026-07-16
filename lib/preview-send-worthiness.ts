@@ -18,11 +18,9 @@ const internalPublicTextPattern = /include only when verified|placeholder|proof 
 const unsupportedClaimPattern = /\b(award-winning|certified|licensed|insured|guaranteed|guarantee|guarantees|warrant(?:y|ies)|five-star|best rated|family-owned|locally owned for \d+ years|in business for \d+ years)\b/i;
 
 function previewServices(prospect: Prospect, preview: PreviewConcept) {
-  return [
-    { title: preview.serviceHighlights?.[0] ?? displayTradeCategory(prospect.trade), description: "Primary service." },
-    { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
-    { title: preview.serviceHighlights?.[2] ?? "Estimate request", description: "Supporting service." },
-  ] as const;
+  if (preview.serviceHierarchy?.length) return preview.serviceHierarchy.map(({ title, description }) => ({ title, description }));
+  return (preview.serviceHighlights?.length ? preview.serviceHighlights : [displayTradeCategory(prospect.trade)])
+    .map((title) => ({ title, description: `Request an estimate for ${title.toLowerCase()}.` }));
 }
 
 function publicCopy(preview: PreviewConcept) {
@@ -48,8 +46,8 @@ function uniqueBySrc(images: readonly ResolvedPreviewImage[]) {
 }
 
 function publicMajorImagesForWorthiness(prospect: Prospect, images: ReturnType<typeof resolvePreviewImages>) {
-  const all = [images.hero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta];
-  if (displayTradeCategory(prospect.trade) !== "Pressure Washing") return all;
+  const effectiveHero = images.heroCandidates.find((image) => isPublicPreviewImageRelevant(image, prospect.trade)) ?? images.hero;
+  const all = [effectiveHero, ...images.services, ...images.gallery, images.beforeAfter, images.process, images.cta];
   const visibleRelevant = all.filter((image) => isPublicPreviewImageRelevant(image, prospect.trade));
   return uniqueBySrc(visibleRelevant.length ? visibleRelevant : all);
 }
@@ -101,12 +99,20 @@ export function evaluatePreviewSendWorthiness(
     ? images.warnings.filter((warning) => !/one image is used across too much|repeats one image/i.test(warning))
     : images.warnings;
   warnings.push(...resolverWarnings, ...imageValidation.warnings);
-  if (images.hero.source === "curated-trade-library" || images.hero.source === "neutral-fallback") {
+  const effectiveHero = images.heroCandidates.find((image) => isPublicPreviewImageRelevant(image, prospect.trade)) ?? images.hero;
+  if (effectiveHero.source === "curated-trade-library" || effectiveHero.source === "neutral-fallback") {
     warnings.push("Hero image did not resolve to photography.");
   }
   if (imageList.some((image) => image.source === "curated-trade-library")) {
     warnings.push("One or more public preview sections are using illustration fallback instead of photography.");
   }
+  if (preview.serviceFidelity?.status === "failed") {
+    warnings.push(`Service fidelity failed: ${preview.serviceFidelity.transformations.map((item) => item.stage).join(", ")}.`);
+  }
+  if (preview.visualAssetQa?.criticalFailures.length) warnings.push(...preview.visualAssetQa.criticalFailures);
+  if (preview.visualAssetQa?.brokenImage) warnings.push("The rendered hero image is broken.");
+  if (preview.visualAssetQa?.visuallyBlank) warnings.push("The rendered hero image is visually blank.");
+  if (preview.visualAssetQa?.semanticRelevance === "rejected") warnings.push("The rendered hero image is semantically unrelated to the business.");
 
   const copy = publicCopy(preview);
   if (!copy.includes(prospect.businessName)) warnings.push("Business name is not clearly represented in the preview copy.");
@@ -125,11 +131,11 @@ export function evaluatePreviewSendWorthiness(
   if ((preview.qualityScore?.mobileResponsiveness ?? 100) < 80) warnings.push("Mobile layout needs visual review before outreach.");
   if ((preview.qualityScore?.conversionStrength ?? 100) < 80) warnings.push("CTA hierarchy is not strong enough yet.");
   if ((preview.qualityScore?.safetyTruthfulness ?? 100) < 85) warnings.push("Factual-safety score is too low for prospect-facing use.");
-  if (resolvedImageCount < 6) warnings.push("Too few trade-relevant photos resolved for the public preview.");
+  if (preview.renderPlan?.pageMode !== "concise" && resolvedImageCount < 3) warnings.push("Too few trade-relevant photos resolved for the selected full-page direction.");
 
   const uniqueWarnings = [...new Set(warnings.filter(Boolean))];
   const blockingWarning = uniqueWarnings.find((warning) =>
-    /No prospect-safe public|could not be verified|Internal or placeholder|Unsupported factual|No preview exists|factual-safety/i.test(warning),
+    /No prospect-safe public|could not be verified|Internal or placeholder|Unsupported factual|No preview exists|factual-safety|Service fidelity failed|rendered hero|critical|semantically unrelated/i.test(warning),
   );
   const score = preview.qualityScore?.overall ?? 0;
   const qualityStatus = preview.qualityScore?.status ?? "";

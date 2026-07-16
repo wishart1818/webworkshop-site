@@ -6,7 +6,13 @@ import {
   webworkshopPreviewValueLine,
   webworkshopYesReply,
 } from "@/lib/outreach-style-guide";
-import { attachResolvedPreviewImages, isPublicPreviewImageRelevant, type PreviewImageSet } from "@/lib/preview-image-resolver";
+import { attachResolvedPreviewImages, buildPreviewVisualAssetQa, isPublicPreviewImageRelevant, type PreviewImageSet } from "@/lib/preview-image-resolver";
+import {
+  buildPreviewServiceHierarchy,
+  evaluateServiceFidelity,
+  groundedPreviewCopy,
+  serviceHierarchyWithImages,
+} from "@/lib/preview-fidelity";
 
 export const prospectStatuses = [
   "New",
@@ -170,6 +176,9 @@ export type PreviewConcept = {
   regenerationFeedbackHistory?: string[];
   layoutDirection?: PreviewLayoutDirection;
   resolvedImages?: PreviewImageSet;
+  serviceHierarchy?: PreviewServiceHierarchyItem[];
+  serviceFidelity?: PreviewServiceFidelityResult;
+  visualAssetQa?: PreviewVisualAssetQa;
   direction: string;
   visualStyleDirection: string;
   artDirection?: PreviewArtDirection;
@@ -187,6 +196,47 @@ export type PreviewConcept = {
   leadCaptureStrategy: string;
   qualityScore?: PreviewQualityScore;
   generatedAt: string;
+};
+
+export type PreviewServiceProvenance = "verified official source" | "verified provider source" | "trade fallback";
+
+export type PreviewServiceHierarchyItem = {
+  title: string;
+  description: string;
+  role: "primary" | "secondary" | "specialty";
+  confidence: "verified" | "inferred";
+  provenance: PreviewServiceProvenance;
+  source: string;
+  displayPriority: number;
+  imageAvailable: boolean;
+};
+
+export type PreviewServiceFidelityTransformation = {
+  stage: string;
+  before: string[];
+  after: string[];
+  rule: string;
+};
+
+export type PreviewServiceFidelityResult = {
+  status: "passed" | "failed";
+  groundedInput: string[];
+  savedServices: string[];
+  transformations: PreviewServiceFidelityTransformation[];
+};
+
+export type PreviewVisualAssetQa = {
+  selectedHeroStatus: "accepted" | "replaced" | "uncertain" | "low-image" | "blocked";
+  selectedHeroSource: string;
+  renderedHeroDimensions?: { width: number; height: number };
+  brokenImage: boolean;
+  visuallyBlank: boolean;
+  cropSuitability: "suitable" | "uncertain" | "unsuitable";
+  semanticRelevance: "accepted" | "uncertain" | "rejected";
+  distinctMajorImageCount: number;
+  omittedUncertainAssets: string[];
+  criticalFailures: string[];
+  lowImageMode: boolean;
 };
 
 export type PreviewLayoutDirection =
@@ -235,6 +285,11 @@ export type PreviewRenderPlan = {
     placement: "header-and-hero" | "hero-and-final" | "persistent";
   };
   headerTreatment: "official-logo" | "structured-wordmark" | "compact-wordmark";
+  pageMode: "full" | "concise";
+  copyStrategy: {
+    voice: "direct-service" | "visual-results" | "local-assurance";
+    variant: number;
+  };
   mobilePriorities: string[];
   avoidPatterns: string[];
   inputs: {
@@ -448,6 +503,15 @@ export type Prospect = {
   analysis?: Analysis;
   outreach?: OutreachDraft;
   preview?: PreviewConcept;
+  verifiedPreviewServices?: string[];
+  providerPreviewServices?: string[];
+  approvedPreviewPhotos?: Array<string | { src: string; alt?: string; service?: string }>;
+  previewBrandColors?: string[];
+  websiteLogoUrl?: string;
+  previewResearchFacts?: PreviewResearchFact[];
+  previewResearchVerified?: boolean;
+  previewResearchStatus?: "succeeded" | "timed_out" | "failed" | "not_applicable";
+  previewResearchNote?: string;
   notes: string[];
   activities: Activity[];
   createdAt: string;
@@ -696,10 +760,10 @@ function previewCta(prospect: Prospect) {
   const trade = prospectTrade(prospect);
   if (trade === "Roofing") return /storm|damage|repair/i.test(prospect.businessName) ? "Schedule an inspection" : "Request an estimate";
   if (trade === "HVAC") return "Schedule service";
-  if (trade === "Landscaping") return "Get a free quote";
+  if (trade === "Landscaping") return "Request an estimate";
   if (trade === "Plumbing") return "Request service";
   if (trade === "Electrical") return "Request an estimate";
-  if (trade === "Pressure Washing") return "Get a free quote";
+  if (trade === "Pressure Washing") return "Request an estimate";
   if (trade === "Painting") return "Request a painting estimate";
   if (trade === "Concrete") return "Request an estimate";
   if (trade === "Cleaning") return "Request cleaning service";
@@ -1187,7 +1251,9 @@ function previewPlanInputs(prospect: Prospect, preview: PreviewConcept): Preview
   return {
     usableImageCount: new Set(usableImages.map((image) => image.src)).size,
     businessPhotoCount: new Set(usableImages.filter((image) => image.source === "business-photo").map((image) => image.src)).size,
-    verifiedServiceCount: profile?.verifiedServices.length ?? 0,
+    verifiedServiceCount: preview.serviceHierarchy?.filter((service) => service.provenance !== "trade fallback").length
+      ?? profile?.verifiedServices.length
+      ?? 0,
     verifiedTrustFactCount,
     officialLogoAvailable: profile?.logo.status === "available" && profile.logo.confidence === "verified",
     verifiedBrandColorsAvailable: Boolean(profile?.detectedBrandColors.some((fact) => fact.confidence === "verified" && fact.provenance === "verified official source")),
@@ -1230,7 +1296,11 @@ function sectionDecision(id: PreviewSectionId, status: PreviewSectionDecision["s
 
 export function buildPreviewRenderPlan(prospect: Prospect, preview: PreviewConcept): PreviewRenderPlan {
   const inputs = previewPlanInputs(prospect, preview);
-  const direction = renderDirectionFor(prospect, preview, inputs);
+  const lowDataMode = inputs.verifiedServiceCount <= 1
+    && inputs.businessPhotoCount < 3
+    && inputs.verifiedTrustFactCount < 2
+    && !inputs.officialLogoAvailable;
+  const direction = lowDataMode ? "trust-led-local" : renderDirectionFor(prospect, preview, inputs);
   const servicePresentation: PreviewRenderPlan["servicePresentation"] = direction === "project-showcase"
     ? inputs.verifiedServiceCount >= 4 && inputs.usableImageCount >= 5 ? "alternating-service-spotlights" : "image-led-services"
     : direction === "service-command"
@@ -1240,8 +1310,8 @@ export function buildPreviewRenderPlan(prospect: Prospect, preview: PreviewConce
   const includeGallery = direction === "project-showcase" && inputs.usableImageCount >= 6;
   const includeFeaturedService = inputs.verifiedServiceCount >= 2 && direction === "project-showcase";
   const includeProjectProof = direction === "project-showcase" && inputs.businessPhotoCount >= 2;
-  const includeFaq = inputs.verifiedServiceCount >= 2;
-  const includeProcess = direction === "service-command" || (inputs.verifiedServiceCount >= 2 && inputs.usableContactPath);
+  const includeFaq = !lowDataMode && inputs.verifiedServiceCount >= 2;
+  const includeProcess = !lowDataMode && (direction === "service-command" || (inputs.verifiedServiceCount >= 2 && inputs.usableContactPath));
   const decisions: PreviewSectionDecision[] = [
     sectionDecision("hero", "required", "Every preview needs a clear business identity, service promise, and next action."),
     sectionDecision("trust", includeTrust ? "optional" : "omitted", includeTrust ? "At least two coherent verified trust facts are available." : "Fewer than two coherent verified trust facts are available."),
@@ -1269,7 +1339,7 @@ export function buildPreviewRenderPlan(prospect: Prospect, preview: PreviewConce
     servicePresentation,
     orderedSections,
     sectionDecisions: decisions,
-    density: direction === "service-command" ? "compact" : direction === "project-showcase" ? "spacious" : "balanced",
+    density: lowDataMode || direction === "service-command" ? "compact" : direction === "project-showcase" ? "spacious" : "balanced",
     imageStrategy: inputs.businessPhotoCount >= 3 ? "business-photo-led" : inputs.usableImageCount >= 4 ? "trade-photo-led" : "restrained-imagery",
     trustStrategy: includeTrust ? "verified-proof" : inputs.usableContactPath ? "contact-first" : "compact-local-facts",
     ctaStrategy: {
@@ -1278,6 +1348,11 @@ export function buildPreviewRenderPlan(prospect: Prospect, preview: PreviewConce
       placement: direction === "service-command" ? "persistent" : direction === "project-showcase" ? "hero-and-final" : "header-and-hero",
     },
     headerTreatment: inputs.officialLogoAvailable ? "official-logo" : direction === "trust-led-local" ? "compact-wordmark" : "structured-wordmark",
+    pageMode: lowDataMode ? "concise" : "full",
+    copyStrategy: {
+      voice: direction === "service-command" ? "direct-service" : direction === "project-showcase" ? "visual-results" : "local-assurance",
+      variant: 0,
+    },
     mobilePriorities: [
       "Keep business identity and the primary action visible without horizontal overflow.",
       direction === "service-command" ? "Stack service navigation and contact actions before supporting content." : "Keep the strongest relevant image near the primary service message.",
@@ -1943,11 +2018,8 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     "General Contractor": "Thoughtful construction work, from first conversation to finished space.",
   };
   const noWebsiteProspect = prospect.prospectType === "no_website_social_only";
-  const record = prospectRecord(prospect);
-  const researchedServices = record.previewResearchVerified === true
-    ? stringListFromUnknown(record.verifiedPreviewServices).map(titleCase)
-    : [];
-  const services = researchedServices.length ? [...new Set(researchedServices)].slice(0, 6) : [displayTrade];
+  const serviceHierarchy = buildPreviewServiceHierarchy(prospect, trade);
+  const services = serviceHierarchy.map((service) => service.title);
   const businessProfile = buildPreviewBusinessProfile(prospect, styleProfile, services, serviceArea, artDirection, noWebsiteProspect);
   const coherentReviewProof = prospect.rating >= 1 && prospect.rating <= 5 && Number.isInteger(prospect.reviewCount) && prospect.reviewCount > 0;
   const trustItems = [
@@ -2005,6 +2077,7 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     heroHeadline: businessSpecificHeroHeadline(businessProfile) || heroHeadlines[trade],
     heroSupporting: `${businessProfile.verifiedServices.slice(0, 4).join(", ")} for homes and properties across ${businessProfile.verifiedServiceArea}.`,
     serviceHighlights: businessProfile.verifiedServices,
+    serviceHierarchy,
     trustItems,
     styleProfile,
     homepageStructure: [
@@ -2026,7 +2099,11 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     generatedAt: now(),
   };
   const previewWithImages = attachResolvedPreviewImages(prospect, preview);
-  const renderPlan = buildPreviewRenderPlan(prospect, previewWithImages);
+  const hierarchyWithImages = serviceHierarchyWithImages(serviceHierarchy, previewWithImages.resolvedImages!);
+  const previewWithHierarchy = { ...previewWithImages, serviceHierarchy: hierarchyWithImages };
+  const renderPlanBase = buildPreviewRenderPlan(prospect, previewWithHierarchy);
+  const groundedCopy = groundedPreviewCopy(prospect, businessProfile, renderPlanBase, hierarchyWithImages);
+  const renderPlan: PreviewRenderPlan = { ...renderPlanBase, copyStrategy: groundedCopy.strategy };
   const plannedArtDirection: PreviewArtDirection = {
     ...artDirection,
     heroTreatment: renderPlan.direction === "project-showcase" ? "photo-led-overlap" : renderPlan.direction === "service-command" ? "service-command" : "proof-forward",
@@ -2039,14 +2116,26 @@ export function generatePreview(prospect: Prospect): PreviewConcept {
     sectionFlow: renderPlan.orderedSections.join(" -> "),
   };
   const plannedPreview: PreviewConcept = {
-    ...previewWithImages,
+    ...previewWithHierarchy,
     renderPlan,
     layoutDirection: legacyLayoutDirectionForPlan(renderPlan),
     artDirection: plannedArtDirection,
+    heroHeadline: groundedCopy.headline,
+    heroSupporting: groundedCopy.supporting,
+  };
+  const serviceFidelity = evaluateServiceFidelity(prospect, hierarchyWithImages, [
+    { stage: "business-profile", values: businessProfile.verifiedServices, rule: "Business profile must preserve the grounded service hierarchy." },
+    { stage: "creative-brief", values: preview.creativeBrief?.services ?? [], rule: "Creative brief must preserve grounded service order." },
+    { stage: "render-plan", values: hierarchyWithImages.map((service) => service.title), rule: "Render plan must consume the saved service hierarchy." },
+  ]);
+  const previewWithQa: PreviewConcept = {
+    ...plannedPreview,
+    serviceFidelity,
+    visualAssetQa: buildPreviewVisualAssetQa(prospect, { ...plannedPreview, serviceFidelity }),
   };
   return {
-    ...plannedPreview,
-    qualityScore: scorePreviewQuality(prospect, plannedPreview),
+    ...previewWithQa,
+    qualityScore: scorePreviewQuality(prospect, previewWithQa),
   };
 }
 

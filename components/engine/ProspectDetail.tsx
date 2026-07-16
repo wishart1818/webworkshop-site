@@ -1198,11 +1198,10 @@ function PreviewView({
   const artDirection = preview.artDirection;
   const creativeBrief = preview.creativeBrief;
   const businessProfile = preview.businessProfile;
-  const services = [
-    { title: preview.serviceHighlights?.[0] ?? displayTradeCategory(prospect.trade), description: "Primary service." },
-    { title: preview.serviceHighlights?.[1] ?? "Service planning", description: "Secondary service." },
-    { title: preview.serviceHighlights?.[2] ?? "Estimate request", description: "Supporting service." },
-  ] as const;
+  const services = preview.serviceHierarchy?.length
+    ? preview.serviceHierarchy.map(({ title, description }) => ({ title, description }))
+    : (preview.serviceHighlights?.length ? preview.serviceHighlights : [displayTradeCategory(prospect.trade)])
+      .map((title) => ({ title, description: `Request an estimate for ${title.toLowerCase()}.` }));
   const imageSet = prospect.preview?.resolvedImages ?? resolvePreviewImages(prospect, services);
   const imageSummary = [
     imageSet.hero,
@@ -1536,6 +1535,11 @@ function PreviewView({
           <div><dt>Stock provider</dt><dd>{imageSet.providerStatus}</dd></div>
           <div><dt>Distinct images</dt><dd>{new Set(imageSummary.map((image) => image.src)).size}</dd></div>
           <div><dt>Hero image</dt><dd>{imageSet.hero.source}</dd></div>
+          <div><dt>Hero gate</dt><dd>{preview.visualAssetQa?.selectedHeroStatus ?? "Not recorded"}</dd></div>
+          <div><dt>Semantic relevance</dt><dd>{preview.visualAssetQa?.semanticRelevance ?? imageSet.hero.semanticStatus}</dd></div>
+          <div><dt>Major images</dt><dd>{preview.visualAssetQa?.distinctMajorImageCount ?? new Set(imageSummary.map((image) => image.src)).size}</dd></div>
+          <div><dt>Service fidelity</dt><dd>{preview.serviceFidelity?.status ?? "Not recorded"}</dd></div>
+          <div><dt>Page mode</dt><dd>{preview.renderPlan?.pageMode ?? "legacy"}</dd></div>
           <div><dt>Warnings</dt><dd>{imageSet.warnings.length ? imageSet.warnings.join(", ") : "None"}</dd></div>
         </dl>
       </section>

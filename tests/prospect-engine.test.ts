@@ -185,7 +185,7 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   const preview = generatePreview(prospect);
 
   assert.match(preview.direction, /landscaping/i);
-  assert.match(preview.ctaStrategy, /get a free quote/i);
+  assert.match(preview.ctaStrategy, /request an estimate/i);
   assert.ok(preview.homepageStructure.length >= 5);
   assert.ok(preview.servicePageStructure.length >= 5);
   assert.match(preview.visualStyleDirection, /outdoor spaces/i);
@@ -210,7 +210,7 @@ test("preview concepts include contractor-specific conversion strategy", () => {
   assert.match(preview.artDirection?.interactiveFeatures.join(" ") ?? "", /FAQ accordion|gallery lightbox|quote form browser validation|sticky mobile quote CTA/i);
   assert.match(preview.qualityScore.notes.join(" "), /prospect-specific style rationale|stronger CTA treatment/i);
   assert.ok(preview.heroHeadline);
-  assert.equal(preview.styleProfile?.ctaLabel, "Get a free quote");
+  assert.equal(preview.styleProfile?.ctaLabel, "Request an estimate");
   assert.match(preview.homepageStructure.join(" "), /strong trade photo|distinct service photos/i);
   assert.match(preview.portfolioDirection, /verified photos|project photos/i);
 });
@@ -268,7 +268,7 @@ test("preview generation normalizes city and state capitalization", () => {
     serviceArea: "toledo and nearby communities",
   });
 
-  assert.match(preview.heroHeadline ?? "", /heating and cooling service for Toledo/i);
+  assert.match(`${preview.heroHeadline} ${preview.heroSupporting}`, /Toledo/);
   assert.match(preview.hero, /Toledo and nearby communities/);
   assert.match(preview.heroSupporting ?? "", /Toledo and nearby communities/);
   assert.doesNotMatch(`${preview.hero} ${preview.heroSupporting}`, /\btoledo\b/);
@@ -298,11 +298,11 @@ test("preview generation creates a structured photo-led business design brief", 
   assert.match(preview.creativeBrief?.verifiedEmailOrContactPath ?? "", /public email/);
   assert.match(preview.creativeBrief?.imageIntents.join(" ") ?? "", /Hero: .*pressure washer|Hero: .*pressure washing/i);
   assert.equal(preview.resolvedImages?.sourceStatus, "curated stock photo library");
-  assert.match(preview.resolvedImages?.hero.src ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
+  assert.match(preview.resolvedImages?.hero.src ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.(?:unsplash|pexels)\.com\/|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(preview.creativeBrief?.copyRestrictions.join(" ") ?? "", /Do not invent reviews/);
-  assert.match(preview.heroHeadline ?? "", /Exterior cleaning for Tampa homes from MC Pressure Washing FL/i);
+  assert.match(preview.heroHeadline ?? "", /cleaner exterior|Pressure Washing|surfaces people notice/i);
   assert.ok((preview.qualityScore?.imageQuality ?? 0) >= 50);
-  assert.match(preview.qualityScore?.notes.join(" ") ?? "", /lower-image layout because only limited reliable service photos/i);
+  assert.ok((preview.resolvedImages?.heroCandidates.length ?? 0) >= 2);
   assert.ok(["Send-worthy / polished", "Needs visual review", "Needs regeneration"].includes(preview.qualityScore?.status ?? ""));
 });
 

@@ -10,10 +10,12 @@ import {
   titleCaseLocation,
   type PreviewConcept,
   type PreviewBusinessProfile,
+  type PreviewServiceHierarchyItem,
   type PreviewSectionId,
   type Prospect,
 } from "@/lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, type ResolvedPreviewImage } from "@/lib/preview-image-resolver";
+import { groundedPreviewCopy } from "@/lib/preview-fidelity";
 
 type ProspectWebsitePreviewProps = {
   prospect: Prospect;
@@ -170,9 +172,11 @@ function profileServiceCards(
   pageCopy: TradePageCopy,
   trade: Prospect["trade"],
   plannedServices: string[] = [],
+  hierarchy: PreviewServiceHierarchyItem[] = [],
   padToThree = true,
 ): TradeServiceCard[] {
-  const serviceNames = (plannedServices.length ? plannedServices : profile?.verifiedServices?.length ? profile.verifiedServices : pageCopy.services.map((service) => service.title)).slice(0, 3);
+  if (hierarchy.length) return hierarchy.slice(0, 6).map(({ title, description }) => ({ title, description }));
+  const serviceNames = (plannedServices.length ? plannedServices : profile?.verifiedServices?.length ? profile.verifiedServices : pageCopy.services.map((service) => service.title)).slice(0, 6);
   const fallback = pageCopy.services;
   const cards = serviceNames.map((title, index) => {
     const tokens = words(title);
@@ -186,13 +190,11 @@ function profileServiceCards(
     };
   });
   if (padToThree) while (cards.length < 3) cards.push(fallback[cards.length] ?? fallback[0]);
-  return cards.slice(0, 3);
+  return cards.slice(0, 6);
 }
 
-function imageResolverServices(cards: TradeServiceCard[], fallback: TradePageCopy["services"]): [TradeServiceCard, TradeServiceCard, TradeServiceCard] {
-  const services = [...cards];
-  while (services.length < 3) services.push(fallback[services.length] ?? fallback[0]);
-  return services.slice(0, 3) as [TradeServiceCard, TradeServiceCard, TradeServiceCard];
+function imageResolverServices(cards: TradeServiceCard[], fallback: TradePageCopy["services"]): TradeServiceCard[] {
+  return cards.length ? cards : fallback.slice(0, 1);
 }
 
 function serviceDescriptionFallback(trade: Prospect["trade"], title: string, index: number) {
@@ -452,13 +454,14 @@ function heroSupportingCopy(
   return fallback;
 }
 
-function previewImageProps(image: ResolvedPreviewImage, slot: PreviewImageRenderSlot = image.slot) {
+function previewImageProps(image: ResolvedPreviewImage, slot: PreviewImageRenderSlot = image.slot, candidates: ResolvedPreviewImage[] = []) {
   return {
     alt: image.alt,
     section: image.section,
     slot,
     src: image.src,
     source: image.source,
+    candidates,
   };
 }
 
@@ -478,7 +481,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const businessProfile = preview.businessProfile;
   const businessName = businessProfile?.officialBusinessName ?? prospect.businessName;
   const officialTagline = verifiedProfileFact(businessProfile, "Official tagline");
-  const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade, preview.creativeBrief?.services, !preview.renderPlan);
+  const serviceCards = profileServiceCards(businessProfile, pageCopy, canonicalTrade, preview.creativeBrief?.services, preview.serviceHierarchy, !preview.renderPlan);
   const alignedServiceArea = (value: string) => {
     const normalized = normalizeCopy(value);
     const lower = normalized.toLowerCase();
@@ -489,6 +492,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const serviceArea = alignedServiceArea(prospect.serviceArea || `${displayCity}, ${displayState}`);
   const images = preview.resolvedImages ?? resolvePreviewImages(renderProspect, imageResolverServices(serviceCards, pageCopy.services));
   const renderPlan = previewRenderPlan(renderProspect, preview);
+  const groundedCopy = businessProfile
+    ? groundedPreviewCopy(renderProspect, businessProfile, renderPlan, preview.serviceHierarchy ?? [])
+    : null;
   const ctaLabel = renderPlan.ctaStrategy.label || styleProfile.ctaLabel;
   const faqs = faqItems(canonicalTrade, ctaLabel);
   const steps = quoteProcess(displayTrade, ctaLabel);
@@ -509,7 +515,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
     if (selected) usedImageSources.add(selected.src);
     return selected ?? null;
   };
-  const heroImage = takeImage([images.hero, ...images.services, ...images.gallery, images.beforeAfter]) ?? images.hero;
+  const heroImage = takeImage([images.hero, ...images.heroCandidates, ...images.services, ...images.gallery, images.beforeAfter]);
+  const heroFallbackCandidates = images.heroCandidates.filter((candidate) => candidate.src !== heroImage?.src && imageRelevant(candidate));
+  heroFallbackCandidates.forEach((candidate) => usedImageSources.add(candidate.src));
   const serviceImages = images.services.map((image, index) => takeImage([image, images.gallery[index], images.beforeAfter], { requireDependable: true })) as Array<ResolvedPreviewImage | null>;
   const proofImage = takeImage([images.gallery[0], images.beforeAfter, images.process, ...images.gallery], { requireDependable: true });
   const businessFirst = (candidates: Array<ResolvedPreviewImage | undefined | null>) => [
@@ -526,12 +534,12 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
   const galleryAssets = images.gallery.filter((image) => imageRelevant(image) && dependableImage(image) && !usedImageSources.has(image.src) && (images.sourceStatus !== "approved business photos" || image.source === "business-photo")).slice(0, 3);
   galleryAssets.forEach((image) => usedImageSources.add(image.src));
   const showGallery = galleryAssets.length >= 3 && sectionEnabled("gallery");
-  const headline = normalizeCopy(officialTagline || heroHeadlineCopy(canonicalTrade, businessName, displayCity, preview.heroHeadline ?? pageCopy.heroHeadline));
+  const headline = normalizeCopy(officialTagline || groundedCopy?.headline || heroHeadlineCopy(canonicalTrade, businessName, displayCity, preview.heroHeadline ?? pageCopy.heroHeadline));
   const rawHeroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const heroSupporting = rawHeroSupporting.toLowerCase().includes(displayCity.toLowerCase()) || !/nearby communities|across/i.test(rawHeroSupporting)
     ? rawHeroSupporting
     : `${businessName} provides ${serviceCards.map((service) => service.title).join(", ")} across ${serviceArea}.`;
-  const heroSupportingLine = normalizeCopy(heroSupportingCopy(canonicalTrade, serviceCards, serviceArea, heroSupporting));
+  const heroSupportingLine = normalizeCopy(groundedCopy?.supporting || heroSupportingCopy(canonicalTrade, serviceCards, serviceArea, heroSupporting));
   const logoUrl = logoImageUrl(businessProfile);
   const wordmark = wordmarkParts(businessName, canonicalTrade);
   const hasOfficialResearch = Boolean(verifiedProfileFact(businessProfile, "Official website research"));
@@ -589,6 +597,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         data-layout-direction={preview.layoutDirection ?? "split-photo"}
         data-logo-treatment={logoUrl ? "official" : "typographic-wordmark"}
         data-render-direction={renderPlan.direction}
+        data-page-mode={renderPlan.pageMode}
         data-rhythm={artDirection?.layoutRhythm ?? "calm-premium"}
         data-service-presentation={renderPlan.servicePresentation}
         data-tone={styleProfile.tone}
@@ -619,7 +628,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <a className="prospect-preview-button" href="#contact">{ctaLabel}</a>
         </nav>
 
-        <section className="prospect-preview-hero" id="top">
+        <section className={`prospect-preview-hero${heroImage ? "" : " prospect-preview-hero--low-image"}`} id="top">
           <div className="prospect-preview-hero__content">
             <span className="prospect-preview-kicker">{displayTrade} in {displayCity}, {displayState}</span>
             <h1>{headline}</h1>
@@ -632,7 +641,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             </div>
             {serviceCards.length > 1 ? (
               <div className="prospect-preview-hero__proof-strip" aria-label="Service shortcuts">
-                {serviceCards.map((item, index) => (
+                {serviceCards.slice(0, 3).map((item, index) => (
                   <a href={`#service-${index + 1}`} key={item.title}>
                     <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
                     <span>
@@ -644,14 +653,14 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
               </div>
             ) : null}
           </div>
-          <aside className="prospect-preview-hero__visual">
-            <TradePreviewImage {...previewImageProps(heroImage, "hero")} />
+          {heroImage ? <aside className="prospect-preview-hero__visual">
+            <TradePreviewImage {...previewImageProps(heroImage, "hero", heroFallbackCandidates)} />
             <div className="prospect-preview-visual-caption">
               <small>{displayCity}, {displayState}</small>
               <strong>{primaryService.title}</strong>
               <span>{visualCaption.label}</span>
             </div>
-          </aside>
+          </aside> : null}
         </section>
 
         {sectionEnabled("trust") ? <section className="prospect-preview-trust" aria-label="Business trust highlights">
@@ -662,7 +671,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Services</span>
             <h2>{hasOfficialResearch && canonicalTrade === "Pressure Washing" ? `${businessName} exterior cleaning services.` : pageCopy.servicesHeadline}</h2>
-            <p>{pageCopy.servicesIntro}</p>
+            <p>{groundedCopy?.servicesLead ?? pageCopy.servicesIntro}</p>
           </div>
           <div className="prospect-preview-service-list" data-service-count={serviceCards.length}>
             {serviceCards.map((item, index) => (
@@ -686,7 +695,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             {differentiators.map((fact) => (
               <article key={`${fact.label}-${fact.value}`}>
-                <span aria-hidden="true" className="prospect-preview-checkmark">✓</span>
+                <span aria-hidden="true" className="prospect-preview-checkmark">{"\u2713"}</span>
                 <h3>{fact.label}</h3>
                 <p>{fact.value}</p>
               </article>
@@ -694,8 +703,8 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           </div>
         </section> : null}
 
-        {sectionEnabled("featured-service") ? <section className="prospect-preview-featured-service" id="work">
-          {proofImage ? <TradePreviewImage {...previewImageProps(proofImage, "proof")} /> : null}
+        {sectionEnabled("featured-service") && proofImage ? <section className="prospect-preview-featured-service" id="work">
+          <TradePreviewImage {...previewImageProps(proofImage, "proof")} />
           <div>
             <span className="prospect-preview-kicker">Featured service</span>
             <h2>{featuredService.title}</h2>
@@ -751,7 +760,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         {sectionEnabled("service-area") ? <section className="prospect-preview-service-area">
           <span className="prospect-preview-kicker">Service area</span>
           <h2>Serving {displayCity} and nearby communities.</h2>
-          <p>{businessName} serves {serviceArea}. Contact the team to confirm availability for your property and project.</p>
+          <p>{groundedCopy?.serviceAreaCopy ?? `${businessName} serves ${serviceArea}. Contact the team to confirm availability for your property and project.`}</p>
           {prospect.phone && <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>}
         </section> : null}
 
