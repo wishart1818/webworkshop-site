@@ -952,8 +952,10 @@ test("True Clean-style pressure washing preview uses researched branding, distin
   assert.doesNotMatch(html, />00</);
   assert.doesNotMatch(html, /Match the service to what the property needs|Exterior surfaces homeowners care about most/);
   assert.doesNotMatch(html, /prospect-preview-slider-card|Compare current buildup/);
+  assert.doesNotMatch(html, /prospect-preview-why|Details homeowners can verify before they call|>Check</);
   assert.doesNotMatch(html, /Service detail|Property context|Finished look|Photos should look|service-area copy|quote-path design|website structure|customer navigation|contact options|conversion/i);
   assert.doesNotMatch(html, /municipal|street cleaning|commercial surface|interior rooms|swimming pools|architecture portfolio/i);
+  assert.match(html, /Tell us what needs cleaning, where the property is, and when you would like an estimate\./);
   assert.ok(new Set(imageSources).size >= 5);
   assert.match(html, /data-preview-image-source="business-photo"/);
 });

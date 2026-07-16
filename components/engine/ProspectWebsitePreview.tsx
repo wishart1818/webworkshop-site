@@ -264,6 +264,18 @@ function processHeadline(trade: Prospect["trade"]) {
   return byTrade[trade] ?? "Start with the work your property needs.";
 }
 
+function contactIntro(trade: Prospect["trade"]) {
+  const byTrade: Partial<Record<Prospect["trade"], string>> = {
+    "Pressure Washing": "Tell us what needs cleaning, where the property is, and when you would like an estimate.",
+    HVAC: "Tell us what the system is doing, where the property is, and when you need service.",
+    Roofing: "Tell us what you are seeing on the roof, where the property is, and when you would like an inspection.",
+    Plumbing: "Tell us what is happening, where the property is, and how soon you need plumbing help.",
+    Electrical: "Tell us about the electrical work, where the property is, and when you need service.",
+    Landscaping: "Tell us what you want to improve outdoors, where the property is, and when you would like to begin.",
+  };
+  return byTrade[trade] ?? "Tell us about the work, where the property is, and when you would like an estimate.";
+}
+
 function cleanVisualCaption(trade: Prospect["trade"], displayCity: string) {
   const byTrade: Partial<Record<Prospect["trade"], { label: string; headline: string; body: string }>> = {
     "Pressure Washing": {
@@ -371,7 +383,8 @@ function verifiedProfileFact(profile: PreviewBusinessProfile | undefined, label:
 }
 
 function meaningfulDifferentiators(profile: PreviewBusinessProfile | undefined) {
-  return (profile?.realDifferentiators ?? []).filter((fact) => /review|rating|quote form|contact form|address/i.test(fact.label) && fact.confidence === "verified").slice(0, 3);
+  return (profile?.realDifferentiators ?? []).filter((fact) => /review|rating|years|license|certif|warrant|guarantee|insured|award|locally owned|family owned/i.test(fact.label)
+    && fact.confidence === "verified").slice(0, 3);
 }
 
 function wordmarkDescriptor(trade: Prospect["trade"], city: string) {
@@ -581,8 +594,11 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
             <div className="prospect-preview-hero__proof-strip" aria-label="Service shortcuts">
               {serviceCards.map((item, index) => (
                 <a href={`#service-${index + 1}`} key={item.title}>
-                  <b>{item.title}</b>
-                  <i>{serviceShortcutText(canonicalTrade, item.title, index, displayCity)}</i>
+                  <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+                  <span>
+                    <b>{item.title}</b>
+                    <i>{serviceShortcutText(canonicalTrade, item.title, index, displayCity)}</i>
+                  </span>
                 </a>
               ))}
             </div>
@@ -624,12 +640,12 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         {differentiators.length >= 2 ? <section className="prospect-preview-why">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Why {businessName}</span>
-            <h2>{officialTagline || `A local ${tradePhrase(displayTrade)} team with public proof behind the name.`}</h2>
+            <h2>Details homeowners can verify before they call.</h2>
           </div>
           <div>
             {differentiators.map((fact) => (
               <article key={`${fact.label}-${fact.value}`}>
-                <span aria-hidden="true" className="prospect-preview-checkmark">Check</span>
+                <span aria-hidden="true" className="prospect-preview-checkmark">✓</span>
                 <h3>{fact.label}</h3>
                 <p>{fact.value}</p>
               </article>
@@ -717,7 +733,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           <div>
             <span className="prospect-preview-kicker">Start a conversation</span>
             <h2>Request an estimate for your property.</h2>
-            <p>Tell us what needs done, where it is, and when you would like the work estimated.</p>
+            <p>{contactIntro(canonicalTrade)}</p>
             {ctaImage ? <TradePreviewImage {...previewImageProps(ctaImage, "proof")} /> : null}
           </div>
           <form action="#contact" aria-describedby="preview-form-note">
