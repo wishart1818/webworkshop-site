@@ -266,12 +266,6 @@ function unsplashPhoto(id: string) {
 }
 
 const curatedStockCatalog: Partial<Record<TradeCategory, CuratedStockPhoto[]>> = {
-  "Pressure Washing": [
-    {
-      src: "/engine-preview-assets/trade-photos/power-washing-service.jpg",
-      keywords: ["soft washing", "roof cleaning", "residential roof", "roofline", "soft-wash system", "exterior cleaning", "verified exterior cleaning photo"],
-    },
-  ],
   Roofing: [
     { id: "photo-1635424824849-1b09bdcc55b1", keywords: ["roofer", "roof inspection", "shingles"] },
     { id: "photo-1635424709845-3a85ad5e1f5e", keywords: ["roofing crew", "roof repair", "roofline"] },
@@ -445,6 +439,36 @@ function verifiedLocalPhotoSources(trade: TradeCategory) {
         src: curatedPhoto("hvac", "service"),
         keywords: ["HVAC unit", "heat pump", "air conditioner", "system installation", "verified HVAC photo"],
       },
+      {
+        src: curatedPhoto("hvac", "detail"),
+        keywords: ["HVAC technician", "ductwork", "air handler", "ventilation service", "verified HVAC photo"],
+      },
+      {
+        src: curatedPhoto("hvac", "support"),
+        keywords: ["HVAC technician", "service call", "outdoor AC condenser", "repair", "verified HVAC photo"],
+      },
+      {
+        src: curatedPhoto("hvac", "proof"),
+        keywords: ["thermostat", "supply vent", "home comfort", "heating and cooling", "verified HVAC photo"],
+      },
+    ];
+  }
+  if (trade === "Roofing") {
+    return [
+      { src: curatedPhoto("roofing", "hero"), keywords: ["roofer", "residential roof", "roof inspection", "shingles"] },
+      { src: curatedPhoto("roofing", "service"), keywords: ["roof repair", "shingles", "flashing", "inspection tools"] },
+      { src: curatedPhoto("roofing", "detail"), keywords: ["roof materials", "shingle detail", "flashing", "roof inspection"] },
+      { src: curatedPhoto("roofing", "support"), keywords: ["roofer", "roof inspection", "residential shingles", "roof service"] },
+      { src: curatedPhoto("roofing", "proof"), keywords: ["finished roof", "roofer", "residential roofline", "shingles"] },
+    ];
+  }
+  if (trade === "Landscaping") {
+    return [
+      { src: curatedPhoto("landscaping", "hero"), keywords: ["residential landscaping", "lawn", "planting beds", "outdoor space"] },
+      { src: curatedPhoto("landscaping", "service"), keywords: ["garden bed", "mulch", "edging", "planting", "landscape tools"] },
+      { src: curatedPhoto("landscaping", "detail"), keywords: ["planting bed", "garden maintenance", "mulch", "landscape detail"] },
+      { src: curatedPhoto("landscaping", "support"), keywords: ["patio", "lawn", "hardscape", "finished yard", "outdoor living"] },
+      { src: curatedPhoto("landscaping", "proof"), keywords: ["finished landscape", "patio", "lawn", "planting", "outdoor space"] },
     ];
   }
   return [];
@@ -656,7 +680,9 @@ function selectCuratedStockPhoto(
     return selected?.photo;
   }
   const bestScore = scored[0]?.score ?? 0;
-  const unusedRelevant = scored.find((candidate) => !usedSources.has(candidate.photo.src) && candidate.score >= Math.max(minimumScore, bestScore - 12));
+  const eligible = scored.filter((candidate) => !usedSources.has(candidate.photo.src) && candidate.score >= Math.max(minimumScore, bestScore - 12));
+  const unusedRelevant = eligible.find((candidate) => candidate.photo.src.startsWith("/engine-preview-assets/"))
+    ?? eligible[0];
   if (unusedRelevant) return unusedRelevant.photo;
   return undefined;
 }

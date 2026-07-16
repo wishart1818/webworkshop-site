@@ -405,6 +405,22 @@ function wordmarkDescriptor(trade: Prospect["trade"], city: string) {
   return `${displayTradeCategory(trade)} | ${city}`;
 }
 
+function wordmarkParts(businessName: string, trade: Prospect["trade"]) {
+  const parts = businessName.trim().split(/\s+/).filter(Boolean);
+  const tradeWords = new Set(words(displayTradeCategory(trade)).concat(trade === "Pressure Washing" ? ["wash", "washing", "prowash"] : []));
+  const qualifierStart = parts.findIndex((part, index) => index > 0 && tradeWords.has(part.toLowerCase().replace(/[^a-z0-9]/g, "")));
+  if (qualifierStart > 0) {
+    return {
+      lead: parts.slice(0, qualifierStart).join(" "),
+      qualifier: parts.slice(qualifierStart).join(" "),
+    };
+  }
+  if (parts.length > 2) {
+    return { lead: parts.slice(0, -1).join(" "), qualifier: parts.at(-1) ?? "" };
+  }
+  return { lead: businessName, qualifier: "" };
+}
+
 function heroHeadlineCopy(
   trade: Prospect["trade"],
   businessName: string,
@@ -412,10 +428,10 @@ function heroHeadlineCopy(
   fallback: string,
 ) {
   const byTrade: Partial<Record<Prospect["trade"], string>> = {
-    "Pressure Washing": `Cleaner exterior surfaces around ${displayCity}.`,
-    Landscaping: `Outdoor spaces that feel cared for in ${displayCity}.`,
-    Roofing: `Roofing help for ${displayCity} homes.`,
-    HVAC: `Heating and cooling help for ${displayCity} homes.`,
+    "Pressure Washing": "Bring back a cleaner exterior.",
+    Landscaping: "Make more of the space outside.",
+    Roofing: "Roofing help when your home needs it.",
+    HVAC: "Keep home comfortable in every season.",
     Plumbing: `Plumbing help for ${displayCity} homes.`,
     Electrical: `Electrical help for ${displayCity} homes.`,
   };
@@ -517,9 +533,9 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
     : `${businessName} provides ${serviceCards.map((service) => service.title).join(", ")} across ${serviceArea}.`;
   const heroSupportingLine = normalizeCopy(heroSupportingCopy(canonicalTrade, serviceCards, serviceArea, heroSupporting));
   const logoUrl = logoImageUrl(businessProfile);
+  const wordmark = wordmarkParts(businessName, canonicalTrade);
   const hasOfficialResearch = Boolean(verifiedProfileFact(businessProfile, "Official website research"));
   const differentiators = meaningfulDifferentiators(businessProfile);
-  const hasBusinessPhotos = (businessProfile?.businessPhotoSources.length ?? 0) >= 3;
   const trustItems = (preview.trustItems ?? [
     `Serving ${displayCity}, ${displayState}`,
     prospect.phone ? "Direct phone contact" : "Estimate request",
@@ -571,10 +587,12 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         data-header-treatment={renderPlan.headerTreatment}
         data-layout={styleProfile.layoutStyle}
         data-layout-direction={preview.layoutDirection ?? "split-photo"}
+        data-logo-treatment={logoUrl ? "official" : "typographic-wordmark"}
         data-render-direction={renderPlan.direction}
         data-rhythm={artDirection?.layoutRhythm ?? "calm-premium"}
         data-service-presentation={renderPlan.servicePresentation}
         data-tone={styleProfile.tone}
+        data-trade={canonicalTrade.toLowerCase().replace(/[^a-z0-9]+/g, "-")}
         style={style}
       >
         <nav className="prospect-preview-nav" aria-label={`${businessName} concept navigation`}>
@@ -586,7 +604,10 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
                 <span className="prospect-preview-brand-copy"><strong>{businessName}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
               </>
             ) : (
-              <span className="prospect-preview-brand-copy prospect-preview-wordmark"><strong>{businessName}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
+              <span className="prospect-preview-brand-copy prospect-preview-wordmark">
+                <strong><span>{wordmark.lead}</span>{wordmark.qualifier ? <em>{wordmark.qualifier}</em> : null}</strong>
+                <small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small>
+              </span>
             )}
           </a>
           <div>
@@ -609,24 +630,26 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
                 ? <a className="prospect-preview-text-link" href={`tel:${prospect.phone}`}>Call {prospect.phone}</a>
                 : <a className="prospect-preview-text-link" href="#services">Explore services</a>}
             </div>
-            <div className="prospect-preview-hero__proof-strip" aria-label="Service shortcuts">
-              {serviceCards.map((item, index) => (
-                <a href={`#service-${index + 1}`} key={item.title}>
-                  <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
-                  <span>
-                    <b>{item.title}</b>
-                    <i>{serviceShortcutText(canonicalTrade, item.title, index, displayCity)}</i>
-                  </span>
-                </a>
-              ))}
-            </div>
+            {serviceCards.length > 1 ? (
+              <div className="prospect-preview-hero__proof-strip" aria-label="Service shortcuts">
+                {serviceCards.map((item, index) => (
+                  <a href={`#service-${index + 1}`} key={item.title}>
+                    <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+                    <span>
+                      <b>{item.title}</b>
+                      <i>{serviceShortcutText(canonicalTrade, item.title, index, displayCity)}</i>
+                    </span>
+                  </a>
+                ))}
+              </div>
+            ) : null}
           </div>
           <aside className="prospect-preview-hero__visual">
             <TradePreviewImage {...previewImageProps(heroImage, "hero")} />
             <div className="prospect-preview-visual-caption">
-              <small>{businessName}</small>
+              <small>{displayCity}, {displayState}</small>
               <strong>{primaryService.title}</strong>
-              <span>{hasBusinessPhotos ? "Official business imagery" : visualCaption.label}</span>
+              <span>{visualCaption.label}</span>
             </div>
           </aside>
         </section>
@@ -635,13 +658,13 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
           {trustItems.slice(0, 4).map((item) => <span key={item}><b>{item}</b><i>{trustItemDescription(item, canonicalTrade)}</i></span>)}
         </section> : null}
 
-        <section className="prospect-preview-section prospect-preview-services" id="services">
+        <section className="prospect-preview-section prospect-preview-services" data-service-count={serviceCards.length} id="services">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Services</span>
             <h2>{hasOfficialResearch && canonicalTrade === "Pressure Washing" ? `${businessName} exterior cleaning services.` : pageCopy.servicesHeadline}</h2>
             <p>{pageCopy.servicesIntro}</p>
           </div>
-          <div className="prospect-preview-service-list">
+          <div className="prospect-preview-service-list" data-service-count={serviceCards.length}>
             {serviceCards.map((item, index) => (
               <article className={serviceImages[index] ? "" : "prospect-preview-service-card--text-only"} id={`service-${index + 1}`} key={item.title}>
                 {serviceImages[index] ? <TradePreviewImage {...previewImageProps(serviceImages[index], "service")} /> : null}
@@ -658,7 +681,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         {differentiators.length >= 2 ? <section className="prospect-preview-why">
           <div className="prospect-preview-section__intro">
             <span className="prospect-preview-kicker">Why {businessName}</span>
-            <h2>Details homeowners can verify before they call.</h2>
+            <h2>What to know before you schedule.</h2>
           </div>
           <div>
             {differentiators.map((fact) => (
@@ -764,7 +787,7 @@ export function ProspectWebsitePreview({ prospect, publicView = false, savedPrev
         </section>
 
         <footer className="prospect-preview-footer">
-          <span className="prospect-preview-footer-brand"><strong>{businessName}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
+          <span className="prospect-preview-footer-brand"><strong>{wordmark.lead}{wordmark.qualifier ? ` ${wordmark.qualifier}` : ""}</strong><small>{wordmarkDescriptor(canonicalTrade, displayCity)}</small></span>
           <span>{displayTrade} | {serviceArea}</span>
           {prospect.phone && <a href={`tel:${prospect.phone}`}>{prospect.phone}</a>}
         </footer>

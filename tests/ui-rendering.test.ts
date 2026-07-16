@@ -636,7 +636,7 @@ test("protected website preview uses the prospect style profile instead of WebWo
   assert.equal(prospect.preview?.resolvedImages?.sourceStatus, "curated stock photo library");
   assert.doesNotMatch(html, /Service detail|Property context|Finished look/);
   assert.doesNotMatch(html, /Clear surface details, local service-area copy, and a direct estimate request work together/);
-  assert.match(html, /Roof concerns/);
+  assert.match(html, /roof concern/i);
   assert.doesNotMatch(html, /href="#faq"/);
   assert.doesNotMatch(html, /empty gallery|placeholder gallery/i);
   assert.doesNotMatch(html, /Project view|Surface refresh|Yard refresh/);
@@ -683,7 +683,7 @@ test("HVAC public preview uses trade-specific equipment visuals instead of rando
   assert.match(html, /technician tools|service call|equipment/i);
   assert.match(html, /home comfort|thermostat-ready home|air conditioner/i);
   assert.match(html, /HVAC in Toledo, OH/);
-  assert.match(html, /Heating and cooling help for Toledo homes\./);
+  assert.match(html, /Keep home comfortable in every season\./);
   assert.match(html, /Heating and cooling service for repairs, installs, and seasonal care\./);
   assert.doesNotMatch(html, /Local exterior service|surfaces you want cleaned/);
   assert.match(html, /Heating And Cooling Repair/i);
@@ -761,7 +761,10 @@ test("preview image resolver creates distinct section intents and matching press
   assert.equal(images.sourceStatus, "curated stock photo library");
   assert.ok(new Set(firstVisibleImages).size >= 2);
   assert.ok(firstVisibleImages.every((src) => /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/.test(src)));
-  assert.ok([images.hero, ...images.services, ...images.gallery].filter((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")).length >= 2);
+  assert.equal(
+    [images.hero, ...images.services, ...images.gallery].filter((image) => isPublicPreviewImageRelevant(image, "Pressure Washing")).length,
+    1,
+  );
   assert.equal(isPublicPreviewImageRelevant(images.services[0], "Pressure Washing"), false);
   assert.equal(images.services[0].source, "curated-trade-library");
   assert.match(intentText, /house washing/i);
@@ -843,8 +846,8 @@ test("two pressure washing public previews are photo-led but not visual duplicat
   assert.equal(isPublicPreviewImageRelevant(second.preview!.resolvedImages!.hero, "Pressure Washing"), true);
   assert.notEqual(first.preview?.layoutDirection, undefined);
   assert.notEqual(second.preview?.layoutDirection, undefined);
-  assert.match(firstHtml, /Cleaner exterior surfaces around Tampa\./);
-  assert.match(secondHtml, /Cleaner exterior surfaces around St Augustine\./);
+  assert.match(firstHtml, /Bring back a cleaner exterior\./);
+  assert.match(secondHtml, /Bring back a cleaner exterior\./);
   assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /href="#gallery"|prospect-preview-lightbox/);
   assert.doesNotMatch(`${firstHtml}\n${secondHtml}`, /Business research summary|Source-backed facts|Excluded unless verified|A cleaner exterior starts with a clear quote|Services explained clearly|The contact path stays visible and direct|contact options|quote path|website structure|Representative image direction|proof concept|Service detail|Property context|Finished look|Photos should look|service-area copy/i);
 });
@@ -867,8 +870,7 @@ test("representative public previews use service-focused copy without UX wording
   }).join("\n");
 
   assert.match(rendered, /Wash away dirt, algae, and buildup/);
-  assert.match(rendered, /Cleaner exterior surfaces around Tampa\./);
-  assert.match(rendered, /Cleaner exterior surfaces around St Augustine\./);
+  assert.match(rendered, /Bring back a cleaner exterior\./);
   assert.match(rendered, /Landscaping shaped around the property and the season/);
   assert.match(rendered, /Roofing help built around the condition of your home/);
   assert.doesNotMatch(rendered, /Business research summary|Source-backed facts|Excluded unless verified|contact options|quote path|website structure|customer navigation|conversion design|Services explained clearly|The contact path stays visible/i);
@@ -964,6 +966,37 @@ test("True Clean-style pressure washing preview uses researched branding, distin
   assert.match(html, /data-preview-image-source="business-photo"/);
 });
 
+test("phase 3 preview composition uses business branding, content density, and trade-specific visual rhythm", () => {
+  const representatives = [
+    { id: "seed-prospect-6", trade: "Pressure Washing", expectedDirection: "project-showcase", expectedImage: /power-washing-hero\.jpg/ },
+    { id: "seed-prospect-3", trade: "Landscaping", expectedDirection: "project-showcase", expectedImage: /landscaping-hero\.jpg/ },
+    { id: "seed-prospect-2", trade: "HVAC", expectedDirection: "service-command", expectedImage: /hvac-hero\.jpg/ },
+    { id: "seed-prospect-1", trade: "Roofing", expectedDirection: "project-showcase", expectedImage: /roofing-hero\.jpg/ },
+  ] as const;
+
+  const rendered = representatives.map(({ id, trade, expectedDirection, expectedImage }) => {
+    const prospect = withPreview(structuredClone(seedProspects.find((item) => item.id === id)!));
+    const html = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+      prospect,
+      publicView: true,
+      savedPreview: prospect.preview,
+    }));
+    assert.match(html, new RegExp(`data-render-direction="${expectedDirection}"`));
+    assert.match(html, new RegExp(`data-trade="${trade.toLowerCase().replace(/[^a-z0-9]+/g, "-")}"`));
+    assert.match(html, /data-logo-treatment="typographic-wordmark"/);
+    assert.match(html, /prospect-preview-wordmark[^]*?<strong><span>/);
+    assert.match(html, expectedImage);
+    assert.doesNotMatch(html, /Official business imagery|reviews recorded|rating recorded|Details homeowners can verify/i);
+    return html;
+  });
+
+  assert.match(rendered[0], /data-service-count="1"/);
+  assert.doesNotMatch(rendered[0], /power-washing-(?:service|detail|support|proof)\.jpg/);
+  assert.match(rendered[1], /Evergreen Outdoor<\/span><em>Works<\/em>/);
+  assert.match(rendered[2], /Northline Heating &amp;<\/span><em>Air<\/em>/);
+  assert.match(rendered[3], /Summit Ridge<\/span><em>Roofing<\/em>/);
+});
+
 test("preview image resolver supports configured stock manifests without exposing provider secrets", () => {
   const prospect = withPreview({
     ...structuredClone(seedProspects[2]),
@@ -1001,7 +1034,7 @@ test("local illustration fallback library remains available but is not the defau
 
 test("priority trades use matching preview image language", () => {
   const expected = [
-    ["HVAC", /outdoor AC condenser|HVAC unit|air conditioner/i],
+    ["HVAC", /cooling|home comfort|air handler|ventilation/i],
     ["Roofing", /roofer|roof repair|shingle|roofline/i],
     ["Plumbing", /under-sink|plumber|fixture|pipes/i],
     ["Landscaping", /landscaping worker|planting|lawn|outdoor space/i],
@@ -1058,7 +1091,7 @@ test("no-website public preview stays customer-facing without invented proof", (
     savedPreview: prospect.preview,
   }));
 
-  assert.match(html, /Roof concerns|Service focus|Exterior surfaces|Home comfort/);
+  assert.match(html, /Roofing help when your home needs it|Roofing service/);
   if (html.includes("prospect-preview-gallery")) assert.match(html, /Gallery/);
   else assert.doesNotMatch(html, /href="#gallery"/);
   assert.match(html, /This sample form will not submit/);

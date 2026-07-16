@@ -10625,3 +10625,593 @@ body:has(.engine-shell) {
   }
 }
 
+/* Phase 3: business-specific branding, photography, and composition. */
+.prospect-site-preview .prospect-preview-site {
+  --preview-gutter: clamp(1.25rem, 5vw, 5rem);
+  background: var(--prospect-surface);
+}
+
+.prospect-site-preview .prospect-preview-nav {
+  min-height: 4.75rem;
+  gap: clamp(1rem, 2.5vw, 2.5rem);
+  padding: 0.75rem var(--preview-gutter);
+  backdrop-filter: blur(18px);
+}
+
+.prospect-site-preview .prospect-preview-brand {
+  max-width: min(27rem, 40vw);
+  min-width: 0;
+}
+
+.prospect-site-preview .prospect-preview-brand--wordmark {
+  border: 0;
+  padding: 0;
+}
+
+.prospect-site-preview .prospect-preview-wordmark {
+  max-width: 100%;
+  overflow: visible;
+  white-space: normal;
+}
+
+.prospect-site-preview .prospect-preview-wordmark strong {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.08em 0.32em;
+  overflow-wrap: normal;
+  text-transform: none;
+}
+
+.prospect-site-preview .prospect-preview-wordmark strong > span {
+  color: var(--prospect-primary);
+}
+
+.prospect-site-preview .prospect-preview-wordmark strong > em {
+  color: var(--prospect-accent);
+  font-size: 0.68em;
+  font-style: normal;
+  font-weight: 850;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.prospect-site-preview .prospect-preview-brand-copy small {
+  max-width: 28rem;
+  letter-spacing: 0.1em;
+}
+
+.prospect-site-preview .prospect-preview-logo-image {
+  width: auto;
+  max-width: 10rem;
+  height: auto;
+  max-height: 3.25rem;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.prospect-site-preview .prospect-preview-button,
+.prospect-site-preview .prospect-preview-contact button {
+  min-height: 2.75rem;
+  border-radius: 0.6rem;
+  box-shadow: none;
+  padding-inline: 1.15rem;
+}
+
+.prospect-site-preview .prospect-preview-hero {
+  min-height: 34rem;
+  gap: clamp(2rem, 5vw, 5rem);
+  padding: clamp(3.75rem, 7vw, 6.5rem) var(--preview-gutter);
+}
+
+.prospect-site-preview .prospect-preview-hero__content {
+  max-width: 42rem;
+}
+
+.prospect-site-preview .prospect-preview-hero__content h1 {
+  max-width: 13ch;
+  font-size: clamp(2.8rem, 5.2vw, 4.9rem);
+  line-height: 0.97;
+  letter-spacing: -0.045em;
+}
+
+.prospect-site-preview .prospect-preview-hero__content > p {
+  max-width: 52ch;
+  font-size: clamp(1rem, 1.3vw, 1.16rem);
+  line-height: 1.58;
+}
+
+.prospect-site-preview .prospect-preview-hero__visual {
+  position: relative;
+  min-height: 27rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 1rem;
+  box-shadow: 0 1.75rem 4.5rem rgb(5 16 26 / 24%);
+  transform: none;
+}
+
+.prospect-site-preview .prospect-preview-hero__visual .prospect-preview-image,
+.prospect-site-preview .prospect-preview-hero__visual img {
+  min-height: 27rem;
+}
+
+.prospect-site-preview .prospect-preview-image {
+  border-radius: 0.75rem;
+  box-shadow: 0 1rem 2.5rem rgb(12 25 35 / 12%);
+}
+
+.prospect-site-preview .prospect-preview-image::before {
+  border-color: rgb(255 255 255 / 16%);
+}
+
+.prospect-site-preview .prospect-preview-visual-caption {
+  right: 1rem;
+  bottom: 1rem;
+  left: auto;
+  width: min(18rem, calc(100% - 2rem));
+  max-width: none;
+  gap: 0.18rem;
+  border: 0;
+  border-radius: 0.65rem;
+  background: rgb(255 255 255 / 92%);
+  padding: 0.8rem 0.9rem;
+  box-shadow: 0 0.75rem 2rem rgb(7 16 24 / 18%);
+}
+
+.prospect-site-preview .prospect-preview-visual-caption small {
+  color: var(--prospect-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.prospect-site-preview .prospect-preview-visual-caption strong {
+  font-size: 1rem;
+}
+
+.prospect-site-preview .prospect-preview-visual-caption span {
+  color: var(--prospect-primary);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.prospect-site-preview .prospect-preview-hero__proof-strip {
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  border-color: rgb(255 255 255 / 20%);
+}
+
+.prospect-site-preview .prospect-preview-section,
+.prospect-site-preview .prospect-preview-why,
+.prospect-site-preview .prospect-preview-featured-service,
+.prospect-site-preview .prospect-preview-process,
+.prospect-site-preview .prospect-preview-gallery-section,
+.prospect-site-preview .prospect-preview-service-area,
+.prospect-site-preview .prospect-preview-faq,
+.prospect-site-preview .prospect-preview-contact {
+  padding: clamp(3.5rem, 6vw, 5.75rem) var(--preview-gutter);
+}
+
+.prospect-site-preview .prospect-preview-section__intro {
+  max-width: 48rem;
+}
+
+.prospect-site-preview .prospect-preview-section__intro h2,
+.prospect-site-preview .prospect-preview-contact h2 {
+  max-width: 17ch;
+  font-size: clamp(2rem, 3.75vw, 3.65rem);
+  line-height: 1.02;
+  letter-spacing: -0.038em;
+}
+
+.prospect-site-preview .prospect-preview-kicker {
+  border: 0;
+  padding: 0;
+  color: var(--prospect-primary);
+  font-size: 0.72rem;
+  letter-spacing: 0.095em;
+  text-transform: uppercase;
+}
+
+.prospect-site-preview .prospect-preview-services {
+  background: color-mix(in srgb, var(--prospect-soft) 68%, #fff);
+}
+
+.prospect-site-preview .prospect-preview-service-list {
+  gap: clamp(1rem, 2vw, 1.6rem);
+}
+
+.prospect-site-preview .prospect-preview-service-list article,
+.prospect-site-preview[data-card-style] .prospect-preview-service-list article:first-child {
+  border-radius: 0.8rem;
+  box-shadow: 0 0.5rem 1.5rem rgb(18 34 44 / 7%);
+}
+
+.prospect-site-preview .prospect-preview-service-list article > div {
+  min-height: 10rem;
+  gap: 0.7rem;
+  padding: clamp(1.25rem, 2.2vw, 1.8rem);
+}
+
+.prospect-site-preview .prospect-preview-service-list h3 {
+  font-size: clamp(1.2rem, 1.8vw, 1.55rem);
+}
+
+.prospect-site-preview .prospect-preview-services[data-service-count="1"] {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.7fr) minmax(22rem, 1.3fr);
+  gap: clamp(2rem, 6vw, 6rem);
+  align-items: center;
+}
+
+.prospect-site-preview .prospect-preview-services[data-service-count="1"] .prospect-preview-section__intro {
+  margin: 0;
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] article {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.9fr) minmax(0, 1.1fr);
+  min-height: 19rem;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-service-list[data-service-count="1"] article,
+.prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-service-list[data-service-count="1"] article:first-child {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.9fr) minmax(0, 1.1fr);
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-image {
+  height: 100%;
+  min-height: 19rem;
+  aspect-ratio: auto;
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] article > div {
+  min-height: 0;
+  justify-content: center;
+  padding: clamp(1.75rem, 3vw, 2.75rem);
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-service-card--text-only {
+  min-height: 18rem;
+  border: 0;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--prospect-accent) 18%, transparent), transparent 60%),
+    var(--prospect-primary);
+  color: #fff;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-service-list[data-service-count="1"] article.prospect-preview-service-card--text-only {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--prospect-accent) 18%, transparent), transparent 60%),
+    var(--prospect-primary);
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-service-card--text-only h3,
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-service-card--text-only p,
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-service-card--text-only a {
+  color: #fff;
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-service-card--text-only p {
+  max-width: 42ch;
+}
+
+.prospect-site-preview .prospect-preview-service-list[data-service-count="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+.prospect-site-preview .prospect-preview-why {
+  gap: clamp(2rem, 5vw, 5rem);
+}
+
+.prospect-site-preview .prospect-preview-why article {
+  border-radius: 0.65rem;
+}
+
+.prospect-site-preview .prospect-preview-featured-service {
+  gap: clamp(2.5rem, 6vw, 6rem);
+}
+
+.prospect-site-preview .prospect-preview-featured-service > .prospect-preview-image {
+  min-height: 24rem;
+  border-radius: 0.8rem;
+}
+
+.prospect-site-preview .prospect-preview-process {
+  gap: clamp(2rem, 5vw, 5rem);
+}
+
+.prospect-site-preview .prospect-preview-process li {
+  min-height: 11.5rem;
+}
+
+.prospect-site-preview .prospect-preview-service-area {
+  grid-template-columns: minmax(16rem, 0.8fr) minmax(20rem, 1.2fr);
+  align-items: center;
+  border-block: 1px solid color-mix(in srgb, var(--prospect-primary) 12%, var(--prospect-line));
+  background: var(--prospect-soft);
+  color: var(--prospect-ink);
+}
+
+.prospect-site-preview .prospect-preview-service-area h2 {
+  font-size: clamp(1.9rem, 3vw, 3rem);
+}
+
+.prospect-site-preview .prospect-preview-contact {
+  grid-template-columns: minmax(18rem, 0.82fr) minmax(26rem, 1.18fr);
+  gap: clamp(2rem, 5vw, 5rem);
+}
+
+.prospect-site-preview .prospect-preview-contact form {
+  border-radius: 0.75rem;
+  padding: clamp(1.25rem, 2.5vw, 2rem);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 18%);
+}
+
+.prospect-site-preview .prospect-preview-contact input,
+.prospect-site-preview .prospect-preview-contact textarea {
+  border-radius: 0.4rem;
+}
+
+.prospect-site-preview .prospect-preview-footer {
+  gap: 1rem 2rem;
+  padding: 2rem var(--preview-gutter);
+}
+
+/* Project-showcase plans give photography and completed-work context the visual lead. */
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 0.86fr) minmax(28rem, 1.14fr);
+  min-height: 39rem;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-hero__content h1 {
+  max-width: 11ch;
+  font-size: clamp(2.8rem, 4.8vw, 4.4rem);
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-hero__visual,
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-hero__visual .prospect-preview-image,
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-hero__visual img {
+  min-height: 31rem;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-service-list article {
+  border: 0;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"] .prospect-preview-image--service {
+  aspect-ratio: 16 / 11;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero {
+  grid-template-columns: minmax(28rem, 1.18fr) minmax(0, 0.82fr);
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--prospect-soft) 86%, #fff), var(--prospect-surface));
+  color: var(--prospect-ink);
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__visual {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__content {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__content h1 {
+  color: var(--prospect-ink);
+  font-family: Georgia, Cambria, "Times New Roman", serif;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__content > p,
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero .prospect-preview-kicker,
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero .prospect-preview-text-link {
+  color: var(--prospect-ink);
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero .prospect-preview-button {
+  background: var(--prospect-primary);
+  color: #fff;
+}
+
+/* Service-command plans stay compact, practical, and contact-forward. */
+.prospect-site-preview .prospect-preview-site[data-render-direction="service-command"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 1.04fr) minmax(23rem, 0.96fr);
+  min-height: 32rem;
+  padding-block: clamp(3.25rem, 5vw, 4.75rem);
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="service-command"] .prospect-preview-hero__visual,
+.prospect-site-preview .prospect-preview-site[data-render-direction="service-command"] .prospect-preview-hero__visual .prospect-preview-image,
+.prospect-site-preview .prospect-preview-site[data-render-direction="service-command"] .prospect-preview-hero__visual img {
+  min-height: 23rem;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="service-command"] .prospect-preview-service-list article {
+  border-radius: 0.45rem;
+  box-shadow: none;
+}
+
+/* Trust-led plans use quieter contrast and never force an oversized media stage. */
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero {
+  grid-template-columns: minmax(0, 1.12fr) minmax(20rem, 0.88fr);
+  min-height: 31rem;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--prospect-primary) 9%, var(--prospect-surface)), var(--prospect-surface));
+  color: var(--prospect-ink);
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero__content h1,
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero__content > p,
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero .prospect-preview-kicker,
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero .prospect-preview-text-link {
+  color: var(--prospect-ink);
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero .prospect-preview-button {
+  background: var(--prospect-primary);
+  color: #fff;
+}
+
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero__visual,
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero__visual .prospect-preview-image,
+.prospect-site-preview .prospect-preview-site[data-render-direction="trust-led-local"] .prospect-preview-hero__visual img {
+  min-height: 22rem;
+}
+
+@media (max-width: 980px) {
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-hero,
+  .prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero,
+  .prospect-site-preview .prospect-preview-services[data-service-count="1"],
+  .prospect-site-preview .prospect-preview-contact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__visual,
+  .prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__content {
+    grid-column: 1;
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__content {
+    grid-row: 1;
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-render-direction="project-showcase"][data-trade="landscaping"] .prospect-preview-hero__visual {
+    grid-row: 2;
+  }
+
+  .prospect-site-preview .prospect-preview-service-list[data-service-count="1"] article {
+    grid-template-columns: minmax(13rem, 0.82fr) minmax(0, 1.18fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .prospect-site-preview .prospect-preview-site {
+    --preview-gutter: 1.1rem;
+  }
+
+  .prospect-site-preview .prospect-preview-nav {
+    min-height: 4.25rem;
+    padding-block: 0.55rem;
+  }
+
+  .prospect-site-preview .prospect-preview-brand {
+    max-width: calc(100vw - 3rem);
+  }
+
+  .prospect-site-preview .prospect-preview-wordmark strong {
+    display: grid;
+    gap: 0.08rem;
+    font-size: 0.98rem;
+    line-height: 1;
+  }
+
+  .prospect-site-preview .prospect-preview-wordmark strong > em {
+    font-size: 0.625rem;
+  }
+
+  .prospect-site-preview .prospect-preview-brand-copy small {
+    font-size: 0.625rem;
+    letter-spacing: 0.07em;
+  }
+
+  .prospect-site-preview .prospect-preview-logo-image {
+    max-width: 7.5rem;
+    max-height: 2.65rem;
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-hero {
+    min-height: 0;
+    gap: 2rem;
+    padding-block: 3rem 2.5rem;
+  }
+
+  .prospect-site-preview .prospect-preview-hero__content h1 {
+    max-width: 13ch;
+    font-size: clamp(2.35rem, 11.5vw, 3.25rem);
+  }
+
+  .prospect-site-preview .prospect-preview-hero__visual,
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-hero__visual,
+  .prospect-site-preview .prospect-preview-hero__visual .prospect-preview-image,
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-hero__visual .prospect-preview-image,
+  .prospect-site-preview .prospect-preview-hero__visual img,
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-hero__visual img {
+    min-height: 17.5rem;
+  }
+
+  .prospect-site-preview .prospect-preview-visual-caption {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: calc(100% - 1.5rem);
+  }
+
+  .prospect-site-preview .prospect-preview-section,
+  .prospect-site-preview .prospect-preview-why,
+  .prospect-site-preview .prospect-preview-featured-service,
+  .prospect-site-preview .prospect-preview-process,
+  .prospect-site-preview .prospect-preview-gallery-section,
+  .prospect-site-preview .prospect-preview-service-area,
+  .prospect-site-preview .prospect-preview-faq,
+  .prospect-site-preview .prospect-preview-contact {
+    padding-block: 3.25rem;
+  }
+
+  .prospect-site-preview .prospect-preview-services[data-service-count="1"] {
+    gap: 1.75rem;
+  }
+
+  .prospect-site-preview .prospect-preview-service-list[data-service-count="1"],
+  .prospect-site-preview .prospect-preview-service-list[data-service-count="2"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .prospect-site-preview .prospect-preview-service-list[data-service-count="1"] article {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-service-list[data-service-count="1"] article,
+  .prospect-site-preview .prospect-preview-site[data-render-direction] .prospect-preview-service-list[data-service-count="1"] article:first-child {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-image {
+    min-height: 15rem;
+    aspect-ratio: 4 / 3;
+  }
+
+  .prospect-site-preview .prospect-preview-service-list[data-service-count="1"] .prospect-preview-service-card--text-only {
+    min-height: 15rem;
+  }
+
+  .prospect-site-preview .prospect-preview-service-area {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .prospect-site-preview .prospect-preview-service-area .prospect-preview-kicker,
+  .prospect-site-preview .prospect-preview-service-area h2,
+  .prospect-site-preview .prospect-preview-service-area p,
+  .prospect-site-preview .prospect-preview-service-area .prospect-preview-text-link {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .prospect-site-preview .prospect-preview-service-area h2 {
+    font-size: 2rem;
+  }
+}
+

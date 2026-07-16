@@ -301,7 +301,8 @@ test("preview generation creates a structured photo-led business design brief", 
   assert.match(preview.resolvedImages?.hero.src ?? "", /(?:\/engine-preview-assets\/trade-photos\/|images\.unsplash\.com\/photo-|upload\.wikimedia\.org\/wikipedia\/commons)/);
   assert.match(preview.creativeBrief?.copyRestrictions.join(" ") ?? "", /Do not invent reviews/);
   assert.match(preview.heroHeadline ?? "", /Exterior cleaning for Tampa homes from MC Pressure Washing FL/i);
-  assert.ok((preview.qualityScore?.imageQuality ?? 0) >= 60);
+  assert.ok((preview.qualityScore?.imageQuality ?? 0) >= 50);
+  assert.match(preview.qualityScore?.notes.join(" ") ?? "", /lower-image layout because only limited reliable service photos/i);
   assert.ok(["Send-worthy / polished", "Needs visual review", "Needs regeneration"].includes(preview.qualityScore?.status ?? ""));
 });
 
