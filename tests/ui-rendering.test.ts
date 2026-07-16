@@ -9,7 +9,7 @@ import { ProspectWebsitePreview } from "../components/engine/ProspectWebsitePrev
 import { SystemWorkspace } from "../components/engine/SystemWorkspace";
 import { RecommendedMarketPresetCard } from "../components/engine/TopProspectsWorkspace";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
-import { ProspectDetail, publicPreviewUrlForProspect, type DetailTab } from "../components/engine/ProspectDetail";
+import { ProspectDetail, buildFullPreviewReviewPrompt, isSafePublicPreviewPath, previewStripViewport, publicPreviewUrlForProspect, sanitizePreviewStripFilename, type DetailTab } from "../components/engine/ProspectDetail";
 import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, validatePreviewImages } from "../lib/preview-image-resolver";
 import { evaluatePreviewSendWorthiness } from "../lib/preview-send-worthiness";
@@ -338,6 +338,52 @@ test("preview workspace renders the complete contractor strategy", () => {
   assert.match(html, /Image strategy/);
   assert.match(html, /Distinct images/);
   assert.match(html, /Nothing is sent/);
+});
+
+test("Full Preview Strip appears only for valid public previews and uses safe review helpers", () => {
+  const token = "abcdefghijklmnopqrstuvwxyzABCDEF";
+  const prospect = withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[0]))));
+  prospect.businessName = "True Clean Prowash";
+  prospect.outreach!.detailed = `${prospect.outreach!.detailed}\n\nSounds good, here is the preview:\nhttps://webworkshop.dev/p/${token}`;
+  const html = renderDetail(prospect, "Preview");
+  const missingHtml = renderDetail(withPreview(withOutreach(withAnalysis(structuredClone(seedProspects[1])))), "Preview");
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
+  const prompt = buildFullPreviewReviewPrompt(prospect, "desktop");
+
+  assert.match(html, /Full Preview Strip/);
+  assert.match(html, /Open Public Preview/);
+  assert.doesNotMatch(missingHtml, /Full Preview Strip/);
+  assert.match(missingHtml, /Create Public Preview/);
+  assert.equal((html.match(/Full Preview Strip/g) ?? []).length, 1);
+  assert.equal(previewStripViewport("desktop").width, 1440);
+  assert.equal(previewStripViewport("mobile").width, 390);
+  assert.equal(sanitizePreviewStripFilename("True Clean Prowash", "desktop"), "true-clean-prowash-desktop-full-preview.png");
+  assert.equal(isSafePublicPreviewPath(`/p/${token}`), true);
+  assert.equal(isSafePublicPreviewPath("https://example.com/p/abcdefghijklmnopqrstuvwxyzABCDEF"), false);
+  assert.equal(isSafePublicPreviewPath("/engine/previews/seed-prospect-1"), false);
+  assert.match(prompt, /Review this website preview/);
+  assert.match(prompt, /Business: True Clean Prowash/);
+  assert.match(prompt, /Strip mode: Desktop Strip/);
+  assert.doesNotMatch(prompt, /internal prospect|suppression|score|engine/i);
+  assert.match(detailSource, /capturePublicPreviewStrip/);
+  assert.match(detailSource, /absolutePublicPreviewUrl/);
+  assert.match(detailSource, /isSafePublicPreviewPath/);
+  assert.match(detailSource, /loadPreviewFrame\(iframe, absolutePublicPreviewUrl\(publicPreviewUrl\)\)/);
+  assert.match(detailSource, /iframe\.src = url/);
+  assert.match(detailSource, /clonePublicPreviewForCapture/);
+  assert.match(detailSource, /Array\.from\(doc\.styleSheets\)/);
+  assert.match(detailSource, /fetchAsDataUrl/);
+  assert.match(detailSource, /cloneImage\.setAttribute\("src", await fetchAsDataUrl\(src\)\)/);
+  assert.match(detailSource, /doc\.querySelector\("\.prospect-preview-nav"\)/);
+  assert.match(detailSource, /doc\.querySelector\("\.prospect-preview-footer"\)/);
+  assert.match(detailSource, /doc\.querySelector\("\.engine-shell, \.engine-detail, \.engine-preview-action-bar"\)/);
+  assert.match(detailSource, /navigator\.clipboard\.write\(\[new ClipboardItem\(\{ "image\/png": capture\.blob \}\)\]\)/);
+  assert.match(detailSource, /navigator\.clipboard\.writeText\(reviewPrompt\)/);
+  assert.match(detailSource, /window\.open\("about:blank"/);
+  assert.match(detailSource, /nextWindow\.location\.href = "https:\/\/chatgpt\.com\/"/);
+  assert.match(detailSource, /URL\.revokeObjectURL/);
+  assert.match(detailSource, /Nothing was sent/);
+  assert.doesNotMatch(detailSource, /sendApproved|sendEmail|submitContactForm|autoSend|TWILIO|prospect SMS/i);
 });
 
 test("Improve Preview opens a guided feedback workflow before regeneration", () => {

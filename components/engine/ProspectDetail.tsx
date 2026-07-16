@@ -53,6 +53,18 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
 
 export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity" | "Details";
 type PreviewRegenerationResult = { ok: boolean; message: string };
+type PreviewStripMode = "desktop" | "mobile";
+type PreviewStripStage = "idle" | "loading" | "images" | "measuring" | "capturing" | "validating" | "ready" | "error";
+type PreviewStripCapture = {
+  blob: Blob;
+  blobUrl: string;
+  mode: PreviewStripMode;
+  width: number;
+  height: number;
+  fileSize: number;
+  capturedAt: number;
+  previewVersionKey: string;
+};
 
 type ProspectDetailProps = {
   prospect: Prospect;
@@ -106,6 +118,77 @@ export function publicPreviewUrlForProspect(prospect: Pick<Prospect, "outreach">
   return "";
 }
 
+export function isSafePublicPreviewPath(value: string) {
+  return /^\/p\/[A-Za-z0-9_-]{24,}$/.test(value);
+}
+
+export function previewStripViewport(mode: PreviewStripMode) {
+  return mode === "desktop" ? { width: 1440, label: "Desktop Strip" } : { width: 390, label: "Mobile Strip" };
+}
+
+export function sanitizePreviewStripFilename(businessName: string, mode: PreviewStripMode) {
+  const base = businessName
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "prospect-preview";
+  return `${base}-${mode}-full-preview.png`;
+}
+
+export function buildFullPreviewReviewPrompt(prospect: Pick<Prospect, "businessName" | "trade" | "city" | "state">, mode: PreviewStripMode) {
+  return [
+    "Review this website preview as if you were a local business owner deciding whether to pay for it.",
+    "",
+    `Business: ${prospect.businessName}`,
+    `Trade: ${displayTradeCategory(prospect.trade)}`,
+    `Market: ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`,
+    `Strip mode: ${previewStripViewport(mode).label}`,
+    "",
+    "Identify the most important visual, credibility, and conversion issues preventing it from looking like a premium custom website.",
+    "",
+    "Focus on:",
+    "",
+    "- branding and logo use",
+    "- color scheme",
+    "- image relevance and quality",
+    "- image-to-section matching",
+    "- visual hierarchy",
+    "- headline quality",
+    "- typography",
+    "- spacing and empty space",
+    "- section flow",
+    "- service clarity",
+    "- credibility and trust",
+    "- CTA effectiveness",
+    "- desktop or mobile presentation",
+    "- placeholders",
+    "- generic copy",
+    "- unsupported claims",
+    "- anything that makes the page feel like an AI-generated template",
+    "",
+    "Be direct.",
+    "",
+    "Prioritize Critical and High issues first.",
+    "",
+    "State clearly whether the preview is:",
+    "",
+    "- Send-worthy",
+    "- Needs improvement",
+    "- Blocked",
+  ].join("\n");
+}
+
+function currentPreviewVersionKey(prospect: Prospect, publicPreviewUrl: string) {
+  return [
+    publicPreviewUrl,
+    prospect.preview?.generatedAt ?? "",
+    prospect.preview?.previewVersion ?? "",
+    prospect.preview?.qualityScore?.overall ?? "",
+    prospect.outreach?.lastRegeneratedAt ?? prospect.outreach?.generatedAt ?? "",
+  ].join("|");
+}
+
 function prospectLocationLine(prospect: Pick<Prospect, "trade" | "city" | "state">) {
   return `${displayTradeCategory(prospect.trade)} · ${titleCaseLocation(prospect.city)}, ${displayStateCode(prospect.state)}`;
 }
@@ -156,6 +239,409 @@ function ScoreRing({ value }: { value: number }) {
       <b>{value}</b>
     </span>
   );
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function canvasToPngBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Full page could not be captured."));
+    }, "image/png");
+  });
+}
+
+async function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)));
+    reader.addEventListener("error", () => reject(new Error("One or more preview images could not be prepared for capture.")));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchAsDataUrl(src: string) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(src, { mode: "cors", signal: controller.signal });
+    if (!response.ok) throw new Error("One or more preview images could not be prepared for capture.");
+    return await blobToDataUrl(await response.blob());
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function absolutePublicPreviewUrl(path: string) {
+  if (!isSafePublicPreviewPath(path)) throw new Error("Public preview unavailable.");
+  return new URL(path, window.location.origin).href;
+}
+
+async function waitForPreviewFrameReady(iframe: HTMLIFrameElement, publicPreviewUrl: string, setStage: (stage: PreviewStripStage) => void) {
+  const expectedPath = new URL(absolutePublicPreviewUrl(publicPreviewUrl)).pathname;
+  const startedAt = Date.now();
+  while (!iframe.contentDocument || iframe.contentDocument.readyState !== "complete") {
+    if (Date.now() - startedAt > 12000) throw new Error("Capture timed out while loading the public preview.");
+    await wait(100);
+  }
+  const doc = iframe.contentDocument;
+  if (doc.location.pathname !== expectedPath) throw new Error("Public preview unavailable.");
+  setStage("images");
+  await doc.fonts?.ready;
+  const win = iframe.contentWindow;
+  const height = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0);
+  if (win && height > 0) {
+    const step = Math.max(360, Math.floor(win.innerHeight * 0.7));
+    for (let y = 0; y <= height; y += step) {
+      win.scrollTo(0, y);
+      await wait(35);
+    }
+    win.scrollTo(0, 0);
+  }
+  const images = Array.from(doc.images);
+  await Promise.all(images.map((image) => {
+    if (image.complete) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => resolve();
+      image.addEventListener("load", done, { once: true });
+      image.addEventListener("error", done, { once: true });
+      window.setTimeout(done, 3500);
+    });
+  }));
+  const broken = images.filter((image) => !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0);
+  if (broken.length > 0) throw new Error("One or more preview images failed to load.");
+  if (!doc.querySelector(".prospect-preview-nav")) throw new Error("Header was missing from the capture.");
+  if (!doc.querySelector(".prospect-preview-footer")) throw new Error("Footer was missing from the capture.");
+  if (doc.querySelector(".engine-shell, .engine-detail, .engine-preview-action-bar")) throw new Error("Engine controls appeared in the public preview capture.");
+  if (/loading preview|loading image|skeleton/i.test(doc.body.textContent ?? "")) throw new Error("The public preview was still loading.");
+}
+
+async function loadPreviewFrame(iframe: HTMLIFrameElement, url: string) {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Capture timed out while loading the public preview."));
+    }, 12000);
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      iframe.removeEventListener("load", handleLoad);
+      iframe.removeEventListener("error", handleError);
+    };
+    const handleLoad = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Public preview unavailable."));
+    };
+    iframe.addEventListener("load", handleLoad, { once: true });
+    iframe.addEventListener("error", handleError, { once: true });
+    iframe.src = url;
+  });
+}
+
+async function clonePublicPreviewForCapture(doc: Document) {
+  const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("script").forEach((script) => script.remove());
+  clone.querySelectorAll('link[rel="stylesheet"], link[rel="preload"], link[rel="modulepreload"]').forEach((link) => link.remove());
+  const base = doc.createElement("base");
+  base.href = window.location.origin;
+  clone.querySelector("head")?.prepend(base);
+  const style = doc.createElement("style");
+  style.textContent = Array.from(doc.styleSheets)
+    .map((sheet) => {
+      try {
+        return Array.from(sheet.cssRules).map((rule) => rule.cssText).join("\n");
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean)
+    .join("\n");
+  clone.querySelector("head")?.append(style);
+  const originalImages = Array.from(doc.images);
+  const clonedImages = Array.from(clone.querySelectorAll("img"));
+  await Promise.all(originalImages.map(async (image, index) => {
+    const cloneImage = clonedImages[index];
+    if (!cloneImage) return;
+    const src = image.currentSrc || image.src;
+    if (!src) return;
+    cloneImage.setAttribute("src", await fetchAsDataUrl(src));
+    cloneImage.removeAttribute("srcset");
+    cloneImage.removeAttribute("sizes");
+    cloneImage.setAttribute("decoding", "sync");
+  }));
+  clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  return clone;
+}
+
+async function capturePublicPreviewStrip(
+  iframe: HTMLIFrameElement,
+  publicPreviewUrl: string,
+  mode: PreviewStripMode,
+  versionKey: string,
+  setStage: (stage: PreviewStripStage) => void,
+) {
+  setStage("loading");
+  const { width } = previewStripViewport(mode);
+  iframe.style.width = `${width}px`;
+  iframe.style.height = mode === "desktop" ? "900px" : "980px";
+  await loadPreviewFrame(iframe, absolutePublicPreviewUrl(publicPreviewUrl));
+  await waitForPreviewFrameReady(iframe, publicPreviewUrl, setStage);
+  const doc = iframe.contentDocument;
+  if (!doc) throw new Error("Public preview unavailable.");
+  setStage("measuring");
+  const height = Math.ceil(Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0));
+  if (height < 900) throw new Error("The capture was too short to be a full preview.");
+  if (height > 24000) throw new Error("Capture exceeded a browser image limit.");
+  iframe.style.height = `${height}px`;
+  await wait(150);
+  setStage("capturing");
+  const clone = await clonePublicPreviewForCapture(doc);
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject width="100%" height="100%" x="0" y="0">${serialized}</foreignObject>`,
+    "</svg>",
+  ].join("");
+  const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const image = new Image();
+  image.decoding = "async";
+  image.src = svgUrl;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Full page could not be captured.");
+  context.drawImage(image, 0, 0);
+  setStage("validating");
+  const blob = await canvasToPngBlob(canvas);
+  if (blob.size < 6000) throw new Error("Blank capture rejected.");
+  return {
+    blob,
+    blobUrl: URL.createObjectURL(blob),
+    mode,
+    width,
+    height,
+    fileSize: blob.size,
+    capturedAt: Date.now(),
+    previewVersionKey: versionKey,
+  } satisfies PreviewStripCapture;
+}
+
+function FullPreviewStripDialog({
+  prospect,
+  publicPreviewUrl,
+  versionKey,
+  onClose,
+}: {
+  prospect: Prospect;
+  publicPreviewUrl: string;
+  versionKey: string;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<PreviewStripMode>("desktop");
+  const [stage, setStage] = useState<PreviewStripStage>("idle");
+  const [capture, setCapture] = useState<PreviewStripCapture | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Capture the current public preview when ready.");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const latestUrlRef = useRef<string | null>(null);
+  const seenVersionKeyRef = useRef(versionKey);
+  const invalidated = Boolean(capture && capture.previewVersionKey !== versionKey);
+  const ready = Boolean(capture && !invalidated && stage === "ready");
+  const reviewPrompt = buildFullPreviewReviewPrompt(prospect, mode);
+  const fileName = sanitizePreviewStripFilename(prospect.businessName, mode);
+
+  useEffect(() => {
+    return () => {
+      if (latestUrlRef.current) URL.revokeObjectURL(latestUrlRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (seenVersionKeyRef.current === versionKey) return;
+    seenVersionKeyRef.current = versionKey;
+    setStatusMessage("Preview changed - refresh capture.");
+  }, [versionKey]);
+
+  function replaceCapture(nextCapture: PreviewStripCapture | null) {
+    if (latestUrlRef.current) URL.revokeObjectURL(latestUrlRef.current);
+    latestUrlRef.current = nextCapture?.blobUrl ?? null;
+    setCapture(nextCapture);
+  }
+
+  async function refreshCapture(nextMode = mode) {
+    if (busy) return;
+    if (!iframeRef.current) {
+      setErrorMessage("Full page could not be captured.");
+      return;
+    }
+    setBusy(true);
+    setErrorMessage("");
+    setStatusMessage("Loading public preview.");
+    replaceCapture(null);
+    try {
+      const nextCapture = await capturePublicPreviewStrip(iframeRef.current, publicPreviewUrl, nextMode, versionKey, setStage);
+      replaceCapture(nextCapture);
+      setStage("ready");
+      setStatusMessage(`${previewStripViewport(nextMode).label} ready. Nothing was sent.`);
+    } catch (error) {
+      setStage("error");
+      setErrorMessage(error instanceof Error ? error.message : "Full page could not be captured.");
+      setStatusMessage("Capture failed. The public preview was not changed and nothing was sent.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function switchMode(nextMode: PreviewStripMode) {
+    if (nextMode === mode) return;
+    setMode(nextMode);
+    replaceCapture(null);
+    setStage("idle");
+    setErrorMessage("");
+    setStatusMessage(`${previewStripViewport(nextMode).label} selected. Refresh capture to create a strip.`);
+  }
+
+  async function copyImage() {
+    if (!capture || invalidated || busy) return;
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.write !== "function" || typeof ClipboardItem === "undefined") {
+        throw new Error("Image clipboard access is not available in this browser.");
+      }
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": capture.blob })]);
+      setStatusMessage("Full preview copied.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Clipboard access was denied.");
+      setStatusMessage("Image copy failed. Download PNG or Open Image in New Tab is still available.");
+    }
+  }
+
+  async function copyReviewPrompt() {
+    try {
+      await navigator.clipboard.writeText(reviewPrompt);
+      setStatusMessage("Review prompt copied.");
+    } catch {
+      setErrorMessage("Clipboard access was denied.");
+      setStatusMessage("Review prompt copy failed. You can still select and copy it manually.");
+    }
+  }
+
+  async function openChatGpt() {
+    const nextWindow = window.open("about:blank", "_blank");
+    try {
+      await navigator.clipboard.writeText(reviewPrompt);
+      setStatusMessage("Review prompt copied. ChatGPT opened. Paste the image manually.");
+    } catch {
+      setErrorMessage("Clipboard access was denied.");
+      setStatusMessage("ChatGPT opened, but the review prompt was not copied.");
+    }
+    if (nextWindow) {
+      nextWindow.opener = null;
+      nextWindow.location.href = "https://chatgpt.com/";
+    } else {
+      setErrorMessage("Popup was blocked. Open ChatGPT manually.");
+    }
+  }
+
+  function downloadPng() {
+    if (!capture || invalidated || busy) return;
+    const link = document.createElement("a");
+    link.href = capture.blobUrl;
+    link.download = fileName;
+    link.click();
+    setStatusMessage("PNG download started.");
+  }
+
+  function openImage() {
+    if (!capture || invalidated || busy) return;
+    window.open(capture.blobUrl, "_blank", "noopener,noreferrer");
+  }
+
+  function closeDialog() {
+    replaceCapture(null);
+    onClose();
+  }
+
+  return (
+    <div className="engine-dialog-backdrop engine-preview-strip-backdrop" role="presentation">
+      <section aria-label="Full Preview Strip review tool" aria-modal="true" className="engine-dialog engine-dialog--wide engine-preview-strip-dialog" role="dialog">
+        <header>
+          <div>
+            <p>Temporary capture tool</p>
+            <h2>Full Preview Strip</h2>
+          </div>
+          <button onClick={closeDialog} type="button">Close</button>
+        </header>
+        <div className="engine-preview-strip-body">
+          <div className="engine-preview-strip-controls">
+            <div className="engine-preview-strip-mode" role="tablist" aria-label="Preview strip mode">
+              {(["desktop", "mobile"] as PreviewStripMode[]).map((item) => (
+                <button aria-selected={mode === item} className={mode === item ? "is-active" : ""} disabled={busy} key={item} onClick={() => switchMode(item)} role="tab" type="button">
+                  {previewStripViewport(item).label}
+                </button>
+              ))}
+            </div>
+            <div className="engine-preview-strip-actions">
+              <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void refreshCapture()} type="button">{busy ? stageLabel(stage) : capture ? "Refresh Capture" : "Capture Strip"}</button>
+              <button className="engine-button" disabled={!ready} onClick={() => void copyImage()} type="button">Copy Image</button>
+              <button className="engine-button" onClick={() => void copyReviewPrompt()} type="button">Copy Review Prompt</button>
+              <button className="engine-button" onClick={() => void openChatGpt()} type="button">Open ChatGPT</button>
+              <button className="engine-button" disabled={!ready} onClick={downloadPng} type="button">Download PNG</button>
+              <button className="engine-button" disabled={!ready} onClick={openImage} type="button">Open Image in New Tab</button>
+              <a className="engine-button" href={publicPreviewUrl} rel="noreferrer" target="_blank">Open Public Preview</a>
+            </div>
+            <div className={`engine-preview-strip-status engine-preview-strip-status--${errorMessage ? "error" : stage}`}>
+              <b>{statusMessage}</b>
+              <span>Mode: {previewStripViewport(mode).label}. Capture is temporary and discarded on close.</span>
+              {capture ? <span>{capture.width}px wide, {capture.height}px tall, {(capture.fileSize / 1024 / 1024).toFixed(2)} MB.</span> : null}
+              {invalidated ? <span>Preview changed - refresh capture before copying or downloading.</span> : null}
+              {errorMessage ? <span>{errorMessage}</span> : null}
+            </div>
+          </div>
+          <div className="engine-preview-strip-viewer" aria-live="polite">
+            {capture ? (
+              // eslint-disable-next-line @next/next/no-img-element -- temporary operator-only Blob URL cannot be optimized by next/image
+              <img alt={`${previewStripViewport(capture.mode).label} capture for ${prospect.businessName}`} src={capture.blobUrl} />
+            ) : (
+              <div className="engine-preview-strip-empty">
+                <b>{busy ? stageLabel(stage) : "No strip captured yet."}</b>
+                <p>Capture loads the actual saved public preview at {publicPreviewUrl}. Nothing is regenerated or sent.</p>
+              </div>
+            )}
+          </div>
+          <details className="engine-preview-strip-prompt">
+            <summary>Review prompt text</summary>
+            <pre>{reviewPrompt}</pre>
+          </details>
+        </div>
+        <iframe aria-hidden="true" className="engine-preview-strip-frame" ref={iframeRef} title="Public preview capture frame" />
+      </section>
+    </div>
+  );
+}
+
+function stageLabel(stage: PreviewStripStage) {
+  const labels: Record<PreviewStripStage, string> = {
+    idle: "Ready to capture",
+    loading: "Loading public preview",
+    images: "Waiting for images",
+    measuring: "Measuring page",
+    capturing: "Capturing full page",
+    validating: "Validating image",
+    ready: "Ready",
+    error: "Capture failed",
+  };
+  return labels[stage];
 }
 
 export function ProspectDetail({
@@ -576,6 +1062,7 @@ function PreviewView({
   const [selectedImprovements, setSelectedImprovements] = useState<string[]>([]);
   const [regenerationResult, setRegenerationResult] = useState("");
   const [regenerating, setRegenerating] = useState(false);
+  const [stripDialogOpen, setStripDialogOpen] = useState(false);
   const lastPreviewImprovementSignal = useRef(0);
   const improvementPanelRef = useRef<HTMLDivElement | null>(null);
   const styleProfile = previewStyleProfile(prospect, preview);
@@ -742,8 +1229,9 @@ function PreviewView({
         ) : null}
         <div className="engine-preview-action-bar__actions">
           {publicPreviewUrl
-            ? <button className="engine-button engine-button--primary" onClick={onOpenPublicPreview} type="button">Open Public Preview</button>
+            ? <button className="engine-button engine-button--primary" onClick={() => setStripDialogOpen(true)} type="button">Full Preview Strip</button>
             : <button className="engine-button engine-button--primary" onClick={() => void onCreateReviewPackage()} type="button">Create Public Preview</button>}
+          {publicPreviewUrl ? <button className="engine-button" onClick={onOpenPublicPreview} type="button">Open Public Preview</button> : null}
           <button className="engine-button" disabled={busy} onClick={() => openImprovementPanel()} type="button">{busy ? "Regenerating preview..." : "Improve Preview"}</button>
           <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Refresh Review Package</button>
         </div>
@@ -754,6 +1242,14 @@ function PreviewView({
           </div>
         ) : null}
       </section>
+      {stripDialogOpen && publicPreviewUrl ? (
+        <FullPreviewStripDialog
+          prospect={prospect}
+          publicPreviewUrl={publicPreviewUrl}
+          versionKey={currentPreviewVersionKey(prospect, publicPreviewUrl)}
+          onClose={() => setStripDialogOpen(false)}
+        />
+      ) : null}
       {businessProfile ? (
         <section className="engine-preview-research-summary" aria-label="Business research summary">
           <div>
