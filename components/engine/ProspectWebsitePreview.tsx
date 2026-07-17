@@ -541,6 +541,12 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
   const galleryAssets = images.gallery.filter((image) => imageRelevant(image) && dependableImage(image) && !usedImageSources.has(image.src) && (images.sourceStatus !== "approved business photos" || image.source === "business-photo")).slice(0, 3);
   galleryAssets.forEach((image) => usedImageSources.add(image.src));
   const showGallery = galleryAssets.length >= 3 && sectionEnabled("gallery");
+  const navigationItems = [
+    { href: "#services", label: "Services", visible: true },
+    { href: "#gallery", label: "Gallery", visible: showGallery },
+    { href: "#faq", label: "FAQ", visible: sectionEnabled("faq") },
+    { href: "#contact", label: "Contact", visible: true },
+  ].filter((item) => item.visible);
   const headline = normalizeCopy(officialTagline || groundedCopy?.headline || heroHeadlineCopy(canonicalTrade, businessName, displayCity, preview.heroHeadline ?? pageCopy.heroHeadline));
   const rawHeroSupporting = normalizeCopy(preview.heroSupporting ?? preview.hero);
   const heroSupporting = rawHeroSupporting.toLowerCase().includes(displayCity.toLowerCase()) || !/nearby communities|across/i.test(rawHeroSupporting)
@@ -605,6 +611,7 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
         data-logo-treatment={logoUrl ? "official" : "typographic-wordmark"}
         data-render-direction={renderPlan.direction}
         data-page-mode={renderPlan.pageMode}
+        data-preview-composition={canonicalTrade === "Pressure Washing" ? "premium-property-polish" : "adaptive"}
         data-rhythm={artDirection?.layoutRhythm ?? "calm-premium"}
         data-service-presentation={renderPlan.servicePresentation}
         data-tone={styleProfile.tone}
@@ -626,13 +633,22 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
               </span>
             )}
           </a>
-          <div>
-            <a href="#services">Services</a>
-            {showGallery ? <a href="#gallery">Gallery</a> : null}
-            {sectionEnabled("faq") ? <a href="#faq">FAQ</a> : null}
-            <a href="#contact">Contact</a>
+          <div className="prospect-preview-nav__links">
+            {navigationItems.map((item) => <a href={item.href} key={item.href}>{item.label}</a>)}
           </div>
           <a className="prospect-preview-button" href="#contact">{ctaLabel}</a>
+          {canonicalTrade === "Pressure Washing" ? (
+            <details className="prospect-preview-mobile-menu">
+              <summary aria-label="Open site navigation">
+                <span>Menu</span>
+                <i aria-hidden="true">+</i>
+              </summary>
+              <div>
+                {navigationItems.map((item) => <a href={item.href} key={item.href}>{item.label}</a>)}
+                {verifiedPhone ? <a href={`tel:${verifiedPhone}`}>Call {verifiedPhone}</a> : null}
+              </div>
+            </details>
+          ) : null}
         </nav>
 
         <section className={`prospect-preview-hero${heroImage ? "" : " prospect-preview-hero--low-image"}`} id="top">
@@ -685,6 +701,7 @@ function renderProspectWebsitePreview({ prospect, publicView = false, savedPrevi
               <article className={serviceImages[index] ? "" : "prospect-preview-service-card--text-only"} id={`service-${index + 1}`} key={item.title}>
                 {serviceImages[index] ? <TradePreviewImage {...previewImageProps(serviceImages[index], "service")} /> : null}
                 <div>
+                  {canonicalTrade === "Pressure Washing" ? <span className="prospect-preview-service-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span> : null}
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
                   <a href="#contact">{ctaLabel}</a>
