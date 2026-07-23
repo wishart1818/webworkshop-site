@@ -5,6 +5,7 @@ import {
   prospectBestManualContactMethod,
   prospectContactConfidence,
   prospectEmailNeedsManualVerification,
+  reconcileProspectContactRouting,
   recommendProspectContactMethod,
   scoreLabels,
   type Analysis,
@@ -260,7 +261,7 @@ function emailAllowed(value: string) {
 }
 
 function bestEmail(emails: string[], existing: Partial<Prospect>) {
-  const unique = [...new Set(emails.map((email) => email.toLowerCase()).filter(emailAllowed))];
+  const unique = [...new Set(emails.map((email) => email.trim().toLowerCase()).filter((email) => email && emailAllowed(email)))];
   return unique.find((email) => !/^privacy@/i.test(email) && !prospectEmailNeedsManualVerification({ ...existing, email }))
     ?? unique.find((email) => !/^privacy@/i.test(email))
     ?? unique[0]
@@ -341,7 +342,7 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
   if (contactFormUrl) notes.push("Contact form detected; form was not submitted.");
   if (facebookUrl || instagramUrl || linkedinUrl) notes.push("Public social profile link found on scanned website pages.");
 
-  const email = existing.email || bestEmail(emails, existing);
+  const email = bestEmail([existing.email ?? "", ...emails], existing);
   const result = {
     email,
     contactPageUrl,
@@ -411,11 +412,13 @@ export async function discoverWebsiteContactPaths(prospect: Prospect): Promise<P
     ...discovery,
     state: displayStateCode(prospect.state),
   };
-  return {
+  return reconcileProspectContactRouting({
     ...updated,
-    classification: prospect.classification === "website_redesign" ? prospect.classification : prospect.classification,
     recommendedContactMethod: recommendProspectContactMethod(updated),
-  };
+  }, fetched.flatMap((page) => [
+    ...(cleanHtmlText(page.html).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []),
+    ...[...page.html.matchAll(/href\s*=\s*["']mailto:([^?"']+)/gi)].map((match) => decodeURIComponent(match[1] ?? "")),
+  ]));
 }
 
 function countMatches(value: string, expression: RegExp) {

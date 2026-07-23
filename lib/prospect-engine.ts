@@ -1982,12 +1982,19 @@ function rootDomain(value: string) {
   }
 }
 
+function prospectEmailHasHardBlock(value: string) {
+  const { local, domain } = emailParts(value);
+  return !local
+    || !domain
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+    || /^(?:no-?reply|noreply|do-?not-?reply|donotreply|wordpress|wp|example|test|privacy|filler)$/i.test(local)
+    || /(?:godaddy|totalwp|wp[-.]?theme|wordpress|themeforest|template|demo|staging|developer|webdesigner|webmaster|hosting|wpengine|directory|yellowpages|yelp)/i.test(domain);
+}
+
 export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospect, "businessName" | "website" | "email">>) {
   if (!input.email) return false;
-  const { local, domain } = emailParts(input.email);
-  if (!local || !domain) return true;
-  if (/^(?:no-?reply|noreply|do-?not-?reply|donotreply|wordpress|wp|example|test|privacy)$/i.test(local)) return true;
-  if (/(?:totalwp|wp[-.]?theme|wordpress|themeforest|template|demo|staging|developer|webdesigner|webmaster|hosting|wpengine)/i.test(domain)) return true;
+  const { domain } = emailParts(input.email);
+  if (prospectEmailHasHardBlock(input.email)) return true;
   const websiteDomain = rootDomain(input.website ?? "");
   if (websiteDomain && domain === websiteDomain) return false;
   const businessTokens = identityTokensForContact(input.businessName ?? "");
@@ -2106,6 +2113,36 @@ export function recommendProspectContactMethod(input: Pick<Prospect, "classifica
   if (input.email) return "verify_email_manually";
   if (input.phone) return "needs_manual_contact_research";
   return "do_not_contact";
+}
+
+export function reconcileProspectContactRouting(
+  prospect: Prospect,
+  discoveredEmails: string[] = [],
+): Prospect {
+  const validatedDiscoveredEmails = new Set(
+    discoveredEmails.map((email) => email.trim().toLowerCase()).filter(Boolean),
+  );
+  const candidates = [...new Set(
+    [...discoveredEmails, prospect.email]
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  )];
+  const legitimateEmail = candidates.find((email) => (
+    !prospectEmailHasHardBlock(email)
+    && (
+      validatedDiscoveredEmails.has(email)
+      || !prospectEmailNeedsManualVerification({ ...prospect, email })
+    )
+  ));
+  const email = legitimateEmail ?? prospect.email.trim().toLowerCase();
+  const contactInput = { ...prospect, email };
+  return {
+    ...prospect,
+    email,
+    recommendedContactMethod: legitimateEmail ? "send_email" : recommendProspectContactMethod(contactInput),
+    bestManualContactMethod: legitimateEmail ? "email" : prospectBestManualContactMethod(contactInput),
+    contactConfidence: legitimateEmail ? "high" : prospectContactConfidence(contactInput),
+  };
 }
 
 export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {

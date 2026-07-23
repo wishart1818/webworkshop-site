@@ -6,9 +6,10 @@ import {
   autonomousFeedbackLabels,
   autonomousGrowthModeLabels,
   autonomousGrowthModes,
+  autoEmailPilotGateReasons,
   csvEscape,
   loomNeededTaskForQueueItem,
-  outreachQueueStatuses,
+  manualQueueStatusTargets,
   smartQueueLabels,
   type AutonomousFeedbackLabel,
   type AutonomousGrowthDashboard,
@@ -65,6 +66,14 @@ type ApiPayload = Partial<DashboardPayload> & {
   autopilot?: AutopilotDashboard;
   smokeTest?: AutopilotSmokeTestResult;
   sendResult?: { sent: boolean; blockedReasons: string[] };
+  approval?: { queued: boolean; blockedReasons: string[] };
+  autoEmailPilot?: {
+    attempted: number;
+    sent: number;
+    blocked: number;
+    approvedQueued: number;
+    blockedReasons: Array<{ queueItemId: string; businessName: string; email: string; reasons: string[] }>;
+  };
   smartGrowth?: SmartAutonomousGrowthSnapshot;
   summary?: SmartRunSummary;
   autoEmailBatch?: {
@@ -250,6 +259,7 @@ export function AutonomousGrowthWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState("");
+  const [sendingQueueItemId, setSendingQueueItemId] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [activeView, setActiveView] = useState<AutonomousGrowthView>("pilot");
 
@@ -361,6 +371,29 @@ export function AutonomousGrowthWorkspace() {
     }
   }
 
+  async function approveAndQueueEmail(item: OutreachQueueItem) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve_and_queue_email", queueItemId: item.id }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.item || !payload.approval) throw new Error(apiError(payload, "Unable to approve and queue email."));
+      await loadDashboard();
+      setNotice(payload.approval.queued
+        ? "Email approved and queued for the guarded Auto Email Pilot cycle. It has not been marked sent."
+        : `Email was not queued: ${payload.approval.blockedReasons.join("; ")}`);
+    } catch (approvalError) {
+      setError(approvalError instanceof Error ? approvalError.message : "Unable to approve and queue email.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function copyText(key: string, value: string) {
     if (!value.trim()) return;
     await navigator.clipboard.writeText(value);
@@ -435,6 +468,7 @@ export function AutonomousGrowthWorkspace() {
   }
 
   async function sendQueuedEmail(item: OutreachQueueItem) {
+    setSendingQueueItemId(item.id);
     setSaving(true);
     setError("");
     setNotice("");
@@ -453,6 +487,7 @@ export function AutonomousGrowthWorkspace() {
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Unable to send queued email.");
     } finally {
+      setSendingQueueItemId("");
       setSaving(false);
     }
   }
@@ -552,6 +587,12 @@ export function AutonomousGrowthWorkspace() {
         setNotice(`${successMessage} Top Prospects job ${payload.topProspectJobId} started in the background.`);
       } else if (payload.topProspectJobWarning) {
         setNotice(`${successMessage} ${payload.topProspectJobWarning}`);
+      } else if (payload.autoEmailPilot) {
+        setNotice(payload.autoEmailPilot.sent > 0
+          ? `Auto Email Pilot sent ${payload.autoEmailPilot.sent} approved email${payload.autoEmailPilot.sent === 1 ? "" : "s"}. No follow-ups or other channels ran.`
+          : payload.autoEmailPilot.blockedReasons.length
+            ? `Auto Email Pilot did not send: ${payload.autoEmailPilot.blockedReasons.flatMap((item) => item.reasons).join("; ")}`
+            : successMessage);
       } else {
         setNotice(successMessage);
       }
@@ -575,7 +616,11 @@ export function AutonomousGrowthWorkspace() {
       const payload = await response.json() as ApiPayload;
       if (!response.ok || !payload.smartGrowth) throw new Error(apiError(payload, "Unable to run Smart Growth action."));
       await loadDashboard();
-      setNotice(payload.summary?.nextBestAction ? `${successMessage} Next: ${payload.summary.nextBestAction}` : successMessage);
+      setNotice(payload.autoEmailPilot?.sent
+        ? `Processed existing inventory and sent ${payload.autoEmailPilot.sent} approved email${payload.autoEmailPilot.sent === 1 ? "" : "s"}. No follow-ups or other channels ran.`
+        : payload.autoEmailPilot?.blockedReasons.length
+          ? `Existing inventory was reconciled. Auto Email Pilot did not send: ${payload.autoEmailPilot.blockedReasons.flatMap((item) => item.reasons).join("; ")}`
+          : payload.summary?.nextBestAction ? `${successMessage} Next: ${payload.summary.nextBestAction}` : successMessage);
     } catch (smartError) {
       setError(smartError instanceof Error ? smartError.message : "Unable to run Smart Growth action.");
     } finally {
@@ -588,7 +633,7 @@ export function AutonomousGrowthWorkspace() {
     await postAutopilot(
       "start_autopilot",
       { autopilotSettings: autopilotSettingsFromForm(new FormData(event.currentTarget)) },
-      "Autopilot campaign started in manual-safe mode. It prepared a report and sent nothing.",
+      "Autopilot campaign started. Only explicitly approved queued emails may send when every Pilot gate passes; all other channels remain manual.",
     );
   }
 
@@ -599,7 +644,7 @@ export function AutonomousGrowthWorkspace() {
       loom: queue.filter((item) => loomStatuses.includes(item.status)),
       dryRun: queue.filter((item) => ["Draft", "Eligible", "Needs Review", "DM Draft", "First DM Sent"].includes(item.status)),
       blocked: queue.filter((item) => ["Blocked", "Bad Fit", "Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed", "Skipped"].includes(item.status)),
-      sent: queue.filter((item) => ["Queued", "Sent", "Loom Sent", "Pricing Requested", "Pricing Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"].includes(item.status)),
+      sent: queue.filter((item) => ["Queued", "Sending", "Sent", "Loom Sent", "Pricing Requested", "Pricing Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"].includes(item.status)),
     };
   }, [dashboard?.queue]);
 
@@ -617,7 +662,27 @@ export function AutonomousGrowthWorkspace() {
   if (!dashboard) return <div className="engine-content"><EmptyState title="Autonomous Growth unavailable" body={error || "Reload the engine and try again."} action={() => void loadDashboard()} actionLabel="Retry" /></div>;
 
   const { autopilot, env, metrics, queue, settings } = dashboard;
-  const autoPilotBlocked = settings.mode !== "auto_email_pilot" || settings.killSwitch || env.emailKillSwitchEnabled || !env.autoSendEnabled || !env.hasResendApiKey || !env.hasFromEmail || !env.hasReplyToEmail || !env.hasPostalAddress;
+  const pilotGateReasons = autoEmailPilotGateReasons({
+    emailsSentToday: metrics.emailsSentToday,
+    environment: env,
+    settings,
+  });
+  const autoPilotBlocked = pilotGateReasons.length > 0;
+  const pilotEmailStatus = env.autopilotDisabled
+    ? "Autopilot disabled by environment"
+    : env.emailKillSwitchEnabled
+    ? "Email disabled"
+    : env.sendProvider !== "resend" || !env.hasResendApiKey || !env.hasFromEmail || !env.hasReplyToEmail || !env.hasPostalAddress
+      ? "Provider configuration incomplete"
+      : !env.autoSendEnabled
+        ? "Auto Email Pilot gate disabled"
+        : settings.mode !== "auto_email_pilot"
+          ? "Auto Email Pilot mode not selected"
+          : settings.killSwitch
+            ? "Global kill switch on"
+            : metrics.dailyCapRemaining <= 0
+              ? "Daily cap reached"
+              : "Ready for approved queued email";
   const sentEmailHistory = queue.filter((item) => item.status === "Sent" || item.sentDate);
   const suppressionHistory = queue.filter((item) => ["Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact"].includes(item.status));
   const latestSentEmail = sentEmailHistory
@@ -657,14 +722,14 @@ export function AutonomousGrowthWorkspace() {
         <div className="engine-panel__head">
           <div>
             <h2>Autonomous Growth Control Center</h2>
-            <p>No outreach will be sent automatically. Emails are manual/review only unless the dedicated email gates are explicitly configured.</p>
+            <p>{autoPilotBlocked ? pilotGateReasons.join(" ") : "Only explicitly approved queued public-email drafts may send through Auto Email Pilot. Other channels remain manual."}</p>
           </div>
           <span>{autoPilotBlocked ? "Blocked" : autopilot.activity.status === "running" ? "Running" : settings.killSwitch ? "Paused" : "Ready"}</span>
         </div>
         <div className="engine-control-grid">
           <article><span>Current mode</span><strong>{autonomousGrowthModeLabels[settings.mode]}</strong></article>
           <article><span>Global kill switch</span><strong>{settings.killSwitch ? "On" : "Off"}</strong></article>
-          <article><span>Prospect email sending</span><strong>{env.emailKillSwitchEnabled ? "Disabled" : "Enabled by env"}</strong></article>
+          <article><span>Prospect email sending</span><strong>{pilotEmailStatus}</strong></article>
           <article><span>Daily email cap</span><strong>{settings.maxEmailsSentPerDay}</strong></article>
           <article><span>Emails sent today</span><strong>{metrics.emailsSentToday}</strong></article>
           <article><span>Eligible email leads</span><strong>{metrics.emailReadyLeads}</strong></article>
@@ -672,7 +737,7 @@ export function AutonomousGrowthWorkspace() {
           <article><span>Next recommended action</span><strong>{dashboard.smartGrowth.recommendation.recommendedAction.replaceAll("_", " ")}</strong></article>
         </div>
         <div className="engine-autonomous-safety-strip">
-          <span>Emails: manual/review only</span>
+          <span>{autoPilotBlocked ? "Emails: blocked or review-only" : "Emails: approved queue only"}</span>
           <span>Social DMs: manual only</span>
           <span>Contact forms: never automated</span>
           <span>Phone calls: never automated</span>
@@ -680,7 +745,7 @@ export function AutonomousGrowthWorkspace() {
         </div>
         <div className="engine-action-row">
           <button className="engine-button engine-button--primary" disabled={saving} onClick={() => setActiveView("settings")} type="button">Open Settings</button>
-          <button className="engine-button" disabled={saving} onClick={() => void postAutopilot(autopilot.activity.status === "paused" ? "resume_autopilot" : "run_autopilot_batch", {}, "Autopilot refreshed. Nothing was sent.")} type="button">{autopilot.activity.status === "paused" ? "Resume" : "Start / Resume"}</button>
+          <button className="engine-button" disabled={saving} onClick={() => void postAutopilot(autopilot.activity.status === "paused" ? "resume_autopilot" : "run_autopilot_batch", {}, "Autopilot refreshed. Approved queued emails run only through the guarded Pilot cycle.")} type="button">{autopilot.activity.status === "paused" ? "Resume" : "Start / Resume"}</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")} type="button">Pause</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")} type="button">Stop</button>
           <button className="engine-button" disabled={saving} onClick={() => void postAutopilot("run_fake_autopilot_smoke_test")} type="button">Run Dry Test</button>
@@ -694,7 +759,7 @@ export function AutonomousGrowthWorkspace() {
         smartGrowth={dashboard.smartGrowth}
         onCopy={copyText}
         onMarketScout={() => void runSmartGrowthAction("run_market_scout_dry_run", "Market Scout dry run finished. No provider calls or outreach sends happened.")}
-        onProcessExisting={() => void runSmartGrowthAction("process_existing_qualified_prospects", "Existing qualified prospects processed for manual review. Nothing was sent.")}
+        onProcessExisting={() => void runSmartGrowthAction("process_existing_qualified_prospects", "Existing qualified prospects were reconciled. Any approved queued email ran only through the guarded Pilot cycle.")}
         onSmartDryRun={() => void runSmartGrowthAction("run_smart_autonomous_dry_run", "Smart Autonomous dry run finished. Nothing was sent.")}
       />
 
@@ -714,18 +779,19 @@ export function AutonomousGrowthWorkspace() {
       ) : null}
 
       {activeView === "campaigns" ? (
-        <AutopilotCampaignPanel
+      <AutopilotCampaignPanel
         autopilot={autopilot}
         disabled={saving}
         onDownload={() => downloadAutopilotCsv(autopilot)}
         onPause={() => void postAutopilot("pause_autopilot", {}, "Autopilot paused. No outreach was sent.")}
         onRefreshActivity={() => void loadDashboard()}
         onRetryHandoff={(settings) => void postAutopilot("retry_autopilot_handoff", { autopilotSettings: settings }, "Autopilot handoff retried. Nothing was sent.")}
-        onResume={() => void postAutopilot("resume_autopilot", {}, "Autopilot resumed. No outreach was sent.")}
-        onRunBatch={() => void postAutopilot("run_autopilot_batch", {}, "Autopilot batch report refreshed. Nothing was sent.")}
+        onResume={() => void postAutopilot("resume_autopilot", {}, "Autopilot resumed. Approved queued emails run only through the guarded Pilot cycle.")}
+        onRunBatch={() => void postAutopilot("run_autopilot_batch", {}, "Autopilot batch report refreshed. Approved queued emails run only through the guarded Pilot cycle.")}
         onSmokeTest={() => void postAutopilot("run_fake_autopilot_smoke_test")}
         onStart={startAutopilot}
         onStop={() => void postAutopilot("stop_autopilot", {}, "Autopilot stopped. No outreach was sent.")}
+        pilotEmailEnabled={!autoPilotBlocked}
       />
       ) : null}
 
@@ -849,7 +915,7 @@ export function AutonomousGrowthWorkspace() {
           <Gate label="Global kill switch is off" passed={!settings.killSwitch} />
           <Gate label="OUTREACH_EMAIL_DISABLED is not true" passed={!env.emailKillSwitchEnabled} detail="Hard email stop" />
           <Gate label="OUTREACH_AUTO_SEND_ENABLED is true" passed={env.autoSendEnabled} />
-          <Gate label="OUTREACH_FULL_AUTO_SEND_ENABLED is true" passed={env.fullAutoSendEnabled} detail="Required only for automatic batches" />
+          <Gate label="Full-auto gate is separate from Pilot" passed detail={env.fullAutoSendEnabled ? "Enabled separately" : "Disabled; not required for Pilot"} />
           <Gate label="Provider is configured" passed={env.sendProvider === "resend" && env.hasResendApiKey} detail={env.sendProvider} />
           <Gate label="Sender and reply-to are configured" passed={env.hasFromEmail && env.hasReplyToEmail} />
           <Gate label="Postal address is configured" passed={env.hasPostalAddress} />
@@ -880,6 +946,7 @@ export function AutonomousGrowthWorkspace() {
         copied={copied}
         description="Generated packages waiting for review, copy, edit, or manual approval."
         items={groupedQueue.dryRun}
+        onApproveEmail={approveAndQueueEmail}
         onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
@@ -887,12 +954,14 @@ export function AutonomousGrowthWorkspace() {
         onSendEmail={sendQueuedEmail}
         onSuppressEmail={recordSuppression}
         onStatus={updateStatus}
+        sendingItemId={sendingQueueItemId}
         title="Dry-run and review queue"
       />
       <QueueSection
         copied={copied}
         description="Leads blocked by contact rules, preview quality, unsupported claims, opt-out, or bad fit logic."
         items={groupedQueue.blocked}
+        onApproveEmail={approveAndQueueEmail}
         onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
@@ -900,12 +969,14 @@ export function AutonomousGrowthWorkspace() {
         onSendEmail={sendQueuedEmail}
         onSuppressEmail={recordSuppression}
         onStatus={updateStatus}
+        sendingItemId={sendingQueueItemId}
         title="Blocked queue"
       />
       <QueueSection
         copied={copied}
         description="Items queued or manually marked through outreach follow-up states."
         items={groupedQueue.sent}
+        onApproveEmail={approveAndQueueEmail}
         onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
@@ -913,6 +984,7 @@ export function AutonomousGrowthWorkspace() {
         onSendEmail={sendQueuedEmail}
         onSuppressEmail={recordSuppression}
         onStatus={updateStatus}
+        sendingItemId={sendingQueueItemId}
         title="Send queue and sent log"
       />
         </>
@@ -1484,6 +1556,7 @@ function AutopilotCampaignPanel({
   onSmokeTest,
   onStart,
   onStop,
+  pilotEmailEnabled,
 }: {
   autopilot: AutopilotDashboard;
   disabled: boolean;
@@ -1496,6 +1569,7 @@ function AutopilotCampaignPanel({
   onSmokeTest: () => void;
   onStart: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onStop: () => void;
+  pilotEmailEnabled: boolean;
 }) {
   const { campaign } = autopilot;
   const [formSettings, setFormSettings] = useState<AutopilotCampaignSettings>(campaign.settings);
@@ -1595,7 +1669,7 @@ function AutopilotCampaignPanel({
       <div className="engine-panel__head">
         <div>
           <h2 id="autopilot-campaign-title">Autopilot Campaign</h2>
-          <p>One-click campaign setup for discovery, scoring, package generation, review queues, and next-run reports. It never sends email, DMs, contact forms, phone calls, or Looms automatically.</p>
+          <p>One-click campaign setup for discovery, scoring, package generation, review queues, and next-run reports. Only explicitly approved queued email may run through the configured Pilot; DMs, forms, calls, Looms, and SMS remain manual or disabled.</p>
         </div>
         <div className={`engine-autopilot-status engine-autopilot-status--${campaign.status}`}>
           <b>{optionLabel(campaign.status)}</b>
@@ -1616,7 +1690,7 @@ function AutopilotCampaignPanel({
         <span>Trade: {startConfirmation.trade}</span>
         <span>Duration: {startConfirmation.duration}</span>
         <strong>{startConfirmation.safety}</strong>
-        <span>Emails: manual/review only</span>
+        <span>{pilotEmailEnabled ? "Emails: approved queued drafts may send" : "Emails: blocked or review-only"}</span>
         <span>Social DMs: manual only</span>
         <span>Contact forms: never automated</span>
         <span>Phone calls: never automated</span>
@@ -1882,6 +1956,7 @@ function QueueSection({
   copied,
   description,
   items,
+  onApproveEmail,
   onCopy,
   onRegenerate,
   onFeedback,
@@ -1889,11 +1964,13 @@ function QueueSection({
   onSendEmail,
   onSuppressEmail,
   onStatus,
+  sendingItemId,
   title,
 }: {
   copied: string;
   description: string;
   items: OutreachQueueItem[];
+  onApproveEmail: (item: OutreachQueueItem) => Promise<void>;
   onCopy: (key: string, value: string) => Promise<void>;
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
@@ -1901,6 +1978,7 @@ function QueueSection({
   onSendEmail: (item: OutreachQueueItem) => Promise<void>;
   onSuppressEmail: (item: OutreachQueueItem, reason: "bounce" | "complaint" | "manual_suppression") => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
+  sendingItemId: string;
   title: string;
 }) {
   return (
@@ -1914,6 +1992,7 @@ function QueueSection({
               copied={copied}
               item={item}
               key={item.id}
+              onApproveEmail={onApproveEmail}
               onCopy={onCopy}
               onFeedback={onFeedback}
               onRegenerate={onRegenerate}
@@ -1921,6 +2000,7 @@ function QueueSection({
               onSendEmail={onSendEmail}
               onSuppressEmail={onSuppressEmail}
               onStatus={onStatus}
+              sending={sendingItemId === item.id}
             />
           ))}
         </div>
@@ -1932,6 +2012,7 @@ function QueueSection({
 function QueueItemRow({
   copied,
   item,
+  onApproveEmail,
   onCopy,
   onFeedback,
   onRegenerate,
@@ -1939,9 +2020,11 @@ function QueueItemRow({
   onSendEmail,
   onSuppressEmail,
   onStatus,
+  sending,
 }: {
   copied: string;
   item: OutreachQueueItem;
+  onApproveEmail: (item: OutreachQueueItem) => Promise<void>;
   onCopy: (key: string, value: string) => Promise<void>;
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
@@ -1949,9 +2032,16 @@ function QueueItemRow({
   onSendEmail: (item: OutreachQueueItem) => Promise<void>;
   onSuppressEmail: (item: OutreachQueueItem, reason: "bounce" | "complaint" | "manual_suppression") => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
+  sending: boolean;
 }) {
   const scripts = loomNeededTaskForQueueItem(item).scripts;
   const explanation = queueContactExplanation(item);
+  const manualStatusOptions = manualQueueStatusTargets(item.status);
+  const displayStatus = sending
+    ? "Sending"
+    : item.status === "Needs Review" && /Auto Email Pilot send failed safely/i.test(item.notes)
+      ? "Failed"
+      : item.status;
   return (
     <article key={item.id} role="row">
       <div><b>{item.businessName}</b><span>{item.trade} in {item.city}</span><small>{item.sourceProvider}</small></div>
@@ -1964,7 +2054,7 @@ function QueueItemRow({
         {item.blockedReason ? <small>{item.blockedReason}</small> : null}
       </div>
       <div><span>{item.email || "No public email"}</span><span>{item.contactSource}</span></div>
-      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{item.status}</i><span>{item.subjectLine}</span></div>
+      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>
       <div className="engine-result-actions">
         {item.previewLink ? <a className="engine-button" href={item.previewLink} rel="noreferrer" target="_blank">Open preview</a> : null}
         <CopyScriptButton copied={copied} copyKey={`${item.id}:first-dm`} label="Copy first DM" onCopy={onCopy} value={item.dmScript || scripts.firstDm} />
@@ -1973,15 +2063,18 @@ function QueueItemRow({
         <CopyScriptButton copied={copied} copyKey={`${item.id}:pricing-reply`} label="Copy pricing reply" onCopy={onCopy} value={scripts.pricingReply} />
         <button className="engine-button" disabled={!item.topProspectResultId} onClick={() => void onRegenerate(item)} type="button">Regenerate with Fixes</button>
         <button className="engine-button" onClick={() => void onRewrite(item)} type="button">Rewrite Outreach</button>
-        <button className="engine-button" onClick={() => void onStatus(item, "DM Draft")} type="button">DM Draft</button>
-        <button className="engine-button" onClick={() => void onStatus(item, "First DM Sent")} type="button">First DM Sent</button>
-        {item.status === "Queued" ? <button className="engine-button engine-button--primary" onClick={() => void onSendEmail(item)} type="button">Send approved email</button> : null}
-        <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button>
+        {manualStatusOptions.includes("DM Draft") ? <button className="engine-button" onClick={() => void onStatus(item, "DM Draft")} type="button">DM Draft</button> : null}
+        {manualStatusOptions.includes("First DM Sent") ? <button className="engine-button" onClick={() => void onStatus(item, "First DM Sent")} type="button">First DM Sent</button> : null}
+        {["Eligible", "Needs Review"].includes(item.status)
+          ? <button className="engine-button engine-button--primary" onClick={() => void onApproveEmail(item)} type="button">Approve &amp; Queue Email</button>
+          : null}
+        {item.status === "Queued" ? <button className="engine-button engine-button--primary" disabled={sending} onClick={() => void onSendEmail(item)} type="button">{sending ? "Sending..." : "Send approved email"}</button> : null}
+        {manualStatusOptions.includes("Prospect Said Yes") ? <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button> : null}
         <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "bounce")} type="button">Mark bounced</button>
         <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "complaint")} type="button">Mark complained</button>
         <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "manual_suppression")} type="button">Suppress email</button>
-        <button className="engine-button" onClick={() => void onStatus(item, "Eligible")} type="button">Mark reviewed</button>
-        <button className="engine-button" onClick={() => void onStatus(item, "Skipped")} type="button">Skip</button>
+        {manualStatusOptions.includes("Eligible") ? <button className="engine-button" onClick={() => void onStatus(item, "Eligible")} type="button">Mark reviewed only</button> : null}
+        {manualStatusOptions.includes("Skipped") ? <button className="engine-button" onClick={() => void onStatus(item, "Skipped")} type="button">Skip</button> : null}
         <div className="engine-feedback-controls">
           <span>Feedback</span>
           <select
@@ -2014,9 +2107,12 @@ function QueueItemRow({
             <p><b>Next step:</b> {explanation.nextStep}</p>
           </div>
         </details>
-        <select aria-label={`Change status for ${item.businessName}`} onChange={(event) => void onStatus(item, event.target.value as OutreachQueueStatus)} value={item.status}>
-          {outreachQueueStatuses.map((status) => <option key={status}>{status}</option>)}
-        </select>
+        {manualStatusOptions.length ? (
+          <select aria-label={`Change status for ${item.businessName}`} onChange={(event) => void onStatus(item, event.target.value as OutreachQueueStatus)} value={item.status}>
+            <option value={item.status}>{item.status}</option>
+            {manualStatusOptions.map((status) => <option key={status}>{status}</option>)}
+          </select>
+        ) : null}
       </div>
     </article>
   );

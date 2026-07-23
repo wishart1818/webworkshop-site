@@ -4,6 +4,7 @@ import { createTopProspectJob, getActiveTopProspectJobSummary, getTopProspectJob
 import { safeTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import { validateTopProspectInput } from "@/lib/top-prospects";
 import {
+  approveAndQueueEmail,
   failAutopilotCampaignHandoff,
   getAutonomousGrowthDashboard,
   pauseAutopilotCampaign,
@@ -62,6 +63,17 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
       message: autopilotDisabledMessage,
     }));
     return NextResponse.json({ autopilot, topProspectJobWarning: autopilotDisabledMessage });
+  }
+  const existingInventory = await processExistingQualifiedProspects({ dryRun: false });
+  if (existingInventory.autoEmailPilot.approvedQueued > 0) {
+    const dashboard = await getAutonomousGrowthDashboard();
+    return NextResponse.json({
+      ...dashboard,
+      autoEmailPilot: existingInventory.autoEmailPilot,
+      summary: existingInventory.summary,
+      message: existingInventory.message,
+      discoverySkipped: true,
+    });
   }
   const validation = validateTopProspectInput(autopilotTopProspectInput(settings));
   if (!validation.ok) {
@@ -138,9 +150,23 @@ export async function POST(request: Request) {
       if (!payload.status || !outreachQueueStatuses.includes(payload.status)) {
         return NextResponse.json({ error: "Select a supported queue status." }, { status: 400 });
       }
-      const item = await updateOutreachQueueStatus(payload.queueItemId, payload.status);
+      let item;
+      try {
+        item = await updateOutreachQueueStatus(payload.queueItemId, payload.status);
+      } catch (error) {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : "That queue status change is not allowed." },
+          { status: 409 },
+        );
+      }
       if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item });
+    }
+    if (payload.action === "approve_and_queue_email") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      const approval = await approveAndQueueEmail(payload.queueItemId);
+      if (!approval.item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+      return NextResponse.json({ item: approval.item, approval });
     }
     if (payload.action === "record_feedback") {
       if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
@@ -183,7 +209,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ autopilot: await pauseAutopilotCampaign() });
     }
     if (payload.action === "resume_autopilot") {
-      return NextResponse.json({ autopilot: await resumeAutopilotCampaign() });
+      await resumeAutopilotCampaign();
+      const existingInventory = await processExistingQualifiedProspects({ dryRun: false });
+      const dashboard = await getAutonomousGrowthDashboard();
+      return NextResponse.json({ ...dashboard, autoEmailPilot: existingInventory.autoEmailPilot, summary: existingInventory.summary });
     }
     if (payload.action === "stop_autopilot") {
       return NextResponse.json({ autopilot: await stopAutopilotCampaign() });
@@ -193,7 +222,10 @@ export async function POST(request: Request) {
         const dashboard = await getAutonomousGrowthDashboard();
         return NextResponse.json({ autopilot: dashboard.autopilot, topProspectJobWarning: autopilotDisabledMessage });
       }
-      return NextResponse.json({ autopilot: await runAutopilotNextBatchNow() });
+      await runAutopilotNextBatchNow();
+      const existingInventory = await processExistingQualifiedProspects({ dryRun: false });
+      const dashboard = await getAutonomousGrowthDashboard();
+      return NextResponse.json({ ...dashboard, autoEmailPilot: existingInventory.autoEmailPilot, summary: existingInventory.summary });
     }
     if (payload.action === "run_fake_autopilot_smoke_test") {
       return NextResponse.json(await runFakeAutopilotSmokeTestForDashboard());
