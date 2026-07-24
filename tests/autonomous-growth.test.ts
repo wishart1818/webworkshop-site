@@ -36,6 +36,8 @@ import {
   resetAutonomousGrowthMemoryForTests,
   recordEmailSuppression,
   regenerateUnsentOutreachCopy,
+  revokeAllQueuedEmailApprovals,
+  revokeQueuedEmailApproval,
   outreachQueueMemoryForTests,
   runFullAutoEmailBatch,
   runAutoEmailPilotCycle,
@@ -505,6 +507,165 @@ test("Resend receives the exact recipient snapshot that was approved and queued"
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
   }
+});
+
+test("revoking one Queued approval preserves its recipient and draft but requires review again", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "must-not-send-during-revocation" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspect(),
+      topProspectResultId: "revoke-single-result",
+    });
+    const approval = await approveAndQueueEmail(eligible.id);
+    assert.equal(approval.queued, true);
+    const approved = approval.item!;
+
+    const revocation = await revokeQueuedEmailApproval(approved.id);
+
+    assert.equal(revocation.revoked, true);
+    assert.equal(revocation.item?.status, "Needs Review");
+    assert.equal(revocation.item?.queuedDate, "");
+    assert.doesNotMatch(revocation.item?.notes ?? "", /\[auto-email-approved\]/);
+    assert.equal(revocation.item?.email, approved.email);
+    assert.equal(revocation.item?.contactSource, approved.contactSource);
+    assert.equal(revocation.item?.subjectLine, approved.subjectLine);
+    assert.equal(revocation.item?.emailBody, approved.emailBody);
+    assert.notEqual(revocation.item?.updatedAt, approved.updatedAt);
+
+    const send = await sendQueuedEmailQueueItem(approved.id);
+    assert.equal(send.sent, false);
+    assert.match(send.blockedReasons.join(" "), /Only Queued email items/i);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("bulk revocation changes all and only revocable Queued approvals", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "must-not-send-during-bulk-revocation" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const first = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspectFor({
+        id: "bulk-revoke-prospect-1",
+        businessName: "Clear Flow Plumbing",
+        website: "https://clearflowplumbing.com",
+        email: "hello@clearflowplumbing.com",
+      }),
+      topProspectResultId: "bulk-revoke-result-1",
+    });
+    const second = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspectFor({
+        id: "bulk-revoke-prospect-2",
+        businessName: "Summit Roofing Care",
+        website: "https://summitroofingcare.com",
+        email: "hello@summitroofingcare.com",
+      }),
+      topProspectResultId: "bulk-revoke-result-2",
+    });
+    assert.equal((await approveAndQueueEmail(first.id)).queued, true);
+    assert.equal((await approveAndQueueEmail(second.id)).queued, true);
+    const approved = outreachQueueMemoryForTests();
+    const sending = queueItem({
+      id: "bulk-revoke-sending",
+      status: "Sending",
+      notes: "[auto-email-approved]\n[auto-email-claim:bulk-test]",
+    });
+    const sent = queueItem({
+      id: "bulk-revoke-sent",
+      status: "Sent",
+      sentDate: new Date().toISOString(),
+      notes: "[auto-email-approved]",
+    });
+    const ambiguous = queueItem({
+      id: "bulk-revoke-ambiguous",
+      status: "Queued",
+      notes: "[auto-email-approved]\n[auto-email-ambiguous]",
+    });
+    setOutreachQueueMemoryForTests([...approved, sending, sent, ambiguous]);
+
+    const result = await revokeAllQueuedEmailApprovals();
+    const current = outreachQueueMemoryForTests();
+
+    assert.equal(result.revoked, 2);
+    for (const item of approved) {
+      const revoked = current.find((entry) => entry.id === item.id)!;
+      assert.equal(revoked.status, "Needs Review");
+      assert.equal(revoked.queuedDate, "");
+      assert.doesNotMatch(revoked.notes, /\[auto-email-approved\]/);
+      assert.equal(revoked.email, item.email);
+      assert.equal(revoked.emailBody, item.emailBody);
+    }
+    assert.deepEqual(current.find((item) => item.id === sending.id), sending);
+    assert.deepEqual(current.find((item) => item.id === sent.id), sent);
+    assert.deepEqual(current.find((item) => item.id === ambiguous.id), ambiguous);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("non-Queued approvals cannot be revoked", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  try {
+    const sending = queueItem({ id: "revoke-protected-sending", status: "Sending", notes: "[auto-email-claim:protected]" });
+    const sent = queueItem({ id: "revoke-protected-sent", status: "Sent", sentDate: new Date().toISOString() });
+    setOutreachQueueMemoryForTests([sending, sent]);
+
+    assert.equal((await revokeQueuedEmailApproval(sending.id)).revoked, false);
+    assert.equal((await revokeQueuedEmailApproval(sent.id)).revoked, false);
+    assert.deepEqual(outreachQueueMemoryForTests(), [sending, sent]);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("queued approval revocation is conditionally transactional and UI-confirmed", () => {
+  const repository = readFileSync(new URL("../lib/autonomous-growth-repository.ts", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../app/api/engine/autonomous-growth/route.ts", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/engine/AutonomousGrowthWorkspace.tsx", import.meta.url), "utf8");
+  assert.match(repository, /revokeQueuedApprovalInTransaction[\s\S]*status:\s*"Queued"[\s\S]*updatedAt:\s*new Date\(item\.updatedAt\)[\s\S]*status:\s*"Needs Review"/);
+  assert.match(repository, /revokeQueuedEmailApproval[\s\S]*\$transaction[\s\S]*isolationLevel:\s*"Serializable"/);
+  assert.match(repository, /revokeAllQueuedEmailApprovals[\s\S]*\$transaction[\s\S]*isolationLevel:\s*"Serializable"/);
+  assert.doesNotMatch(repository.match(/export async function revokeQueuedEmailApproval[\s\S]*?export async function revokeAllQueuedEmailApprovals/)?.[0] ?? "", /sendWithResend|fetch\(/);
+  assert.match(route, /revoke_queued_email_approval[\s\S]*revokeQueuedEmailApproval/);
+  assert.match(route, /revoke_all_queued_email_approvals[\s\S]*revokeAllQueuedEmailApprovals/);
+  assert.match(workspace, /Revoke approval/);
+  assert.match(workspace, /Revoke all queued approvals/);
+  assert.match(workspace, /queued email approval.*will return to Needs Review/s);
 });
 
 test("Auto Email Pilot ignores unapproved inventory, then sends one approved item without the full-auto gate", async () => {

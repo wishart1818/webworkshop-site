@@ -4163,6 +4163,18 @@ body:has(.engine-shell) {
   cursor: pointer;
 }
 
+.engine-revoke-approval-dialog__body {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem;
+}
+
+.engine-revoke-approval-dialog__body p {
+  margin: 0;
+  color: var(--engine-muted);
+  line-height: 1.55;
+}
+
 .engine-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

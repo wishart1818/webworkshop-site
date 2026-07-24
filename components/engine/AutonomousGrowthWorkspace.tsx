@@ -67,6 +67,7 @@ type ApiPayload = Partial<DashboardPayload> & {
   smokeTest?: AutopilotSmokeTestResult;
   sendResult?: { sent: boolean; blockedReasons: string[] };
   approval?: { queued: boolean; blockedReasons: string[] };
+  revocation?: { revoked: boolean | number; blockedReason?: string };
   autoEmailPilot?: {
     attempted: number;
     sent: number;
@@ -87,6 +88,10 @@ type ApiPayload = Partial<DashboardPayload> & {
   topProspectJobId?: string;
   topProspectJobWarning?: string;
 };
+
+type ApprovalRevocationTarget =
+  | { scope: "single"; item: OutreachQueueItem; count: 1 }
+  | { scope: "all"; count: number };
 
 function apiError(payload: ApiPayload, fallback: string) {
   return payload.error || fallback;
@@ -211,6 +216,12 @@ function readinessLabel(item: OutreachQueueItem) {
   return item.status;
 }
 
+function queuedApprovalCanBeRevoked(item: OutreachQueueItem) {
+  return item.status === "Queued"
+    && !item.sentDate
+    && !item.notes.includes("[auto-email-ambiguous]");
+}
+
 function queueContactExplanation(item: OutreachQueueItem) {
   const eligibleFor = {
     email: item.contactSource === "Public email" && Boolean(item.email),
@@ -260,6 +271,7 @@ export function AutonomousGrowthWorkspace() {
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState("");
   const [sendingQueueItemId, setSendingQueueItemId] = useState("");
+  const [approvalRevocationTarget, setApprovalRevocationTarget] = useState<ApprovalRevocationTarget | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [activeView, setActiveView] = useState<AutonomousGrowthView>("pilot");
 
@@ -389,6 +401,37 @@ export function AutonomousGrowthWorkspace() {
         : `Email was not queued: ${payload.approval.blockedReasons.join("; ")}`);
     } catch (approvalError) {
       setError(approvalError instanceof Error ? approvalError.message : "Unable to approve and queue email.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function confirmApprovalRevocation() {
+    if (!approvalRevocationTarget) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const single = approvalRevocationTarget.scope === "single";
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: single ? "revoke_queued_email_approval" : "revoke_all_queued_email_approvals",
+          ...(single ? { queueItemId: approvalRevocationTarget.item.id } : {}),
+        }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.revocation) throw new Error(apiError(payload, "Unable to revoke queued email approval."));
+      if (single && payload.revocation.revoked !== true) {
+        throw new Error(payload.revocation.blockedReason || "This email is no longer Queued and was not changed.");
+      }
+      const revoked = single ? 1 : Number(payload.revocation.revoked);
+      await loadDashboard();
+      setApprovalRevocationTarget(null);
+      setNotice(`${revoked} queued email approval${revoked === 1 ? "" : "s"} revoked. Nothing was sent.`);
+    } catch (revocationError) {
+      setError(revocationError instanceof Error ? revocationError.message : "Unable to revoke queued email approval.");
     } finally {
       setSaving(false);
     }
@@ -950,6 +993,7 @@ export function AutonomousGrowthWorkspace() {
         onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
+        onRequestRevoke={(item) => setApprovalRevocationTarget({ scope: "single", item, count: 1 })}
         onRewrite={rewriteOutreach}
         onSendEmail={sendQueuedEmail}
         onSuppressEmail={recordSuppression}
@@ -965,6 +1009,7 @@ export function AutonomousGrowthWorkspace() {
         onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
+        onRequestRevoke={(item) => setApprovalRevocationTarget({ scope: "single", item, count: 1 })}
         onRewrite={rewriteOutreach}
         onSendEmail={sendQueuedEmail}
         onSuppressEmail={recordSuppression}
@@ -973,6 +1018,7 @@ export function AutonomousGrowthWorkspace() {
         title="Blocked queue"
       />
       <QueueSection
+        bulkRevokeCount={queue.filter(queuedApprovalCanBeRevoked).length}
         copied={copied}
         description="Items queued or manually marked through outreach follow-up states."
         items={groupedQueue.sent}
@@ -980,6 +1026,11 @@ export function AutonomousGrowthWorkspace() {
         onCopy={copyText}
         onFeedback={recordFeedback}
         onRegenerate={regeneratePackage}
+        onRequestBulkRevoke={() => setApprovalRevocationTarget({
+          scope: "all",
+          count: queue.filter(queuedApprovalCanBeRevoked).length,
+        })}
+        onRequestRevoke={(item) => setApprovalRevocationTarget({ scope: "single", item, count: 1 })}
         onRewrite={rewriteOutreach}
         onSendEmail={sendQueuedEmail}
         onSuppressEmail={recordSuppression}
@@ -1027,6 +1078,41 @@ export function AutonomousGrowthWorkspace() {
           )) : <p>No reply-rate data yet.</p>}
         </div>
       </section>
+      ) : null}
+      {approvalRevocationTarget ? (
+        <div className="engine-dialog-backdrop" onMouseDown={() => !saving && setApprovalRevocationTarget(null)}>
+          <dialog
+            aria-labelledby="revoke-email-approval-title"
+            className="engine-dialog"
+            onCancel={(event) => {
+              event.preventDefault();
+              if (!saving) setApprovalRevocationTarget(null);
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+            open
+          >
+            <header>
+              <div>
+                <p>Auto Email Pilot safety</p>
+                <h2 id="revoke-email-approval-title">Revoke queued approval?</h2>
+              </div>
+              <button aria-label="Close approval revocation dialog" disabled={saving} onClick={() => setApprovalRevocationTarget(null)} type="button">×</button>
+            </header>
+            <div className="engine-revoke-approval-dialog__body">
+              <p>
+                {approvalRevocationTarget.count} queued email approval{approvalRevocationTarget.count === 1 ? "" : "s"} will return to Needs Review.
+                Recipient snapshots and draft content will be preserved.
+              </p>
+              <p>No email or other outreach will be sent.</p>
+            </div>
+            <footer>
+              <button className="engine-button" disabled={saving} onClick={() => setApprovalRevocationTarget(null)} type="button">Cancel</button>
+              <button className="engine-button engine-button--danger" disabled={saving} onClick={() => void confirmApprovalRevocation()} type="button">
+                {saving ? "Revoking..." : approvalRevocationTarget.scope === "all" ? "Revoke all approvals" : "Revoke approval"}
+              </button>
+            </footer>
+          </dialog>
+        </div>
       ) : null}
     </div>
   );
@@ -1953,12 +2039,15 @@ function LoomQueueSection({
 }
 
 function QueueSection({
+  bulkRevokeCount = 0,
   copied,
   description,
   items,
   onApproveEmail,
   onCopy,
   onRegenerate,
+  onRequestBulkRevoke,
+  onRequestRevoke,
   onFeedback,
   onRewrite,
   onSendEmail,
@@ -1967,6 +2056,7 @@ function QueueSection({
   sendingItemId,
   title,
 }: {
+  bulkRevokeCount?: number;
   copied: string;
   description: string;
   items: OutreachQueueItem[];
@@ -1974,6 +2064,8 @@ function QueueSection({
   onCopy: (key: string, value: string) => Promise<void>;
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
+  onRequestBulkRevoke?: () => void;
+  onRequestRevoke: (item: OutreachQueueItem) => void;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
   onSendEmail: (item: OutreachQueueItem) => Promise<void>;
   onSuppressEmail: (item: OutreachQueueItem, reason: "bounce" | "complaint" | "manual_suppression") => Promise<void>;
@@ -1983,7 +2075,15 @@ function QueueSection({
 }) {
   return (
     <section className="engine-panel engine-autonomous-queue">
-      <div className="engine-panel__head"><div><h2>{title}</h2><p>{description}</p></div><span>{items.length} items</span></div>
+      <div className="engine-panel__head">
+        <div><h2>{title}</h2><p>{description}</p></div>
+        <div className="engine-action-row">
+          <span>{items.length} items</span>
+          {onRequestBulkRevoke && bulkRevokeCount > 0
+            ? <button className="engine-button" onClick={onRequestBulkRevoke} type="button">Revoke all queued approvals</button>
+            : null}
+        </div>
+      </div>
       {items.length === 0 ? <EmptyState title={`No ${title.toLowerCase()} items`} body="Generated Outreach Packages will appear here after the next qualified Top Prospects run." /> : (
         <div className="engine-autonomous-table" role="table" aria-label={title}>
           <div className="engine-autonomous-table__head" role="row"><span>Business</span><span>Self-review</span><span>Contact</span><span>Status</span><span>Actions</span></div>
@@ -1996,6 +2096,7 @@ function QueueSection({
               onCopy={onCopy}
               onFeedback={onFeedback}
               onRegenerate={onRegenerate}
+              onRequestRevoke={onRequestRevoke}
               onRewrite={onRewrite}
               onSendEmail={onSendEmail}
               onSuppressEmail={onSuppressEmail}
@@ -2016,6 +2117,7 @@ function QueueItemRow({
   onCopy,
   onFeedback,
   onRegenerate,
+  onRequestRevoke,
   onRewrite,
   onSendEmail,
   onSuppressEmail,
@@ -2028,6 +2130,7 @@ function QueueItemRow({
   onCopy: (key: string, value: string) => Promise<void>;
   onFeedback: (item: OutreachQueueItem, feedbackLabel: AutonomousFeedbackLabel) => Promise<void>;
   onRegenerate: (item: OutreachQueueItem) => Promise<void>;
+  onRequestRevoke: (item: OutreachQueueItem) => void;
   onRewrite: (item: OutreachQueueItem) => Promise<void>;
   onSendEmail: (item: OutreachQueueItem) => Promise<void>;
   onSuppressEmail: (item: OutreachQueueItem, reason: "bounce" | "complaint" | "manual_suppression") => Promise<void>;
@@ -2069,6 +2172,7 @@ function QueueItemRow({
           ? <button className="engine-button engine-button--primary" onClick={() => void onApproveEmail(item)} type="button">Approve &amp; Queue Email</button>
           : null}
         {item.status === "Queued" ? <button className="engine-button engine-button--primary" disabled={sending} onClick={() => void onSendEmail(item)} type="button">{sending ? "Sending..." : "Send approved email"}</button> : null}
+        {queuedApprovalCanBeRevoked(item) ? <button className="engine-button" disabled={sending} onClick={() => onRequestRevoke(item)} type="button">Revoke approval</button> : null}
         {manualStatusOptions.includes("Prospect Said Yes") ? <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button> : null}
         <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "bounce")} type="button">Mark bounced</button>
         <button className="engine-button" disabled={!item.email} onClick={() => void onSuppressEmail(item, "complaint")} type="button">Mark complained</button>
