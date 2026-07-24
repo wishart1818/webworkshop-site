@@ -113,7 +113,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /recommendedFirstAutopilotRunSettings/);
   assert.match(autonomousGrowthWorkspace, /Start Autopilot with:/);
   assert.match(autonomousGrowthWorkspace, /startConfirmation\.safety/);
-  assert.match(autonomousGrowthWorkspace, /Emails: manual\/review only/);
+  assert.match(autonomousGrowthWorkspace, /autoPilotBlocked \? "Emails: blocked or review-only" : "Emails: approved queue only"/);
+  assert.match(autonomousGrowthWorkspace, /autoPilotBlocked \? pilotGateReasons\.join\(" "\) : "Only explicitly approved queued public-email drafts may send through Auto Email Pilot\. Other channels remain manual\."/);
   assert.match(autonomousGrowthWorkspace, /Social DMs: manual only/);
   assert.match(autonomousGrowthWorkspace, /Contact forms: never automated/);
   assert.match(autonomousGrowthWorkspace, /Phone calls: never automated/);
@@ -188,7 +189,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Only Queued public-email leads can send/);
   assert.match(autonomousGrowthWorkspace, /Daily cap, cooldown, suppression, and audit logs enforced/);
   assert.match(autonomousGrowthWorkspace, /OUTREACH_EMAIL_DISABLED is not true/);
-  assert.match(autonomousGrowthWorkspace, /OUTREACH_FULL_AUTO_SEND_ENABLED is true/);
+  assert.match(autonomousGrowthWorkspace, /Fully automatic batch sending is separate from/);
+  assert.match(autonomousGrowthWorkspace, /OUTREACH_FULL_AUTO_SEND_ENABLED=true/);
   assert.match(autonomousGrowthWorkspace, /Run full auto email batch/);
   assert.match(autonomousGrowthWorkspace, /Send approved email/);
   assert.match(autonomousGrowthWorkspace, /Mark bounced/);

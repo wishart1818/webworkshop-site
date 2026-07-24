@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 import {
+  autoEmailPilotGateReasons,
   autonomousFeedbackLabels,
   defaultAutonomousGrowthSettings,
   evaluateAutoSendEligibility,
@@ -13,6 +15,7 @@ import {
   learningSummaryForQueue,
   loomNeededNotificationDraft,
   loomTalkingPoints,
+  manualQueueStatusTransitionAllowed,
   manualDmScript,
   normalizeAutonomousGrowthSettings,
   currentOutreachCopyVersion,
@@ -37,7 +40,16 @@ import {
   type OutreachQueueStatus,
   type SmartRunSummary,
 } from "@/lib/autonomous-growth";
-import { activity, createProspect, generateOutreach, normalizeTradeCategory, prospectWrittenContactMethodIsUsable, type Prospect } from "@/lib/prospect-engine";
+import {
+  activity,
+  createProspect,
+  generateOutreach,
+  normalizeTradeCategory,
+  prospectEmailNeedsManualVerification,
+  prospectWrittenContactMethodIsUsable,
+  reconcileProspectContactRouting,
+  type Prospect,
+} from "@/lib/prospect-engine";
 import { prepareProspectForPreview } from "@/lib/preview-preparation";
 import { getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
@@ -73,6 +85,7 @@ const globalAutonomous = globalThis as typeof globalThis & {
   autopilotCampaignMemory?: AutopilotCampaign;
   autopilotSmokeTestMemory?: AutopilotSmokeTestResult;
   smartAutonomousRunSummaryMemory?: SmartRunSummary;
+  approvedAutoEmailQueueIdsMemory?: Set<string>;
 };
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
@@ -306,6 +319,11 @@ async function listOutreachQueueItems() {
   return rows.map(queueToDomain);
 }
 
+function memoryApprovedAutoEmailQueueIds() {
+  if (!globalAutonomous.approvedAutoEmailQueueIdsMemory) globalAutonomous.approvedAutoEmailQueueIdsMemory = new Set();
+  return globalAutonomous.approvedAutoEmailQueueIdsMemory;
+}
+
 export async function listOutreachQueueItemsForBackfill() {
   return listOutreachQueueItems();
 }
@@ -375,7 +393,7 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
     blockedBadFitLeads: queue.filter((item) => item.status === "Bad Fit" || /bad-fit|inactive|franchise|duplicate/i.test(item.blockedReason)).length,
     emailsQueued: queue.filter((item) => item.status === "Queued").length,
     emailsSentToday: sentToday,
-    dailyCapRemaining: Math.max(0, settings.maxEmailsSentPerDay - sentToday),
+    dailyCapRemaining: Math.max(0, Math.min(settings.maxEmailsSentPerDay, outreachEnvironment().dailyCap) - sentToday),
     replies,
     positiveReplies,
     loomNeeded,
@@ -397,10 +415,15 @@ function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
   return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus(), autopilotEnvironmentKillSwitchEnabled());
 }
 
-async function sendInternalOperatorNotificationSafely(input: InternalNotificationInput) {
+async function sendInternalOperatorNotificationSafely(
+  input: InternalNotificationInput,
+  options: { sms?: boolean } = {},
+) {
   const [emailResult, smsResult] = await Promise.all([
     sendInternalOperatorNotification(input),
-    sendInternalOperatorSms(input),
+    options.sms === false
+      ? Promise.resolve({ sent: false, configured: false, blockedReasons: ["SMS disabled for this workflow."] })
+      : sendInternalOperatorSms(input),
   ]);
   if (!emailResult.sent && emailResult.configured) {
     console.warn("[operator-notification] Internal email notification failed safely.", { reasons: emailResult.blockedReasons });
@@ -450,8 +473,12 @@ async function syncTopProspectResultIntoQueue(
   if (hasDatabase) {
     const scores = prepared.assessment.salesScores;
     const token = previewLink.split("/p/")[1] ?? null;
-    await getProspectDatabase().topProspectResult.update({
-      where: { id: result.id },
+    const refreshed = await getProspectDatabase().topProspectResult.updateMany({
+      where: {
+        id: result.id,
+        packageSentAt: null,
+        NOT: { packageStatus: "SENT" },
+      },
       data: {
         opportunityScore: prepared.assessment.opportunityScore,
         ...scores,
@@ -472,8 +499,12 @@ async function syncTopProspectResultIntoQueue(
         packageSkippedAt: null,
       },
     });
+    if (refreshed.count !== 1) {
+      throw new Error("The Top Prospect package changed before refresh completed.");
+    }
   }
   return upsertAutonomousQueueItemFromPackage({
+    internalSmsEnabled: false,
     outreachPreference,
     previewLink: prepared.previewLink,
     prospect: saved,
@@ -501,6 +532,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
       autoSendEnabled: env.autoSendEnabled,
       fullAutoSendEnabled: env.fullAutoSendEnabled,
       emailKillSwitchEnabled: env.emailKillSwitchEnabled,
+      autopilotDisabled: env.autopilotDisabled,
       sendProvider: env.sendProvider || "not configured",
       hasResendApiKey: env.hasResendApiKey,
       hasFromEmail: env.hasFromEmail,
@@ -509,6 +541,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
       hasNotifyEmail: env.hasNotifyEmail,
       hasNotifyFromEmail: env.hasNotifyFromEmail,
       notifyOnLoomNeeded: env.notifyOnLoomNeeded,
+      dailyCap: env.dailyCap,
     },
     metrics: metricsForQueue(queue, settings),
     queue,
@@ -587,6 +620,7 @@ export type SmartGrowthActionResult = {
   message: string;
   smartGrowth: AutonomousGrowthDashboard["smartGrowth"];
   summary: SmartRunSummary;
+  autoEmailPilot: AutoEmailPilotCycleResult;
 };
 
 export async function processExistingQualifiedProspects(options: { dryRun?: boolean } = {}): Promise<SmartGrowthActionResult> {
@@ -598,12 +632,29 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
   const skippedReasons: Record<string, number> = { ...initialSnapshot.existingQualifiedUnsent.blockedSkippedReasons };
   let generatedMissingPackages = 0;
   let refreshedCopyCount = 0;
+  let reconciledQueueItems = 0;
+  let autoEmailPilot: AutoEmailPilotCycleResult = {
+    attempted: 0,
+    sent: 0,
+    blocked: 0,
+    approvedQueued: 0,
+    blockedReasons: [],
+  };
 
   if (!dryRun) {
     const regeneration = await regenerateUnsentOutreachCopy();
     refreshedCopyCount = regeneration.updated;
     for (const [reason, count] of Object.entries(regeneration.skippedReasons)) {
       skippedReasons[reason] = (skippedReasons[reason] ?? 0) + count;
+    }
+    for (const item of initialQueue) {
+      const reconciled = await reconcileQueueItem(item);
+      if (
+        reconciled.email !== item.email
+        || reconciled.contactSource !== item.contactSource
+        || reconciled.status !== item.status
+        || reconciled.blockedReason !== item.blockedReason
+      ) reconciledQueueItems += 1;
     }
     for (const job of jobs) {
       const candidates = [...job.results, ...(job.reviewableLowerPriority ?? []), ...job.reviewedNotRecommended];
@@ -630,6 +681,7 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
         }
       }
     }
+    autoEmailPilot = await runAutoEmailPilotCycle();
   }
 
   const queue = await listOutreachQueueItems();
@@ -647,6 +699,7 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
     scout: snapshot.marketScout,
     recommendation,
     actionLabel: dryRun ? "Smart Backfill Dry Run" : "Process Existing Qualified Prospects",
+    pilotEmailSentCount: autoEmailPilot.sent,
   });
   globalAutonomous.smartAutonomousRunSummaryMemory = summary;
   const smartGrowth = buildSmartAutonomousGrowthSnapshot({
@@ -659,9 +712,10 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
     dryRun,
     message: dryRun
       ? "Smart Backfill dry run checked saved queues and Top Prospects results. Nothing was generated or sent."
-      : `Processed existing qualified prospects. Refreshed ${refreshedCopyCount} copy item${refreshedCopyCount === 1 ? "" : "s"} and generated ${generatedMissingPackages} missing package${generatedMissingPackages === 1 ? "" : "s"}. Nothing was sent.`,
+      : `Processed existing qualified prospects. Reconciled ${reconciledQueueItems} queue item${reconciledQueueItems === 1 ? "" : "s"}, refreshed ${refreshedCopyCount} copy item${refreshedCopyCount === 1 ? "" : "s"}, generated ${generatedMissingPackages} missing package${generatedMissingPackages === 1 ? "" : "s"}, and sent ${autoEmailPilot.sent} approved email${autoEmailPilot.sent === 1 ? "" : "s"}. No DMs, forms, calls, Looms, SMS, or follow-ups were sent.`,
     smartGrowth,
     summary,
+    autoEmailPilot,
   };
 }
 
@@ -680,6 +734,7 @@ export async function runMarketScoutDryRunForDashboard(input?: Partial<MarketSco
     message: `${scout.message} This was a bounded dry run. No provider calls or outreach sends happened.`,
     smartGrowth,
     summary,
+    autoEmailPilot: { attempted: 0, sent: 0, blocked: 0, approvedQueued: 0, blockedReasons: [] },
   };
 }
 
@@ -703,13 +758,22 @@ export async function runSmartAutonomousDryRun(): Promise<SmartGrowthActionResul
     message: `${snapshot.recommendation.nextBestMove} Dry run only. Nothing was sent or submitted.`,
     smartGrowth: buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs, lastRunSummary: summary }),
     summary,
+    autoEmailPilot: { attempted: 0, sent: 0, blocked: 0, approvedQueued: 0, blockedReasons: [] },
   };
 }
 
 function sourceForProspect(prospect: Prospect) {
-  if (prospect.email) return "Public email";
+  if (
+    prospect.email
+    && (
+      !prospectEmailNeedsManualVerification(prospect)
+      || (prospect.recommendedContactMethod === "send_email" && prospect.bestManualContactMethod === "email")
+    )
+  ) return "Public email";
+  if (prospect.quoteFormUrl) return "Quote form";
   if (prospect.contactFormUrl) return "Contact form";
-  if (/facebook|instagram/i.test(prospect.profileUrl)) return "Social profile";
+  if (prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl || /facebook|instagram|linkedin/i.test(prospect.profileUrl)) return "Social profile";
+  if (prospect.email) return "Email needs manual verification";
   if (prospect.phone) return "Phone";
   return "Manual research";
 }
@@ -912,12 +976,38 @@ export type FullAutoEmailBatchResult = {
   }>;
 };
 
+export type ApproveAndQueueEmailResult = {
+  item: OutreachQueueItem | null;
+  queued: boolean;
+  blockedReasons: string[];
+};
+
+export type AutoEmailPilotCycleResult = {
+  attempted: number;
+  sent: number;
+  blocked: number;
+  approvedQueued: number;
+  blockedReasons: Array<{
+    queueItemId: string;
+    businessName: string;
+    email: string;
+    reasons: string[];
+  }>;
+};
+
 export type EmailSuppressionReason = "bounce" | "complaint" | "unsubscribe" | "manual_suppression";
 export type EmailSuppressionResult = {
   matched: number;
   updated: number;
   reason: EmailSuppressionReason;
 };
+
+class ApprovalBlockedError extends Error {
+  constructor(readonly reasons: string[]) {
+    super(reasons.join("; "));
+    this.name = "ApprovalBlockedError";
+  }
+}
 
 export type OutreachCopyRegenerationSummary = {
   copyVersion: string;
@@ -938,6 +1028,455 @@ function suppressionStatus(reason: EmailSuppressionReason): OutreachQueueStatus 
 
 function normalizeEmailAddress(value: string) {
   return value.trim().toLowerCase();
+}
+
+export function normalizeRecipientEmailDomain(value: string) {
+  const email = normalizeEmailAddress(value);
+  const separator = email.lastIndexOf("@");
+  if (separator <= 0 || separator === email.length - 1) return "";
+  const domain = email.slice(separator + 1).replace(/\.+$/, "");
+  return domain && !domain.includes("@") ? domain : "";
+}
+
+const protectedQueueStatuses = new Set<OutreachQueueStatus>([
+  "Sending",
+  "Sent",
+  "Bounced",
+  "Complained",
+  "Opted Out",
+  "Suppressed",
+  "Never Contact",
+  "Not Interested",
+  "Bad Fit",
+  "Lost",
+  "Skipped",
+  "No Response",
+  "Won",
+  "Replied",
+  "Positive Reply",
+  "First DM Sent",
+  "Prospect Said Yes",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Follow-up Needed",
+  "Follow-up Sent",
+]);
+const approvableQueueStatuses = new Set<OutreachQueueStatus>(["Eligible", "Needs Review"]);
+
+const ambiguousOutcomeMarker = "[auto-email-ambiguous]";
+const approvalMarker = "[auto-email-approved]";
+const claimMarkerPrefix = "[auto-email-claim:";
+
+function queueItemHasAmbiguousOutcome(item: Pick<OutreachQueueItem, "notes">) {
+  return item.notes.includes(ambiguousOutcomeMarker);
+}
+
+function queueItemDraftMutationIsProtected(item: Pick<OutreachQueueItem, "status" | "notes" | "sentDate">) {
+  return Boolean(item.sentDate)
+    || item.status === "Queued"
+    || protectedQueueStatuses.has(item.status)
+    || queueItemHasAmbiguousOutcome(item);
+}
+
+function claimMarker(token: string) {
+  return `${claimMarkerPrefix}${token}]`;
+}
+
+function stripClaimMarkers(value: string) {
+  return value
+    .split("\n")
+    .filter((line) => !line.startsWith(claimMarkerPrefix))
+    .join("\n")
+    .trim();
+}
+
+function stripApprovalMarker(value: string) {
+  return value
+    .split("\n")
+    .filter((line) => line !== approvalMarker)
+    .join("\n")
+    .trim();
+}
+
+function queueSnapshotData(item: OutreachQueueItem) {
+  return {
+    email: item.email || null,
+    contactSource: item.contactSource,
+    contactConfidence: item.contactConfidence,
+    eligibilityReason: item.eligibilityReason,
+    blockedReason: item.blockedReason || null,
+    recommendedNextAction: item.recommendedNextAction,
+    status: item.status,
+    queuedDate: item.queuedDate ? new Date(item.queuedDate) : null,
+    notes: item.notes || null,
+  };
+}
+
+async function persistQueueSnapshot(item: OutreachQueueItem, expected: Pick<OutreachQueueItem, "status" | "updatedAt">) {
+  if (!hasDatabase) {
+    const index = memoryQueue().findIndex((entry) => entry.id === item.id);
+    if (index < 0) return null;
+    if (
+      memoryQueue()[index].status !== expected.status
+      || memoryQueue()[index].updatedAt !== expected.updatedAt
+      || memoryQueue()[index].status === "Queued"
+      || protectedQueueStatuses.has(memoryQueue()[index].status)
+      || queueItemHasAmbiguousOutcome(memoryQueue()[index])
+    ) return structuredClone(memoryQueue()[index]);
+    memoryQueue()[index] = structuredClone(item);
+    return structuredClone(item);
+  }
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const updated = await database.outreachQueueItem.updateMany({
+    where: {
+      id: item.id,
+      status: expected.status,
+      updatedAt: new Date(expected.updatedAt),
+      sentDate: null,
+      NOT: [
+        { status: { in: ["Queued", ...protectedQueueStatuses] } },
+        { notes: { contains: ambiguousOutcomeMarker } },
+      ],
+    },
+    data: queueSnapshotData(item),
+  });
+  const row = await database.outreachQueueItem.findUnique({ where: { id: item.id } });
+  if (!row) return null;
+  if (updated.count !== 1) return queueToDomain(row);
+  return queueToDomain(row);
+}
+
+async function persistRecipientChangedQueueSnapshot(item: OutreachQueueItem, expected: OutreachQueueItem) {
+  const candidate = { ...item, notes: stripApprovalMarker(item.notes) };
+  if (!hasDatabase) {
+    const index = memoryQueue().findIndex((entry) => entry.id === item.id);
+    if (index < 0) return null;
+    const current = memoryQueue()[index];
+    if (
+      current.status !== expected.status
+      || current.updatedAt !== expected.updatedAt
+      || queueItemDraftMutationIsProtected(current)
+    ) return structuredClone(current);
+    memoryApprovedAutoEmailQueueIds().delete(current.id);
+    memoryQueue()[index] = structuredClone(candidate);
+    return structuredClone(candidate);
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const row = await database.$transaction(async (transaction) => {
+    const current = await transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+    if (!current) return null;
+    const currentDomain = queueToDomain(current);
+    if (
+      current.status !== expected.status
+      || current.updatedAt.toISOString() !== expected.updatedAt
+      || queueItemDraftMutationIsProtected(currentDomain)
+    ) return current;
+    const updated = await transaction.outreachQueueItem.updateMany({
+      where: {
+        id: item.id,
+        status: expected.status,
+        updatedAt: new Date(expected.updatedAt),
+        sentDate: null,
+        NOT: [
+          { status: { in: ["Queued", ...protectedQueueStatuses] } },
+          { notes: { contains: ambiguousOutcomeMarker } },
+        ],
+      },
+      data: queueSnapshotData(candidate),
+    });
+    if (updated.count !== 1) return transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+    await clearPersistedApproval(transaction, currentDomain, new Date());
+    return transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+  }, { isolationLevel: "Serializable" });
+  return row ? queueToDomain(row) : null;
+}
+
+async function queueItemHasPersistedApproval(item: OutreachQueueItem, transaction?: Prisma.TransactionClient) {
+  if (!hasDatabase) return memoryApprovedAutoEmailQueueIds().has(item.id);
+  if (item.notes.split("\n").includes(approvalMarker)) return true;
+  await ensureTopProspectSchema();
+  const database = transaction ?? getProspectDatabase();
+  const [result, draft] = await Promise.all([
+    item.topProspectResultId
+      ? database.topProspectResult.findUnique({
+          where: { id: item.topProspectResultId },
+          select: { packageSentAt: true, packageStatus: true },
+        })
+      : Promise.resolve(null),
+    item.prospectId
+      ? database.outreachDraft.findFirst({
+          where: { prospectId: item.prospectId },
+          orderBy: { createdAt: "desc" },
+          select: { approvedAt: true },
+        })
+      : Promise.resolve(null),
+  ]);
+  return result
+    ? result.packageStatus === "APPROVED_TO_SEND" && !result.packageSentAt
+    : Boolean(draft?.approvedAt);
+}
+
+async function reconcileQueueItem(item: OutreachQueueItem) {
+  if (item.status === "Queued" || protectedQueueStatuses.has(item.status) || queueItemHasAmbiguousOutcome(item) || !item.prospectId) return item;
+  const currentProspect = await getProspect(item.prospectId);
+  if (!currentProspect) return item;
+  const prospect = reconcileProspectContactRouting(currentProspect);
+  if (
+    prospect.email !== currentProspect.email
+    || prospect.recommendedContactMethod !== currentProspect.recommendedContactMethod
+    || prospect.bestManualContactMethod !== currentProspect.bestManualContactMethod
+    || prospect.contactConfidence !== currentProspect.contactConfidence
+  ) {
+    await saveProspect(prospect);
+  }
+  const settings = await getAutonomousGrowthSettings();
+  const queue = await listOutreachQueueItems();
+  const previewGate = evaluatePreviewQualityGate(prospect);
+  const emailQuality = evaluateOutreachEmailQuality(prospect, item.previewLink, "written_only");
+  const autoEligibility = evaluateAutoSendEligibility({
+    emailQuality,
+    emailsSentToday: queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length,
+    previewGate,
+    previewLink: item.previewLink,
+    prospect,
+    settings,
+  });
+  const computedStatus = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
+  const nextEmail = prospect.email;
+  const nextContactSource = sourceForProspect(prospect);
+  const recipientChanged = normalizeEmailAddress(nextEmail) !== normalizeEmailAddress(item.email)
+    || nextContactSource !== item.contactSource;
+  const approved = recipientChanged ? false : await queueItemHasPersistedApproval(item);
+  const nextStatus = approved && computedStatus === "Queued"
+    ? "Queued"
+    : computedStatus === "Queued"
+      ? "Eligible"
+      : computedStatus;
+  const nowIso = new Date().toISOString();
+  const reconciled: OutreachQueueItem = {
+    ...item,
+    email: nextEmail,
+    contactSource: nextContactSource,
+    contactConfidence: prospect.sourceConfidence,
+    status: nextStatus,
+    queuedDate: nextStatus === "Queued" ? item.queuedDate || nowIso : "",
+    blockedReason: blockedReasonText(autoEligibility.blockedReasons, previewGate.reasons),
+    eligibilityReason: emailQuality.ready && previewGate.status === "Eligible"
+      ? `${prospect.trade} prospect has a public preview, send-safe copy, and a usable written contact path.`
+      : "Package generated, but review is required before any outreach.",
+    recommendedNextAction: nextStatus === "Eligible" || nextStatus === "Queued" ? "Keep" : "Needs Human Review",
+    updatedAt: nowIso,
+  };
+  if (recipientChanged) return await persistRecipientChangedQueueSnapshot(reconciled, item) ?? reconciled;
+  return await persistQueueSnapshot(reconciled, item) ?? reconciled;
+}
+
+export async function approveAndQueueEmail(id: string): Promise<ApproveAndQueueEmailResult> {
+  const queue = await listOutreachQueueItems();
+  const existing = queue.find((entry) => entry.id === id) ?? null;
+  if (!existing) return { item: null, queued: false, blockedReasons: ["Queue item was not found."] };
+  if (protectedQueueStatuses.has(existing.status) || existing.sentDate || queueItemHasAmbiguousOutcome(existing)) {
+    return { item: existing, queued: false, blockedReasons: ["This prospect is already contacted, suppressed, closed, or otherwise protected."] };
+  }
+  const refreshed = await reconcileQueueItem(existing);
+  if (!approvableQueueStatuses.has(refreshed.status)) {
+    return {
+      item: refreshed,
+      queued: false,
+      blockedReasons: [refreshed.blockedReason || `Status ${refreshed.status} is not eligible for email approval.`],
+    };
+  }
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const candidate: OutreachQueueItem = {
+    ...refreshed,
+    status: "Queued",
+    queuedDate: refreshed.queuedDate || nowIso,
+    notes: [...stripApprovalMarker(refreshed.notes).split("\n").filter(Boolean), approvalMarker].join("\n"),
+    updatedAt: nowIso,
+  };
+  const refreshedQueue = (await listOutreachQueueItems()).map((entry) => entry.id === id ? candidate : entry);
+  const readiness = evaluateQueuedEmailSendReadiness({
+    item: candidate,
+    queue: refreshedQueue,
+    settings: await getAutonomousGrowthSettings(),
+  });
+  if (!readiness.ready) {
+    const blocked: OutreachQueueItem = {
+      ...refreshed,
+      status: "Needs Review",
+      blockedReason: blockedReasonText(readiness.blockedReasons, []),
+      notes: [refreshed.notes, `Approval blocked by send-readiness gates: ${readiness.blockedReasons.join("; ")}`].filter(Boolean).join("\n"),
+      recommendedNextAction: "Needs Human Review",
+      updatedAt: nowIso,
+    };
+    const saved = await persistQueueSnapshot(blocked, refreshed);
+    await safeRecordAudit({
+      action: "autonomous_email_approval",
+      outcome: "rejected",
+      subject: refreshed.email || refreshed.businessName,
+      metadata: { queueItemId: refreshed.id, reasons: readiness.blockedReasons },
+    });
+    return { item: saved ?? blocked, queued: false, blockedReasons: readiness.blockedReasons };
+  }
+
+  const prospect = refreshed.prospectId ? await getProspect(refreshed.prospectId) : null;
+  if (!hasDatabase) {
+    const current = memoryQueue().find((entry) => entry.id === refreshed.id);
+    if (
+      !current
+      || current.status !== refreshed.status
+      || current.updatedAt !== refreshed.updatedAt
+      || !approvableQueueStatuses.has(current.status)
+      || protectedQueueStatuses.has(current.status)
+      || current.sentDate
+      || queueItemHasAmbiguousOutcome(current)
+    ) {
+      return {
+        item: current ? structuredClone(current) : null,
+        queued: false,
+        blockedReasons: ["The queue item changed before approval could be saved. Refresh and review it again."],
+      };
+    }
+    if (prospect?.outreach) await saveProspect({ ...prospect, outreach: { ...prospect.outreach, approved: true } });
+    memoryApprovedAutoEmailQueueIds().add(refreshed.id);
+    const saved = await persistQueueSnapshot({ ...candidate, blockedReason: "", recommendedNextAction: "Keep" }, refreshed);
+    if (saved?.status !== "Queued") {
+      memoryApprovedAutoEmailQueueIds().delete(refreshed.id);
+      return {
+        item: saved,
+        queued: false,
+        blockedReasons: ["The queue item changed before approval could be saved. Refresh and review it again."],
+      };
+    }
+    await safeRecordAudit({
+      action: "autonomous_email_approval",
+      outcome: "success",
+      subject: refreshed.email,
+      metadata: { queueItemId: refreshed.id },
+    });
+    return { item: saved ?? candidate, queued: true, blockedReasons: [] };
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  let saved: OutreachQueueItem;
+  try {
+    const savedRow = await database.$transaction(async (transaction) => {
+      const current = await transaction.outreachQueueItem.findUnique({ where: { id: refreshed.id } });
+      if (
+        !current
+        || current.status !== refreshed.status
+        || current.updatedAt.toISOString() !== refreshed.updatedAt
+        || !approvableQueueStatuses.has(current.status as OutreachQueueStatus)
+        || current.sentDate
+        || protectedQueueStatuses.has(current.status as OutreachQueueStatus)
+        || queueItemHasAmbiguousOutcome({ notes: current.notes ?? "" })
+      ) {
+        throw new ApprovalBlockedError(["The queue item changed before approval could be saved. Refresh and review it again."]);
+      }
+
+      if (refreshed.topProspectResultId) {
+        const linkedResult = await transaction.topProspectResult.findUnique({
+          where: { id: refreshed.topProspectResultId },
+          select: { packageSentAt: true, packageStatus: true },
+        });
+        if (!linkedResult) throw new ApprovalBlockedError(["The linked Top Prospect result no longer exists."]);
+        if (linkedResult.packageStatus === "SENT" || linkedResult.packageSentAt) {
+          throw new ApprovalBlockedError(["The linked Top Prospect result was already sent."]);
+        }
+        const resultApproval = await transaction.topProspectResult.updateMany({
+          where: {
+            id: refreshed.topProspectResultId,
+            packageSentAt: null,
+            packageStatus: { notIn: ["SENT", "SKIPPED"] },
+          },
+          data: {
+            packageStatus: "APPROVED_TO_SEND",
+            packageReviewedAt: now,
+            packageApprovedAt: now,
+          },
+        });
+        if (resultApproval.count !== 1) {
+          throw new ApprovalBlockedError(["The linked Top Prospect result changed before approval completed."]);
+        }
+      }
+
+      if (refreshed.prospectId) {
+        const linkedDraft = await transaction.outreachDraft.findFirst({
+          where: { prospectId: refreshed.prospectId },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        if (linkedDraft) {
+          const draftApproval = await transaction.outreachDraft.updateMany({
+            where: { id: linkedDraft.id },
+            data: { approvedAt: now },
+          });
+          if (draftApproval.count !== 1) {
+            throw new ApprovalBlockedError(["The linked outreach draft changed before approval completed."]);
+          }
+        }
+      }
+
+      const queueApproval = await transaction.outreachQueueItem.updateMany({
+        where: {
+          id: refreshed.id,
+          status: refreshed.status,
+          updatedAt: new Date(refreshed.updatedAt),
+          sentDate: null,
+          NOT: [
+            { status: { in: [...protectedQueueStatuses] } },
+            { notes: { contains: ambiguousOutcomeMarker } },
+          ],
+        },
+        data: {
+          email: candidate.email,
+          contactSource: "Public email",
+          contactConfidence: candidate.contactConfidence,
+          status: "Queued",
+          queuedDate: now,
+          blockedReason: null,
+          recommendedNextAction: "Keep",
+          notes: candidate.notes || null,
+        },
+      });
+      if (queueApproval.count !== 1) {
+        throw new ApprovalBlockedError(["The queue item changed before approval completed. Refresh and review it again."]);
+      }
+      return transaction.outreachQueueItem.findUniqueOrThrow({ where: { id: refreshed.id } });
+    }, { isolationLevel: "Serializable" });
+    saved = queueToDomain(savedRow);
+  } catch (error) {
+    if (error instanceof ApprovalBlockedError) {
+      const current = (await listOutreachQueueItems()).find((entry) => entry.id === refreshed.id) ?? refreshed;
+      await safeRecordAudit({
+        action: "autonomous_email_approval",
+        outcome: "rejected",
+        subject: current.email || current.businessName,
+        metadata: { queueItemId: current.id, reasons: error.reasons },
+      });
+      return { item: current, queued: false, blockedReasons: error.reasons };
+    }
+    throw error;
+  }
+  await safeRecordAudit({
+    action: "autonomous_email_approval",
+    outcome: "success",
+    subject: refreshed.email,
+    metadata: { queueItemId: refreshed.id, topProspectResultId: refreshed.topProspectResultId || null },
+  });
+  await Promise.allSettled([
+    (async () => recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems()))(),
+  ]);
+  return { item: saved, queued: true, blockedReasons: [] };
 }
 
 function unknownSuppressionQueueItem(email: string, status: OutreachQueueStatus, reason: EmailSuppressionReason, source: string, note: string, nowIso: string): OutreachQueueItem {
@@ -984,97 +1523,345 @@ function unknownSuppressionQueueItem(email: string, status: OutreachQueueStatus,
   };
 }
 
+type EmailSendClaim = {
+  item: OutreachQueueItem;
+  marker: string;
+  token: string;
+};
+
+type EmailSendClaimResult =
+  | { claimed: true; claim: EmailSendClaim }
+  | { claimed: false; item: OutreachQueueItem | null; blockedReasons: string[] };
+
+class ConfirmedProviderRejectionError extends Error {
+  constructor(readonly status: number) {
+    super(`Email provider rejected the message before acceptance with HTTP ${status}.`);
+    this.name = "ConfirmedProviderRejectionError";
+  }
+}
+
+class AmbiguousProviderOutcomeError extends Error {
+  constructor(message = "Email provider outcome is uncertain. Manual reconciliation is required.") {
+    super(message);
+    this.name = "AmbiguousProviderOutcomeError";
+  }
+}
+
+export function prospectInitialEmailIdempotencyKey(
+  item: Pick<OutreachQueueItem, "email" | "id" | "prospectId">,
+) {
+  const identity = item.prospectId.trim()
+    || createHash("sha256").update(normalizeEmailAddress(item.email) || item.id).digest("hex").slice(0, 32);
+  return `auto-email-pilot-initial-prospect-${identity}`.slice(0, 256);
+}
+
+async function claimQueuedEmailForSend(id: string): Promise<EmailSendClaimResult> {
+  const token = crypto.randomUUID();
+  const marker = claimMarker(token);
+  const claimedAt = new Date();
+  const claimedAtIso = claimedAt.toISOString();
+
+  if (!hasDatabase) {
+    const approvalCandidate = memoryQueue().find((entry) => entry.id === id) ?? null;
+    if (!approvalCandidate) return { claimed: false, item: null, blockedReasons: ["Queue item was not found."] };
+    if (!(await queueItemHasPersistedApproval(approvalCandidate))) {
+      return { claimed: false, item: structuredClone(approvalCandidate), blockedReasons: ["Persisted email approval is missing."] };
+    }
+    const item = memoryQueue().find((entry) => entry.id === id) ?? null;
+    if (!item) return { claimed: false, item: null, blockedReasons: ["Queue item was not found."] };
+    if (
+      item.status !== "Queued"
+      || item.sentDate
+      || protectedQueueStatuses.has(item.status)
+      || queueItemHasAmbiguousOutcome(item)
+    ) {
+      return { claimed: false, item: structuredClone(item), blockedReasons: ["The email is no longer queued and available to send."] };
+    }
+    item.status = "Sending";
+    item.notes = [stripClaimMarkers(item.notes), marker].filter(Boolean).join("\n");
+    item.updatedAt = claimedAtIso;
+    return { claimed: true, claim: { item: structuredClone(item), marker, token } };
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  try {
+    const row = await database.$transaction(async (transaction) => {
+      const current = await transaction.outreachQueueItem.findUnique({ where: { id } });
+      if (!current) throw new ApprovalBlockedError(["Queue item was not found."]);
+      const domain = queueToDomain(current);
+      if (
+        domain.status !== "Queued"
+        || domain.sentDate
+        || queueItemHasAmbiguousOutcome(domain)
+      ) {
+        throw new ApprovalBlockedError(["The email is no longer queued and available to send."]);
+      }
+      if (!(await queueItemHasPersistedApproval(domain, transaction))) {
+        throw new ApprovalBlockedError(["Persisted email approval is missing."]);
+      }
+      const claimed = await transaction.outreachQueueItem.updateMany({
+        where: {
+          id,
+          status: "Queued",
+          sentDate: null,
+          updatedAt: current.updatedAt,
+          NOT: { notes: { contains: ambiguousOutcomeMarker } },
+        },
+        data: {
+          status: "Sending",
+          notes: [stripClaimMarkers(current.notes ?? ""), marker].filter(Boolean).join("\n"),
+          updatedAt: claimedAt,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ApprovalBlockedError(["Another process changed or claimed this queue item first."]);
+      }
+      return transaction.outreachQueueItem.findUniqueOrThrow({ where: { id } });
+    }, { isolationLevel: "Serializable" });
+    return { claimed: true, claim: { item: queueToDomain(row), marker, token } };
+  } catch (error) {
+    if (error instanceof ApprovalBlockedError) {
+      const current = await database.outreachQueueItem.findUnique({ where: { id } });
+      return { claimed: false, item: current ? queueToDomain(current) : null, blockedReasons: error.reasons };
+    }
+    throw error;
+  }
+}
+
+async function claimStillOwned(claim: EmailSendClaim) {
+  if (!hasDatabase) {
+    const current = memoryQueue().find((entry) => entry.id === claim.item.id);
+    return Boolean(current?.status === "Sending" && current.notes.includes(claim.marker) && !current.sentDate);
+  }
+  const count = await getProspectDatabase().outreachQueueItem.count({
+    where: {
+      id: claim.item.id,
+      status: "Sending",
+      sentDate: null,
+      notes: { contains: claim.marker },
+    },
+  });
+  return count === 1;
+}
+
+async function releaseClaimBeforeDispatch(claim: EmailSendClaim, reason: string) {
+  const nowIso = new Date().toISOString();
+  if (!hasDatabase) {
+    const current = memoryQueue().find((entry) => entry.id === claim.item.id);
+    if (!current || current.status !== "Sending" || !current.notes.includes(claim.marker)) return current ? structuredClone(current) : null;
+    current.status = "Queued";
+    current.notes = stripClaimMarkers(current.notes);
+    current.blockedReason = reason;
+    current.updatedAt = nowIso;
+    return structuredClone(current);
+  }
+  const database = getProspectDatabase();
+  const current = await database.outreachQueueItem.findUnique({ where: { id: claim.item.id } });
+  if (!current) return null;
+  const released = await database.outreachQueueItem.updateMany({
+    where: {
+      id: claim.item.id,
+      status: "Sending",
+      sentDate: null,
+      notes: { contains: claim.marker },
+    },
+    data: {
+      status: "Queued",
+      notes: stripClaimMarkers(current.notes ?? "") || null,
+      blockedReason: reason,
+    },
+  });
+  const row = await database.outreachQueueItem.findUnique({ where: { id: claim.item.id } });
+  return row && released.count === 1 ? queueToDomain(row) : row ? queueToDomain(row) : null;
+}
+
+async function clearPersistedApproval(
+  transaction: Prisma.TransactionClient,
+  item: OutreachQueueItem,
+  now: Date,
+) {
+  if (item.topProspectResultId) {
+    await transaction.topProspectResult.updateMany({
+      where: { id: item.topProspectResultId, packageStatus: "APPROVED_TO_SEND", packageSentAt: null },
+      data: {
+        packageStatus: "READY_FOR_REVIEW",
+        packageReviewedAt: now,
+        packageApprovedAt: null,
+      },
+    });
+  }
+  if (item.prospectId) {
+    await transaction.outreachDraft.updateMany({
+      where: { prospectId: item.prospectId, approvedAt: { not: null } },
+      data: { approvedAt: null },
+    });
+  }
+}
+
+async function finishClaimWithReview(
+  claim: EmailSendClaim,
+  message: string,
+  ambiguous: boolean,
+  providerMessageId = "",
+) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const status: OutreachQueueStatus = ambiguous ? "Blocked" : "Needs Review";
+  const note = ambiguous
+    ? `${ambiguousOutcomeMarker} Auto Email Pilot provider outcome requires manual reconciliation on ${nowIso}: ${message}${providerMessageId ? ` Resend message ID: ${providerMessageId}` : ""}`
+    : `Auto Email Pilot send was rejected before acceptance on ${nowIso}: ${message}`;
+
+  if (!hasDatabase) {
+    const current = memoryQueue().find((entry) => entry.id === claim.item.id);
+    if (!current || current.status !== "Sending" || !current.notes.includes(claim.marker)) return current ? structuredClone(current) : null;
+    current.status = status;
+    current.sentDate = "";
+    current.blockedReason = message;
+    current.recommendedNextAction = "Needs Human Review";
+    current.notes = [stripApprovalMarker(stripClaimMarkers(current.notes)), note].filter(Boolean).join("\n");
+    current.updatedAt = nowIso;
+    memoryApprovedAutoEmailQueueIds().delete(current.id);
+    await recordRunReview(memorySettings(), memoryQueue());
+    return structuredClone(current);
+  }
+
+  const database = getProspectDatabase();
+  const row = await database.$transaction(async (transaction) => {
+    const current = await transaction.outreachQueueItem.findUnique({ where: { id: claim.item.id } });
+    if (!current) return null;
+    const updated = await transaction.outreachQueueItem.updateMany({
+      where: {
+        id: claim.item.id,
+        status: "Sending",
+        sentDate: null,
+        notes: { contains: claim.marker },
+      },
+      data: {
+        status,
+        sentDate: null,
+        blockedReason: message,
+        recommendedNextAction: "Needs Human Review",
+        notes: [stripApprovalMarker(stripClaimMarkers(current.notes ?? "")), note].filter(Boolean).join("\n"),
+      },
+    });
+    if (updated.count !== 1) return transaction.outreachQueueItem.findUnique({ where: { id: claim.item.id } });
+    await clearPersistedApproval(transaction, claim.item, now);
+    return transaction.outreachQueueItem.findUnique({ where: { id: claim.item.id } });
+  }, { isolationLevel: "Serializable" });
+  if (!row) return null;
+  await Promise.allSettled([
+    (async () => recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems()))(),
+  ]);
+  return queueToDomain(row);
+}
+
 async function sendWithResend(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
   const apiKey = environment.RESEND_API_KEY?.trim();
   const from = environment.OUTREACH_FROM_EMAIL?.trim();
   const replyTo = environment.OUTREACH_REPLY_TO_EMAIL?.trim();
   if (!apiKey || !from || !replyTo) throw new Error("Email provider, sender, or reply-to is not configured.");
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from,
-      to: [item.email],
-      reply_to: replyTo,
-      subject: item.subjectLine,
-      text: item.emailBody,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`Email provider rejected the message with HTTP ${response.status}.`);
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": prospectInitialEmailIdempotencyKey(item),
+      },
+      body: JSON.stringify({
+        from,
+        to: [item.email],
+        reply_to: replyTo,
+        subject: item.subjectLine,
+        text: item.emailBody,
+      }),
+    });
+  } catch {
+    throw new AmbiguousProviderOutcomeError();
   }
-  const payload = await response.json().catch(() => ({})) as { id?: string };
-  return payload.id ?? "";
+  if (!response.ok) {
+    if (response.status === 409) {
+      throw new AmbiguousProviderOutcomeError("Email provider returned an idempotency conflict. Manual reconciliation is required.");
+    }
+    throw new ConfirmedProviderRejectionError(response.status);
+  }
+  let payload: { id?: unknown };
+  try {
+    payload = await response.json() as { id?: unknown };
+  } catch {
+    throw new AmbiguousProviderOutcomeError("Email provider returned a malformed success response.");
+  }
+  const providerMessageId = typeof payload.id === "string" ? payload.id.trim() : "";
+  if (!providerMessageId) {
+    throw new AmbiguousProviderOutcomeError("Email provider returned success without a valid message ID.");
+  }
+  return providerMessageId;
 }
 
-function safeEmailSendFailureMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : "";
-  return /^Email provider (?:rejected|request failed|sender|provider, sender)/i.test(message)
-    ? message
-    : "Email provider request failed safely.";
-}
-
-async function markQueueItemSent(item: OutreachQueueItem, providerMessageId: string, now = new Date()) {
+async function markQueueItemSent(claim: EmailSendClaim, providerMessageId: string, now = new Date()) {
   const sentDate = now.toISOString();
-  const notes = [item.notes, providerMessageId ? `Resend message ID: ${providerMessageId}` : "Sent through Auto Email Pilot."].filter(Boolean).join("\n");
+  const notes = [
+    stripApprovalMarker(stripClaimMarkers(claim.item.notes)),
+    `Resend message ID: ${providerMessageId}`,
+  ].filter(Boolean).join("\n");
   if (!hasDatabase) {
-    const existing = memoryQueue().find((entry) => entry.id === item.id);
+    const existing = memoryQueue().find((entry) => entry.id === claim.item.id);
     if (!existing) return null;
+    if (existing.status !== "Sending" || !existing.notes.includes(claim.marker) || existing.sentDate) return null;
     existing.status = "Sent";
     existing.sentDate = sentDate;
     existing.notes = notes;
     existing.updatedAt = sentDate;
-    await recordRunReview(memorySettings(), memoryQueue());
+    await Promise.allSettled([
+      recordRunReview(memorySettings(), memoryQueue()),
+    ]);
     return structuredClone(existing);
   }
   await ensureTopProspectSchema();
-  const row = await getProspectDatabase().outreachQueueItem.update({
-    where: { id: item.id },
-    data: {
-      status: "Sent",
-      sentDate: now,
-      notes,
-    },
-  });
+  const database = getProspectDatabase();
+  const row = await database.$transaction(async (transaction) => {
+    const sent = await transaction.outreachQueueItem.updateMany({
+      where: {
+        id: claim.item.id,
+        status: "Sending",
+        sentDate: null,
+        notes: { contains: claim.marker },
+      },
+      data: {
+        status: "Sent",
+        sentDate: now,
+        notes,
+      },
+    });
+    if (sent.count !== 1) throw new AmbiguousProviderOutcomeError("Provider accepted the email, but the claimed queue item could not be marked Sent.");
+    if (claim.item.topProspectResultId) {
+      await transaction.topProspectResult.updateMany({
+        where: { id: claim.item.topProspectResultId, packageStatus: { not: "SENT" } },
+        data: { packageStatus: "SENT", packageSentAt: now },
+      });
+    }
+    return transaction.outreachQueueItem.findUniqueOrThrow({ where: { id: claim.item.id } });
+  }, { isolationLevel: "Serializable" });
   const domain = queueToDomain(row);
-  await recordLearningEvent(domain);
-  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  await Promise.allSettled([
+    recordLearningEvent(domain),
+    (async () => recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems()))(),
+  ]);
   return domain;
 }
 
-async function markQueueItemSendFailure(item: OutreachQueueItem, message: string, now = new Date()) {
-  const failedAt = now.toISOString();
-  const note = `Auto Email Pilot send failed safely on ${failedAt}: ${message}`;
-  const notes = [item.notes, note].filter(Boolean).join("\n");
-  if (!hasDatabase) {
-    const existing = memoryQueue().find((entry) => entry.id === item.id);
-    if (!existing) return item;
-    existing.status = "Needs Review";
-    existing.notes = notes;
-    existing.updatedAt = failedAt;
-    await recordRunReview(memorySettings(), memoryQueue());
-    return structuredClone(existing);
-  }
-  await ensureTopProspectSchema();
-  const row = await getProspectDatabase().outreachQueueItem.update({
-    where: { id: item.id },
-    data: {
-      status: "Needs Review",
-      notes,
-    },
-  });
-  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
-  return queueToDomain(row);
-}
-
-export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEmailResult> {
+export async function sendQueuedEmailQueueItem(
+  id: string,
+  options: { beforeProviderDispatch?: () => Promise<void> } = {},
+): Promise<SendQueuedEmailResult> {
   const settings = await getAutonomousGrowthSettings();
-  const queue = await listOutreachQueueItems();
-  const item = queue.find((entry) => entry.id === id) ?? null;
+  const initialQueue = await listOutreachQueueItems();
+  const initialItem = initialQueue.find((entry) => entry.id === id) ?? null;
+  const item = initialItem ? await reconcileQueueItem(initialItem) : null;
   if (!item) return { item: null, sent: false, blockedReasons: ["Queue item was not found."] };
+  const queue = await listOutreachQueueItems();
   const emailsSentToday = queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length;
   const readiness = evaluateQueuedEmailSendReadiness({ emailSendsToday: emailsSentToday, item, queue, settings });
   if (!readiness.ready) {
@@ -1086,7 +1873,28 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
     });
     return { item, sent: false, blockedReasons: readiness.blockedReasons };
   }
+
+  const claimed = await claimQueuedEmailForSend(id);
+  if (!claimed.claimed) {
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "rejected",
+      subject: claimed.item?.email || claimed.item?.businessName || id,
+      metadata: { queueItemId: id, reasons: claimed.blockedReasons },
+    });
+    return { item: claimed.item, sent: false, blockedReasons: claimed.blockedReasons };
+  }
+  const { claim } = claimed;
+
   try {
+    const recipientDomain = normalizeRecipientEmailDomain(claim.item.email);
+    if (!recipientDomain) throw new Error("Recipient business email domain is invalid.");
+    await enforceRateLimit({
+      action: "autonomous_email_send_domain",
+      subject: recipientDomain,
+      limit: 1,
+      windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
+    });
     await enforceRateLimit({
       action: "autonomous_email_send",
       subject: "global",
@@ -1095,48 +1903,183 @@ export async function sendQueuedEmailQueueItem(id: string): Promise<SendQueuedEm
     });
     await enforceRateLimit({
       action: "autonomous_email_send_recipient",
-      subject: item.email.toLowerCase(),
+      subject: normalizeEmailAddress(claim.item.email),
       limit: 1,
       windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
     });
-    const providerMessageId = await sendWithResend(item);
-    const sentItem = await markQueueItemSent(item, providerMessageId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "A pre-dispatch safety claim failed.";
+    const released = await releaseClaimBeforeDispatch(claim, message);
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "rejected",
+      subject: claim.item.email,
+      metadata: { queueItemId: claim.item.id, reason: message, phase: "pre_dispatch" },
+    });
+    return { item: released, sent: false, blockedReasons: [message] };
+  }
+
+  await options.beforeProviderDispatch?.();
+  if (!(await claimStillOwned(claim))) {
+    const current = (await listOutreachQueueItems()).find((entry) => entry.id === claim.item.id) ?? claim.item;
+    return { item: current, sent: false, blockedReasons: ["The send claim was cancelled by a newer protected state before provider dispatch."] };
+  }
+
+  let providerMessageId = "";
+  try {
+    providerMessageId = await sendWithResend(claim.item);
+  } catch (error) {
+    const ambiguous = error instanceof AmbiguousProviderOutcomeError;
+    const message = error instanceof Error ? error.message : "Email provider request failed safely.";
+    const failedItem = await finishClaimWithReview(claim, message, ambiguous);
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "failure",
+      subject: claim.item.email,
+      metadata: {
+        queueItemId: claim.item.id,
+        reason: message,
+        phase: ambiguous ? "ambiguous_provider_outcome" : "confirmed_rejection",
+      },
+    });
+    await sendInternalOperatorNotification({
+      kind: "approved_email_failed",
+      title: ambiguous ? "Approved email outcome needs reconciliation" : "Approved email send failed",
+      marketTrade: `${claim.item.trade} in ${claim.item.city}`,
+      resultCount: 1,
+      attention: `${claim.item.businessName} did not reach a confirmed Sent state. Reason: ${message}`,
+      nextAction: ambiguous ? "Reconcile the attempt in Resend before any manual retry." : "Review Resend and queue the email again only after fixing the rejection.",
+      pagePath: "/engine?tab=operator-test-center",
+    });
+    return { item: failedItem, sent: false, blockedReasons: [message] };
+  }
+
+  try {
+    const sentItem = await markQueueItemSent(claim, providerMessageId);
+    if (!sentItem) {
+      const failedItem = await finishClaimWithReview(
+        claim,
+        "Provider accepted the email, but the claimed queue item could not be marked Sent.",
+        true,
+        providerMessageId,
+      );
+      return {
+        item: failedItem,
+        sent: false,
+        blockedReasons: ["Provider accepted the email, but sent-state persistence requires manual reconciliation."],
+        providerMessageId,
+      };
+    }
     await safeRecordAudit({
       action: "autonomous_email_send",
       outcome: "success",
-      subject: item.email,
-      metadata: { queueItemId: item.id, provider: "resend", providerMessageId: providerMessageId || "accepted" },
+      subject: claim.item.email,
+      metadata: { queueItemId: claim.item.id, provider: "resend", providerMessageId },
     });
-    await sendInternalOperatorNotificationSafely({
+    await sendInternalOperatorNotification({
       kind: "approved_email_sent",
       title: "Approved email send succeeded",
-      marketTrade: `${item.trade} in ${item.city}`,
+      marketTrade: `${claim.item.trade} in ${claim.item.city}`,
       resultCount: 1,
-      attention: `${item.businessName} email was accepted by the provider.`,
+      attention: `${claim.item.businessName} email was accepted by the provider.`,
       nextAction: "Watch for a reply and keep suppression handling active.",
       pagePath: "/engine?tab=operator-test-center",
     });
     return { item: sentItem, sent: true, blockedReasons: [], providerMessageId };
   } catch (error) {
-    const message = safeEmailSendFailureMessage(error);
-    const failedItem = await markQueueItemSendFailure(item, message);
+    const message = error instanceof Error ? error.message : "Provider accepted the email, but sent-state persistence failed.";
+    const failedItem = await finishClaimWithReview(claim, message, true, providerMessageId);
     await safeRecordAudit({
       action: "autonomous_email_send",
       outcome: "failure",
-      subject: item.email || item.businessName,
-      metadata: { queueItemId: item.id, reason: message },
+      subject: claim.item.email,
+      metadata: { queueItemId: claim.item.id, reason: message, phase: "sent_state_persistence", providerMessageId },
     });
-    await sendInternalOperatorNotificationSafely({
-      kind: "approved_email_failed",
-      title: "Approved email send failed",
-      marketTrade: `${item.trade} in ${item.city}`,
-      resultCount: 1,
-      attention: `${item.businessName} did not send. Reason: ${message}`,
-      nextAction: "Review Resend, sender settings, suppression, and queue status.",
-      pagePath: "/engine?tab=operator-test-center",
-    });
-    return { item: failedItem, sent: false, blockedReasons: [message] };
+    return {
+      item: failedItem,
+      sent: false,
+      blockedReasons: ["Provider accepted the email, but sent-state persistence requires manual reconciliation."],
+      providerMessageId,
+    };
   }
+}
+
+async function executeAutoEmailPilotCycle(): Promise<AutoEmailPilotCycleResult> {
+  const settings = await getAutonomousGrowthSettings();
+  const env = outreachEnvironment();
+  const queue = await listOutreachQueueItems();
+  const queuedPublicEmailItems = queue.filter((item) => item.status === "Queued" && item.contactSource === "Public email" && !item.sentDate);
+  const approvedItems: OutreachQueueItem[] = [];
+  for (const item of queuedPublicEmailItems) {
+    if (await queueItemHasPersistedApproval(item)) approvedItems.push(item);
+  }
+  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
+  const result: AutoEmailPilotCycleResult = {
+    attempted: 0,
+    sent: 0,
+    blocked: 0,
+    approvedQueued: approvedItems.length,
+    blockedReasons: [],
+  };
+  const cycleGateReasons = autoEmailPilotGateReasons({
+    emailsSentToday: sentToday,
+    environment: env,
+    settings,
+  });
+  if (cycleGateReasons.length) {
+    if (approvedItems.length) {
+      result.blocked = approvedItems.length;
+      result.blockedReasons = approvedItems.map((item) => ({
+        queueItemId: item.id,
+        businessName: item.businessName,
+        email: item.email,
+        reasons: cycleGateReasons,
+      }));
+    }
+    await safeRecordAudit({
+      action: "auto_email_pilot_cycle",
+      outcome: "rejected",
+      subject: "approved-queued-email",
+      metadata: { reasons: cycleGateReasons, approvedQueued: approvedItems.length },
+    });
+    return result;
+  }
+
+  const candidates = approvedItems.slice(0, remainingDailyCap);
+  result.attempted = candidates.length;
+  for (const item of candidates) {
+    const send = await sendQueuedEmailQueueItem(item.id);
+    if (send.sent) {
+      result.sent += 1;
+    } else {
+      result.blocked += 1;
+      result.blockedReasons.push({
+        queueItemId: item.id,
+        businessName: item.businessName,
+        email: item.email,
+        reasons: send.blockedReasons,
+      });
+    }
+  }
+  await safeRecordAudit({
+    action: "auto_email_pilot_cycle",
+    outcome: result.sent > 0 ? "success" : result.blocked > 0 ? "rejected" : "success",
+    subject: "approved-queued-email",
+    metadata: {
+      attempted: result.attempted,
+      sent: result.sent,
+      blocked: result.blocked,
+      remainingDailyCap,
+      followUpsAttempted: 0,
+      nonEmailChannelsAttempted: 0,
+    },
+  });
+  return result;
+}
+
+export async function runAutoEmailPilotCycle(): Promise<AutoEmailPilotCycleResult> {
+  return executeAutoEmailPilotCycle();
 }
 
 export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult> {
@@ -1157,7 +2100,7 @@ export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult>
       attention: "Full automatic batch sending did not run because OUTREACH_FULL_AUTO_SEND_ENABLED is not true.",
       nextAction: "Keep it disabled unless you intentionally switch to a reviewed Auto Email Pilot setup.",
       pagePath: "/engine?tab=operator-test-center",
-    });
+    }, { sms: false });
     return {
       attempted: 0,
       sent: 0,
@@ -1171,7 +2114,10 @@ export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult>
       }],
     };
   }
-  const queued = queue.filter((item) => item.status === "Queued" && item.contactSource === "Public email");
+  const queued: OutreachQueueItem[] = [];
+  for (const item of queue.filter((candidate) => candidate.status === "Queued" && candidate.contactSource === "Public email")) {
+    if (await queueItemHasPersistedApproval(item)) queued.push(item);
+  }
   const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
   const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
   const batchLimit = Math.min(queued.length, remainingDailyCap, 5);
@@ -1337,21 +2283,22 @@ export async function recordEmailSuppression(email: string, reason: EmailSuppres
   return { matched: matches.length, updated: update.count || 1, reason };
 }
 
-export async function upsertAutonomousQueueItemFromPackage({
-  forceReviewOnly = false,
-  outreachPreference,
-  previewLink,
-  prospect,
-  sourceProvider = "Top Prospects",
-  topProspectResultId,
-}: {
+export async function upsertAutonomousQueueItemFromPackage(input: {
   forceReviewOnly?: boolean;
+  internalSmsEnabled?: boolean;
   outreachPreference: OutreachPreference;
   previewLink: string;
   prospect: Prospect;
   sourceProvider?: string;
   topProspectResultId: string;
 }) {
+  const {
+    outreachPreference,
+    previewLink,
+    sourceProvider = "Top Prospects",
+    topProspectResultId,
+  } = input;
+  const prospect = reconcileProspectContactRouting(input.prospect);
   const settings = await getAutonomousGrowthSettings();
   const previewGate = evaluatePreviewQualityGate(prospect);
   const emailQuality = evaluateOutreachEmailQuality(prospect, previewLink, outreachPreference);
@@ -1367,7 +2314,7 @@ export async function upsertAutonomousQueueItemFromPackage({
   });
   const selfReview = evaluateSelfReview({ emailQuality, previewGate, prospect });
   const computedStatus = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
-  const status = forceReviewOnly && computedStatus === "Queued" ? "Eligible" : computedStatus;
+  const status = computedStatus === "Queued" ? "Eligible" : computedStatus;
   const now = new Date();
   const outreach = prospect.outreach;
   const outreachGeneratedAt = outreach?.outreachCopyGeneratedAt || outreach?.generatedAt || now.toISOString();
@@ -1401,7 +2348,7 @@ export async function upsertAutonomousQueueItemFromPackage({
     feedbackLabels: [],
     status,
     sourceProvider,
-    queuedDate: status === "Queued" ? now : null,
+    queuedDate: null,
     sentDate: null,
     followUpDate: null,
     replyStatus: null,
@@ -1413,13 +2360,15 @@ export async function upsertAutonomousQueueItemFromPackage({
   };
   if (!hasDatabase) {
     const existingIndex = memoryQueue().findIndex((item) => item.topProspectResultId === topProspectResultId);
+    const existing = existingIndex >= 0 ? memoryQueue()[existingIndex] : null;
+    if (existing && queueItemDraftMutationIsProtected(existing)) return structuredClone(existing);
     const domain: OutreachQueueItem = {
       ...itemData,
       id: existingIndex >= 0 ? memoryQueue()[existingIndex].id : `queue-${topProspectResultId}`,
       website: itemData.website ?? "",
       email: itemData.email ?? "",
       blockedReason: itemData.blockedReason ?? "",
-      queuedDate: itemData.queuedDate?.toISOString() ?? "",
+      queuedDate: "",
       sentDate: "",
       followUpDate: "",
       replyStatus: "",
@@ -1442,7 +2391,7 @@ export async function upsertAutonomousQueueItemFromPackage({
         attention: `${domain.businessName} has a preview/package, but written outreach is blocked.`,
         nextAction: "Find a written contact path or leave it blocked.",
         pagePath: "/engine?tab=operator-test-center",
-      });
+      }, { sms: input.internalSmsEnabled !== false });
     } else if (["Eligible", "Needs Review", "Queued"].includes(domain.status)) {
       await sendInternalOperatorNotificationSafely({
         kind: "outreach_package_ready",
@@ -1452,16 +2401,37 @@ export async function upsertAutonomousQueueItemFromPackage({
         attention: `${domain.businessName} is in the manual review queue.`,
         nextAction: "Review preview, copy, contact path, and approval gates.",
         pagePath: "/engine?tab=operator-test-center",
-      });
+      }, { sms: input.internalSmsEnabled !== false });
     }
     await recordRunReview(settings, memoryQueue());
     return domain;
   }
   await ensureTopProspectSchema();
-  const row = await getProspectDatabase().outreachQueueItem.upsert({
-    where: { topProspectResultId },
-    create: itemData,
-    update: itemData,
+  const database = getProspectDatabase();
+  const row = await database.$transaction(async (transaction) => {
+    const existing = await transaction.outreachQueueItem.findUnique({ where: { topProspectResultId } });
+    if (!existing) return transaction.outreachQueueItem.create({ data: itemData });
+    const existingDomain = queueToDomain(existing);
+    if (queueItemDraftMutationIsProtected(existingDomain)) return existing;
+    const updated = await transaction.outreachQueueItem.updateMany({
+      where: {
+        id: existing.id,
+        status: existing.status,
+        updatedAt: existing.updatedAt,
+        sentDate: null,
+        NOT: [
+          { status: { in: ["Queued", ...protectedQueueStatuses] } },
+          { notes: { contains: ambiguousOutcomeMarker } },
+        ],
+      },
+      data: itemData,
+    });
+    if (updated.count !== 1) {
+      throw new Error("The review package changed before refresh completed. Refresh and try again.");
+    }
+    return transaction.outreachQueueItem.findUniqueOrThrow({ where: { id: existing.id } });
+  }, {
+    isolationLevel: "Serializable",
   });
   const domain = queueToDomain(row);
   if (domain.status === "Blocked" && /phone-only/i.test(domain.blockedReason)) {
@@ -1473,7 +2443,7 @@ export async function upsertAutonomousQueueItemFromPackage({
       attention: `${domain.businessName} has a preview/package, but written outreach is blocked.`,
       nextAction: "Find a written contact path or leave it blocked.",
       pagePath: "/engine?tab=operator-test-center",
-    });
+    }, { sms: input.internalSmsEnabled !== false });
   } else if (["Eligible", "Needs Review", "Queued"].includes(domain.status)) {
     await sendInternalOperatorNotificationSafely({
       kind: "outreach_package_ready",
@@ -1483,7 +2453,7 @@ export async function upsertAutonomousQueueItemFromPackage({
       attention: `${domain.businessName} is in the manual review queue.`,
       nextAction: "Review preview, copy, contact path, and approval gates.",
       pagePath: "/engine?tab=operator-test-center",
-    });
+    }, { sms: input.internalSmsEnabled !== false });
   }
   await recordLearningEvent(domain);
   await recordRunReview(settings, await listOutreachQueueItems());
@@ -1497,27 +2467,18 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   if (!hasDatabase) {
     const item = memoryQueue().find((entry) => entry.id === id);
     if (!item) return null;
-    let effectiveStatus = nextStatus;
-    if (nextStatus === "Queued") {
-      const candidate = { ...item, status: "Queued" as const, queuedDate: item.queuedDate || nowIso };
-      const candidateQueue = memoryQueue().map((entry) => entry.id === id ? candidate : entry);
-      const readiness = evaluateQueuedEmailSendReadiness({ item: candidate, queue: candidateQueue, settings: memorySettings() });
-      if (!readiness.ready) {
-        effectiveStatus = "Needs Review";
-        item.blockedReason = blockedReasonText(readiness.blockedReasons, []);
-        item.notes = [item.notes, `Queue request blocked by send-readiness gates: ${item.blockedReason}`].filter(Boolean).join("\n");
-      } else {
-        item.queuedDate = item.queuedDate || nowIso;
-      }
+    if (item.status === nextStatus) return structuredClone(item);
+    if (!manualQueueStatusTransitionAllowed(item.status, status)) {
+      throw new Error(`Status cannot change from ${item.status} to ${status} through the general queue action.`);
     }
+    const effectiveStatus = nextStatus;
     item.status = effectiveStatus;
-    item.sentDate = ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(effectiveStatus) ? nowIso : item.sentDate;
     item.followUpDate = effectiveStatus === "Follow-up Needed" ? nowIso : item.followUpDate;
     item.replyStatus = status === "Prospect Said Yes" ? "prospect_said_yes" : item.replyStatus;
     if (effectiveStatus === "Bad Fit") item.recommendedNextAction = "Bad Fit";
     if (["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(effectiveStatus)) item.recommendedNextAction = "Never Contact";
     if (effectiveStatus === "Preview Needs Polish") item.recommendedNextAction = "Regenerate Preview";
-    if (effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom" || (nextStatus === "Queued" && effectiveStatus === "Needs Review")) item.recommendedNextAction = "Needs Human Review";
+    if (effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom") item.recommendedNextAction = "Needs Human Review";
     item.updatedAt = nowIso;
     await recordRunReview(memorySettings(), memoryQueue());
     await sendLoomNeededNotificationIfConfigured(item, status);
@@ -1535,48 +2496,33 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
     return structuredClone(item);
   }
   await ensureTopProspectSchema();
-  const now = new Date();
-  let effectiveStatus = nextStatus;
-  let queueBlockedData: Partial<OutreachQueueItem> = {};
-  if (nextStatus === "Queued") {
-    const queue = await listOutreachQueueItems();
-    const current = queue.find((entry) => entry.id === id);
-    if (!current) return null;
-    const candidate = { ...current, status: "Queued" as const, queuedDate: current.queuedDate || nowIso };
-    const readiness = evaluateQueuedEmailSendReadiness({
-      item: candidate,
-      queue: queue.map((entry) => entry.id === id ? candidate : entry),
-      settings: await getAutonomousGrowthSettings(),
-    });
-    if (!readiness.ready) {
-      effectiveStatus = "Needs Review";
-      const blockedReason = blockedReasonText(readiness.blockedReasons, []);
-      queueBlockedData = {
-        blockedReason,
-        notes: [current.notes, `Queue request blocked by send-readiness gates: ${blockedReason}`].filter(Boolean).join("\n"),
-        recommendedNextAction: "Needs Human Review",
-      };
-    } else {
-      queueBlockedData = { queuedDate: candidate.queuedDate };
-    }
+  const database = getProspectDatabase();
+  const current = await database.outreachQueueItem.findUnique({ where: { id } });
+  if (!current) return null;
+  const currentStatus = current.status as OutreachQueueStatus;
+  if (currentStatus === nextStatus) return queueToDomain(current);
+  if (!manualQueueStatusTransitionAllowed(currentStatus, status)) {
+    throw new Error(`Status cannot change from ${currentStatus} to ${status} through the general queue action.`);
   }
+  const now = new Date();
+  const effectiveStatus = nextStatus;
   const extraReviewData =
     effectiveStatus === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
       : ["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(effectiveStatus) ? { recommendedNextAction: "Never Contact" }
         : effectiveStatus === "Preview Needs Polish" ? { recommendedNextAction: "Regenerate Preview" }
           : effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
             : {};
-  const row = await getProspectDatabase().outreachQueueItem.update({
-    where: { id },
+  const update = await database.outreachQueueItem.updateMany({
+    where: { id, status: current.status, updatedAt: current.updatedAt },
     data: {
       status: effectiveStatus,
-      sentDate: ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(effectiveStatus) ? now : undefined,
       followUpDate: effectiveStatus === "Follow-up Needed" ? now : undefined,
       replyStatus: status === "Prospect Said Yes" ? "prospect_said_yes" : undefined,
       ...extraReviewData,
-      ...queueBlockedData,
     },
   });
+  if (update.count !== 1) throw new Error("The queue item changed before the status update completed. Refresh and try again.");
+  const row = await database.outreachQueueItem.findUniqueOrThrow({ where: { id } });
   const domain = queueToDomain(row);
   await sendLoomNeededNotificationIfConfigured(domain, status);
   if (status === "Prospect Said Yes") {
@@ -1614,6 +2560,9 @@ export async function regenerateProspectOutreachWithCurrentScript(prospectId: st
     ],
   };
   const queueItem = await findExistingQueueItemForProspect(prospectId);
+  if (!options.previewOnly && queueItem && queueItemDraftMutationIsProtected(queueItem)) {
+    throw new Error("Outreach cannot be regenerated after approval, sending, contact, or suppression.");
+  }
   if (options.previewOnly) {
     return {
       prospect,
@@ -1640,6 +2589,8 @@ export async function regenerateProspectOutreachWithCurrentScript(prospectId: st
 export async function createOrRefreshAutonomousReviewPackageForProspect(prospectOrId: Prospect | string) {
   const prospect = typeof prospectOrId === "string" ? await getProspect(prospectOrId) : prospectOrId;
   if (!prospect) return null;
+  const existingQueueItem = await findExistingQueueItemForProspect(prospect.id);
+  if (existingQueueItem && queueItemDraftMutationIsProtected(existingQueueItem)) return existingQueueItem;
   const previewInfo = await publicPreviewForProspect(prospect.id);
   const nowIso = new Date().toISOString();
   const prospectWithPreview = prospect.preview ? prospect : (await prepareProspectForPreview(prospect)).prospect;
@@ -1665,10 +2616,11 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
     topProspectResultId: previewInfo.topProspectResultId,
   });
   if (!previewInfo.previewLink) {
+    if (queueItemDraftMutationIsProtected(queueItem)) return queueItem;
     const note = "No valid public /p/ preview link was found. Generate/review a public preview before send-ready approval.";
     if (!hasDatabase) {
       const memory = memoryQueue().find((item) => item.id === queueItem.id);
-      if (memory) {
+      if (memory && memory.status === queueItem.status && memory.updatedAt === queueItem.updatedAt && !queueItemDraftMutationIsProtected(memory)) {
         memory.status = "Needs Review";
         memory.blockedReason = [memory.blockedReason, note].filter(Boolean).join(" ");
         memory.recommendedNextAction = "Regenerate Preview";
@@ -1677,8 +2629,18 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
         return structuredClone(memory);
       }
     } else {
-      const row = await getProspectDatabase().outreachQueueItem.update({
-        where: { id: queueItem.id },
+      const database = getProspectDatabase();
+      const updated = await database.outreachQueueItem.updateMany({
+        where: {
+          id: queueItem.id,
+          status: queueItem.status,
+          updatedAt: new Date(queueItem.updatedAt),
+          sentDate: null,
+          NOT: [
+            { status: { in: ["Queued", ...protectedQueueStatuses] } },
+            { notes: { contains: ambiguousOutcomeMarker } },
+          ],
+        },
         data: {
           status: "Needs Review",
           blockedReason: [queueItem.blockedReason, note].filter(Boolean).join(" "),
@@ -1686,6 +2648,11 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
           notes: [queueItem.notes, note].filter(Boolean).join("\n") || null,
         },
       });
+      if (updated.count !== 1) {
+        const current = await database.outreachQueueItem.findUnique({ where: { id: queueItem.id } });
+        return current ? queueToDomain(current) : null;
+      }
+      const row = await database.outreachQueueItem.findUniqueOrThrow({ where: { id: queueItem.id } });
       return queueToDomain(row);
     }
   }
@@ -1698,6 +2665,9 @@ export async function recordAutonomousFeedback(id: string, feedbackLabel: Autono
   if (!hasDatabase) {
     const item = memoryQueue().find((entry) => entry.id === id);
     if (!item) return null;
+    if (item.status === "Sending" || queueItemHasAmbiguousOutcome(item)) {
+      throw new Error("Feedback cannot change a queue item while email delivery is unresolved.");
+    }
     item.feedbackLabels = [...new Set([...item.feedbackLabels, feedbackLabel])];
     Object.assign(item, feedbackReview(item));
     item.notes = [item.notes, note].filter(Boolean).join("\n");
@@ -1710,10 +2680,21 @@ export async function recordAutonomousFeedback(id: string, feedbackLabel: Autono
   const existing = await database.outreachQueueItem.findUnique({ where: { id } });
   if (!existing) return null;
   const current = queueToDomain(existing);
+  if (current.status === "Sending" || queueItemHasAmbiguousOutcome(current)) {
+    throw new Error("Feedback cannot change a queue item while email delivery is unresolved.");
+  }
   const feedbackLabels = [...new Set([...current.feedbackLabels, feedbackLabel])];
   const review = feedbackReview(current, feedbackLabels);
-  const row = await database.outreachQueueItem.update({
-    where: { id },
+  const updated = await database.outreachQueueItem.updateMany({
+    where: {
+      id,
+      status: existing.status,
+      updatedAt: existing.updatedAt,
+      NOT: [
+        { status: "Sending" },
+        { notes: { contains: ambiguousOutcomeMarker } },
+      ],
+    },
     data: {
       feedbackLabels,
       notes: [current.notes, note].filter(Boolean).join("\n") || null,
@@ -1726,6 +2707,8 @@ export async function recordAutonomousFeedback(id: string, feedbackLabel: Autono
       rewritePlan: review.rewritePlan,
     },
   });
+  if (updated.count !== 1) throw new Error("The queue item changed before feedback was recorded. Refresh and try again.");
+  const row = await database.outreachQueueItem.findUniqueOrThrow({ where: { id } });
   await database.autonomousFeedbackEvent.create({
     data: {
       queueItemId: id,
@@ -1749,6 +2732,9 @@ export async function rewriteOutreachQueueItem(id: string) {
   if (!hasDatabase) {
     const item = memoryQueue().find((entry) => entry.id === id);
     if (!item) return null;
+    if (queueItemDraftMutationIsProtected(item)) {
+      throw new Error("Outreach copy cannot be rewritten after approval, sending, contact, or suppression.");
+    }
     item.emailBody = rewriteOutreachWithFixes(item.emailBody);
     item.rewritePlan = [];
     item.recommendedNextAction = "Needs Human Review";
@@ -1762,8 +2748,20 @@ export async function rewriteOutreachQueueItem(id: string) {
   const existing = await database.outreachQueueItem.findUnique({ where: { id } });
   if (!existing) return null;
   const current = queueToDomain(existing);
-  const row = await database.outreachQueueItem.update({
-    where: { id },
+  if (queueItemDraftMutationIsProtected(current)) {
+    throw new Error("Outreach copy cannot be rewritten after approval, sending, contact, or suppression.");
+  }
+  const updated = await database.outreachQueueItem.updateMany({
+    where: {
+      id,
+      status: existing.status,
+      updatedAt: existing.updatedAt,
+      sentDate: null,
+      NOT: [
+        { status: { in: ["Queued", ...protectedQueueStatuses] } },
+        { notes: { contains: ambiguousOutcomeMarker } },
+      ],
+    },
     data: {
       emailBody: rewriteOutreachWithFixes(current.emailBody),
       rewritePlan: [],
@@ -1771,6 +2769,8 @@ export async function rewriteOutreachQueueItem(id: string) {
       reviewSummary: `${current.businessName} outreach was rewritten for review. Nothing was sent.`,
     },
   });
+  if (updated.count !== 1) throw new Error("The queue item changed before the rewrite completed. Refresh and try again.");
+  const row = await database.outreachQueueItem.findUniqueOrThrow({ where: { id } });
   const domain = queueToDomain(row);
   await recordLearningEvent(domain);
   await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
@@ -1861,10 +2861,23 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
       continue;
     }
     const regenerated = regeneratedQueueCopy(item, nowIso);
-    await database.outreachQueueItem.update({
-      where: { id: item.id },
+    const updated = await database.outreachQueueItem.updateMany({
+      where: {
+        id: item.id,
+        status: item.status,
+        updatedAt: new Date(item.updatedAt),
+        sentDate: null,
+        NOT: [
+          { status: { in: ["Queued", ...protectedQueueStatuses] } },
+          { notes: { contains: ambiguousOutcomeMarker } },
+        ],
+      },
       data: regenerated,
     });
+    if (updated.count !== 1) {
+      incrementReason(summary, "record changed during regeneration");
+      continue;
+    }
     summary.updated += 1;
     summary.updatedItems.push(item.businessName);
   }
@@ -1880,6 +2893,7 @@ export function resetAutonomousGrowthMemoryForTests() {
   globalAutonomous.autopilotCampaignMemory = undefined;
   globalAutonomous.autopilotSmokeTestMemory = undefined;
   globalAutonomous.smartAutonomousRunSummaryMemory = undefined;
+  globalAutonomous.approvedAutoEmailQueueIdsMemory = undefined;
 }
 
 export function setOutreachQueueMemoryForTests(items: OutreachQueueItem[]) {

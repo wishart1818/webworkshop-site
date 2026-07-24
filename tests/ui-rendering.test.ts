@@ -908,6 +908,56 @@ test("preview QA rejects municipal or mismatched pressure washing imagery", () =
   assert.match(report.warnings.join(" "), /municipal|street-cleaning|house washing/i);
 });
 
+test("pressure washing previews use the premium native composition without copying demo claims", () => {
+  const pressureWashing = withPreview({
+    ...structuredClone(seedProspects[0]),
+    id: "premium-pressure-washing-composition",
+    businessName: "Champion Pressure Washing",
+    trade: "Pressure Washing",
+    city: "Toledo",
+    state: "OH",
+    serviceArea: "Toledo, OH",
+    phone: "(419) 555-0142",
+    previewResearchVerified: true,
+    verifiedPreviewServices: ["House Washing", "Concrete Cleaning", "Roof Soft Washing"],
+  });
+  const pressureHtml = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect: pressureWashing,
+    publicView: true,
+    savedPreview: pressureWashing.preview,
+  }));
+  const roofing = withPreview({
+    ...structuredClone(seedProspects[0]),
+    id: "adaptive-roofing-composition",
+    businessName: "Blue Line Roofing",
+    trade: "Roofing",
+  });
+  const roofingHtml = renderToStaticMarkup(createElement(ProspectWebsitePreview, {
+    prospect: roofing,
+    publicView: true,
+    savedPreview: roofing.preview,
+  }));
+  const css = readFileSync("app/engine/engine.css", "utf8");
+
+  assert.match(pressureHtml, /data-preview-composition="premium-property-polish"/);
+  assert.match(pressureHtml, /class="prospect-preview-mobile-menu"/);
+  assert.match(pressureHtml, /aria-label="Open site navigation"/);
+  assert.match(pressureHtml, /class="prospect-preview-service-number"[^>]*>01</);
+  assert.match(pressureHtml, /House Washing/);
+  assert.match(pressureHtml, /Concrete Cleaning/);
+  assert.match(pressureHtml, /Roof Soft Washing/);
+  assert.match(pressureHtml, /This sample form will not submit/);
+  assert.doesNotMatch(pressureHtml, /Rated 5|Licensed &amp; Insured|Typical residential wash|0 damage|respond within one business day/i);
+  assert.match(roofingHtml, /data-preview-composition="adaptive"/);
+  assert.doesNotMatch(roofingHtml, /class="prospect-preview-mobile-menu"/);
+  assert.match(css, /data-preview-composition="premium-property-polish"/);
+  assert.match(css, /data-service-count="3"[\s\S]{0,500}grid-template-rows: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /max-width: 767px[\s\S]{0,9000}premium-property-polish[\s\S]{0,1000}flex-direction: column/);
+  assert.match(css, /premium-property-polish[\s\S]{0,1200}article:not\(:first-child\)[\s\S]{0,1000}aspect-ratio: 4 \/ 3/);
+  assert.match(css, /position: fixed;[\s\S]{0,400}env\(safe-area-inset-bottom\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
 test("two pressure washing public previews are photo-led but not visual duplicates", () => {
   const first = withPreview({
     ...structuredClone(seedProspects[0]),

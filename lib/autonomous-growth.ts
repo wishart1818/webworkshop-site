@@ -62,6 +62,7 @@ export const outreachQueueStatuses = [
   "Pricing Requested",
   "Pricing Sent",
   "Queued",
+  "Sending",
   "Sent",
   "Follow-up Needed",
   "Follow-up Sent",
@@ -275,6 +276,7 @@ export type AutonomousGrowthDashboard = {
     autoSendEnabled: boolean;
     fullAutoSendEnabled: boolean;
     emailKillSwitchEnabled: boolean;
+    autopilotDisabled: boolean;
     sendProvider: string;
     hasResendApiKey: boolean;
     hasFromEmail: boolean;
@@ -283,6 +285,7 @@ export type AutonomousGrowthDashboard = {
     hasNotifyEmail: boolean;
     hasNotifyFromEmail: boolean;
     notifyOnLoomNeeded: boolean;
+    dailyCap: number;
   };
   metrics: AutonomousGrowthMetrics;
   queue: OutreachQueueItem[];
@@ -861,8 +864,11 @@ export function smartRecommendationForGrowth(input: {
   environment?: NodeJS.ProcessEnv;
 }): SmartRecommendation {
   const env = outreachEnvironment(input.environment);
+  const pilotEmailCanRun = env.autoSendEnabled && !env.emailKillSwitchEnabled && !env.autopilotDisabled;
   const whatItWillNotDo = [
-    "It will not send emails.",
+    pilotEmailCanRun
+      ? "It will not send email unless a public-email draft is explicitly approved, queued, and passes every Pilot gate."
+      : "It will not send emails.",
     "It will not send social DMs.",
     "It will not submit contact forms.",
     "It will not place calls.",
@@ -923,6 +929,7 @@ export function buildSmartRunSummary(input: {
   recommendation: SmartRecommendation;
   actionLabel?: string;
   now?: Date;
+  pilotEmailSentCount?: number;
 }): SmartRunSummary {
   const createdAt = (input.now ?? new Date()).toISOString();
   const marketScoutResults = input.scout.results.slice(0, 5).map((result) =>
@@ -932,7 +939,9 @@ export function buildSmartRunSummary(input: {
     .filter((key) => input.existing.queueCounts[key] > 0)
     .map((key) => `${smartQueueLabels[key]}: ${input.existing.queueCounts[key]}`);
   const safetyGates = [
-    "No emails sent.",
+    input.pilotEmailSentCount
+      ? `${input.pilotEmailSentCount} explicitly approved queued email${input.pilotEmailSentCount === 1 ? "" : "s"} sent through Auto Email Pilot.`
+      : "No emails sent.",
     "No DMs sent.",
     "No contact forms submitted.",
     "No calls placed.",
@@ -942,7 +951,7 @@ export function buildSmartRunSummary(input: {
   const whatWasNotDone = [
     "No new nationwide discovery was started.",
     "No social media automation was used.",
-    "No prospect-facing message was sent.",
+    input.pilotEmailSentCount ? "No unapproved prospect-facing message was sent." : "No prospect-facing message was sent.",
     "No secrets or environment values were included.",
   ];
   const summaryText = [
@@ -1196,16 +1205,43 @@ export function outreachEnvironment(environment: NodeJS.ProcessEnv = process.env
     autoSendEnabled: environment.OUTREACH_AUTO_SEND_ENABLED === "true",
     fullAutoSendEnabled: environment.OUTREACH_FULL_AUTO_SEND_ENABLED === "true",
     emailKillSwitchEnabled: environment.OUTREACH_EMAIL_DISABLED === "true",
+    autopilotDisabled: environment.AUTOPILOT_DISABLED === "true",
     sendProvider,
     hasResendApiKey: Boolean(environment.RESEND_API_KEY?.trim()),
     hasFromEmail: Boolean(environment.OUTREACH_FROM_EMAIL?.trim()),
     hasReplyToEmail: Boolean(environment.OUTREACH_REPLY_TO_EMAIL?.trim()),
-    hasPostalAddress: Boolean(environment.OUTREACH_POSTAL_ADDRESS?.trim()),
+    hasPostalAddress: Boolean(environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim()),
     hasNotifyEmail: Boolean(environment.OUTREACH_NOTIFY_EMAIL?.trim()),
     hasNotifyFromEmail: Boolean(environment.OUTREACH_NOTIFY_FROM_EMAIL?.trim()),
     notifyOnLoomNeeded,
     dailyCap: clampCap(environment.OUTREACH_DAILY_CAP, 5, 0, 25),
   };
+}
+
+export function autoEmailPilotGateReasons({
+  emailsSentToday = 0,
+  environment = outreachEnvironment(),
+  settings,
+}: {
+  emailsSentToday?: number;
+  environment?: ReturnType<typeof outreachEnvironment>;
+  settings: AutonomousGrowthSettings;
+}) {
+  return [
+    settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
+    settings.killSwitch ? "Global kill switch is on." : "",
+    environment.autopilotDisabled ? "Autopilot is disabled by environment kill switch." : "",
+    environment.emailKillSwitchEnabled ? "OUTREACH_EMAIL_DISABLED is true." : "",
+    !environment.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true." : "",
+    environment.sendProvider !== "resend"
+      || !environment.hasResendApiKey
+      || !environment.hasFromEmail
+      || !environment.hasReplyToEmail
+      || !environment.hasPostalAddress
+      ? "Email provider, sender, reply-to, or postal address is missing."
+      : "",
+    emailsSentToday >= Math.min(settings.maxEmailsSentPerDay, environment.dailyCap) ? "Daily email cap has been reached." : "",
+  ].filter(Boolean);
 }
 
 export function providerConfigured(environment: NodeJS.ProcessEnv = process.env) {
@@ -1257,6 +1293,9 @@ function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJ
   const postalAddresses = senderPostalAddressForDrafts(environment);
   return [
     item.outreachCopyVersion !== currentOutreachCopyVersion ? `Outreach copy is outdated. Regenerate with ${currentOutreachCopyVersion}.` : "",
+    item.businessName && !combined.toLowerCase().includes(item.businessName.toLowerCase())
+      ? "Outreach copy does not match the current business identity."
+      : "",
     /https?:\/\/|\/p\//i.test(item.emailBody) ? "First-touch email must ask permission before sending the public preview link." : "",
     /\/engine(?:\/|$)/i.test(combined) ? "Prospect-facing email contains a protected /engine link." : "",
     /\[[^\]]*(postal address|before sending|insert|placeholder)[^\]]*\]/i.test(combined) ? "Prospect-facing email still contains placeholder text." : "",
@@ -1300,18 +1339,13 @@ export function evaluateQueuedEmailSendReadiness({
     return Number.isFinite(sentAt) && Date.now() - sentAt < cooldownMs;
   });
   const blockedReasons = [
-    settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
-    settings.killSwitch ? "Global kill switch is on." : "",
-    env.emailKillSwitchEnabled ? "OUTREACH_EMAIL_DISABLED is true." : "",
-    !env.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true." : "",
-    !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
+    ...autoEmailPilotGateReasons({ emailsSentToday: emailSendsToday, environment: env, settings }),
     item.status !== "Queued" ? "Only Queued email items can be sent by Auto Email Pilot." : "",
     email ? "" : "Recipient email is missing.",
     email && prospectEmailNeedsManualVerification({ businessName: item.businessName, website: item.website, email })
       ? "Recipient email needs manual verification before sending."
       : "",
     item.contactSource !== "Public email" ? "Only public-email contacts can be sent automatically." : "",
-    emailSendsToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",
     item.sentDate ? "This queue item already has a sent date." : "",
     previouslySent ? "This email address was already contacted." : "",
     previouslySentDomain ? "This business email domain was already contacted." : "",
@@ -1352,6 +1386,7 @@ export function evaluateAutoSendEligibility({
   const blockedReasons = [
     settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
     settings.killSwitch ? "Global kill switch is on." : "",
+    env.autopilotDisabled ? "Autopilot is disabled by environment kill switch." : "",
     env.emailKillSwitchEnabled ? "OUTREACH_EMAIL_DISABLED is true." : "",
     !env.autoSendEnabled ? "OUTREACH_AUTO_SEND_ENABLED is not true." : "",
     !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
@@ -1408,6 +1443,7 @@ const contactedOrClosedStatuses = new Set<OutreachQueueStatus>([
   "Loom Sent",
   "Pricing Requested",
   "Pricing Sent",
+  "Sending",
   "Sent",
   "Follow-up Needed",
   "Follow-up Sent",
@@ -1431,6 +1467,7 @@ export function outreachCopyRegenerationEligibility(item: OutreachQueueItem): Ou
   if (item.outreachCopyVersion === currentOutreachCopyVersion) return { eligible: false, reason: "already current" };
   if (item.sentDate) return { eligible: false, reason: "already contacted" };
   if (item.replyStatus) return { eligible: false, reason: "reply or suppression recorded" };
+  if (item.status === "Queued") return { eligible: false, reason: "approved and queued" };
   if (contactedOrClosedStatuses.has(item.status)) return { eligible: false, reason: `status is ${item.status}` };
   if (/phone(?:\s|-)?only/i.test(`${item.contactSource} ${item.blockedReason}`)) return { eligible: false, reason: "phone-only" };
   if (/suppressed|opted out|bounced|complained|never contact|bad fit/i.test(`${item.status} ${item.blockedReason} ${item.notes}`)) return { eligible: false, reason: "suppressed or blocked" };
@@ -1443,6 +1480,38 @@ export function outreachCopyRegenerationEligibility(item: OutreachQueueItem): Ou
 
 export function queueStatusAfterManualAction(status: OutreachQueueStatus): OutreachQueueStatus {
   return status === "Prospect Said Yes" ? "Loom Needed" : status;
+}
+
+const manualQueueTransitionMap: Partial<Record<OutreachQueueStatus, readonly OutreachQueueStatus[]>> = {
+  Draft: ["Eligible", "Needs Review", "DM Draft", "Preview Needs Polish", "Skipped", "Bad Fit"],
+  Eligible: ["Needs Review", "DM Draft", "Preview Needs Polish", "Skipped", "Bad Fit"],
+  "Needs Review": ["Eligible", "DM Draft", "Preview Needs Polish", "Skipped", "Bad Fit"],
+  "DM Draft": ["Eligible", "Needs Review", "First DM Sent", "Skipped", "Bad Fit"],
+  "First DM Sent": ["Prospect Said Yes", "Follow-up Needed", "Replied", "No Response", "Not Interested"],
+  "Prospect Said Yes": ["Loom Needed", "Ready for Loom", "Pricing Requested", "Positive Reply", "Won", "Lost", "Not Interested"],
+  "Loom Needed": ["Preview Needs Polish", "Ready for Loom", "Loom Recorded", "Pricing Requested", "Lost", "Not Interested"],
+  "Preview Needs Polish": ["Eligible", "Needs Review", "Ready for Loom", "Skipped", "Bad Fit"],
+  "Ready for Loom": ["Preview Needs Polish", "Loom Recorded", "Lost", "Not Interested"],
+  "Loom Recorded": ["Loom Sent", "Pricing Requested", "Lost", "Not Interested"],
+  "Loom Sent": ["Pricing Requested", "Follow-up Needed", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"],
+  "Pricing Requested": ["Pricing Sent", "Positive Reply", "Won", "Lost", "Not Interested"],
+  "Pricing Sent": ["Follow-up Needed", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"],
+  Sent: ["Follow-up Needed", "Replied", "Positive Reply", "No Response", "Not Interested"],
+  "Follow-up Needed": ["Follow-up Sent", "Replied", "Positive Reply", "No Response", "Not Interested"],
+  "Follow-up Sent": ["Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"],
+  Replied: ["Positive Reply", "Pricing Requested", "Won", "Lost", "Not Interested"],
+  "Positive Reply": ["Pricing Requested", "Won", "Lost", "Not Interested"],
+};
+
+export function manualQueueStatusTargets(status: OutreachQueueStatus): readonly OutreachQueueStatus[] {
+  return manualQueueTransitionMap[status] ?? [];
+}
+
+export function manualQueueStatusTransitionAllowed(
+  currentStatus: OutreachQueueStatus,
+  requestedStatus: OutreachQueueStatus,
+) {
+  return manualQueueStatusTargets(currentStatus).includes(requestedStatus);
 }
 
 function hasFeedback(feedbackLabels: readonly string[], value: AutonomousFeedbackLabel) {
