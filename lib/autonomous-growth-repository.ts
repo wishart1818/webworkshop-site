@@ -1030,6 +1030,14 @@ function normalizeEmailAddress(value: string) {
   return value.trim().toLowerCase();
 }
 
+export function normalizeRecipientEmailDomain(value: string) {
+  const email = normalizeEmailAddress(value);
+  const separator = email.lastIndexOf("@");
+  if (separator <= 0 || separator === email.length - 1) return "";
+  const domain = email.slice(separator + 1).replace(/\.+$/, "");
+  return domain && !domain.includes("@") ? domain : "";
+}
+
 const protectedQueueStatuses = new Set<OutreachQueueStatus>([
   "Sending",
   "Sent",
@@ -1094,6 +1102,20 @@ function stripApprovalMarker(value: string) {
     .trim();
 }
 
+function queueSnapshotData(item: OutreachQueueItem) {
+  return {
+    email: item.email || null,
+    contactSource: item.contactSource,
+    contactConfidence: item.contactConfidence,
+    eligibilityReason: item.eligibilityReason,
+    blockedReason: item.blockedReason || null,
+    recommendedNextAction: item.recommendedNextAction,
+    status: item.status,
+    queuedDate: item.queuedDate ? new Date(item.queuedDate) : null,
+    notes: item.notes || null,
+  };
+}
+
 async function persistQueueSnapshot(item: OutreachQueueItem, expected: Pick<OutreachQueueItem, "status" | "updatedAt">) {
   if (!hasDatabase) {
     const index = memoryQueue().findIndex((entry) => entry.id === item.id);
@@ -1101,6 +1123,7 @@ async function persistQueueSnapshot(item: OutreachQueueItem, expected: Pick<Outr
     if (
       memoryQueue()[index].status !== expected.status
       || memoryQueue()[index].updatedAt !== expected.updatedAt
+      || memoryQueue()[index].status === "Queued"
       || protectedQueueStatuses.has(memoryQueue()[index].status)
       || queueItemHasAmbiguousOutcome(memoryQueue()[index])
     ) return structuredClone(memoryQueue()[index]);
@@ -1116,26 +1139,63 @@ async function persistQueueSnapshot(item: OutreachQueueItem, expected: Pick<Outr
       updatedAt: new Date(expected.updatedAt),
       sentDate: null,
       NOT: [
-        { status: { in: [...protectedQueueStatuses] } },
+        { status: { in: ["Queued", ...protectedQueueStatuses] } },
         { notes: { contains: ambiguousOutcomeMarker } },
       ],
     },
-    data: {
-      email: item.email || null,
-      contactSource: item.contactSource,
-      contactConfidence: item.contactConfidence,
-      eligibilityReason: item.eligibilityReason,
-      blockedReason: item.blockedReason || null,
-      recommendedNextAction: item.recommendedNextAction,
-      status: item.status,
-      queuedDate: item.queuedDate ? new Date(item.queuedDate) : null,
-      notes: item.notes || null,
-    },
+    data: queueSnapshotData(item),
   });
   const row = await database.outreachQueueItem.findUnique({ where: { id: item.id } });
   if (!row) return null;
   if (updated.count !== 1) return queueToDomain(row);
   return queueToDomain(row);
+}
+
+async function persistRecipientChangedQueueSnapshot(item: OutreachQueueItem, expected: OutreachQueueItem) {
+  const candidate = { ...item, notes: stripApprovalMarker(item.notes) };
+  if (!hasDatabase) {
+    const index = memoryQueue().findIndex((entry) => entry.id === item.id);
+    if (index < 0) return null;
+    const current = memoryQueue()[index];
+    if (
+      current.status !== expected.status
+      || current.updatedAt !== expected.updatedAt
+      || queueItemDraftMutationIsProtected(current)
+    ) return structuredClone(current);
+    memoryApprovedAutoEmailQueueIds().delete(current.id);
+    memoryQueue()[index] = structuredClone(candidate);
+    return structuredClone(candidate);
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const row = await database.$transaction(async (transaction) => {
+    const current = await transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+    if (!current) return null;
+    const currentDomain = queueToDomain(current);
+    if (
+      current.status !== expected.status
+      || current.updatedAt.toISOString() !== expected.updatedAt
+      || queueItemDraftMutationIsProtected(currentDomain)
+    ) return current;
+    const updated = await transaction.outreachQueueItem.updateMany({
+      where: {
+        id: item.id,
+        status: expected.status,
+        updatedAt: new Date(expected.updatedAt),
+        sentDate: null,
+        NOT: [
+          { status: { in: ["Queued", ...protectedQueueStatuses] } },
+          { notes: { contains: ambiguousOutcomeMarker } },
+        ],
+      },
+      data: queueSnapshotData(candidate),
+    });
+    if (updated.count !== 1) return transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+    await clearPersistedApproval(transaction, currentDomain, new Date());
+    return transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+  }, { isolationLevel: "Serializable" });
+  return row ? queueToDomain(row) : null;
 }
 
 async function queueItemHasPersistedApproval(item: OutreachQueueItem, transaction?: Prisma.TransactionClient) {
@@ -1164,7 +1224,7 @@ async function queueItemHasPersistedApproval(item: OutreachQueueItem, transactio
 }
 
 async function reconcileQueueItem(item: OutreachQueueItem) {
-  if (protectedQueueStatuses.has(item.status) || queueItemHasAmbiguousOutcome(item) || !item.prospectId) return item;
+  if (item.status === "Queued" || protectedQueueStatuses.has(item.status) || queueItemHasAmbiguousOutcome(item) || !item.prospectId) return item;
   const currentProspect = await getProspect(item.prospectId);
   if (!currentProspect) return item;
   const prospect = reconcileProspectContactRouting(currentProspect);
@@ -1189,7 +1249,11 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
     settings,
   });
   const computedStatus = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
-  const approved = await queueItemHasPersistedApproval(item);
+  const nextEmail = prospect.email;
+  const nextContactSource = sourceForProspect(prospect);
+  const recipientChanged = normalizeEmailAddress(nextEmail) !== normalizeEmailAddress(item.email)
+    || nextContactSource !== item.contactSource;
+  const approved = recipientChanged ? false : await queueItemHasPersistedApproval(item);
   const nextStatus = approved && computedStatus === "Queued"
     ? "Queued"
     : computedStatus === "Queued"
@@ -1198,8 +1262,8 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
   const nowIso = new Date().toISOString();
   const reconciled: OutreachQueueItem = {
     ...item,
-    email: prospect.email,
-    contactSource: sourceForProspect(prospect),
+    email: nextEmail,
+    contactSource: nextContactSource,
     contactConfidence: prospect.sourceConfidence,
     status: nextStatus,
     queuedDate: nextStatus === "Queued" ? item.queuedDate || nowIso : "",
@@ -1210,6 +1274,7 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
     recommendedNextAction: nextStatus === "Eligible" || nextStatus === "Queued" ? "Keep" : "Needs Human Review",
     updatedAt: nowIso,
   };
+  if (recipientChanged) return await persistRecipientChangedQueueSnapshot(reconciled, item) ?? reconciled;
   return await persistQueueSnapshot(reconciled, item) ?? reconciled;
 }
 
@@ -1822,6 +1887,14 @@ export async function sendQueuedEmailQueueItem(
   const { claim } = claimed;
 
   try {
+    const recipientDomain = normalizeRecipientEmailDomain(claim.item.email);
+    if (!recipientDomain) throw new Error("Recipient business email domain is invalid.");
+    await enforceRateLimit({
+      action: "autonomous_email_send_domain",
+      subject: recipientDomain,
+      limit: 1,
+      windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
+    });
     await enforceRateLimit({
       action: "autonomous_email_send",
       subject: "global",
@@ -1830,7 +1903,7 @@ export async function sendQueuedEmailQueueItem(
     });
     await enforceRateLimit({
       action: "autonomous_email_send_recipient",
-      subject: item.email.toLowerCase(),
+      subject: normalizeEmailAddress(claim.item.email),
       limit: 1,
       windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
     });

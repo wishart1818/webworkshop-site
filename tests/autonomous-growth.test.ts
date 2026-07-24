@@ -30,6 +30,7 @@ import {
 } from "../lib/autonomous-growth";
 import {
   approveAndQueueEmail,
+  normalizeRecipientEmailDomain,
   processExistingQualifiedProspects,
   prospectInitialEmailIdempotencyKey,
   resetAutonomousGrowthMemoryForTests,
@@ -456,6 +457,56 @@ test("human-approved queued email sends through Resend only after every gate pas
   }
 });
 
+test("Resend receives the exact recipient snapshot that was approved and queued", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  let providerRecipient = "";
+  const prospect = eligibleProspectFor({
+    id: "approved-recipient-prospect",
+    businessName: "Clear Flow Plumbing",
+    website: "https://clearflowplumbing.com",
+    email: "approved@clearflowplumbing.com",
+  });
+  try {
+    globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { to?: string[] };
+      providerRecipient = body.to?.[0] ?? "";
+      return new Response(JSON.stringify({ id: "approved-recipient-message" }), { status: 200 });
+    };
+    setProspectMemoryForTests([prospect]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect,
+      topProspectResultId: "approved-recipient-result",
+    });
+    const approval = await approveAndQueueEmail(eligible.id);
+    assert.equal(approval.queued, true);
+    assert.equal(approval.item?.email, "approved@clearflowplumbing.com");
+
+    setProspectMemoryForTests([{
+      ...prospect,
+      email: "later@clearflowplumbing.com",
+      publicEmail: "later@clearflowplumbing.com",
+    }]);
+    const result = await sendQueuedEmailQueueItem(eligible.id);
+
+    assert.equal(result.sent, true, result.blockedReasons.join("; "));
+    assert.equal(providerRecipient, "approved@clearflowplumbing.com");
+    assert.equal(result.item?.email, "approved@clearflowplumbing.com");
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 test("Auto Email Pilot ignores unapproved inventory, then sends one approved item without the full-auto gate", async () => {
   const originalFetch = globalThis.fetch;
   const originalEnv = { ...process.env };
@@ -616,6 +667,132 @@ test("concurrent direct sends use one repository claim and one guarded provider 
   } finally {
     globalThis.fetch = originalFetch;
     process.env = originalEnv;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("concurrent initial emails to different addresses on one business domain dispatch once", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env({ OUTREACH_DAILY_CAP: "5" }));
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ id: `same-domain-message-${providerCalls}` }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({
+      ...defaultAutonomousGrowthSettings,
+      mode: "auto_email_pilot",
+      killSwitch: false,
+      maxEmailsSentPerDay: 5,
+    });
+    const first = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspectFor({
+        id: "same-domain-prospect-1",
+        businessName: "Clear Flow Plumbing North",
+        website: "https://clearflowplumbing.com/north",
+        email: "Info@ClearFlowPlumbing.COM",
+      }),
+      topProspectResultId: "same-domain-result-1",
+    });
+    const second = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspectFor({
+        id: "same-domain-prospect-2",
+        businessName: "Clear Flow Plumbing South",
+        website: "https://clearflowplumbing.com/south",
+        email: "sales@clearflowplumbing.com",
+      }),
+      topProspectResultId: "same-domain-result-2",
+    });
+    assert.equal(normalizeRecipientEmailDomain(first.email), "clearflowplumbing.com");
+    assert.equal(normalizeRecipientEmailDomain(second.email), "clearflowplumbing.com");
+    assert.equal((await approveAndQueueEmail(first.id)).queued, true);
+    assert.equal((await approveAndQueueEmail(second.id)).queued, true);
+
+    const results = await Promise.all([
+      sendQueuedEmailQueueItem(first.id),
+      sendQueuedEmailQueueItem(second.id),
+    ]);
+
+    assert.equal(providerCalls, 1);
+    assert.equal(results.filter((result) => result.sent).length, 1);
+    assert.equal(outreachQueueMemoryForTests().filter((item) => item.status === "Sent").length, 1);
+    assert.equal(outreachQueueMemoryForTests().filter((item) => item.status === "Queued").length, 1);
+    assert.match(results.flatMap((result) => result.blockedReasons).join(" "), /Rate limit reached/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("concurrent initial emails to unrelated business domains may both dispatch within the daily cap", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env({ OUTREACH_DAILY_CAP: "5" }));
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ id: `different-domain-message-${providerCalls}` }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({
+      ...defaultAutonomousGrowthSettings,
+      mode: "auto_email_pilot",
+      killSwitch: false,
+      maxEmailsSentPerDay: 5,
+    });
+    const first = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspectFor({
+        id: "different-domain-prospect-1",
+        businessName: "Clear Flow Plumbing",
+        website: "https://clearflowplumbing.com",
+        email: "info@clearflowplumbing.com",
+      }),
+      topProspectResultId: "different-domain-result-1",
+    });
+    const second = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: eligibleProspectFor({
+        id: "different-domain-prospect-2",
+        businessName: "Summit Roofing Care",
+        website: "https://summitroofingcare.com",
+        email: "sales@summitroofingcare.com",
+      }),
+      topProspectResultId: "different-domain-result-2",
+    });
+    assert.equal((await approveAndQueueEmail(first.id)).queued, true);
+    assert.equal((await approveAndQueueEmail(second.id)).queued, true);
+
+    const results = await Promise.all([
+      sendQueuedEmailQueueItem(first.id),
+      sendQueuedEmailQueueItem(second.id),
+    ]);
+
+    assert.equal(providerCalls, 2);
+    assert.equal(results.filter((result) => result.sent).length, 2);
+    assert.equal(outreachQueueMemoryForTests().filter((item) => item.status === "Sent").length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
   }
@@ -851,7 +1028,163 @@ test("existing qualified inventory refreshes stale queue contact snapshots witho
   }
 });
 
-test("inventory reconciliation cannot overwrite Sending or protected queue states", async () => {
+test("Queued reconciliation preserves the approved recipient snapshot", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  const originalProspect = eligibleProspectFor({
+    id: "queued-snapshot-prospect",
+    businessName: "Clear Flow Plumbing",
+    website: "https://clearflowplumbing.com",
+    email: "approved@clearflowplumbing.com",
+  });
+  try {
+    setProspectMemoryForTests([originalProspect]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: originalProspect,
+      topProspectResultId: "queued-snapshot-result",
+    });
+    const approval = await approveAndQueueEmail(eligible.id);
+    assert.equal(approval.queued, true);
+    const approved = approval.item!;
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
+
+    setProspectMemoryForTests([{
+      ...originalProspect,
+      email: "changed@clearflowplumbing.com",
+      publicEmail: "changed@clearflowplumbing.com",
+    }]);
+    await processExistingQualifiedProspects({ dryRun: false });
+
+    const current = outreachQueueMemoryForTests().find((item) => item.id === approved.id)!;
+    assert.equal(current.status, "Queued");
+    assert.equal(current.email, approved.email);
+    assert.equal(current.contactSource, approved.contactSource);
+    assert.match(current.notes, /\[auto-email-approved\]/);
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("Sending reconciliation preserves the claimed recipient snapshot", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  const originalProspect = eligibleProspectFor({
+    id: "sending-snapshot-prospect",
+    businessName: "Clear Flow Plumbing",
+    website: "https://clearflowplumbing.com",
+    email: "approved@clearflowplumbing.com",
+  });
+  try {
+    setProspectMemoryForTests([originalProspect]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: originalProspect,
+      topProspectResultId: "sending-snapshot-result",
+    });
+    const approval = await approveAndQueueEmail(eligible.id);
+    assert.equal(approval.queued, true);
+    const approved = approval.item!;
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
+    setOutreachQueueMemoryForTests([{
+      ...approved,
+      status: "Sending",
+      notes: `${approved.notes}\n[auto-email-claim:snapshot-test]`,
+    }]);
+    setProspectMemoryForTests([{
+      ...originalProspect,
+      email: "changed@clearflowplumbing.com",
+      publicEmail: "changed@clearflowplumbing.com",
+    }]);
+
+    await processExistingQualifiedProspects({ dryRun: false });
+
+    const current = outreachQueueMemoryForTests().find((item) => item.id === approved.id)!;
+    assert.equal(current.status, "Sending");
+    assert.equal(current.email, approved.email);
+    assert.equal(current.contactSource, approved.contactSource);
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("recipient changes before queueing revoke approval and require fresh approval", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  let providerCalls = 0;
+  const originalProspect = eligibleProspectFor({
+    id: "recipient-change-prospect",
+    businessName: "Clear Flow Plumbing",
+    website: "https://clearflowplumbing.com",
+    email: "first@clearflowplumbing.com",
+  });
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "must-not-send" }), { status: 200 });
+    };
+    setProspectMemoryForTests([originalProspect]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect: originalProspect,
+      topProspectResultId: "recipient-change-result",
+    });
+    const approval = await approveAndQueueEmail(eligible.id);
+    assert.equal(approval.queued, true);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
+    setOutreachQueueMemoryForTests([{
+      ...approval.item!,
+      status: "Eligible",
+      queuedDate: "",
+    }]);
+    setProspectMemoryForTests([{
+      ...originalProspect,
+      email: "second@clearflowplumbing.com",
+      publicEmail: "second@clearflowplumbing.com",
+    }]);
+
+    await processExistingQualifiedProspects({ dryRun: false });
+
+    const reconciled = outreachQueueMemoryForTests().find((item) => item.id === eligible.id)!;
+    assert.equal(reconciled.email, "second@clearflowplumbing.com");
+    assert.notEqual(reconciled.status, "Queued");
+    assert.doesNotMatch(reconciled.notes, /\[auto-email-approved\]/);
+
+    setOutreachQueueMemoryForTests([{ ...reconciled, status: "Queued", queuedDate: new Date().toISOString() }]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const attempted = await sendQueuedEmailQueueItem(reconciled.id);
+    assert.equal(attempted.sent, false);
+    assert.match(attempted.blockedReasons.join(" "), /Persisted email approval is missing/);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("inventory reconciliation cannot overwrite Queued, Sending, or terminal queue states", async () => {
   const originalEnv = { ...process.env };
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
@@ -860,17 +1193,28 @@ test("inventory reconciliation cannot overwrite Sending or protected queue state
     id: "protected-reconcile-prospect",
     businessName: "Clear Flow Plumbing",
     website: "https://clearflowplumbing.com",
-    email: "hello@clearflowplumbing.com",
+    email: "changed@clearflowplumbing.com",
   });
   try {
     setProspectMemoryForTests([prospect]);
     const protectedItems = [
       queueItem({
+        id: "protected-queued",
+        prospectId: prospect.id,
+        businessName: prospect.businessName,
+        website: prospect.website,
+        email: "approved@clearflowplumbing.com",
+        contactSource: "Approved public email",
+        status: "Queued",
+        notes: "[auto-email-approved]",
+      }),
+      queueItem({
         id: "protected-sending",
         prospectId: prospect.id,
         businessName: prospect.businessName,
         website: prospect.website,
-        email: prospect.email,
+        email: "approved@clearflowplumbing.com",
+        contactSource: "Approved public email",
         status: "Sending",
         notes: "[auto-email-claim:test]",
       }),
@@ -891,6 +1235,18 @@ test("inventory reconciliation cannot overwrite Sending or protected queue state
         email: prospect.email,
         status: "Suppressed",
       }),
+      queueItem({ id: "protected-bounced", prospectId: prospect.id, email: prospect.email, status: "Bounced" }),
+      queueItem({ id: "protected-complained", prospectId: prospect.id, email: prospect.email, status: "Complained" }),
+      queueItem({ id: "protected-not-interested", prospectId: prospect.id, email: prospect.email, status: "Not Interested" }),
+      queueItem({ id: "protected-opted-out", prospectId: prospect.id, email: prospect.email, status: "Opted Out" }),
+      queueItem({ id: "protected-never-contact", prospectId: prospect.id, email: prospect.email, status: "Never Contact" }),
+      queueItem({
+        id: "protected-ambiguous",
+        prospectId: prospect.id,
+        email: prospect.email,
+        status: "Blocked",
+        notes: "[auto-email-ambiguous]",
+      }),
     ];
     setOutreachQueueMemoryForTests(protectedItems);
     await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
@@ -899,7 +1255,10 @@ test("inventory reconciliation cannot overwrite Sending or protected queue state
 
     const current = outreachQueueMemoryForTests();
     for (const item of protectedItems) {
-      assert.equal(current.find((entry) => entry.id === item.id)?.status, item.status);
+      const persisted = current.find((entry) => entry.id === item.id);
+      assert.equal(persisted?.status, item.status);
+      assert.equal(persisted?.email, item.email);
+      assert.equal(persisted?.contactSource, item.contactSource);
     }
   } finally {
     process.env = originalEnv;
@@ -1406,9 +1765,12 @@ test("duplicate queue rows for one prospect use the same stable initial-outreach
 
 test("database send and approval paths use conditional serializable claims", () => {
   const repository = readFileSync(new URL("../lib/autonomous-growth-repository.ts", import.meta.url), "utf8");
+  const operationalControls = readFileSync(new URL("../lib/operational-controls.ts", import.meta.url), "utf8");
   assert.match(repository, /claimQueuedEmailForSend[\s\S]*\$transaction[\s\S]*status:\s*"Queued"[\s\S]*sentDate:\s*null[\s\S]*status:\s*"Sending"/);
   assert.match(repository, /claimQueuedEmailForSend[\s\S]*queueItemHasPersistedApproval\(domain,\s*transaction\)/);
   assert.match(repository, /claimQueuedEmailForSend[\s\S]*updatedAt:\s*current\.updatedAt[\s\S]*claimed\.count\s*!==\s*1/);
+  assert.match(repository, /action:\s*"autonomous_email_send_domain"[\s\S]*subject:\s*recipientDomain[\s\S]*sendWithResend\(claim\.item\)/);
+  assert.match(operationalControls, /rateLimitBucket\.upsert[\s\S]*action_subject_windowStart[\s\S]*count:\s*\{\s*increment:\s*1\s*\}/);
   assert.match(repository, /approveAndQueueEmail[\s\S]*packageStatus\s*===\s*"SENT"[\s\S]*packageSentAt[\s\S]*throw new ApprovalBlockedError/);
   assert.match(repository, /approveAndQueueEmail[\s\S]*outreachDraft\.updateMany[\s\S]*outreachQueueItem\.updateMany[\s\S]*isolationLevel:\s*"Serializable"/);
   assert.doesNotMatch(repository, /autoEmailPilotCyclePromise/);
