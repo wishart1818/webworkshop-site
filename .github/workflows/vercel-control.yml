@@ -118,7 +118,37 @@ jobs:
             npx --yes vercel@latest curl "$url" --token "$VERCEL_TOKEN" --silent --show-error --fail-with-body "$@"
           }
 
+          sanitize_file() {
+            local file="$1"
+            head -c 1200 "$file" 2>/dev/null \
+              | tr '\r\n' '  ' \
+              | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g' \
+              | sed -E 's/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig'
+          }
+
           case "$COMMAND" in
+            "/vercel diagnose")
+              set +e
+              npx --yes vercel@latest curl /api/engine/autonomous-growth --token "$VERCEL_TOKEN" \
+                --silent --show-error --include --output /tmp/diagnose-response.txt 2>/tmp/diagnose-request.err
+              request_status=$?
+              npx --yes vercel@latest logs --environment production --level error --since 15m --token "$VERCEL_TOKEN" \
+                >/tmp/diagnose-logs.txt 2>&1
+              logs_status=$?
+              set -e
+              response="$(sanitize_file /tmp/diagnose-response.txt)"
+              request_error="$(sanitize_file /tmp/diagnose-request.err)"
+              recent_errors="$(tail -c 1200 /tmp/diagnose-logs.txt 2>/dev/null | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g; s/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig')"
+              comment "### Vercel diagnostic
+- Endpoint command exit: \`${request_status}\`
+- Logs command exit: \`${logs_status}\`
+- Endpoint response: \`${response:-empty}\`
+- Request error: \`${request_error:-none}\`
+- Recent production errors: \`${recent_errors:-none}\`
+
+No settings were changed and no email was sent."
+              ;;
+
             "/vercel status")
               required_variables_present
               comment "✅ Vercel connection and required Production variable names are available for \`$VERCEL_PROJECT_NAME\`. No settings changed and no deployment started."
@@ -271,7 +301,7 @@ jobs:
               ;;
 
             *)
-              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel verify-pilot CONFIRM\`, \`/vercel redeploy\`."
+              comment "❌ Command rejected. Allowed: \`/vercel diagnose\`, \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel verify-pilot CONFIRM\`, \`/vercel redeploy\`."
               exit 1
               ;;
           esac
