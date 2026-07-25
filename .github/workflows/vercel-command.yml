@@ -1,0 +1,82 @@
+name: Vercel Command
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/vercel-command.json
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: webworkshop-vercel-command
+  cancel-in-progress: true
+
+jobs:
+  run-command:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Read command
+        shell: bash
+        run: |
+          set -euo pipefail
+          command="$(node -e "const c=require('./.github/vercel-command.json'); process.stdout.write(String(c.command||''))")"
+          nonce="$(node -e "const c=require('./.github/vercel-command.json'); process.stdout.write(String(c.nonce||''))")"
+          echo "COMMAND=$command" >> "$GITHUB_ENV"
+          echo "COMMAND_NONCE=$nonce" >> "$GITHUB_ENV"
+
+      - name: Link Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest link --yes --project webworkshop-site --token "$VERCEL_TOKEN" >/tmp/vercel-link.log 2>&1
+          npx --yes vercel@latest project inspect --token "$VERCEL_TOKEN" >/dev/null
+
+      - name: Execute command
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          comment() {
+            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$1"
+          }
+
+          sanitize_file() {
+            head -c 1800 "$1" 2>/dev/null \
+              | tr '\r\n' '  ' \
+              | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g' \
+              | sed -E 's/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig'
+          }
+
+          case "$COMMAND" in
+            diagnose)
+              set +e
+              npx --yes vercel@latest curl /api/engine/autonomous-growth --token "$VERCEL_TOKEN" \
+                --silent --show-error --include --max-time 45 --output /tmp/response.txt 2>/tmp/request.err
+              status=$?
+              set -e
+              response="$(sanitize_file /tmp/response.txt)"
+              request_error="$(sanitize_file /tmp/request.err)"
+              comment "### Push-triggered Vercel diagnostic
+- Nonce: \`${COMMAND_NONCE}\`
+- Endpoint exit: \`${status}\`
+- Endpoint response: \`${response:-empty}\`
+- Request error: \`${request_error:-none}\`
+
+No settings were changed and no email was sent."
+              ;;
+            *)
+              comment "❌ Unknown push-triggered Vercel command: \`$COMMAND\`. No settings were changed."
+              exit 1
+              ;;
+          esac
