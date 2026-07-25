@@ -2,7 +2,8 @@ name: Vercel Command
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - .github/vercel-command.json
 
@@ -30,8 +31,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command="$(node -e "const c=require('./.github/vercel-command.json'); process.stdout.write(String(c.command||''))")"
-          nonce="$(node -e "const c=require('./.github/vercel-command.json'); process.stdout.write(String(c.nonce||''))")"
+          command="$(node -e 'const c=require("./.github/vercel-command.json"); process.stdout.write(String(c.command||""))')"
+          nonce="$(node -e 'const c=require("./.github/vercel-command.json"); process.stdout.write(String(c.nonce||""))')"
           echo "COMMAND=$command" >> "$GITHUB_ENV"
           echo "COMMAND_NONCE=$nonce" >> "$GITHUB_ENV"
 
@@ -46,37 +47,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$COMMAND" != "diagnose" ]]; then
+            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "Unknown push-triggered Vercel command. No settings were changed."
+            exit 1
+          fi
 
-          comment() {
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$1"
-          }
+          set +e
+          npx --yes vercel@latest curl /api/health/autopilot --token "$VERCEL_TOKEN" --silent --show-error --include --max-time 60 --output /tmp/response.txt 2>/tmp/request.err
+          status=$?
+          set -e
 
-          sanitize_file() {
-            head -c 1800 "$1" 2>/dev/null \
-              | tr '\r\n' '  ' \
-              | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g' \
-              | sed -E 's/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig'
-          }
-
-          case "$COMMAND" in
-            diagnose)
-              set +e
-              npx --yes vercel@latest curl /api/engine/autonomous-growth --token "$VERCEL_TOKEN" \
-                --silent --show-error --include --max-time 45 --output /tmp/response.txt 2>/tmp/request.err
-              status=$?
-              set -e
-              response="$(sanitize_file /tmp/response.txt)"
-              request_error="$(sanitize_file /tmp/request.err)"
-              comment "### Push-triggered Vercel diagnostic
-- Nonce: \`${COMMAND_NONCE}\`
-- Endpoint exit: \`${status}\`
-- Endpoint response: \`${response:-empty}\`
-- Request error: \`${request_error:-none}\`
-
-No settings were changed and no email was sent."
-              ;;
-            *)
-              comment "❌ Unknown push-triggered Vercel command: \`$COMMAND\`. No settings were changed."
-              exit 1
-              ;;
-          esac
+          response="$(head -c 1200 /tmp/response.txt 2>/dev/null | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+          request_error="$(head -c 800 /tmp/request.err 2>/dev/null | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+          body="Vercel health diagnostic nonce ${COMMAND_NONCE}. Endpoint exit ${status}. Response: ${response:-empty}. Request error: ${request_error:-none}. No settings were changed and no email was sent."
+          gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$body"
