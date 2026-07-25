@@ -52,6 +52,16 @@ jobs:
             gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$1"
           }
 
+          compact_file() {
+            local file="$1"
+            local fallback="$2"
+            if [[ -s "$file" ]]; then
+              head -c 1600 "$file" | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g'
+            else
+              printf '%s' "$fallback"
+            fi
+          }
+
           fail() {
             post_result "Auto Email Pilot ${COMMAND} check failed. Outreach remains disabled and no prospect email was intentionally sent."
             exit 1
@@ -72,8 +82,24 @@ jobs:
               ;;
 
             smoke)
-              npx --yes vercel@latest curl /api/engine/autonomous-growth -X POST -H "Content-Type: application/json" -d '{"action":"run_fake_autopilot_smoke_test"}' >/tmp/result.json 2>/tmp/result.err || fail
-              node -e 'const fs=require("fs"); const d=JSON.parse(fs.readFileSync("/tmp/result.json","utf8")); const r=d.smokeTest||d.autopilotSmokeTest||d; if (r?.passed!==true) process.exit(1)' || fail
+              set +e
+              npx --yes vercel@latest curl /api/engine/autonomous-growth -X POST -H "Content-Type: application/json" -d '{"action":"run_fake_autopilot_smoke_test"}' >/tmp/result.json 2>/tmp/result.err
+              request_status=$?
+              set -e
+              response="$(compact_file /tmp/result.json empty)"
+              request_error="$(compact_file /tmp/result.err none)"
+              if [[ "$request_status" != "0" ]]; then
+                post_result "Auto Email Pilot smoke request failed for nonce ${COMMAND_NONCE}. Exit ${request_status}. Response: ${response}. Error: ${request_error}. Outreach remains disabled and no prospect email was intentionally sent."
+                exit 1
+              fi
+              set +e
+              node -e 'const fs=require("fs"); const d=JSON.parse(fs.readFileSync("/tmp/result.json","utf8")); const r=d.smokeTest||d.autopilotSmokeTest||d; if (r?.passed!==true) process.exit(1)'
+              assertion_status=$?
+              set -e
+              if [[ "$assertion_status" != "0" ]]; then
+                post_result "Auto Email Pilot smoke assertions failed for nonce ${COMMAND_NONCE}. Production response: ${response}. Outreach remains disabled and no prospect email was intentionally sent."
+                exit 1
+              fi
               post_result "Auto Email Pilot fake production pipeline passed for nonce ${COMMAND_NONCE}. No real email was sent and outreach remains disabled."
               ;;
 
