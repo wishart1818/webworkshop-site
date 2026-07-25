@@ -126,7 +126,7 @@ jobs:
               disable_outreach
               url="$(deploy_production)"
               set +e
-              response="$(npx --yes vercel@latest curl /api/health/autopilot --token "$VERCEL_TOKEN" 2>&1)"
+              response="$(npx --yes vercel@latest --token "$VERCEL_TOKEN" curl /api/health/autopilot --deployment "$url" 2>&1)"
               status=$?
               set -e
               safe_response="$(printf '%s' "$response" | head -c 1200 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g')"
