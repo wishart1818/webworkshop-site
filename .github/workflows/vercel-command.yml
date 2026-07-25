@@ -18,7 +18,7 @@ concurrency:
 jobs:
   run-command:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -47,24 +47,120 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$COMMAND" != "diagnose" ]]; then
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "Unknown push-triggered Vercel command. No settings were changed."
+
+          post_result() {
+            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$1"
+          }
+
+          vercel_get() {
+            npx --yes vercel@latest curl "$1"
+          }
+
+          if [[ "$COMMAND" == "diagnose" ]]; then
+            set +e
+            vercel_get /api/health/autopilot >/tmp/response.txt 2>/tmp/request.err
+            status=$?
+            set -e
+            response="empty"
+            request_error="none"
+            if [[ -s /tmp/response.txt ]]; then response="$(head -c 1200 /tmp/response.txt | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"; fi
+            if [[ -s /tmp/request.err ]]; then request_error="$(head -c 800 /tmp/request.err | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"; fi
+            post_result "Vercel health diagnostic nonce ${COMMAND_NONCE}. Endpoint exit ${status}. Response: ${response}. Request error: ${request_error}. No settings were changed and no email was sent."
+            exit 0
+          fi
+
+          if [[ "$COMMAND" != "verify" ]]; then
+            post_result "Unknown push-triggered Vercel command. No settings were changed."
             exit 1
           fi
 
-          set +e
-          npx --yes vercel@latest curl /api/health/autopilot >/tmp/response.txt 2>/tmp/request.err
-          status=$?
-          set -e
+          fail() {
+            local phase="$1"
+            post_result "Auto Email Pilot verification failed during ${phase}. Outreach remains disabled and no prospect email was intentionally sent."
+            exit 1
+          }
 
-          response="empty"
-          request_error="none"
-          if [[ -s /tmp/response.txt ]]; then
-            response="$(head -c 1200 /tmp/response.txt | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
-          fi
-          if [[ -s /tmp/request.err ]]; then
-            request_error="$(head -c 800 /tmp/request.err | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+          npm ci >/tmp/npm-ci.log 2>&1 || fail "dependency installation"
+          npx tsx --test tests/autonomous-growth.test.ts >/tmp/focused-tests.log 2>&1 || fail "focused safety tests"
+
+          vercel_get /api/health/autopilot >/tmp/health-before.json 2>/tmp/health-before.err || fail "production health check"
+          node -e 'const fs=require("fs"); const d=JSON.parse(fs.readFileSync("/tmp/health-before.json","utf8")); if (!(d.ok===true && d.failClosed===true && d.databaseConnected===true && d.requiredEnvironmentReady===true && d.queueReadable===true)) process.exit(1)' || fail "fail-closed production assertions"
+
+          vercel_get /api/engine/autonomous-growth >/tmp/dashboard-before.json 2>/tmp/dashboard-before.err || fail "production dashboard read"
+          node - <<'NODE' || exit 1
+          const fs = require('fs');
+          const d = JSON.parse(fs.readFileSync('/tmp/dashboard-before.json', 'utf8'));
+          if (!Array.isArray(d?.queue)) process.exit(1);
+          const snapshot = {
+            sent: d.queue.filter((item) => item?.status === 'Sent').length,
+            sending: d.queue.filter((item) => item?.status === 'Sending').length,
+          };
+          fs.writeFileSync('/tmp/queue-before.json', JSON.stringify(snapshot));
+          NODE
+
+          npx --yes vercel@latest curl /api/engine/autonomous-growth -X POST -H "Content-Type: application/json" -d '{"action":"run_fake_autopilot_smoke_test"}' >/tmp/fake-smoke.json 2>/tmp/fake-smoke.err || fail "production fake pipeline smoke test"
+          node -e 'const fs=require("fs"); const d=JSON.parse(fs.readFileSync("/tmp/fake-smoke.json","utf8")); const r=d.smokeTest||d.autopilotSmokeTest||d; if (r?.passed!==true) process.exit(1)' || fail "fake pipeline assertions"
+
+          cat >/tmp/provider-test.mjs <<'NODE'
+          import fs from 'node:fs';
+          const required = ['RESEND_API_KEY', 'OUTREACH_FROM_EMAIL', 'OUTREACH_REPLY_TO_EMAIL'];
+          if (required.some((key) => !String(process.env[key] || '').trim())) throw new Error('Provider variables are missing.');
+          const recipient = process.env.OUTREACH_REPLY_TO_EMAIL.trim();
+          const response = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': `webworkshop-controlled-verification-${process.env.GITHUB_RUN_ID}`,
+            },
+            body: JSON.stringify({
+              from: process.env.OUTREACH_FROM_EMAIL.trim(),
+              to: [recipient],
+              reply_to: recipient,
+              subject: '[WebWorkshop] Auto Email Pilot delivery test',
+              text: 'This controlled verification was sent only to the configured WebWorkshop operator inbox. No prospect was contacted.',
+            }),
+          });
+          if (!response.ok) throw new Error(`Resend returned HTTP ${response.status}.`);
+          const payload = await response.json();
+          if (typeof payload?.id !== 'string' || !payload.id.trim()) throw new Error('Resend did not return a valid message ID.');
+          fs.writeFileSync('/tmp/provider-result.json', JSON.stringify({ id: payload.id.trim() }));
+          NODE
+          npx --yes vercel@latest env run -e production -- node /tmp/provider-test.mjs >/tmp/provider-test.log 2>&1 || fail "controlled operator delivery"
+
+          vercel_get /api/engine/autonomous-growth >/tmp/dashboard-after.json 2>/tmp/dashboard-after.err || fail "post-test dashboard read"
+          node - <<'NODE' || exit 1
+          const fs = require('fs');
+          const before = JSON.parse(fs.readFileSync('/tmp/queue-before.json', 'utf8'));
+          const d = JSON.parse(fs.readFileSync('/tmp/dashboard-after.json', 'utf8'));
+          if (!Array.isArray(d?.queue)) process.exit(1);
+          const after = {
+            sent: d.queue.filter((item) => item?.status === 'Sent').length,
+            sending: d.queue.filter((item) => item?.status === 'Sending').length,
+          };
+          if (after.sent !== before.sent || after.sending !== before.sending) process.exit(1);
+          NODE
+
+          node - <<'NODE' || fail "deployment security probe setup"
+          const fs = require('fs');
+          const linked = JSON.parse(fs.readFileSync('.vercel/project.json', 'utf8'));
+          const params = new URLSearchParams({ projectId: linked.projectId, target: 'production', limit: '1' });
+          if (String(linked.orgId || '').startsWith('team_')) params.set('teamId', linked.orgId);
+          const response = await fetch(`https://api.vercel.com/v6/deployments?${params}`, { headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` } });
+          if (!response.ok) process.exit(1);
+          const payload = await response.json();
+          const url = payload?.deployments?.[0]?.url;
+          if (!url) process.exit(1);
+          fs.writeFileSync('/tmp/production-url.txt', `https://${url}`);
+          NODE
+
+          production_url="$(cat /tmp/production-url.txt)"
+          public_code="$(curl -sS -o /tmp/public-probe.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"action":"security_probe"}' "${production_url}/api/engine/autonomous-growth" || true)"
+          if [[ "$public_code" == "200" || "$public_code" == "400" || "$public_code" == "409" || "$public_code" == "503" ]]; then
+            security="public"
+          else
+            security="protected"
           fi
 
-          body="Vercel health diagnostic nonce ${COMMAND_NONCE}. Endpoint exit ${status}. Response: ${response}. Request error: ${request_error}. No settings were changed and no email was sent."
-          gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$body"
+          provider_id="$(node -e 'const r=require("/tmp/provider-result.json"); process.stdout.write(r.id)')"
+          post_result "Auto Email Pilot verification passed. Focused safety tests passed; Production environment, database, and queue are healthy and fail-closed; the fake pipeline passed; Resend accepted one controlled message to the configured operator inbox; no prospect queue item changed to Sent or Sending. Provider message ID: ${provider_id}. External mutation endpoint status: ${security} (HTTP ${public_code}). Outreach remains disabled."
