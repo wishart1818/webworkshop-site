@@ -102,6 +102,20 @@ jobs:
             fi
           }
 
+          required_base_variables_present() {
+            npx --yes vercel@latest env ls production --token "$VERCEL_TOKEN" >/tmp/vercel-env-list.txt
+            local required=(DATABASE_URL RESEND_API_KEY OUTREACH_FROM_EMAIL OUTREACH_REPLY_TO_EMAIL WEBWORKSHOP_POSTAL_ADDRESS)
+            local missing=()
+            local key
+            for key in "${required[@]}"; do
+              grep -q "$key" /tmp/vercel-env-list.txt || missing+=("$key")
+            done
+            if (( ${#missing[@]} > 0 )); then
+              comment "❌ Required Production variable name(s) are missing: \`${missing[*]}\`. No prospect email was sent."
+              return 1
+            fi
+          }
+
           case "$COMMAND" in
             "/vercel status")
               required_variables_present
@@ -139,24 +153,31 @@ jobs:
               ;;
 
             "/vercel cron-health")
-              required_variables_present
+              required_base_variables_present
               disable_outreach
-              url="$(deploy_production)"
               npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --yes --token "$VERCEL_TOKEN" >/dev/null
               set -a
               source /tmp/webworkshop-production.env
               set +a
+              cron_secret_created=false
               if [[ -z "${CRON_SECRET:-}" ]]; then
-                comment "❌ CRON_SECRET is empty. Scheduled outreach remains disabled."
-                exit 1
+                CRON_SECRET="$(openssl rand -hex 32)"
+                set_env CRON_SECRET "$CRON_SECRET"
+                cron_secret_created=true
               fi
+              url="$(deploy_production)"
               set +e
               response="$(npx --yes vercel@latest curl "${url}/api/cron/autopilot" -H "Authorization: Bearer ${CRON_SECRET}" 2>&1)"
               status=$?
               set -e
               safe_response="$(printf '%s' "$response" | head -c 1200 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g')"
               if [[ $status -eq 0 ]] && printf '%s' "$response" | grep -q '"ok":true' && printf '%s' "$response" | grep -q '"sent":0'; then
-                comment "✅ Scheduled Auto Email Pilot endpoint passed in fail-closed mode. Authentication worked, the real inventory-processing path executed, and zero emails were sent while outreach remained disabled. Deployment: ${url}. Probe: \`${safe_response}\`"
+                if [[ "$cron_secret_created" == "true" ]]; then
+                  setup_note=" A new secure CRON_SECRET was created in Vercel Production."
+                else
+                  setup_note=" The existing CRON_SECRET was retained."
+                fi
+                comment "✅ Scheduled Auto Email Pilot endpoint passed in fail-closed mode.${setup_note} Authentication worked, the real inventory-processing path executed, and zero emails were sent while outreach remained disabled. Deployment: ${url}. Probe: \`${safe_response}\`"
               else
                 comment "❌ Scheduled Auto Email Pilot endpoint did not pass safely. Outreach remains disabled and the daily cap remains 1. Deployment: ${url}. Probe: \`${safe_response:-empty}\`"
                 exit 1
