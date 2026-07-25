@@ -15,7 +15,7 @@ concurrency:
 jobs:
   control:
     if: >-
-      github.event.issue.number == 3 &&
+      github.event.issue.number == 4 &&
       github.actor == 'wishart1818' &&
       !github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/vercel ')
@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${VERCEL_TOKEN:-}" ]]; then
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ Vercel control is not configured. Add the GitHub Actions secret \`VERCEL_TOKEN\`, then retry."
+            gh issue comment 4 --repo "$GITHUB_REPOSITORY" --body "❌ Vercel control is not configured. Add the GitHub Actions secret \`VERCEL_TOKEN\`, then retry."
             exit 1
           fi
 
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-link.log 2>&1; then
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ The Vercel token could not link to \`$VERCEL_PROJECT_NAME\`. No settings were changed."
+            gh issue comment 4 --repo "$GITHUB_REPOSITORY" --body "❌ The Vercel token could not link to \`$VERCEL_PROJECT_NAME\`. No settings were changed."
             exit 1
           fi
           npx --yes vercel@latest project inspect --token "$VERCEL_TOKEN" >/dev/null
@@ -58,7 +58,7 @@ jobs:
           set -euo pipefail
 
           comment() {
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$1"
+            gh issue comment 4 --repo "$GITHUB_REPOSITORY" --body "$1"
           }
 
           set_env() {
