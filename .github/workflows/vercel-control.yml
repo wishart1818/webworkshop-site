@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: webworkshop-vercel-control
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   control:
