@@ -67,11 +67,6 @@ jobs:
             printf '%s' "$value" | npx --yes vercel@latest env add "$key" production --force --token "$VERCEL_TOKEN" >/dev/null
           }
 
-          remove_env() {
-            local key="$1"
-            npx --yes vercel@latest env rm "$key" production --yes --token "$VERCEL_TOKEN" >/dev/null 2>&1 || true
-          }
-
           disable_outreach() {
             set_env AUTOPILOT_DISABLED true
             set_env OUTREACH_AUTO_SEND_ENABLED false
@@ -103,17 +98,6 @@ jobs:
             done
             if (( ${#missing[@]} > 0 )); then
               comment "❌ Required Production variable name(s) are missing: \`${missing[*]}\`. No prospect email was sent."
-              return 1
-            fi
-          }
-
-          run_focused_tests() {
-            if ! npm ci >/tmp/verification-npm-ci.log 2>&1; then
-              comment "❌ Verification stopped because dependencies could not be installed. Outreach remains disabled."
-              return 1
-            fi
-            if ! npx tsx --test tests/autonomous-growth.test.ts >/tmp/verification-safety-tests.log 2>&1; then
-              comment "❌ Verification stopped because focused Auto Email Pilot safety tests failed. Outreach remains disabled."
               return 1
             fi
           }
@@ -154,110 +138,13 @@ jobs:
               fi
               ;;
 
-            "/vercel smoke-test CONFIRM")
-              required_variables_present
-              disable_outreach
-              run_focused_tests
-
-              verification_token="$(openssl rand -hex 32)"
-              echo "::add-mask::${verification_token}"
-              set_env AUTOPILOT_VERIFICATION_TOKEN "$verification_token"
-              verification_url="$(deploy_production)"
-
-              set +e
-              npx --yes vercel@latest curl "${verification_url}/api/health/autopilot" \
-                -X POST \
-                -H "Content-Type: application/json" \
-                -H "x-webworkshop-verification-token: ${verification_token}" \
-                --data-raw '{"mode":"smoke"}' \
-                --silent --show-error \
-                >/tmp/smoke-response.json 2>/tmp/smoke-request.err
-              request_status=$?
-              set -e
-
-              smoke_ok=false
-              if [[ $request_status -eq 0 ]]; then
-                if node - <<'NODE'
-          const fs = require('fs');
-          try {
-            const data = JSON.parse(fs.readFileSync('/tmp/smoke-response.json', 'utf8'));
-            if (data?.ok === true && data?.smokeTest?.passed === true && data?.prospectContacted === false) process.exit(0);
-          } catch {}
-          process.exit(1);
-          NODE
-                then
-                  smoke_ok=true
-                fi
-              fi
-
-              remove_env AUTOPILOT_VERIFICATION_TOKEN
-              safe_url="$(deploy_production)"
-
-              if [[ "$smoke_ok" != "true" ]]; then
-                safe_error="$(cat /tmp/smoke-request.err /tmp/smoke-response.json 2>/dev/null | tail -c 1400 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g; s/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig')"
-                comment "❌ Production fake-pipeline verification failed. The one-time verification token was removed, production was redeployed, outreach remains disabled, and no prospect was contacted. Error: \`${safe_error:-smoke test failed}\`"
-                exit 1
-              fi
-
-              comment "✅ Production fake-pipeline verification passed. Focused safety tests passed, the real Production database/runtime executed the fake Autopilot pipeline successfully, no real provider call was made, and no prospect was contacted. The one-time verification token was removed. Outreach remains disabled, full-auto remains disabled, and the daily cap remains 1. Production: ${safe_url}"
-              ;;
-
-            "/vercel provider-test CONFIRM")
-              required_variables_present
-              disable_outreach
-              run_focused_tests
-
-              verification_token="$(openssl rand -hex 32)"
-              echo "::add-mask::${verification_token}"
-              set_env AUTOPILOT_VERIFICATION_TOKEN "$verification_token"
-              verification_url="$(deploy_production)"
-
-              set +e
-              npx --yes vercel@latest curl "${verification_url}/api/health/autopilot" \
-                -X POST \
-                -H "Content-Type: application/json" \
-                -H "x-webworkshop-verification-token: ${verification_token}" \
-                --data-raw '{"mode":"provider"}' \
-                --silent --show-error \
-                >/tmp/provider-response.json 2>/tmp/provider-request.err
-              request_status=$?
-              set -e
-
-              provider_ok=false
-              provider_id=""
-              if [[ $request_status -eq 0 ]]; then
-                provider_id="$(node - <<'NODE'
-          const fs = require('fs');
-          try {
-            const data = JSON.parse(fs.readFileSync('/tmp/provider-response.json', 'utf8'));
-            if (data?.ok === true && typeof data.providerMessageId === 'string' && data.providerMessageId.trim()) {
-              process.stdout.write(data.providerMessageId.trim());
-            }
-          } catch {}
-          NODE
-          )"
-                [[ -n "$provider_id" ]] && provider_ok=true
-              fi
-
-              remove_env AUTOPILOT_VERIFICATION_TOKEN
-              safe_url="$(deploy_production)"
-
-              if [[ "$provider_ok" != "true" ]]; then
-                safe_error="$(cat /tmp/provider-request.err /tmp/provider-response.json 2>/dev/null | tail -c 1000 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g; s/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig')"
-                comment "❌ Controlled Resend verification failed. The one-time verification token was removed, production was redeployed, outreach remains disabled, and the daily cap remains 1. Error: \`${safe_error:-provider test failed}\`"
-                exit 1
-              fi
-
-              comment "✅ Controlled provider verification passed. Focused Auto Email Pilot safety tests passed, Resend accepted one test email sent only to the configured operator reply-to address, and no prospect was contacted. Provider message ID: \`${provider_id}\`. The one-time verification token was removed. Outreach remains disabled, full-auto remains disabled, and the daily cap remains 1. Production: ${safe_url}"
-              ;;
-
             "/vercel redeploy")
               url="$(deploy_production)"
               comment "✅ Production was redeployed without changing environment variables: ${url}"
               ;;
 
             *)
-              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, \`/vercel smoke-test CONFIRM\`, \`/vercel provider-test CONFIRM\`, and \`/vercel redeploy\`."
+              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, and \`/vercel redeploy\`."
               exit 1
               ;;
           esac
