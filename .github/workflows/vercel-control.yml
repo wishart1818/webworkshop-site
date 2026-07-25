@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: webworkshop-vercel-control
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   control:
@@ -20,7 +20,7 @@ jobs:
       !github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/vercel ')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     env:
       COMMAND: ${{ github.event.comment.body }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${VERCEL_TOKEN:-}" ]]; then
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ Add the GitHub Actions secret \`VERCEL_TOKEN\`, then retry."
+            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ Vercel control is not configured. Add the GitHub Actions secret \`VERCEL_TOKEN\`, then retry."
             exit 1
           fi
 
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-link.log 2>&1; then
-            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ The token could not link to \`$VERCEL_PROJECT_NAME\`. No settings were changed."
+            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ The Vercel token could not link to \`$VERCEL_PROJECT_NAME\`. No settings were changed."
             exit 1
           fi
           npx --yes vercel@latest project inspect --token "$VERCEL_TOKEN" >/dev/null
@@ -67,6 +67,14 @@ jobs:
             printf '%s' "$value" | npx --yes vercel@latest env add "$key" production --force --token "$VERCEL_TOKEN" >/dev/null
           }
 
+          disable_outreach() {
+            set_env AUTOPILOT_DISABLED true
+            set_env OUTREACH_AUTO_SEND_ENABLED false
+            set_env OUTREACH_FULL_AUTO_SEND_ENABLED false
+            set_env OUTREACH_DAILY_CAP 1
+            set_env OUTREACH_EMAIL_DISABLED true
+          }
+
           enable_reviewed_pilot() {
             set_env AUTOPILOT_DISABLED false
             set_env OUTREACH_AUTO_SEND_ENABLED true
@@ -74,14 +82,6 @@ jobs:
             set_env OUTREACH_DAILY_CAP 1
             set_env OUTREACH_EMAIL_DISABLED false
             set_env OUTREACH_SEND_PROVIDER resend
-          }
-
-          disable_outreach() {
-            set_env AUTOPILOT_DISABLED true
-            set_env OUTREACH_AUTO_SEND_ENABLED false
-            set_env OUTREACH_FULL_AUTO_SEND_ENABLED false
-            set_env OUTREACH_DAILY_CAP 1
-            set_env OUTREACH_EMAIL_DISABLED true
           }
 
           deploy_production() {
@@ -102,47 +102,7 @@ jobs:
             fi
           }
 
-          fail_closed() {
-            local phase="$1"
-            set +e
-            disable_outreach
-            local safe_url
-            safe_url="$(deploy_production)"
-            comment "❌ Pilot verification failed during ${phase}. Outreach was automatically disabled and production was redeployed fail-closed. Deployment: ${safe_url:-unavailable}. No prospect test email was intentionally sent."
-            exit 1
-          }
-
-          vercel_request() {
-            local url="$1"
-            shift
-            npx --yes vercel@latest curl "$url" --token "$VERCEL_TOKEN" --silent --show-error --fail-with-body "$@"
-          }
-
-          sanitize_file() {
-            local file="$1"
-            head -c 1600 "$file" 2>/dev/null \
-              | tr '\r\n' '  ' \
-              | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g' \
-              | sed -E 's/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig'
-          }
-
           case "$COMMAND" in
-            "/vercel diagnose")
-              set +e
-              npx --yes vercel@latest curl /api/engine/autonomous-growth --token "$VERCEL_TOKEN" \
-                --silent --show-error --include --max-time 45 --output /tmp/diagnose-response.txt 2>/tmp/diagnose-request.err
-              request_status=$?
-              set -e
-              response="$(sanitize_file /tmp/diagnose-response.txt)"
-              request_error="$(sanitize_file /tmp/diagnose-request.err)"
-              comment "### Vercel diagnostic
-- Endpoint command exit: \`${request_status}\`
-- Endpoint response: \`${response:-empty}\`
-- Request error: \`${request_error:-none}\`
-
-No settings were changed and no email was sent."
-              ;;
-
             "/vercel status")
               required_variables_present
               comment "✅ Vercel connection and required Production variable names are available for \`$VERCEL_PROJECT_NAME\`. No settings changed and no deployment started."
@@ -161,132 +121,21 @@ No settings were changed and no email was sent."
               comment "✅ Reviewed Auto Email Pilot test mode was enabled with a daily cap of 1 and full-auto disabled. Production was redeployed: ${url}"
               ;;
 
-            "/vercel verify-pilot CONFIRM")
-              required_variables_present || fail_closed "required-variable validation"
-
-              if ! npm ci >/tmp/pilot-npm-ci.log 2>&1; then
-                tail -80 /tmp/pilot-npm-ci.log
-                fail_closed "dependency installation"
-              fi
-              if ! npx tsx --test tests/autonomous-growth.test.ts >/tmp/pilot-tests.log 2>&1; then
-                tail -120 /tmp/pilot-tests.log
-                fail_closed "focused safety tests"
-              fi
-
-              enable_reviewed_pilot
-              verification_url="$(deploy_production)"
-
-              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" --max-time 60 --output /tmp/dashboard-before.json 2>/tmp/dashboard-before.err; then
-                cat /tmp/dashboard-before.err
-                [[ -f /tmp/dashboard-before.json ]] && head -c 1000 /tmp/dashboard-before.json || true
-                fail_closed "production dashboard/database health check"
-              fi
-
-              if ! node <<'NODE'
-          const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync('/tmp/dashboard-before.json', 'utf8'));
-          if (!data || typeof data !== 'object' || !data.settings || !Array.isArray(data.queue)) {
-            throw new Error('Production dashboard did not return settings and a queue array.');
-          }
-          fs.writeFileSync('/tmp/queue-before.json', JSON.stringify({
-            sent: data.queue.filter((item) => item?.status === 'Sent').length,
-            sending: data.queue.filter((item) => item?.status === 'Sending').length,
-          }));
-          NODE
-              then
-                fail_closed "production dashboard response validation"
-              fi
-
-              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" \
-                -X POST -H "Content-Type: application/json" \
-                -d '{"action":"run_fake_autopilot_smoke_test"}' \
-                --max-time 60 --output /tmp/fake-smoke.json 2>/tmp/fake-smoke.err; then
-                cat /tmp/fake-smoke.err
-                [[ -f /tmp/fake-smoke.json ]] && head -c 1000 /tmp/fake-smoke.json || true
-                fail_closed "production fake pipeline smoke test"
-              fi
-
-              if ! node <<'NODE'
-          const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync('/tmp/fake-smoke.json', 'utf8'));
-          const result = data.smokeTest || data.autopilotSmokeTest || data;
-          if (result?.passed !== true) throw new Error('The fake Autopilot pipeline smoke test did not pass.');
-          NODE
-              then
-                fail_closed "production fake pipeline smoke-test assertions"
-              fi
-
-              cat >/tmp/provider-verification.mjs <<'NODE'
-          import fs from 'node:fs';
-          const expected = {
-            AUTOPILOT_DISABLED: 'false',
-            OUTREACH_AUTO_SEND_ENABLED: 'true',
-            OUTREACH_FULL_AUTO_SEND_ENABLED: 'false',
-            OUTREACH_DAILY_CAP: '1',
-            OUTREACH_EMAIL_DISABLED: 'false',
-            OUTREACH_SEND_PROVIDER: 'resend',
-          };
-          for (const [key, value] of Object.entries(expected)) {
-            if (String(process.env[key] || '').trim().toLowerCase() !== value) {
-              throw new Error(`Production safety flag ${key} is not set to the expected value.`);
-            }
-          }
-          const required = ['DATABASE_URL', 'RESEND_API_KEY', 'OUTREACH_FROM_EMAIL', 'OUTREACH_REPLY_TO_EMAIL', 'WEBWORKSHOP_POSTAL_ADDRESS'];
-          const missing = required.filter((key) => !String(process.env[key] || '').trim());
-          if (missing.length) throw new Error(`Missing required Production variables: ${missing.join(', ')}`);
-
-          const to = process.env.OUTREACH_REPLY_TO_EMAIL.trim();
-          const response = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${process.env.RESEND_API_KEY.trim()}`,
-              'Content-Type': 'application/json',
-              'Idempotency-Key': `webworkshop-pilot-verification-${process.env.GITHUB_RUN_ID || Date.now()}`,
-            },
-            body: JSON.stringify({
-              from: process.env.OUTREACH_FROM_EMAIL.trim(),
-              to: [to],
-              reply_to: to,
-              subject: '[WebWorkshop] Auto Email Pilot delivery test',
-              text: 'Controlled WebWorkshop delivery verification sent only to the configured operator reply-to address. No prospect was contacted.',
-            }),
-          });
-          if (!response.ok) throw new Error(`Resend rejected the controlled delivery test with HTTP ${response.status}.`);
-          const payload = await response.json();
-          if (typeof payload?.id !== 'string' || !payload.id.trim()) throw new Error('Resend did not return a valid message ID.');
-          fs.writeFileSync('/tmp/provider-result.json', JSON.stringify({ id: payload.id.trim() }));
-          NODE
-
-              if ! npx --yes vercel@latest env run -e production --token "$VERCEL_TOKEN" -- node /tmp/provider-verification.mjs >/tmp/provider-verification.log 2>&1; then
-                cat /tmp/provider-verification.log
-                fail_closed "production safety-flag or Resend delivery verification"
-              fi
-
-              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" --max-time 60 --output /tmp/dashboard-after.json 2>/tmp/dashboard-after.err; then
-                cat /tmp/dashboard-after.err
-                fail_closed "post-verification dashboard check"
-              fi
-
-              if ! node <<'NODE'
-          const fs = require('fs');
-          const before = JSON.parse(fs.readFileSync('/tmp/queue-before.json', 'utf8'));
-          const data = JSON.parse(fs.readFileSync('/tmp/dashboard-after.json', 'utf8'));
-          if (!Array.isArray(data?.queue)) throw new Error('Post-verification queue could not be read.');
-          const after = {
-            sent: data.queue.filter((item) => item?.status === 'Sent').length,
-            sending: data.queue.filter((item) => item?.status === 'Sending').length,
-          };
-          if (after.sent !== before.sent) throw new Error('A prospect queue item changed to Sent during verification.');
-          if (after.sending !== before.sending) throw new Error('A prospect queue item changed Sending state during verification.');
-          NODE
-              then
-                fail_closed "no-prospect-contact invariant"
-              fi
-
-              provider_id="$(node -e "const r=require('/tmp/provider-result.json'); process.stdout.write(r.id)")"
+            "/vercel health")
+              required_variables_present
               disable_outreach
-              safe_url="$(deploy_production)"
-              comment "✅ Auto Email Pilot verification passed: focused safety tests, production database/dashboard, fake pipeline, safety flags, and controlled Resend delivery all succeeded; no prospect queue item was sent or left Sending. Provider message ID: ${provider_id}. Outreach was then disabled again and production redeployed fail-closed at ${safe_url}."
+              url="$(deploy_production)"
+              set +e
+              response="$(npx --yes vercel@latest curl /api/health/autopilot --token "$VERCEL_TOKEN" 2>&1)"
+              status=$?
+              set -e
+              safe_response="$(printf '%s' "$response" | head -c 1200 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g')"
+              if [[ $status -eq 0 ]] && printf '%s' "$response" | grep -q '"ok":true'; then
+                comment "✅ Fail-closed production health probe passed. Required environment variables are present, the database/dashboard queue is readable, outreach is disabled, and the daily cap is 1. Deployment: ${url}. Probe: \`${safe_response}\`"
+              else
+                comment "❌ Fail-closed production health probe did not pass. Outreach remains disabled and the daily cap remains 1. Deployment: ${url}. Probe: \`${safe_response:-empty}\`"
+                exit 1
+              fi
               ;;
 
             "/vercel redeploy")
@@ -295,7 +144,7 @@ No settings were changed and no email was sent."
               ;;
 
             *)
-              comment "❌ Command rejected. Allowed: \`/vercel diagnose\`, \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel verify-pilot CONFIRM\`, \`/vercel redeploy\`."
+              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, and \`/vercel redeploy\`."
               exit 1
               ;;
           esac
