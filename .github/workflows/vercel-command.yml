@@ -53,7 +53,7 @@ jobs:
           fi
 
           set +e
-          npx --yes vercel@latest --token "$VERCEL_TOKEN" curl /api/health/autopilot >/tmp/response.txt 2>/tmp/request.err
+          npx --yes vercel@latest curl --token "$VERCEL_TOKEN" /api/health/autopilot >/tmp/response.txt 2>/tmp/request.err
           status=$?
           set -e
 
