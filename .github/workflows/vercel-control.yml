@@ -138,13 +138,86 @@ jobs:
               fi
               ;;
 
+            "/vercel provider-test CONFIRM")
+              required_variables_present
+              disable_outreach
+              safe_url="$(deploy_production)"
+
+              if ! npm ci >/tmp/provider-npm-ci.log 2>&1; then
+                comment "❌ Controlled provider verification stopped because dependencies could not be installed. Outreach remains disabled."
+                exit 1
+              fi
+              if ! npx tsx --test tests/autonomous-growth.test.ts >/tmp/provider-safety-tests.log 2>&1; then
+                comment "❌ Controlled provider verification stopped because focused Auto Email Pilot safety tests failed. Outreach remains disabled."
+                exit 1
+              fi
+
+              cat >/tmp/provider-test.mjs <<'NODE'
+          import fs from 'node:fs';
+
+          const required = [
+            'RESEND_API_KEY',
+            'OUTREACH_FROM_EMAIL',
+            'OUTREACH_REPLY_TO_EMAIL',
+          ];
+          const missing = required.filter((key) => !String(process.env[key] || '').trim());
+          if (missing.length) throw new Error('Required provider configuration is missing.');
+
+          const expected = {
+            AUTOPILOT_DISABLED: 'true',
+            OUTREACH_AUTO_SEND_ENABLED: 'false',
+            OUTREACH_FULL_AUTO_SEND_ENABLED: 'false',
+            OUTREACH_DAILY_CAP: '1',
+            OUTREACH_EMAIL_DISABLED: 'true',
+          };
+          for (const [key, value] of Object.entries(expected)) {
+            if (String(process.env[key] || '').trim().toLowerCase() !== value) {
+              throw new Error(`Fail-closed safety flag ${key} is not set correctly.`);
+            }
+          }
+
+          const replyTo = process.env.OUTREACH_REPLY_TO_EMAIL.trim();
+          const response = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': `webworkshop-controlled-provider-test-${process.env.GITHUB_RUN_ID || Date.now()}`,
+            },
+            body: JSON.stringify({
+              from: process.env.OUTREACH_FROM_EMAIL.trim(),
+              to: [replyTo],
+              reply_to: replyTo,
+              subject: '[WebWorkshop] Controlled Auto Email Pilot verification',
+              text: 'This controlled verification was sent only to the configured WebWorkshop operator reply-to address. No prospect was contacted. Outreach remains disabled and the daily cap remains 1.',
+            }),
+          });
+
+          if (!response.ok) throw new Error(`Resend rejected the controlled verification with HTTP ${response.status}.`);
+          const payload = await response.json();
+          if (typeof payload?.id !== 'string' || !payload.id.trim()) {
+            throw new Error('Resend did not return a valid provider message ID.');
+          }
+          fs.writeFileSync('/tmp/provider-result.json', JSON.stringify({ id: payload.id.trim() }));
+          NODE
+
+              if ! npx --yes vercel@latest env run -e production --token "$VERCEL_TOKEN" -- node /tmp/provider-test.mjs >/tmp/provider-test.log 2>&1; then
+                safe_error="$(tail -c 900 /tmp/provider-test.log | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g; s/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig')"
+                comment "❌ Controlled Resend verification failed. Outreach remains disabled and the daily cap remains 1. Error: \`${safe_error:-provider test failed}\`"
+                exit 1
+              fi
+
+              provider_id="$(node -e "const r=require('/tmp/provider-result.json'); process.stdout.write(r.id)")"
+              comment "✅ Controlled provider verification passed. Focused Auto Email Pilot safety tests passed, Resend accepted one test email sent only to the configured operator reply-to address, and no prospect was contacted. Provider message ID: \`${provider_id}\`. Outreach remains disabled, full-auto remains disabled, and the daily cap remains 1. Production: ${safe_url}"
+              ;;
+
             "/vercel redeploy")
               url="$(deploy_production)"
               comment "✅ Production was redeployed without changing environment variables: ${url}"
               ;;
 
             *)
-              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, and \`/vercel redeploy\`."
+              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, \`/vercel provider-test CONFIRM\`, and \`/vercel redeploy\`."
               exit 1
               ;;
           esac
