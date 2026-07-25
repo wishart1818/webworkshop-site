@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: webworkshop-vercel-control
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   control:
@@ -120,7 +120,7 @@ jobs:
 
           sanitize_file() {
             local file="$1"
-            head -c 1200 "$file" 2>/dev/null \
+            head -c 1600 "$file" 2>/dev/null \
               | tr '\r\n' '  ' \
               | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g' \
               | sed -E 's/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig'
@@ -130,21 +130,15 @@ jobs:
             "/vercel diagnose")
               set +e
               npx --yes vercel@latest curl /api/engine/autonomous-growth --token "$VERCEL_TOKEN" \
-                --silent --show-error --include --output /tmp/diagnose-response.txt 2>/tmp/diagnose-request.err
+                --silent --show-error --include --max-time 45 --output /tmp/diagnose-response.txt 2>/tmp/diagnose-request.err
               request_status=$?
-              npx --yes vercel@latest logs --environment production --level error --since 15m --token "$VERCEL_TOKEN" \
-                >/tmp/diagnose-logs.txt 2>&1
-              logs_status=$?
               set -e
               response="$(sanitize_file /tmp/diagnose-response.txt)"
               request_error="$(sanitize_file /tmp/diagnose-request.err)"
-              recent_errors="$(tail -c 1200 /tmp/diagnose-logs.txt 2>/dev/null | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g; s/(Bearer|token|secret|password|api[_-]?key)[=: ]+[^ ]+/<redacted>/Ig')"
               comment "### Vercel diagnostic
 - Endpoint command exit: \`${request_status}\`
-- Logs command exit: \`${logs_status}\`
 - Endpoint response: \`${response:-empty}\`
 - Request error: \`${request_error:-none}\`
-- Recent production errors: \`${recent_errors:-none}\`
 
 No settings were changed and no email was sent."
               ;;
@@ -182,7 +176,7 @@ No settings were changed and no email was sent."
               enable_reviewed_pilot
               verification_url="$(deploy_production)"
 
-              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" --output /tmp/dashboard-before.json 2>/tmp/dashboard-before.err; then
+              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" --max-time 60 --output /tmp/dashboard-before.json 2>/tmp/dashboard-before.err; then
                 cat /tmp/dashboard-before.err
                 [[ -f /tmp/dashboard-before.json ]] && head -c 1000 /tmp/dashboard-before.json || true
                 fail_closed "production dashboard/database health check"
@@ -206,7 +200,7 @@ No settings were changed and no email was sent."
               if ! vercel_request "${verification_url}/api/engine/autonomous-growth" \
                 -X POST -H "Content-Type: application/json" \
                 -d '{"action":"run_fake_autopilot_smoke_test"}' \
-                --output /tmp/fake-smoke.json 2>/tmp/fake-smoke.err; then
+                --max-time 60 --output /tmp/fake-smoke.json 2>/tmp/fake-smoke.err; then
                 cat /tmp/fake-smoke.err
                 [[ -f /tmp/fake-smoke.json ]] && head -c 1000 /tmp/fake-smoke.json || true
                 fail_closed "production fake pipeline smoke test"
@@ -268,7 +262,7 @@ No settings were changed and no email was sent."
                 fail_closed "production safety-flag or Resend delivery verification"
               fi
 
-              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" --output /tmp/dashboard-after.json 2>/tmp/dashboard-after.err; then
+              if ! vercel_request "${verification_url}/api/engine/autonomous-growth" --max-time 60 --output /tmp/dashboard-after.json 2>/tmp/dashboard-after.err; then
                 cat /tmp/dashboard-after.err
                 fail_closed "post-verification dashboard check"
               fi
