@@ -83,7 +83,7 @@ jobs:
 
             smoke)
               set +e
-              npx --yes vercel@latest curl /api/engine/autonomous-growth -X POST -H "Content-Type: application/json" -d '{"action":"run_fake_autopilot_smoke_test"}' >/tmp/result.json 2>/tmp/result.err
+              npx --yes vercel@latest curl /api/engine/autonomous-growth -X POST -H "Content-Type: application/json" --data-raw '{"action":"run_fake_autopilot_smoke_test"}' >/tmp/result.json 2>/tmp/result.err
               request_status=$?
               set -e
               response="$(compact_file /tmp/result.json empty)"
@@ -148,7 +148,7 @@ jobs:
           fs.writeFileSync('/tmp/production-url.txt', `https://${url}`);
           NODE
               production_url="$(cat /tmp/production-url.txt)"
-              public_code="$(curl -sS -o /tmp/public-probe.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"action":"security_probe"}' "${production_url}/api/engine/autonomous-growth" || true)"
+              public_code="$(curl -sS -o /tmp/public-probe.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-raw '{"action":"security_probe"}' "${production_url}/api/engine/autonomous-growth" || true)"
               if [[ "$public_code" == "401" || "$public_code" == "403" ]]; then
                 status="protected"
               else
