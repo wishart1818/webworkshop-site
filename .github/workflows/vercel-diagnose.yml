@@ -12,9 +12,8 @@ jobs:
   diagnose:
     if: >-
       github.event.issue.number == 3 &&
-      github.actor == 'wishart1818' &&
       !github.event.issue.pull_request &&
-      github.event.comment.body == '/diagnose-vercel'
+      startsWith(github.event.comment.body, '/diagnose-vercel')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
