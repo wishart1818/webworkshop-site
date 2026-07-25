@@ -1,6 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { getAutonomousGrowthDashboard } from "@/lib/autonomous-growth-repository";
+import {
+  getAutonomousGrowthDashboard,
+  runFakeAutopilotSmokeTestForDashboard,
+} from "@/lib/autonomous-growth-repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -77,6 +80,29 @@ export async function POST(request: Request) {
   }
   if (!requiredProductionVariables.every(present) || !failClosed()) {
     return NextResponse.json({ ok: false, error: "Production is not in the required fail-closed state." }, { status: 409 });
+  }
+
+  const body = await request.json().catch(() => ({})) as { mode?: unknown };
+  if (body.mode === "smoke") {
+    try {
+      const smokeTest = await runFakeAutopilotSmokeTestForDashboard();
+      return NextResponse.json(
+        {
+          ok: smokeTest.passed === true,
+          smokeTest,
+          prospectContacted: false,
+        },
+        {
+          status: smokeTest.passed === true ? 200 : 503,
+          headers: { "Cache-Control": "no-store" },
+        },
+      );
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "Production fake-pipeline verification failed.", prospectContacted: false },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
   }
 
   const replyTo = process.env.OUTREACH_REPLY_TO_EMAIL!.trim();
