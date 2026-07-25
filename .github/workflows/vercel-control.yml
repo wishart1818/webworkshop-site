@@ -24,8 +24,6 @@ jobs:
     env:
       COMMAND: ${{ github.event.comment.body }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_PROJECT_NAME: webworkshop-site
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -44,75 +42,14 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve and link selected Vercel project
+      - name: Link selected Vercel project
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .vercel
-
-          if [[ -n "${VERCEL_ORG_ID:-}" && -n "${VERCEL_PROJECT_ID:-}" ]]; then
-            printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
-          else
-            node <<'NODE'
-          const fs = require('fs');
-
-          const token = process.env.VERCEL_TOKEN;
-          const targetName = process.env.VERCEL_PROJECT_NAME;
-          const headers = { Authorization: `Bearer ${token}` };
-
-          async function getJson(url) {
-            const response = await fetch(url, { headers });
-            if (!response.ok) {
-              const text = await response.text();
-              throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 500)}`);
-            }
-            return response.json();
-          }
-
-          (async () => {
-            const scopes = [{ label: 'personal account', teamId: '' }];
-            const teamsPayload = await getJson('https://api.vercel.com/v2/teams?limit=100');
-            for (const team of teamsPayload.teams || []) {
-              scopes.push({ label: team.name || team.slug || team.id, teamId: team.id });
-            }
-
-            const matches = [];
-            for (const scope of scopes) {
-              const query = new URLSearchParams({ limit: '100' });
-              if (scope.teamId) query.set('teamId', scope.teamId);
-              let payload;
-              try {
-                payload = await getJson(`https://api.vercel.com/v9/projects?${query}`);
-              } catch (error) {
-                if (!scope.teamId) continue;
-                throw error;
-              }
-              for (const project of payload.projects || []) {
-                if (project.name === targetName) matches.push({ project, scope });
-              }
-            }
-
-            if (matches.length === 0) {
-              throw new Error(`No accessible Vercel project named ${targetName} was found for this token.`);
-            }
-            if (matches.length > 1) {
-              const labels = matches.map(({ scope, project }) => `${scope.label} (${project.id})`).join(', ');
-              throw new Error(`More than one project named ${targetName} was found: ${labels}. Add VERCEL_ORG_ID and VERCEL_PROJECT_ID to select one explicitly.`);
-            }
-
-            const { project, scope } = matches[0];
-            const orgId = project.accountId || scope.teamId;
-            if (!orgId || !project.id) throw new Error('Vercel did not return the selected project identifiers.');
-
-            fs.writeFileSync('.vercel/project.json', `${JSON.stringify({ orgId, projectId: project.id })}\n`);
-            fs.appendFileSync(process.env.GITHUB_ENV, `RESOLVED_VERCEL_ORG_ID=${orgId}\nRESOLVED_VERCEL_PROJECT_ID=${project.id}\nRESOLVED_VERCEL_PROJECT_NAME=${project.name}\n`);
-          })().catch((error) => {
-            console.error(error instanceof Error ? error.message : error);
-            process.exit(1);
-          });
-          NODE
+          if ! npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-link.log 2>&1; then
+            gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "❌ The Vercel token was found, but it could not link to \`$VERCEL_PROJECT_NAME\`. Make sure the token scope includes the account or team that owns that project. No settings were changed."
+            exit 1
           fi
-
           npx --yes vercel@latest project inspect --token "$VERCEL_TOKEN" >/dev/null
 
       - name: Execute whitelisted command
@@ -139,7 +76,7 @@ jobs:
           case "$COMMAND" in
             "/vercel status")
               npx --yes vercel@latest env ls production --token "$VERCEL_TOKEN" >/tmp/vercel-env-list.txt
-              comment "✅ Vercel connection succeeded for \`${RESOLVED_VERCEL_PROJECT_NAME:-$VERCEL_PROJECT_NAME}\`. Production environment variables are accessible. No settings were changed and no deployment was started."
+              comment "✅ Vercel connection succeeded for \`$VERCEL_PROJECT_NAME\`. Production environment variables are accessible. No settings were changed and no deployment was started."
               ;;
 
             "/vercel pilot-off")
