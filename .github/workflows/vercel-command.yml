@@ -53,11 +53,18 @@ jobs:
           fi
 
           set +e
-          npx --yes vercel@latest curl /api/health/autopilot --token "$VERCEL_TOKEN" --silent --show-error --include --max-time 60 --output /tmp/response.txt 2>/tmp/request.err
+          npx --yes vercel@latest curl /api/health/autopilot --token "$VERCEL_TOKEN" >/tmp/response.txt 2>/tmp/request.err
           status=$?
           set -e
 
-          response="$(head -c 1200 /tmp/response.txt 2>/dev/null | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
-          request_error="$(head -c 800 /tmp/request.err 2>/dev/null | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
-          body="Vercel health diagnostic nonce ${COMMAND_NONCE}. Endpoint exit ${status}. Response: ${response:-empty}. Request error: ${request_error:-none}. No settings were changed and no email was sent."
+          response="empty"
+          request_error="none"
+          if [[ -s /tmp/response.txt ]]; then
+            response="$(head -c 1200 /tmp/response.txt | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+          fi
+          if [[ -s /tmp/request.err ]]; then
+            request_error="$(head -c 800 /tmp/request.err | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+          fi
+
+          body="Vercel health diagnostic nonce ${COMMAND_NONCE}. Endpoint exit ${status}. Response: ${response}. Request error: ${request_error}. No settings were changed and no email was sent."
           gh issue comment 3 --repo "$GITHUB_REPOSITORY" --body "$body"
