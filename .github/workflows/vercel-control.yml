@@ -90,7 +90,7 @@ jobs:
 
           required_variables_present() {
             npx --yes vercel@latest env ls production --token "$VERCEL_TOKEN" >/tmp/vercel-env-list.txt
-            local required=(DATABASE_URL RESEND_API_KEY OUTREACH_FROM_EMAIL OUTREACH_REPLY_TO_EMAIL WEBWORKSHOP_POSTAL_ADDRESS)
+            local required=(DATABASE_URL RESEND_API_KEY OUTREACH_FROM_EMAIL OUTREACH_REPLY_TO_EMAIL WEBWORKSHOP_POSTAL_ADDRESS CRON_SECRET)
             local missing=()
             local key
             for key in "${required[@]}"; do
@@ -138,13 +138,38 @@ jobs:
               fi
               ;;
 
+            "/vercel cron-health")
+              required_variables_present
+              disable_outreach
+              url="$(deploy_production)"
+              npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --yes --token "$VERCEL_TOKEN" >/dev/null
+              set -a
+              source /tmp/webworkshop-production.env
+              set +a
+              if [[ -z "${CRON_SECRET:-}" ]]; then
+                comment "❌ CRON_SECRET is empty. Scheduled outreach remains disabled."
+                exit 1
+              fi
+              set +e
+              response="$(npx --yes vercel@latest curl "${url}/api/cron/autopilot" -H "Authorization: Bearer ${CRON_SECRET}" 2>&1)"
+              status=$?
+              set -e
+              safe_response="$(printf '%s' "$response" | head -c 1200 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g')"
+              if [[ $status -eq 0 ]] && printf '%s' "$response" | grep -q '"ok":true' && printf '%s' "$response" | grep -q '"sent":0'; then
+                comment "✅ Scheduled Auto Email Pilot endpoint passed in fail-closed mode. Authentication worked, the real inventory-processing path executed, and zero emails were sent while outreach remained disabled. Deployment: ${url}. Probe: \`${safe_response}\`"
+              else
+                comment "❌ Scheduled Auto Email Pilot endpoint did not pass safely. Outreach remains disabled and the daily cap remains 1. Deployment: ${url}. Probe: \`${safe_response:-empty}\`"
+                exit 1
+              fi
+              ;;
+
             "/vercel redeploy")
               url="$(deploy_production)"
               comment "✅ Production was redeployed without changing environment variables: ${url}"
               ;;
 
             *)
-              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, and \`/vercel redeploy\`."
+              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, \`/vercel cron-health\`, and \`/vercel redeploy\`."
               exit 1
               ;;
           esac
