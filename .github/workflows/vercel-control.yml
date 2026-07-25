@@ -3,6 +3,10 @@ name: Vercel Control
 on:
   issue_comment:
     types: [created]
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/.cron-health-trigger
 
 permissions:
   contents: read
@@ -15,14 +19,15 @@ concurrency:
 jobs:
   control:
     if: >-
-      github.event.issue.number == 4 &&
+      github.event_name == 'push' ||
+      (github.event.issue.number == 4 &&
       github.actor == 'wishart1818' &&
       !github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/vercel ')
+      startsWith(github.event.comment.body, '/vercel '))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      COMMAND: ${{ github.event.comment.body }}
+      COMMAND: ${{ github.event_name == 'push' && '/vercel cron-health' || github.event.comment.body }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_PROJECT_NAME: webworkshop-site
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
