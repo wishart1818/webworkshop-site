@@ -10,15 +10,13 @@ permissions:
 
 jobs:
   diagnose:
-    if: >-
-      github.event.issue.number == 3 &&
-      !github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/diagnose-vercel')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_BODY: ${{ github.event.comment.body }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +26,11 @@ jobs:
         shell: bash
         run: |
           set -u
+          if [[ "$ISSUE_NUMBER" != "3" || "$COMMENT_BODY" != "/diagnose-vercel" ]]; then
+            echo "Diagnostic command not requested; exiting."
+            exit 0
+          fi
+
           npx --yes vercel@latest link --yes --project webworkshop-site --token "$VERCEL_TOKEN" >/tmp/link.log 2>&1
 
           set +e
