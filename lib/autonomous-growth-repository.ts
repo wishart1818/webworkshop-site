@@ -982,6 +982,16 @@ export type ApproveAndQueueEmailResult = {
   blockedReasons: string[];
 };
 
+export type RevokeQueuedEmailApprovalResult = {
+  item: OutreachQueueItem | null;
+  revoked: boolean;
+  blockedReason: string;
+};
+
+export type RevokeAllQueuedEmailApprovalsResult = {
+  revoked: number;
+};
+
 export type AutoEmailPilotCycleResult = {
   attempted: number;
   sent: number;
@@ -1697,6 +1707,178 @@ async function clearPersistedApproval(
       data: { approvedAt: null },
     });
   }
+}
+
+function queuedApprovalRevokedAt(item: OutreachQueueItem, now: Date) {
+  const previous = Date.parse(item.updatedAt);
+  return Number.isFinite(previous) && now.getTime() <= previous
+    ? new Date(previous + 1)
+    : now;
+}
+
+function revokeQueuedApprovalData(item: OutreachQueueItem, now: Date) {
+  const revokedAt = queuedApprovalRevokedAt(item, now);
+  return {
+    status: "Needs Review" as const,
+    queuedDate: null,
+    notes: stripApprovalMarker(item.notes) || null,
+    recommendedNextAction: "Needs Human Review",
+    updatedAt: revokedAt,
+  };
+}
+
+async function clearMemoryPersistedApproval(item: OutreachQueueItem) {
+  memoryApprovedAutoEmailQueueIds().delete(item.id);
+  if (!item.prospectId) return;
+  const prospect = await getProspect(item.prospectId);
+  if (!prospect?.outreach?.approved) return;
+  await saveProspect({
+    ...prospect,
+    outreach: { ...prospect.outreach, approved: false },
+  });
+}
+
+async function revokeQueuedApprovalInTransaction(
+  transaction: Prisma.TransactionClient,
+  item: OutreachQueueItem,
+  now: Date,
+) {
+  const revokedAt = queuedApprovalRevokedAt(item, now);
+  const updated = await transaction.outreachQueueItem.updateMany({
+    where: {
+      id: item.id,
+      status: "Queued",
+      updatedAt: new Date(item.updatedAt),
+      sentDate: null,
+      NOT: { notes: { contains: ambiguousOutcomeMarker } },
+    },
+    data: revokeQueuedApprovalData(item, revokedAt),
+  });
+  if (updated.count !== 1) return false;
+  await clearPersistedApproval(transaction, item, revokedAt);
+  return true;
+}
+
+export async function revokeQueuedEmailApproval(id: string): Promise<RevokeQueuedEmailApprovalResult> {
+  const now = new Date();
+  if (!hasDatabase) {
+    const current = memoryQueue().find((item) => item.id === id) ?? null;
+    if (!current) return { item: null, revoked: false, blockedReason: "Queue item was not found." };
+    if (
+      current.status !== "Queued"
+      || current.sentDate
+      || queueItemHasAmbiguousOutcome(current)
+    ) {
+      return {
+        item: structuredClone(current),
+        revoked: false,
+        blockedReason: "Only an unchanged Queued email approval can be revoked.",
+      };
+    }
+    current.status = "Needs Review";
+    current.queuedDate = "";
+    current.notes = stripApprovalMarker(current.notes);
+    current.recommendedNextAction = "Needs Human Review";
+    current.updatedAt = queuedApprovalRevokedAt(current, now).toISOString();
+    await clearMemoryPersistedApproval(current);
+    await safeRecordAudit({
+      action: "autonomous_email_approval_revoked",
+      outcome: "success",
+      subject: current.businessName,
+      metadata: { queueItemId: current.id, scope: "single" },
+    });
+    await recordRunReview(memorySettings(), memoryQueue());
+    return { item: structuredClone(current), revoked: true, blockedReason: "" };
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const result = await database.$transaction(async (transaction) => {
+    const row = await transaction.outreachQueueItem.findUnique({ where: { id } });
+    if (!row) return { row: null, revoked: false };
+    const item = queueToDomain(row);
+    if (
+      item.status !== "Queued"
+      || item.sentDate
+      || queueItemHasAmbiguousOutcome(item)
+    ) return { row, revoked: false };
+    const revoked = await revokeQueuedApprovalInTransaction(transaction, item, now);
+    const current = await transaction.outreachQueueItem.findUnique({ where: { id } });
+    return { row: current, revoked };
+  }, { isolationLevel: "Serializable" });
+  const item = result.row ? queueToDomain(result.row) : null;
+  if (result.revoked && item) {
+    await safeRecordAudit({
+      action: "autonomous_email_approval_revoked",
+      outcome: "success",
+      subject: item.businessName,
+      metadata: { queueItemId: item.id, scope: "single" },
+    });
+    await Promise.allSettled([
+      (async () => recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems()))(),
+    ]);
+  }
+  return {
+    item,
+    revoked: result.revoked,
+    blockedReason: result.revoked ? "" : item ? "Only an unchanged Queued email approval can be revoked." : "Queue item was not found.",
+  };
+}
+
+export async function revokeAllQueuedEmailApprovals(): Promise<RevokeAllQueuedEmailApprovalsResult> {
+  const now = new Date();
+  if (!hasDatabase) {
+    const candidates = memoryQueue().filter((item) => (
+      item.status === "Queued"
+      && !item.sentDate
+      && !queueItemHasAmbiguousOutcome(item)
+    ));
+    for (const item of candidates) {
+      item.status = "Needs Review";
+      item.queuedDate = "";
+      item.notes = stripApprovalMarker(item.notes);
+      item.recommendedNextAction = "Needs Human Review";
+      item.updatedAt = queuedApprovalRevokedAt(item, now).toISOString();
+      await clearMemoryPersistedApproval(item);
+    }
+    await safeRecordAudit({
+      action: "autonomous_email_approval_revoked",
+      outcome: "success",
+      subject: "queued-email-approvals",
+      metadata: { scope: "all", revoked: candidates.length },
+    });
+    if (candidates.length) await recordRunReview(memorySettings(), memoryQueue());
+    return { revoked: candidates.length };
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const revoked = await database.$transaction(async (transaction) => {
+    const rows = await transaction.outreachQueueItem.findMany({
+      where: {
+        status: "Queued",
+        sentDate: null,
+        NOT: { notes: { contains: ambiguousOutcomeMarker } },
+      },
+    });
+    let count = 0;
+    for (const row of rows) {
+      if (await revokeQueuedApprovalInTransaction(transaction, queueToDomain(row), now)) count += 1;
+    }
+    return count;
+  }, { isolationLevel: "Serializable" });
+  await safeRecordAudit({
+    action: "autonomous_email_approval_revoked",
+    outcome: "success",
+    subject: "queued-email-approvals",
+    metadata: { scope: "all", revoked },
+  });
+  if (revoked) {
+    await Promise.allSettled([
+      (async () => recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems()))(),
+    ]);
+  }
+  return { revoked };
 }
 
 async function finishClaimWithReview(

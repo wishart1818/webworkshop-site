@@ -11,6 +11,8 @@ import {
   processExistingQualifiedProspects,
   recordEmailSuppression,
   recordAutonomousFeedback,
+  revokeAllQueuedEmailApprovals,
+  revokeQueuedEmailApproval,
   rewriteOutreachQueueItem,
   resumeAutopilotCampaign,
   runAutopilotNextBatchNow,
@@ -167,6 +169,15 @@ export async function POST(request: Request) {
       const approval = await approveAndQueueEmail(payload.queueItemId);
       if (!approval.item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item: approval.item, approval });
+    }
+    if (payload.action === "revoke_queued_email_approval") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      const revocation = await revokeQueuedEmailApproval(payload.queueItemId);
+      if (!revocation.item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+      return NextResponse.json({ item: revocation.item, revocation });
+    }
+    if (payload.action === "revoke_all_queued_email_approvals") {
+      return NextResponse.json({ revocation: await revokeAllQueuedEmailApprovals() });
     }
     if (payload.action === "record_feedback") {
       if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
