@@ -30,4 +30,20 @@ jobs:
         run: npm ci
 
       - name: Apply and verify manual Lovable workflow
-        run: python3 .github/scripts/run_manual_lovable_migration.py
+        id: migration
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/run_manual_lovable_migration.py 2>&1 | tee manual-lovable-runner.log
+
+      - name: Upload runner failure log
+        if: steps.migration.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-lovable-runner-log
+          path: manual-lovable-runner.log
+
+      - name: Fail after captured runner error
+        if: steps.migration.outcome == 'failure'
+        run: exit 1
