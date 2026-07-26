@@ -83,7 +83,23 @@ jobs:
         run: exit 1
 
       - name: Run focused workflow tests
-        run: npx tsx --test tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts
+        id: focused
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsx --test tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts 2>&1 | tee focused-tests.log
+
+      - name: Upload focused test failure log
+        if: steps.focused.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-lovable-focused-tests
+          path: focused-tests.log
+
+      - name: Stop after focused test failure
+        if: steps.focused.outcome == 'failure'
+        run: exit 1
 
       - name: Run full test suite
         run: npm test
@@ -98,7 +114,7 @@ jobs:
         run: git diff --check
 
       - name: Remove temporary migration files
-        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log
+        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log focused-tests.log
 
       - name: Commit verified changes
         run: |
