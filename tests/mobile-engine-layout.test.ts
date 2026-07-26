@@ -145,7 +145,7 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Run next batch now/);
   assert.match(autonomousGrowthWorkspace, /Run Fake Smoke Test/);
   assert.match(autonomousGrowthWorkspace, /Uses fake leads only\. No provider calls\. No outreach\./);
-  assert.match(autonomousGrowthWorkspace, /Start Autopilot prepares prospects, previews, scripts, and queues\. It does not send emails, DMs, forms, phone calls, or Looms automatically\./);
+  assert.match(autonomousGrowthWorkspace, /Start Autopilot prepares prospects, permission-first drafts, and review queues\. It does not build previews before interest or send emails, DMs, forms, phone calls, or Looms automatically\./);
   assert.match(autonomousGrowthWorkspace, /engine-autopilot-action-card/);
   assert.match(autonomousGrowthWorkspace, /engine-autopilot-disabled-reasons/);
   assert.match(autonomousGrowthWorkspace, /missing market/);
@@ -157,7 +157,7 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /safety setting required/);
   assert.equal((autonomousGrowthWorkspace.match(/<AutopilotActionRow/g) ?? []).length, 2);
   assert.match(autonomousGrowthWorkspace, /Ready for Manual DM/);
-  assert.match(autonomousGrowthWorkspace, /Needs Preview Review/);
+  assert.match(autonomousGrowthWorkspace, /Needs Email Review/);
   assert.match(autonomousGrowthWorkspace, /Email Draft Ready/);
   assert.match(autonomousGrowthWorkspace, /Blocked \/ Bad Fit/);
   assert.match(autonomousGrowthWorkspace, /Counts shown below come from the latest run report\. Fake smoke-test counts do not create saved outreach items\./);

@@ -2003,7 +2003,7 @@ test("Autopilot defaults to one-trade manual-safe review mode", () => {
   assert.equal(defaultAutopilotCampaignSettings.cadence, "manual_only");
   assert.equal(defaultAutopilotCampaignSettings.manualDmMode, true);
   assert.equal(defaultAutopilotCampaignSettings.excludePreviouslyReviewed, true);
-  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, true);
+  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, false);
   assert.equal(defaultAutopilotCampaignSettings.requireWrittenContact, true);
   assert.notEqual(defaultAutopilotCampaignSettings.trade, "All Core Service Trades");
   assert.ok(autopilotActionLabels.includes("Start Autopilot"));
@@ -2103,11 +2103,11 @@ test("recommended first real Autopilot run selects Florida Pressure Washing with
   assert.equal(settings.duration, "run_once");
   assert.equal(settings.cadence, "manual_only");
   assert.equal(settings.maxProspectsPerRun, 100);
-  assert.equal(settings.maxPreviewsPerRun, 20);
+  assert.equal(settings.maxPreviewsPerRun, 0);
   assert.equal(settings.maxProspectsTotal, 20);
   assert.equal(settings.outreachStyle, "manual_social_safe");
   assert.equal(settings.excludePreviouslyReviewed, true);
-  assert.equal(settings.requirePreviewQuality85, true);
+  assert.equal(settings.requirePreviewQuality85, false);
   assert.equal(settings.requireWrittenContact, true);
   assert.equal(settings.manualDmMode, true);
   assert.equal(settings.loomNotifications, true);

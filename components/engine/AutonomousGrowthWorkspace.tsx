@@ -1269,7 +1269,7 @@ function autopilotActionReasons(autopilot: AutopilotDashboard, saving: boolean):
   if (!settings.marketPresetId && !settings.customCities.trim()) reasons.start.push("missing market");
   if (!marketTargets.length) reasons.start.push(settings.customCities.trim() ? "invalid city" : "missing market");
   if (!settings.trade) reasons.start.push("missing trade");
-  if (!settings.excludePreviouslyReviewed || !settings.requirePreviewQuality85 || !settings.requireWrittenContact || !settings.manualDmMode) {
+  if (!settings.excludePreviouslyReviewed || !settings.requireWrittenContact || !settings.manualDmMode) {
     reasons.start.push("safety setting required");
   }
   if (effectivelyRunning) reasons.start.push("campaign already running");
@@ -1313,7 +1313,7 @@ function AutopilotActionRow({
     <div className="engine-autopilot-action-card">
       <div className="engine-autopilot-action-card__copy">
         <b>Campaign actions</b>
-        <p>Start Autopilot prepares prospects, previews, scripts, and queues. It does not send emails, DMs, forms, phone calls, or Looms automatically.</p>
+        <p>Start Autopilot prepares prospects, permission-first drafts, and review queues. It does not build previews before interest or send emails, DMs, forms, phone calls, or Looms automatically.</p>
       </div>
       <div className="engine-autopilot-actions" aria-label="Autopilot Campaign actions">
         <button className="engine-button engine-button--primary" disabled={Boolean(reasons.start.length)} form={insideForm ? undefined : formId} title={reasons.start.join(", ")} type="submit">Start Autopilot</button>
@@ -1360,8 +1360,8 @@ function AutopilotLiveActivitySection({
     ["Bad-fit blocked", activity.badFitLeadsBlocked],
     ["Phone-only blocked", activity.phoneOnlyLeadsBlocked],
     ["Websites scanned", activity.websitesScanned],
-    ["Previews generated", activity.previewsGenerated],
-    ["Previews passing QA", activity.previewsPassingQa],
+    ["First-touch packages generated", activity.previewsGenerated],
+    ["Email drafts ready", activity.previewsPassingQa],
     ["DM scripts generated", activity.dmScriptsGenerated],
     ["Email drafts generated", activity.emailDraftsGenerated],
   ] as const;
@@ -1818,16 +1818,13 @@ function AutopilotCampaignPanel({
           {autopilotCadences.map((cadence) => <option key={cadence} value={cadence}>{cadence === "manual_only" ? "Manual only" : optionLabel(cadence)}</option>)}
         </select></label>
         <label>Max prospects/run<input min="5" name="maxProspectsPerRun" onChange={(event) => updateFormSetting("maxProspectsPerRun", Number(event.target.value))} type="number" value={formSettings.maxProspectsPerRun} /></label>
-        <label>Legacy/post-interest preview cap<input min="0" name="maxPreviewsPerRun" onChange={(event) => updateFormSetting("maxPreviewsPerRun", Number(event.target.value))} type="number" value={formSettings.maxPreviewsPerRun} /></label>
         <label>Max prospects total<input min="1" name="maxProspectsTotal" onChange={(event) => updateFormSetting("maxProspectsTotal", Number(event.target.value))} type="number" value={formSettings.maxProspectsTotal} /></label>
         <label className="engine-toggle"><input checked={formSettings.excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => updateFormSetting("excludePreviouslyReviewed", event.target.checked)} type="checkbox" />Exclude previously reviewed prospects</label>
-        <label className="engine-toggle"><input checked={formSettings.requirePreviewQuality85} name="requirePreviewQuality85" onChange={(event) => updateFormSetting("requirePreviewQuality85", event.target.checked)} type="checkbox" />Require preview QA 85+ before a manual Loom</label>
         <label className="engine-toggle"><input checked={formSettings.requireWrittenContact} name="requireWrittenContact" onChange={(event) => updateFormSetting("requireWrittenContact", event.target.checked)} type="checkbox" />Require written contact</label>
         <label className="engine-toggle"><input checked={formSettings.manualDmMode} name="manualDmMode" onChange={(event) => updateFormSetting("manualDmMode", event.target.checked)} type="checkbox" />Manual DM mode</label>
         <label className="engine-toggle"><input checked={formSettings.loomNotifications} name="loomNotifications" onChange={(event) => updateFormSetting("loomNotifications", event.target.checked)} type="checkbox" />Dashboard Loom notifications</label>
         <label className="engine-toggle"><input checked={formSettings.stopRules.pauseOnProviderFailure} name="pauseOnProviderFailure" onChange={(event) => updateStopRule("pauseOnProviderFailure", event.target.checked)} type="checkbox" />Pause on provider failure</label>
         <label>Pause if bad-fit rate exceeds %<input max="100" min="10" name="pauseOnBadFitRatePercent" onChange={(event) => updateStopRule("pauseOnBadFitRatePercent", Number(event.target.value))} type="number" value={formSettings.stopRules.pauseOnBadFitRatePercent} /></label>
-        <label>Pause after weak previews<input min="1" name="pauseAfterWeakPreviewCount" onChange={(event) => updateStopRule("pauseAfterWeakPreviewCount", Number(event.target.value))} type="number" value={formSettings.stopRules.pauseAfterWeakPreviewCount} /></label>
         <label className="engine-toggle"><input checked={formSettings.stopRules.stopWhenTotalProspectsReached} name="stopWhenTotalProspectsReached" onChange={(event) => updateStopRule("stopWhenTotalProspectsReached", event.target.checked)} type="checkbox" />Stop at total prospect cap</label>
         <footer className="engine-autopilot-form-footer">
           <AutopilotActionRow
@@ -1847,7 +1844,7 @@ function AutopilotCampaignPanel({
 
       <div className="engine-autopilot-queues" aria-label="Autopilot queue summary">
         <p className="engine-autopilot-queue-note">
-          Queues: Ready for Manual DM, Needs Preview Review, Loom Needed, Email Draft Ready, Blocked / Bad Fit, Needs Human Research. No email, form, social, phone, or Loom outreach is sent automatically.
+          Queues: Ready for Manual DM, Needs Email Review, Post-interest Preview / Loom, Email Draft Ready, Blocked / Bad Fit, Needs Human Research. No email, form, social, phone, or Loom outreach is sent automatically.
           {autopilot.queueCountsSource === "latest_run_report" ? " Counts shown below come from the latest run report. Fake smoke-test counts do not create saved outreach items." : " Counts shown below come from saved outreach queue items."}
         </p>
         {autopilotQueueKeys.map((key) => (

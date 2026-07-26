@@ -54,8 +54,8 @@ export type AutopilotQueueKey = (typeof autopilotQueueKeys)[number];
 
 export const autopilotQueueLabels: Record<AutopilotQueueKey, string> = {
   readyForManualDm: "Ready for Manual DM",
-  needsPreviewReview: "Needs Preview Review",
-  loomNeeded: "Loom Needed",
+  needsPreviewReview: "Needs Email Review",
+  loomNeeded: "Post-interest Preview / Loom",
   emailDraftReady: "Email Draft Ready",
   blockedBadFit: "Blocked / Bad Fit",
   needsHumanResearch: "Needs Human Research",
@@ -322,17 +322,17 @@ export const defaultAutopilotCampaignSettings: AutopilotCampaignSettings = {
   duration: "run_once",
   cadence: "manual_only",
   maxProspectsPerRun: 100,
-  maxPreviewsPerRun: 20,
+  maxPreviewsPerRun: 0,
   maxProspectsTotal: 20,
   excludePreviouslyReviewed: true,
-  requirePreviewQuality85: true,
+  requirePreviewQuality85: false,
   requireWrittenContact: true,
   manualDmMode: true,
   loomNotifications: true,
   stopRules: {
     pauseOnProviderFailure: true,
     pauseOnBadFitRatePercent: 50,
-    pauseAfterWeakPreviewCount: 3,
+    pauseAfterWeakPreviewCount: 0,
     stopWhenTotalProspectsReached: true,
   },
 };
@@ -412,17 +412,20 @@ export function normalizeAutopilotCampaignSettings(input: Partial<AutopilotCampa
     duration: normalizeDuration(input.duration),
     cadence: normalizeCadence(input.cadence),
     maxProspectsPerRun: boundedNumber(input.maxProspectsPerRun, defaults.maxProspectsPerRun, 5, 250),
-    maxPreviewsPerRun: boundedNumber(input.maxPreviewsPerRun, defaults.maxPreviewsPerRun, 0, 50),
+    // Legacy persisted field retained for compatibility; pre-interest work no longer uses a preview cap.
+    maxPreviewsPerRun: 0,
     maxProspectsTotal: boundedNumber(input.maxProspectsTotal, defaults.maxProspectsTotal, 1, 500),
     excludePreviouslyReviewed: input.excludePreviouslyReviewed !== false,
-    requirePreviewQuality85: input.requirePreviewQuality85 !== false,
+    // Legacy persisted field retained for compatibility; preview quality is post-interest only.
+    requirePreviewQuality85: false,
     requireWrittenContact: input.requireWrittenContact !== false,
     manualDmMode: input.manualDmMode !== false,
     loomNotifications: input.loomNotifications !== false,
     stopRules: {
       pauseOnProviderFailure: stopRules.pauseOnProviderFailure !== false,
       pauseOnBadFitRatePercent: boundedNumber(stopRules.pauseOnBadFitRatePercent, defaults.stopRules.pauseOnBadFitRatePercent, 10, 100),
-      pauseAfterWeakPreviewCount: boundedNumber(stopRules.pauseAfterWeakPreviewCount, defaults.stopRules.pauseAfterWeakPreviewCount, 1, 25),
+      // Legacy persisted field retained for compatibility; no pre-interest preview stop rule is applied.
+      pauseAfterWeakPreviewCount: 0,
       stopWhenTotalProspectsReached: stopRules.stopWhenTotalProspectsReached !== false,
     },
   };
@@ -492,11 +495,11 @@ export function recommendedFirstAutopilotRunSettings(): AutopilotCampaignSetting
     duration: "run_once",
     cadence: "manual_only",
     maxProspectsPerRun: 100,
-    maxPreviewsPerRun: 20,
+    maxPreviewsPerRun: 0,
     maxProspectsTotal: 20,
     outreachStyle: "manual_social_safe",
     excludePreviouslyReviewed: true,
-    requirePreviewQuality85: true,
+    requirePreviewQuality85: false,
     requireWrittenContact: true,
     manualDmMode: true,
     loomNotifications: true,
@@ -556,7 +559,7 @@ export function autopilotProviderGuardrailWarnings(
 export function autopilotTopProspectInput(settings: AutopilotCampaignSettings): TopProspectInput {
   const targets = autopilotMarketTargets(settings);
   const cityInput = targets.map((target) => `${titleCaseLocation(target.city)}, ${displayStateCode(target.state)}`).join("; ");
-  const finalProspectsWanted = Math.max(1, Math.min(25, settings.maxPreviewsPerRun || settings.maxProspectsTotal, settings.maxProspectsPerRun));
+  const finalProspectsWanted = Math.max(1, Math.min(25, settings.maxProspectsTotal, settings.maxProspectsPerRun));
   return {
     trade: settings.trade,
     city: cityInput,
@@ -602,12 +605,13 @@ export function emptyAutopilotQueueCounts(): AutopilotQueueCounts {
 }
 
 export function autopilotQueueKeyForItem(item: Pick<OutreachQueueItem, "status" | "contactSource" | "previewQualityScore" | "blockedReason" | "email">): AutopilotQueueKey {
-  if (["Bad Fit", "Blocked", "Never Contact", "Opted Out", "Skipped"].includes(item.status) || /bad fit|supplier|institution|duplicate|mismatch/i.test(item.blockedReason)) {
+  void item.previewQualityScore;
+  if (["Bad Fit", "Blocked", "Never Contact", "Opted Out", "Suppressed", "Bounced", "Complained", "Skipped"].includes(item.status) || /bad fit|supplier|institution|duplicate|mismatch/i.test(item.blockedReason)) {
     return "blockedBadFit";
   }
-  if (["Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"].includes(item.status)) return "loomNeeded";
+  if (["Prospect Said Yes", "Preview Build Needed", "Preview Needs Polish", "Loom Needed", "Ready for Loom", "Loom Recorded"].includes(item.status)) return "loomNeeded";
   if (!item.email && /phone|manual research/i.test(item.contactSource)) return "needsHumanResearch";
-  if (item.previewQualityScore < 85 || item.status === "Needs Review" || item.status === "Draft") return "needsPreviewReview";
+  if (item.status === "Needs Review" || item.status === "Draft") return "needsPreviewReview";
   if (/social|facebook|instagram|dm/i.test(item.contactSource) || item.status === "DM Draft" || item.status === "First DM Sent") return "readyForManualDm";
   return "emailDraftReady";
 }
@@ -689,7 +693,7 @@ export function buildAutopilotRunReport(campaign: AutopilotCampaign, queue: Outr
     "Automatic email, social DM, contact form, phone, and Loom sending stayed disabled.",
     settings.excludePreviouslyReviewed ? "Previously reviewed prospects are excluded by default." : "Previously reviewed prospects may be included because the setting is off.",
     settings.requireWrittenContact ? "Written contact is required before an item can be email-ready." : "Written contact requirement is off for this campaign.",
-    settings.requirePreviewQuality85 ? "Preview QA threshold is 85+ before review-ready outreach." : "Preview QA threshold is not enforced by this campaign.",
+    "Preview generation and preview scoring are not required before interest.",
   ];
   const recommendations = [
     queueCounts.needsHumanResearch > queueCounts.emailDraftReady ? "Try one starter trade with stronger written-contact coverage next, such as Cleaning, Painting, Pressure Washing, Landscaping, or Concrete." : "Review the email-ready and manual-DM queues before expanding the market.",
@@ -823,20 +827,17 @@ function topProspectCityBreakdown(job: TopProspectJob): AutopilotCityActivity[] 
 
 function topProspectQueueCounts(job: TopProspectJob): AutopilotQueueCounts {
   const counts = emptyAutopilotQueueCounts();
-  const reviewable = job.results;
-  for (const result of reviewable) {
+  for (const result of job.results) {
     const prospect = result.prospect;
-    const previewScore = prospect.preview?.qualityScore?.overall ?? 0;
-    if (previewScore > 0 && previewScore < 85) {
-      counts.needsPreviewReview += 1;
-    } else if (/facebook|instagram/i.test(prospect.profileUrl || "") || prospect.classification === "social_only") {
+    if (/facebook|instagram/i.test(prospect.profileUrl || "") || prospect.classification === "social_only") {
       counts.readyForManualDm += 1;
     } else if (prospect.email || prospect.contactFormUrl) {
-      counts.emailDraftReady += 1;
+      if (result.emailQuality.ready) counts.emailDraftReady += 1;
+      else counts.needsPreviewReview += 1;
     } else if (prospect.phone) {
       counts.needsHumanResearch += 1;
     } else {
-      counts.needsPreviewReview += 1;
+      counts.needsHumanResearch += 1;
     }
   }
   counts.blockedBadFit = Math.max(0, job.skippedCount + job.reviewedNotRecommended.length);
@@ -1037,7 +1038,7 @@ export function fakeAutopilotSmokeQueue() {
       state: "oh",
       email: "owner@example.com",
       recommendedContactMethod: "send_email",
-    } as Prospect, { status: "Eligible", previewQualityScore: 91 }),
+    } as Prospect, { status: "Eligible", previewQualityScore: 0 }),
     fakeQueueItem({
       ...base,
       id: "fixture-facebook-dm",
@@ -1052,13 +1053,13 @@ export function fakeAutopilotSmokeQueue() {
     } as Prospect, { status: "DM Draft", contactSource: "Social profile", email: "" }),
     fakeQueueItem({
       ...base,
-      id: "fixture-weak-preview",
+      id: "fixture-email-review",
       businessName: "Perrysburg Painting Co",
       trade: "Painting",
       city: "perrysburg",
       state: "oh",
       email: "paint@example.com",
-    } as Prospect, { status: "Needs Review", previewQualityScore: 74, detectedIssues: ["Preview quality is below 85."] }),
+    } as Prospect, { status: "Needs Review", previewQualityScore: 0, detectedIssues: ["First-touch email needs human review."] }),
     fakeQueueItem({
       ...base,
       id: "fixture-supplier",
@@ -1087,19 +1088,19 @@ export function fakeAutopilotSmokeQueue() {
       city: "bowling green",
       state: "oh",
       email: "hello@example.com",
-    } as Prospect, { status: "Loom Needed", previewQualityScore: 92 }),
+    } as Prospect, { status: "Preview Build Needed", previewQualityScore: 0 }),
   ];
 }
 
 export function runFakeAutopilotSmokeTest(campaign: AutopilotCampaign, now = new Date()): AutopilotSmokeTestResult {
   const queue = fakeAutopilotSmokeQueue();
   const expectations: Array<[string, AutopilotQueueKey, string]> = [
-    ["fixture-pressure-washing-email", "emailDraftReady", "Public email with strong preview becomes Email Draft Ready."],
+    ["fixture-pressure-washing-email", "emailDraftReady", "A valid public-email first touch is Email Draft Ready without a preview."],
     ["fixture-facebook-dm", "readyForManualDm", "Social lead becomes Manual DM ready, with no first-message link."],
-    ["fixture-weak-preview", "needsPreviewReview", "Weak preview is held for review."],
+    ["fixture-email-review", "needsPreviewReview", "A first-touch draft needing human review enters Needs Email Review."],
     ["fixture-supplier", "blockedBadFit", "Supplier/equipment lead is blocked."],
     ["fixture-phone-only", "blockedBadFit", "Phone-only lead is blocked under written outreach rules."],
-    ["fixture-loom-needed", "loomNeeded", "Prospect Said Yes style state stays in Loom Needed."],
+    ["fixture-loom-needed", "loomNeeded", "Post-interest manual preview work stays in the Preview / Loom queue."],
   ];
   const fixtureResults = expectations.map(([id, expectedQueue, reason]) => {
     const item = queue.find((entry) => entry.prospectId === id);
@@ -1129,9 +1130,9 @@ function countPhoneOnlyBlocked(queue: OutreachQueueItem[]) {
   }).length;
 }
 
-function countPreviewsPassingQa(queue: OutreachQueueItem[], report: AutopilotRunReport) {
-  if (!queue.length) return Math.min(report.packagesGenerated, report.queueCounts.emailDraftReady + report.queueCounts.readyForManualDm + report.queueCounts.loomNeeded);
-  return queue.filter((item) => item.previewLink && Number(item.previewQualityScore) >= 85).length;
+function countFirstTouchDraftsReady(queue: OutreachQueueItem[], report: AutopilotRunReport) {
+  if (!queue.length) return report.queueCounts.emailDraftReady;
+  return queue.filter((item) => autopilotQueueKeyForItem(item) === "emailDraftReady").length;
 }
 
 function blockedReasonsForQueue(queue: OutreachQueueItem[], report: AutopilotRunReport) {
@@ -1280,7 +1281,7 @@ function activityEntriesForReport(campaign: AutopilotCampaign, report: Autopilot
       id: `${report.id}-start`,
       level: "info",
       label: report.fakeOnly ? "Fake Smoke Test Activity — no providers, no outreach." : "Starting Autopilot campaign",
-      detail: report.fakeOnly ? "Fake fixtures are sorted into review queues only." : "Campaign prepared prospects, previews, scripts, and queues. Nothing was sent.",
+      detail: report.fakeOnly ? "Fake fixtures are sorted into review queues only." : "Campaign prepared prospects, permission-first drafts, and review queues. Nothing was sent.",
       createdAt: startedAt,
     },
     {
@@ -1336,14 +1337,14 @@ function activityEntriesForReport(campaign: AutopilotCampaign, report: Autopilot
       id: `${report.id}-scan`,
       level: "info",
       label: `Scanning ${queue.filter((item) => Boolean(item.website)).length || report.packagesGenerated} websites`,
-      detail: "Website and preview work stayed in review-only queues.",
+      detail: "Website analysis and permission-first outreach stayed in review-only queues.",
       createdAt: report.completedAt,
     },
     {
-      id: `${report.id}-previews`,
+      id: `${report.id}-first-touch-packages`,
       level: "success",
-      label: `Generated ${report.packagesGenerated} previews`,
-      detail: `${countPreviewsPassingQa(queue, report)} preview${countPreviewsPassingQa(queue, report) === 1 ? "" : "s"} passed QA or were routed for review.`,
+      label: `Generated ${report.packagesGenerated} first-touch packages`,
+      detail: `${countFirstTouchDraftsReady(queue, report)} email draft${countFirstTouchDraftsReady(queue, report) === 1 ? "" : "s"} ready for human review without requiring a preview.`,
       createdAt: report.completedAt,
     },
     {
@@ -1442,7 +1443,7 @@ function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueu
         id: `${campaign.id}-activity-empty`,
         level: "info",
         label: "No Autopilot activity yet. Start Autopilot or run the fake smoke test to see live steps.",
-        detail: "This panel will show discovery, filtering, preview, script, and queue routing progress.",
+        detail: "This panel will show discovery, filtering, permission-first draft, and queue routing progress.",
         createdAt: campaign.updatedAt || now.toISOString(),
       }],
       providerDiagnostics: [],
@@ -1491,7 +1492,7 @@ function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueu
     phoneOnlyLeadsBlocked,
     websitesScanned: report.prospectsScanned ?? (queue.filter((item) => Boolean(item.website)).length || report.packagesGenerated),
     previewsGenerated: report.packagesGenerated,
-    previewsPassingQa: countPreviewsPassingQa(queue, report),
+    previewsPassingQa: countFirstTouchDraftsReady(queue, report),
     dmScriptsGenerated: queue.filter((item) => Boolean(item.dmScript)).length || report.queueCounts.readyForManualDm,
     emailDraftsGenerated: queue.filter((item) => Boolean(item.emailBody)).length || report.queueCounts.emailDraftReady,
     queueCounts,

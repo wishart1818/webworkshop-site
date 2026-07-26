@@ -921,36 +921,49 @@ function feedbackCategory(label: AutonomousFeedbackLabel) {
   return "lead";
 }
 
-function feedbackReview(item: OutreachQueueItem, feedbackLabels = item.feedbackLabels) {
+const postInterestPreviewFeedbackStatuses = new Set<OutreachQueueItem["status"]>([
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+]);
+
+export function feedbackReview(item: OutreachQueueItem, feedbackLabels = item.feedbackLabels) {
+  const previewFeedbackEnabled = postInterestPreviewFeedbackStatuses.has(item.status);
+  const effectivePreviewFeedback = previewFeedbackEnabled
+    ? feedbackLabels
+    : feedbackLabels.filter((label) => !/preview/i.test(label));
   const previewGate = {
     status: item.previewQualityScore >= 85 ? "Eligible" as const : item.previewQualityScore < 70 ? "Blocked" as const : "Needs Review" as const,
     score: item.previewQualityScore,
     checks: [],
     reasons: item.detectedIssues,
   };
-  const regenerationPlan = previewRegenerationPlan(previewGate, feedbackLabels);
+  const regenerationPlan = previewFeedbackEnabled ? previewRegenerationPlan(previewGate, effectivePreviewFeedback) : [];
   const rewritePlan = outreachRewritePlan(item.emailBody, feedbackLabels);
-  const detectedIssues = new Set(item.detectedIssues);
+  const detectedIssues = new Set(previewFeedbackEnabled ? item.detectedIssues : item.detectedIssues.filter((issue) => !/preview/i.test(issue)));
   if (feedbackLabels.includes("Bad lead")) detectedIssues.add("Manual feedback marked this as a bad lead.");
   if (feedbackLabels.includes("Wrong contact")) detectedIssues.add("Manual feedback marked the contact as wrong.");
   if (feedbackLabels.includes("Never contact")) detectedIssues.add("Manual feedback marked this as never contact.");
-  let recommendedNextAction: AutonomousNextAction = item.recommendedNextAction;
+  let recommendedNextAction: AutonomousNextAction = !previewFeedbackEnabled && item.recommendedNextAction === "Regenerate Preview" ? "Needs Human Review" : item.recommendedNextAction;
   if (feedbackLabels.includes("Never contact")) recommendedNextAction = "Never Contact";
   else if (feedbackLabels.includes("Bad fit")) recommendedNextAction = "Bad Fit";
-  else if (feedbackLabels.includes("Preview looked bad") || regenerationPlan.length) recommendedNextAction = "Regenerate Preview";
+  else if (previewFeedbackEnabled && (effectivePreviewFeedback.includes("Preview looked bad") || regenerationPlan.length)) recommendedNextAction = "Regenerate Preview";
   else if (feedbackLabels.includes("Outreach sounded too AI-ish") || rewritePlan.length) recommendedNextAction = "Rewrite Outreach";
   else if (feedbackLabels.includes("Bad lead")) recommendedNextAction = "Skip";
-  else if (feedbackLabels.includes("Good lead") || feedbackLabels.includes("Preview looked good") || feedbackLabels.includes("Outreach sounded good")) recommendedNextAction = "Keep";
+  else if (feedbackLabels.includes("Good lead") || (previewFeedbackEnabled && effectivePreviewFeedback.includes("Preview looked good")) || feedbackLabels.includes("Outreach sounded good")) recommendedNextAction = "Keep";
   const reviewScore = Math.max(0, Math.min(100, item.reviewScore
     + (feedbackLabels.includes("Good lead") ? 8 : 0)
     + (feedbackLabels.includes("Positive reply") ? 12 : 0)
     - (feedbackLabels.includes("Bad lead") ? 18 : 0)
-    - (feedbackLabels.includes("Preview looked bad") ? 10 : 0)
+    - (previewFeedbackEnabled && effectivePreviewFeedback.includes("Preview looked bad") ? 10 : 0)
     - (feedbackLabels.includes("Outreach sounded too AI-ish") ? 8 : 0)));
+  const existingSuggestions = previewFeedbackEnabled ? item.improvementSuggestions : item.improvementSuggestions.filter((suggestion) => !/preview/i.test(suggestion));
   return {
     reviewScore,
     reviewSummary: `${item.businessName} review: ${recommendedNextAction}. Feedback has been recorded for future recommendations.`,
-    improvementSuggestions: [...new Set([...item.improvementSuggestions, ...regenerationPlan, ...rewritePlan])],
+    improvementSuggestions: [...new Set([...existingSuggestions, ...regenerationPlan, ...rewritePlan])],
     detectedIssues: [...detectedIssues],
     recommendedNextAction,
     regenerationPlan,
