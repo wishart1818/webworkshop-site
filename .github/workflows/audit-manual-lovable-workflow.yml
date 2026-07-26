@@ -30,7 +30,48 @@ jobs:
         run: npm ci
 
       - name: Apply audit fixes
-        run: python3 .github/scripts/audit_manual_lovable_workflow.py
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/audit_manual_lovable_workflow.py')
+          source = path.read_text(encoding='utf-8')
+          old = '''# Protect every post-interest workflow state from copy regeneration.
+          replace_once(
+              "lib/autonomous-growth.ts",
+              '''  "Preview Build Needed",
+            "Loom Needed",''',
+              '''  "Preview Build Needed",
+            "Preview Needs Polish",
+            "Loom Needed",''',
+              "post-interest protected status",
+          )'''
+          new = '''# Protect every post-interest workflow state from copy regeneration.
+          replace_regex(
+              "lib/autonomous-growth.ts",
+              r'''(const contactedOrClosedStatuses = new Set<OutreachQueueStatus>\(\[[\s\S]*?  "Preview Build Needed",\n)(  "Loom Needed",)''',
+              r'''\\1  "Preview Needs Polish",\n\\2''',
+              "post-interest protected status",
+          )'''
+          if old not in source:
+              raise SystemExit('Targeted protected-status transform was not found in the audit script.')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+          python3 .github/scripts/audit_manual_lovable_workflow.py 2>&1 | tee final-audit.log
+
+      - name: Upload audit failure log
+        if: steps.audit.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-lovable-final-audit
+          path: final-audit.log
+
+      - name: Stop after audit failure
+        if: steps.audit.outcome == 'failure'
+        run: exit 1
 
       - name: Run focused audit tests
         run: npx tsx --test tests/final-manual-workflow-audit.test.ts tests/approval-feedback.test.ts tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts
@@ -51,6 +92,7 @@ jobs:
         run: |
           rm -f .github/scripts/audit_manual_lovable_workflow.py
           rm -f .github/workflows/audit-manual-lovable-workflow.yml
+          rm -f final-audit.log
 
       - name: Commit verified audit fixes
         run: |
