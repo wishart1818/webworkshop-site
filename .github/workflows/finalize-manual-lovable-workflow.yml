@@ -36,49 +36,39 @@ jobs:
         run: |
           set -o pipefail
           python3 .github/scripts/finalize_manual_lovable_workflow.py 2>&1 | tee final-corrections.log
-          python3 - <<'PY'
+          python3 - <<'PY' 2>&1 | tee -a final-corrections.log
           from pathlib import Path
+          from textwrap import dedent, indent
           import re
 
-          def replace_once(path: str, old: str, new: str) -> None:
-              file = Path(path)
-              content = file.read_text(encoding="utf-8")
+          def replace_once(content: str, old: str, new: str, label: str) -> str:
               count = content.count(old)
               if count != 1:
-                  raise SystemExit(f"Expected exactly one match in {path}, found {count}: {old[:120]!r}")
-              file.write_text(content.replace(old, new, 1), encoding="utf-8")
+                  raise SystemExit(f"Expected one {label} target, found {count}: {old[:120]!r}")
+              return content.replace(old, new, 1)
 
-          def replace_all(path: str, old: str, new: str, expected: int) -> None:
-              file = Path(path)
-              content = file.read_text(encoding="utf-8")
-              count = content.count(old)
-              if count != expected:
-                  raise SystemExit(f"Expected {expected} matches in {path}, found {count}: {old[:120]!r}")
-              file.write_text(content.replace(old, new), encoding="utf-8")
-
-          # A preview is no longer required for interrupted pre-interest outreach recovery.
-          replace_once(
-              "tests/top-prospects.test.ts",
+          test_path = Path("tests/top-prospects.test.ts")
+          tests = test_path.read_text(encoding="utf-8")
+          tests = replace_once(
+              tests,
               '  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), false);',
               '  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), true);',
+              "preview-independent recovery test",
           )
+          test_path.write_text(tests, encoding="utf-8")
 
           workspace_path = Path("components/engine/AutonomousGrowthWorkspace.tsx")
           workspace = workspace_path.read_text(encoding="utf-8")
+          workspace = replace_once(
+              workspace,
+              '  const [copied, setCopied] = useState("");\n  const [sendingQueueItemId, setSendingQueueItemId] = useState("");\n  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);',
+              '  const [copied, setCopied] = useState("");\n  const [approvingQueueItemId, setApprovingQueueItemId] = useState("");\n  const [sendingQueueItemId, setSendingQueueItemId] = useState("");\n  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);',
+              "approval state",
+          )
 
-          old_state = '''  const [copied, setCopied] = useState("");
-          const [sendingQueueItemId, setSendingQueueItemId] = useState("");
-          const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);'''
-          new_state = '''  const [copied, setCopied] = useState("");
-          const [approvingQueueItemId, setApprovingQueueItemId] = useState("");
-          const [sendingQueueItemId, setSendingQueueItemId] = useState("");
-          const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);'''
-          if workspace.count(old_state) != 1:
-              raise SystemExit("Approval progress state insertion target was not found exactly once.")
-          workspace = workspace.replace(old_state, new_state, 1)
-
-          approval_pattern = r'''  async function approveAndQueueEmail\(item: OutreachQueueItem\) \{[\s\S]*?\n  \}\n\n  async function copyText'''
-          approval_replacement = '''  async function approveAndQueueEmail(item: OutreachQueueItem) {
+          approval_pattern = r'  async function approveAndQueueEmail\(item: OutreachQueueItem\) \{[\s\S]*?\n  \}\n\n  async function copyText'
+          approval_replacement = indent(dedent('''
+          async function approveAndQueueEmail(item: OutreachQueueItem) {
             setApprovingQueueItemId(item.id);
             setSaving(true);
             setError("");
@@ -122,123 +112,119 @@ jobs:
             }
           }
 
-          async function copyText'''
-          workspace, matches = re.subn(approval_pattern, approval_replacement, workspace, count=1)
-          if matches != 1:
-              raise SystemExit(f"Expected one approval handler, found {matches}.")
+          async function copyText
+          ''').strip('\n'), '  ')
+          workspace, count = re.subn(approval_pattern, approval_replacement, workspace, count=1)
+          if count != 1:
+              raise SystemExit(f"Expected one approval handler, found {count}.")
 
-          queue_call_old = '''      <QueueSection
-                  copied={copied}'''
-          queue_call_new = '''      <QueueSection
-                  approvingItemId={approvingQueueItemId}
-                  copied={copied}'''
-          if workspace.count(queue_call_old) != 3:
-              raise SystemExit(f"Expected three QueueSection calls, found {workspace.count(queue_call_old)}.")
-          workspace = workspace.replace(queue_call_old, queue_call_new)
+          workspace, count = re.subn(
+              r'(<QueueSection\n)(\s+)(copied=\{copied\})',
+              r'\1\2approvingItemId={approvingQueueItemId}\n\2\3',
+              workspace,
+          )
+          if count != 3:
+              raise SystemExit(f"Expected three QueueSection calls, found {count}.")
 
-          workspace = workspace.replace(
-              '''function QueueSection({
-            copied,''',
-              '''function QueueSection({
-            approvingItemId,
-            copied,''',
-              1,
+          workspace, count = re.subn(
+              r'(function QueueSection\(\{\n)(  copied,)',
+              r'\1  approvingItemId,\n\2',
+              workspace,
+              count=1,
           )
-          workspace = workspace.replace(
-              '''}: {
-            copied: string;
-            description: string;''',
-              '''}: {
-            approvingItemId: string;
-            copied: string;
-            description: string;''',
-              1,
+          if count != 1:
+              raise SystemExit("QueueSection parameter insertion failed.")
+          workspace, count = re.subn(
+              r'(function QueueSection\([\s\S]*?\}: \{\n)(  copied: string;)',
+              r'\1  approvingItemId: string;\n\2',
+              workspace,
+              count=1,
           )
-          workspace = workspace.replace(
-              '''              <QueueItemRow
-                        copied={copied}''',
-              '''              <QueueItemRow
-                        approving={approvingItemId === item.id}
-                        copied={copied}''',
-              1,
+          if count != 1:
+              raise SystemExit("QueueSection type insertion failed.")
+          workspace, count = re.subn(
+              r'(<QueueItemRow\n)(\s+)(copied=\{copied\})',
+              r'\1\2approving={approvingItemId === item.id}\n\2\3',
+              workspace,
+              count=1,
           )
-          workspace = workspace.replace(
-              '''function QueueItemRow({
-            copied,''',
-              '''function QueueItemRow({
-            approving,
-            copied,''',
-              1,
+          if count != 1:
+              raise SystemExit("QueueItemRow approval prop insertion failed.")
+          workspace, count = re.subn(
+              r'(function QueueItemRow\(\{\n)(  copied,)',
+              r'\1  approving,\n\2',
+              workspace,
+              count=1,
           )
-          workspace = workspace.replace(
-              '''}: {
-            copied: string;
-            item: OutreachQueueItem;''',
-              '''}: {
-            approving: boolean;
-            copied: string;
-            item: OutreachQueueItem;''',
-              1,
+          if count != 1:
+              raise SystemExit("QueueItemRow parameter insertion failed.")
+          workspace, count = re.subn(
+              r'(function QueueItemRow\([\s\S]*?\}: \{\n)(  copied: string;)',
+              r'\1  approving: boolean;\n\2',
+              workspace,
+              count=1,
           )
-          workspace = workspace.replace(
-              '''  const displayStatus = sending
-              ? "Sending"''',
-              '''  const displayStatus = approving
-              ? "Approving"
-              : sending
-                ? "Sending"''',
-              1,
+          if count != 1:
+              raise SystemExit("QueueItemRow type insertion failed.")
+
+          workspace = replace_once(
+              workspace,
+              '  const displayStatus = sending\n    ? "Sending"\n    : item.status ===',
+              '  const displayStatus = approving\n    ? "Approving"\n    : sending\n      ? "Sending"\n      : item.status ===',
+              "approval display status",
           )
-          workspace = workspace.replace(
-              '''      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>''',
-              '''      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{approving ? "Validating the exact draft and safety gates" : item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>''',
-              1,
+          workspace = replace_once(
+              workspace,
+              '      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>',
+              '      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{approving ? "Validating the exact draft and safety gates" : item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>',
+              "approval row detail",
           )
-          workspace = workspace.replace(
-              '''        {["Eligible", "Needs Review"].includes(item.status)
-                    ? <button className="engine-button engine-button--primary" onClick={() => void onApproveEmail(item)} type="button">Approve &amp; Queue Email</button>
-                    : null}''',
-              '''        {["Eligible", "Needs Review"].includes(item.status)
-                    ? <button aria-busy={approving} className="engine-button engine-button--primary" disabled={approving} onClick={() => void onApproveEmail(item)} type="button">{approving ? "Approving..." : "Approve & Queue Email"}</button>
-                    : null}''',
-              1,
-          )
+
+          approval_button_pattern = r'\{\["Eligible", "Needs Review"\]\.includes\(item\.status\)\s*\? <button className="engine-button engine-button--primary" onClick=\{\(\) => void onApproveEmail\(item\)\} type="button">Approve &amp; Queue Email</button>\s*: null\}'
+          approval_button = '{["Eligible", "Needs Review"].includes(item.status)\n          ? <button aria-busy={approving} className="engine-button engine-button--primary" disabled={approving} onClick={() => void onApproveEmail(item)} type="button">{approving ? "Approving..." : "Approve & Queue Email"}</button>\n          : null}'
+          workspace, count = re.subn(approval_button_pattern, approval_button, workspace, count=1)
+          if count != 1:
+              raise SystemExit("Approval button feedback replacement failed.")
 
           wording_replacements = [
               (
                   '  if (mode === "dry_run") return "Finds, scores, generates previews and copy, then sends nothing.";',
                   '  if (mode === "dry_run") return "Finds, scores, and drafts permission-first outreach, then sends nothing.";',
+                  "dry-run description",
               ),
               (
                   'Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.',
                   'Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, truthful first-touch, opt-out, postal address, and audit gates.',
+                  "pilot safety wording",
               ),
               (
                   'description="Leads blocked by contact rules, preview quality, unsupported claims, opt-out, or bad fit logic."',
                   'description="Leads blocked by contact rules, unsupported claims, opt-out, stale evidence, or bad fit logic."',
+                  "blocked queue wording",
               ),
               (
                   '<div><dt>Needs preview</dt><dd>{existing.needsPreview}</dd></div>',
                   '<div><dt>Post-interest preview work</dt><dd>{existing.needsPreview}</dd></div>',
+                  "preview metric wording",
               ),
               (
                   '<label>Max previews/run<input min="0" name="maxPreviewsPerRun"',
                   '<label>Legacy/post-interest preview cap<input min="0" name="maxPreviewsPerRun"',
+                  "preview cap wording",
               ),
               (
                   'type="checkbox" />Require preview QA 85+</label>',
                   'type="checkbox" />Require preview QA 85+ before a manual Loom</label>',
+                  "preview QA wording",
               ),
           ]
-          for old, new in wording_replacements:
-              count = workspace.count(old)
-              if count != 1:
-                  raise SystemExit(f"Expected one wording target, found {count}: {old[:100]!r}")
-              workspace = workspace.replace(old, new, 1)
+          for old, new, label in wording_replacements:
+              workspace = replace_once(workspace, old, new, label)
 
           workspace_path.write_text(workspace, encoding="utf-8")
 
-          Path("tests/approval-feedback.test.ts").write_text(r'''import assert from "node:assert/strict";
+          Path("tests/approval-feedback.test.ts").write_text(dedent('''
+          import assert from "node:assert/strict";
           import test from "node:test";
           import { readFileSync } from "node:fs";
 
@@ -251,7 +237,8 @@ jobs:
             assert.match(source, /queue: current\.queue\.map/);
             assert.match(source, /It has not been sent yet/);
           });
-          ''', encoding="utf-8")
+          ''').lstrip(), encoding="utf-8")
+          print("Approval feedback and final workflow patches applied.")
           PY
 
       - name: Upload final correction failure
