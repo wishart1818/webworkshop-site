@@ -36,11 +36,20 @@ jobs:
           python3 .github/scripts/final_manual_qa_cleanup.py
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("lib/autonomous-growth.ts")
-          content = path.read_text(encoding="utf-8").replace("\x08", r"\b")
-          if "\x08" in content:
+
+          growth_path = Path("lib/autonomous-growth.ts")
+          growth = growth_path.read_text(encoding="utf-8").replace("\x08", r"\b")
+          if "\x08" in growth:
               raise SystemExit("Hidden regex control characters remain in autonomous-growth.ts.")
-          path.write_text(content, encoding="utf-8")
+          growth_path.write_text(growth, encoding="utf-8")
+
+          test_path = Path("tests/autonomous-growth.test.ts")
+          tests = test_path.read_text(encoding="utf-8")
+          old = 'assert.ok(task.checklist.some((check) => check.key === "preview_quality" && !check.passed));'
+          new = 'assert.ok(task.checklist.some((check) => check.key === "manual_preview_qa" && !check.passed));'
+          if tests.count(old) != 1:
+              raise SystemExit(f"Expected one legacy preview-quality checklist assertion, found {tests.count(old)}.")
+          test_path.write_text(tests.replace(old, new, 1), encoding="utf-8")
           PY
 
       - name: Run focused tests
