@@ -1940,6 +1940,7 @@ function LoomQueueSection({
         <div className="engine-loom-task-grid">
           {items.map((item) => {
             const task = loomNeededTaskForQueueItem(item);
+            const statusTargets = manualQueueStatusTargets(item.status);
             return (
               <article className="engine-loom-task" key={item.id}>
                 <header>
@@ -1948,7 +1949,7 @@ function LoomQueueSection({
                 </header>
                 <div className="engine-loom-task__facts">
                   <div><b>Public preview</b>{task.previewLink ? <a href={task.previewLink} rel="noreferrer" target="_blank">{task.previewLink}</a> : <span>Missing public preview link</span>}</div>
-                  <div><b>Preview quality</b><span>{task.previewQuality}</span></div>
+                  <div><b>Manual QA</b><span>{task.previewQuality}</span></div>
                   <div><b>Send rule</b><span>Manual DM, manual Loom, no automatic sending.</span></div>
                 </div>
                 <section className="engine-loom-checklist">
@@ -1984,7 +1985,7 @@ function LoomQueueSection({
                   <dl>
                     <div><dt>Current-site issue to show</dt><dd>{task.recommendation.currentSiteIssue}</dd></div>
                     <div><dt>Preview improvement to show</dt><dd>{task.recommendation.previewImprovement}</dd></div>
-                    <div><dt>Public preview link</dt><dd>{task.recommendation.previewLink ? <a href={task.recommendation.previewLink} rel="noreferrer" target="_blank">{task.recommendation.previewLink}</a> : "Generate a public /p/ preview first."}</dd></div>
+                    <div><dt>Public preview link</dt><dd>{task.recommendation.previewLink ? <a href={task.recommendation.previewLink} rel="noreferrer" target="_blank">{task.recommendation.previewLink}</a> : "Save a legitimate public Lovable preview link first."}</dd></div>
                   </dl>
                   <ul>{task.recommendation.talkingPoints.map((point) => <li key={point}>{point}</li>)}</ul>
                 </section>
@@ -1998,15 +1999,18 @@ function LoomQueueSection({
                   <CopyScriptButton copied={copied} copyKey={`${item.id}:follow-up`} label="Copy follow-up" onCopy={onCopy} value={task.scripts.followUpAfterLoom} />
                   <CopyScriptButton copied={copied} copyKey={`${item.id}:not-interested`} label="Copy not interested reply" onCopy={onCopy} value={task.scripts.notInterestedReply} />
                 </section>
-                <footer className="engine-loom-actions">
-                  <button className="engine-button" onClick={() => void onSavePreview(item)} type="button">Add Lovable preview link</button>
-                  <button className="engine-button" onClick={() => void onStatus(item, "Preview Needs Polish")} type="button">Preview Needs Polish</button>
-                  <button className="engine-button engine-button--primary" disabled={!task.canMarkReadyForLoom} onClick={() => void onStatus(item, "Ready for Loom")} type="button">Ready for Loom</button>
-                  <button className="engine-button" onClick={() => void onStatus(item, "Loom Recorded")} type="button">Loom Recorded</button>
-                  <button className="engine-button" onClick={() => void onStatus(item, "Loom Sent")} type="button">Loom Sent</button>
-                  <button className="engine-button" onClick={() => void onStatus(item, "Follow-up Needed")} type="button">Follow-up Needed</button>
-                  <button className="engine-button" onClick={() => void onStatus(item, "Pricing Requested")} type="button">Pricing Requested</button>
-                </footer>
+<footer className="engine-loom-actions">
+  <button className="engine-button" onClick={() => void onSavePreview(item)} type="button">Add Lovable preview link</button>
+  {statusTargets.includes("Preview Build Needed") ? <button className="engine-button" onClick={() => void onStatus(item, "Preview Build Needed")} type="button">Back to Preview Build</button> : null}
+  {statusTargets.includes("Preview Needs Polish") ? <button className="engine-button" onClick={() => void onStatus(item, "Preview Needs Polish")} type="button">Preview Needs Polish</button> : null}
+  {statusTargets.includes("Ready for Loom") ? <button className="engine-button engine-button--primary" disabled={!task.canMarkReadyForLoom} onClick={() => void onStatus(item, "Ready for Loom")} type="button">Ready for Loom</button> : null}
+  {statusTargets.includes("Loom Recorded") ? <button className="engine-button" onClick={() => void onStatus(item, "Loom Recorded")} type="button">Loom Recorded</button> : null}
+  {statusTargets.includes("Loom Sent") ? <button className="engine-button" onClick={() => void onStatus(item, "Loom Sent")} type="button">Loom Sent</button> : null}
+  {statusTargets.includes("Follow-up Needed") ? <button className="engine-button" onClick={() => void onStatus(item, "Follow-up Needed")} type="button">Follow-up Needed</button> : null}
+  {statusTargets.includes("Pricing Requested") ? <button className="engine-button" onClick={() => void onStatus(item, "Pricing Requested")} type="button">Pricing Requested</button> : null}
+  {statusTargets.includes("Not Interested") ? <button className="engine-button" onClick={() => void onStatus(item, "Not Interested")} type="button">Not Interested</button> : null}
+  {statusTargets.includes("Lost") ? <button className="engine-button" onClick={() => void onStatus(item, "Lost")} type="button">Lost</button> : null}
+</footer>
               </article>
             );
           })}

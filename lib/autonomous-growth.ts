@@ -1668,18 +1668,21 @@ export function loomTalkingPoints(prospect: Prospect, previewLink: string) {
 
 export function loomReadinessChecklist(item: OutreachQueueItem): LoomReadinessCheck[] {
   const previewReady = publicPreviewReady(item.previewLink);
+  const manualQaClear = previewReady
+    && item.status !== "Preview Needs Polish"
+    && item.regenerationPlan.length === 0;
   return [
     {
       key: "public_preview_link",
-      label: "Public preview link exists",
+      label: "Public Lovable preview link exists",
       passed: previewReady,
       fix: "Build the preview manually in Lovable, QA it, then save its public HTTPS link.",
     },
     {
-      key: "preview_quality",
-      label: "Preview quality is high enough for a walkthrough",
-      passed: item.previewQualityScore >= 85 && !item.regenerationPlan.length,
-      fix: "Mark Preview Needs Polish and fix layout, copy, imagery, or truthfulness issues before recording.",
+      key: "manual_preview_qa",
+      label: "Manual desktop, mobile, form, and factual QA is clear",
+      passed: manualQaClear,
+      fix: "Review desktop and mobile, test every button and form, verify imagery and facts, and use Preview Needs Polish when anything still needs work.",
     },
     {
       key: "business_context",
@@ -1696,7 +1699,8 @@ export function loomReadinessChecklist(item: OutreachQueueItem): LoomReadinessCh
   ];
 }
 
-function hasUsableManualContactForLoom(item: OutreachQueueItem) {
+function hasUsableManualContactForLoom
+(item: OutreachQueueItem) {
   return Boolean(item.contactSource)
     && !/phone(?:\s|-)?only|^phone$/i.test(item.contactSource)
     && item.contactSource !== "Unknown"
@@ -1712,10 +1716,12 @@ function visualIssueForLoom(item: OutreachQueueItem) {
 export function loomRecommendationForQueueItem(item: OutreachQueueItem): LoomRecommendation {
   const visualIssue = visualIssueForLoom(item);
   const highValue = item.reviewScore >= 70;
-  const strongPreview = item.previewQualityScore >= 85 && item.regenerationPlan.length === 0;
-  const usableContact = hasUsableManualContactForLoom(item);
   const publicPreview = publicPreviewReady(item.previewLink);
-  const recommended = highValue && strongPreview && usableContact && publicPreview && Boolean(visualIssue);
+  const manualQaClear = publicPreview
+    && item.status !== "Preview Needs Polish"
+    && item.regenerationPlan.length === 0;
+  const usableContact = hasUsableManualContactForLoom(item);
+  const recommended = highValue && manualQaClear && usableContact && Boolean(visualIssue);
   const currentSiteIssue = visualIssue || "No specific visual website issue has been recorded yet.";
   const previewImprovement = item.improvementSuggestions.find((suggestion) => /preview|quote|contact|layout|service/i.test(suggestion))
     ?? "Show how the public preview makes services and quote requests easier to find.";
@@ -1731,12 +1737,13 @@ export function loomRecommendationForQueueItem(item: OutreachQueueItem): LoomRec
     previewImprovement,
     previewLink: publicPreview ? item.previewLink : "",
     whyRecommended: recommended
-      ? "High-value prospect with a strong preview, usable manual contact path, and a visual issue worth showing."
-      : "Wait until the prospect has a strong score, public preview, usable manual contact path, and a clear visual issue.",
+      ? "High-value prospect with a manually QA'd public preview, usable manual contact path, and a visual issue worth showing."
+      : "Wait until the public preview is manually QA'd, the contact path is usable, and there is a clear visual issue to show.",
   };
 }
 
-export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededTask {
+export function loomNeededTaskForQueueItem
+(item: OutreachQueueItem): LoomNeededTask {
   const prospect = {
     id: item.prospectId,
     businessName: item.businessName,
@@ -1767,7 +1774,11 @@ export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededT
     trade: item.trade,
     city: item.city,
     previewLink: item.previewLink,
-    previewQuality: `${item.previewQualityScore || item.reviewScore || 0}/100`,
+    previewQuality: !publicPreviewReady(item.previewLink)
+      ? "Manual QA pending"
+      : item.status === "Preview Needs Polish" || item.regenerationPlan.length
+        ? "Manual QA needs polish"
+        : "Manual QA ready",
     fixNotes: [...new Set(fixNotes)].slice(0, 6),
     recommendation: loomRecommendationForQueueItem(item),
     checklist,
@@ -1792,7 +1803,7 @@ export function loomNeededNotificationDraft(item: OutreachQueueItem, environment
       `${item.businessName} requested a preview and is ready for a manual Lovable build.`,
       `Trade/city: ${item.trade} in ${item.city}`,
       `Preview: ${item.previewLink || "Missing public preview link"}`,
-      `Preview quality: ${item.previewQualityScore || item.reviewScore || 0}/100`,
+      `Manual QA: ${!publicPreviewReady(item.previewLink) ? "pending" : item.status === "Preview Needs Polish" || item.regenerationPlan.length ? "needs polish" : "ready"}`,
       "",
       "Build and QA the preview manually, save the public link, then record and send the Loom manually.",
     ].join("\n"),
@@ -1831,6 +1842,46 @@ function average(values: number[]) {
   return valid.length ? Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length) : 0;
 }
 
+const actualReplyLearningStatuses = new Set<OutreachQueueStatus>([
+  "Replied",
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+  "Not Interested",
+]);
+
+const positiveReplyLearningStatuses = new Set<OutreachQueueStatus>([
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+]);
+
+function learningReplyStatusIsActual(value: string) {
+  return /\b(?:replied|reply|positive|negative|interested|not[_ -]?interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:bounce|bounced|complaint|complained|spam|unsubscribe|unsubscribed|opt[_ -]?out|suppressed)\b/i.test(value);
+}
+
+function learningReplyStatusIsPositive(value: string) {
+  return /\b(?:positive|interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:not[_ -]?interested|negative|bounce|complaint|spam|unsubscribe|opt[_ -]?out|suppressed)\b/i.test(value);
+}
+
 function tradePerformance(queue: OutreachQueueItem[]) {
   const grouped = queue.reduce<Record<string, OutreachQueueItem[]>>((accumulator, item) => {
     const trade = item.trade || "Unknown";
@@ -1838,23 +1889,37 @@ function tradePerformance(queue: OutreachQueueItem[]) {
     return accumulator;
   }, {});
   return Object.entries(grouped)
-    .map(([trade, items]) => ({
-      trade,
-      averageScore: average(items.map((item) => item.reviewScore || item.previewQualityScore)),
-      replies: items.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested"].includes(item.status) || item.replyStatus).length,
-      positiveReplies: items.filter((item) => ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length,
-      sent: items.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate || ["Replied", "Positive Reply", "Not Interested", "Pricing Requested", "Won", "Lost"].includes(item.status)).length,
-    }))
-    .sort((left, right) => right.averageScore - left.averageScore);
+    .map(([trade, items]) => {
+      const emailSends = items.filter((item) => Boolean(item.sentDate) && item.contactSource === "Public email");
+      const replies = emailSends.filter((item) => actualReplyLearningStatuses.has(item.status) || learningReplyStatusIsActual(item.replyStatus)).length;
+      const positiveReplies = emailSends.filter((item) => positiveReplyLearningStatuses.has(item.status) || learningReplyStatusIsPositive(item.replyStatus)).length;
+      return {
+        trade,
+        averageScore: average(items.map((item) => item.reviewScore || item.previewQualityScore)),
+        replies,
+        positiveReplies,
+        sent: emailSends.length,
+        replyRate: emailSends.length ? Math.round((replies / emailSends.length) * 100) : 0,
+        positiveReplyRate: emailSends.length ? Math.round((positiveReplies / emailSends.length) * 100) : 0,
+      };
+    })
+    .sort((left, right) =>
+      right.positiveReplyRate - left.positiveReplyRate
+      || right.positiveReplies - left.positiveReplies
+      || right.replyRate - left.replyRate
+      || right.replies - left.replies
+      || right.averageScore - left.averageScore
+      || left.trade.localeCompare(right.trade));
 }
 
-export function generateAutonomousRunReview(
+export function generateAutonomousRunReview
+(
   settings: AutonomousGrowthSettings,
   queue: OutreachQueueItem[],
   id = `review-${Date.now()}`,
   createdAt = new Date().toISOString(),
 ): AutonomousRunReview {
-  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "DM Draft", "First DM Sent", "Prospect Said Yes", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won"];
+  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "DM Draft", "First DM Sent", "Prospect Said Yes", "Preview Build Needed", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won"];
   const blockedStatuses: OutreachQueueStatus[] = ["Blocked", "Preview Needs Polish", "Bad Fit", "Never Contact", "Opted Out", "Skipped", "Lost", "No Response", "Not Interested"];
   const commonPreviewIssues = topCounts(queue.flatMap((item) => item.regenerationPlan.length ? item.regenerationPlan : item.detectedIssues));
   const commonLeadIssues = topCounts(queue.flatMap((item) => [
@@ -1864,7 +1929,9 @@ export function generateAutonomousRunReview(
   const outreachQualityNotes = topCounts(queue.flatMap((item) => item.rewritePlan));
   const recommendedFixes = topCounts(queue.flatMap((item) => item.improvementSuggestions));
   const previewsGenerated = queue.filter((item) => item.previewLink).length;
-  const previewsPassed = queue.filter((item) => item.previewQualityScore >= 85 && item.regenerationPlan.length === 0).length;
+  const previewPassedStatuses = new Set<OutreachQueueStatus>(["Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Won"]);
+  const previewsPassed = queue.filter((item) => item.previewLink && item.regenerationPlan.length === 0 && (item.previewQualityScore >= 85 || previewPassedStatuses.has(item.status))).length;
+  const previewsFailed = queue.filter((item) => item.previewLink && (item.status === "Preview Needs Polish" || item.regenerationPlan.length > 0)).length;
   const prospectsKept = queue.filter((item) => keptStatuses.includes(item.status)).length;
   const prospectsBlocked = queue.filter((item) => blockedStatuses.includes(item.status) || item.blockedReason).length;
   return {
@@ -1875,7 +1942,7 @@ export function generateAutonomousRunReview(
     prospectsBlocked,
     previewsGenerated,
     previewsPassed,
-    previewsFailed: Math.max(0, previewsGenerated - previewsPassed),
+    previewsFailed,
     commonPreviewIssues,
     commonLeadIssues,
     outreachQualityNotes,
@@ -1896,8 +1963,8 @@ export function learningSummaryForQueue(
   const worstPerformingTrades = [...performance].reverse().slice(0, 3).filter((entry) => entry.averageScore < 70).map((entry) => entry.trade);
   const replyRateByTrade = performance.map((entry) => ({
     trade: entry.trade,
-    replyRate: entry.sent ? Math.round((entry.replies / entry.sent) * 100) : 0,
-    positiveReplyRate: entry.sent ? Math.round((entry.positiveReplies / entry.sent) * 100) : 0,
+    replyRate: entry.replyRate,
+    positiveReplyRate: entry.positiveReplyRate,
   }));
   const previewFixes = topCounts(queue.flatMap((item) => item.regenerationPlan));
   const wordingFixes = topCounts(queue.flatMap((item) => item.rewritePlan));

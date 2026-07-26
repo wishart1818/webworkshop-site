@@ -2920,7 +2920,7 @@ test("Loom Needed task exposes checklist, fix notes, scripts, and no auto-send p
 
   assert.equal(task.businessName, "Sample Roofing");
   assert.equal(task.canMarkReadyForLoom, false);
-  assert.ok(task.checklist.some((check) => check.key === "preview_quality" && !check.passed));
+  assert.ok(task.checklist.some((check) => check.key === "manual_preview_qa" && !check.passed));
   assert.ok(task.fixNotes.includes("make layout more believable"));
   assert.equal(task.recommendation.recommended, false);
   assert.match(task.recommendation.whyRecommended, /Wait until/);
