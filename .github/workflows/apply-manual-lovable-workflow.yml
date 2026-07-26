@@ -1,16 +1,17 @@
 name: Apply manual Lovable workflow
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/manual-lovable-preview-workflow
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   apply-and-verify:
-    if: ${{ !contains(github.event.head_commit.message, '[manual-lovable-applied]') }}
+    if: ${{ !contains(github.event.pull_request.head.sha, '[manual-lovable-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
