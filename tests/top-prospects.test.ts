@@ -428,7 +428,7 @@ test("written outreach readiness blocks phone-only leads from send-ready approva
   assert.throws(() => assertOutreachEmailReady(prepared.prospect, publicLink), /Phone-only \/ written outreach blocked/);
 });
 
-test("Top Prospects treats contact forms and social profiles as usable manual written outreach", () => {
+test("Top Prospects keeps contact forms and social profiles manual and permission-first", () => {
   const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
   const formProspect = withAnalysis(structuredClone(seedProspects[0]));
   formProspect.email = "";
@@ -441,12 +441,10 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests/i);
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /help you get more calls and quote requests/i);
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /Want me to send it over\?/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /had an idea for a simpler website direction/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
-  assert.match(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
-  assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/engine\/previews/i);
+  assert.doesNotMatch(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 
   const socialProspect = withAnalysis(structuredClone(seedProspects[2]));
   socialProspect.email = "";
@@ -458,10 +456,9 @@ test("Top Prospects treats contact forms and social profiles as usable manual wr
 
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
   assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(socialPackage.prospect.outreach?.concise ?? "", /help you get more calls and quote requests|made a quick website preview/i);
-  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Want to see it\?/);
-  assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//);
-  assert.match(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
+  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//i);
+  assert.doesNotMatch(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 });
 
 test("Prospect Modes preserve strict behavior and expand local qualification deliberately", () => {
@@ -813,10 +810,11 @@ test("Top Prospects build version safely identifies the deployed commit", () => 
   assert.equal(topProspectBuildVersion({}), "outreach-package-v1");
 });
 
-test("No Website / Social Only prospects receive separate presence scoring and ownership-focused artifacts", () => {
+test("No Website / Social Only prospects receive separate scoring and permission-first outreach", () => {
   const prospect = structuredClone(seedProspects[0]);
   prospect.businessName = "Local Social Roofing";
   prospect.website = "";
+  prospect.websiteStatus = "no_owned_website";
   prospect.profileUrl = "https://www.facebook.com/local-social-roofing";
   prospect.prospectType = "no_website_social_only";
   prospect.email = "";
@@ -843,8 +841,9 @@ test("No Website / Social Only prospects receive separate presence scoring and o
   assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /noticed you don't have a website|what yours could look like/i);
-  assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
+  assert.match(prepared.prospect.outreach?.concise ?? "", /couldn't find a dedicated website/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.match(prepared.buildPrompt, /first owned/i);
   assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", /licensed|insured|warrant|recent local roofs?/i);
@@ -865,7 +864,7 @@ test("presence classification and contact recommendations cover public lead shap
   assert.equal(recommendProspectContactMethod({ classification: "phone_only", profileUrl: "", phone: "419-555-0100", email: "", contactFormUrl: "", inactive: false }), "needs_manual_contact_research");
 });
 
-test("Top Prospect artifacts remain unapproved and include a detailed builder prompt", () => {
+test("Top Prospect artifacts remain unapproved and keep the preview out of first-touch drafts", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF"));
   const prompt = generateWebsiteBuildPrompt(prepared.prospect, prepared.assessment);
@@ -875,10 +874,10 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.equal(prepared.prospect.outreach?.followUps.length, 2);
   assert.ok(prepared.prospect.preview);
   assert.match(prepared.previewLink, /^https:\/\/webworkshop\.dev\/p\//);
-  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
-  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /Here's the preview/i);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Want me to send it over\?/i);
-  assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
+  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https?:\/\/|\/p\//i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", /I'll put together a quick preview/i);
+  assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.equal(prepared.emailQuality.ready, true);
   assert.ok(prepared.assessment.salesScores.weightedSalesScore > 0);
   assert.match(prompt, new RegExp(prospect.businessName));
@@ -893,7 +892,7 @@ test("Top Prospect artifacts remain unapproved and include a detailed builder pr
   assert.match(prompt, /no invented claims/i);
 });
 
-test("public preview tokens are hard to guess and internal preview links fail send-readiness checks", () => {
+test("public preview tokens stay protected while first-touch readiness remains preview-independent", () => {
   const token = createPublicPreviewToken();
   const publicLink = publicProspectPreviewLink(token);
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
@@ -909,14 +908,14 @@ test("public preview tokens are hard to guess and internal preview links fail se
 
   assert.match(token, /^[A-Za-z0-9_-]{32}$/);
   assert.equal(publicPackage.emailQuality.ready, true);
-  assert.equal(evaluateOutreachEmailQuality(publicPackage.prospect, internalLink).ready, false);
+  assert.equal(evaluateOutreachEmailQuality(publicPackage.prospect, internalLink).ready, true);
   assert.throws(() => prepareTopProspectArtifacts(prospect, internalLink), /public \/p\/ preview link/i);
   assert.equal(evaluateOutreachEmailQuality(scoreLeak, publicLink).ready, false);
-  assert.throws(() => assertOutreachEmailReady(publicPackage.prospect, internalLink), /cannot be approved/i);
+  assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, internalLink));
   assert.doesNotThrow(() => assertOutreachEmailReady(publicPackage.prospect, publicLink));
 });
 
-test("missing sender postal address blocks email send-readiness without adding placeholders", () => {
+test("missing sender postal address blocks email readiness without leaking a preview link", () => {
   const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
   const prepared = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0])), publicLink);
   const quality = evaluateOutreachEmailQuality(prepared.prospect, publicLink, "written_only", {});
@@ -929,8 +928,7 @@ test("missing sender postal address blocks email send-readiness without adding p
   assert.equal(quality.ready, false);
   assert.equal(quality.readinessLabel, "Needs sender postal address before sending");
   assert.doesNotMatch(allDrafts, /\[Add your business postal address before sending\]/i);
-  assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https:\/\/webworkshop\.dev\/p\//i);
-  assert.match(prepared.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
+  assert.doesNotMatch(allDrafts, new RegExp(publicLink.replaceAll("/", "\\/")));
   assert.doesNotMatch(allDrafts, /\/engine\/previews\//i);
 });
 
@@ -971,7 +969,7 @@ test("unsupported outreach claim is explainable and safely repairable", () => {
     outreach: {
       ...prepared.prospect.outreach!,
       concise: prepared.prospect.outreach!.concise.replace(
-        /I was looking at [^\n]+/,
+        /I came across your business\./,
         "I reviewed your website while looking at hvac businesses serving Perrysburg.",
       ),
     },

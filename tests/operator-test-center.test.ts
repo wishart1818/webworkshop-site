@@ -95,15 +95,15 @@ function readinessQueueItem(overrides: Partial<OutreachQueueItem> = {}): Outreac
     contactConfidence: 90,
     previewLink: readinessPreviewLink,
     previewQualityScore: 91,
-    subjectLine: "Quick website preview for Ready Pressure Washing",
+    subjectLine: "Quick website idea for Ready Pressure Washing",
     emailBody: [
       "Hi Ready Pressure Washing team,",
       "",
-      "I was looking at pressure washing businesses around the Tampa area and came across your business.",
+      "I came across your business.",
       "",
-      "I put together a quick preview showing what your website could look like with a cleaner, more modern design and how it could help you get more calls and quote requests.",
+      "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
       "",
-      "Want me to send it over?",
+      "Would you like me to put together a quick preview?",
       "",
       "Thanks,",
       "",
@@ -464,7 +464,7 @@ test("Simulate Next 24 Hours is a no-send dry run with operator queue counts", a
   assert.match(result.simulation?.summary ?? "", /Simulate Next 24 Hours/i);
 });
 
-test("Operator Test Center fake package always returns fake scripts without real outreach activity", () => {
+test("Operator Test Center fake package models the manual Lovable workflow without outreach activity", () => {
   const result = generateOneTestOutreachPackage({
     WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
   } as NodeJS.ProcessEnv);
@@ -478,16 +478,16 @@ test("Operator Test Center fake package always returns fake scripts without real
   assert.match(fake?.recommendedContactPath ?? "", /manual review only/i);
   assert.equal(result.packagePreview?.firstEmailLinkFree, true);
   assert.equal(result.packagePreview?.firstDmLinkFree, true);
-  assert.equal(result.packagePreview?.yesReplyIncludesPublicPreview, true);
+  assert.equal(result.packagePreview?.yesReplyLinkFree, true);
   assert.match(result.packagePreview?.publicPreviewLink ?? "", /^https:\/\/webworkshop\.dev\/p\//);
-  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Want me to send it over\?/i.test(script.body)));
-  assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Want to see it\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you like me to put together a quick preview\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Would you like me to put together a quick preview\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "Softer DM script"));
-  assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / preview-send script" && /https:\/\/webworkshop\.dev\/p\//i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / manual-build confirmation" && /I'll put together a quick preview/i.test(script.body) && !/https?:\/\/|\/p\//i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "Pricing reply"));
   assert.ok(fake?.scripts.some((script) => script.label === "Follow-up"));
   assert.ok(fake?.scripts.some((script) => script.label === "Not interested reply"));
-  assert.match(fake?.fullSummary ?? "", /help get you more calls and quote requests/i);
+  assert.match(fake?.fullSummary ?? "", /easier for people to see what you do and call or request a quote/i);
   assert.match(fake?.fullSummary ?? "", /No email, DM, form, phone call, or Loom was sent/i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First email script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First Facebook\/Instagram DM script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
@@ -536,7 +536,7 @@ test("Full Autonomous Readiness Test blocks full-auto when hard gates are missin
   assert.match(result.readiness?.summaries.safeToTest ?? "", /Full Auto Email: Not recommended yet/);
 });
 
-test("Full Autonomous Readiness Test checks copy, existing prospects, saved results, and queue items", async () => {
+test("Full Autonomous Readiness Test checks manual-build copy, existing prospects, saved results, and queue items", async () => {
   const result = await runFullAutonomousReadinessTest({
     OUTREACH_SEND_PROVIDER: "resend",
     RESEND_API_KEY: "secret-resend-key",
@@ -553,12 +553,12 @@ test("Full Autonomous Readiness Test checks copy, existing prospects, saved resu
   const labels = result.readiness?.checks.map((check) => check.label).join("\n") ?? "";
 
   assert.match(labels, /First-touch email has no preview link/);
-  assert.match(labels, /Yes-reply includes public \/p\/ preview link/);
+  assert.match(labels, /Yes-reply confirms a manual build and stays link-free/);
   assert.match(labels, /Existing qualified unsent prospects checked/);
   assert.match(labels, /Saved Top Prospects results checked/);
   assert.match(labels, /Outreach queue items checked/);
-  assert.ok(result.readiness?.checks.find((check) => check.key === "first-email-link-free")?.status === "passed");
-  assert.ok(result.readiness?.checks.find((check) => check.key === "yes-reply-public-preview")?.status === "passed");
+  assert.equal(result.readiness?.checks.find((check) => check.key === "first-email-link-free")?.status, "passed");
+  assert.equal(result.readiness?.checks.find((check) => check.key === "yes-reply-manual-build")?.status, "passed");
   assert.doesNotMatch(result.readiness?.summaries.debug ?? "", /\/engine\/previews|secret-resend-key|postgres:\/\/|twilio-auth-token|google-places-key/i);
 });
 

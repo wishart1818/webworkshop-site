@@ -1,1 +1,0 @@
-This temporary branch-only migration is removed automatically after the repository passes focused tests, the full test suite, lint, the production build, and git diff checks.

@@ -172,8 +172,8 @@ function downloadAutopilotCsv(autopilot: AutopilotDashboard) {
 
 function modeDescription(mode: AutonomousGrowthMode) {
   if (mode === "off") return "Nothing runs automatically.";
-  if (mode === "dry_run") return "Finds, scores, generates previews and copy, then sends nothing.";
-  if (mode === "manual_approval") return "Builds the queue and lets you approve, copy, edit, or mark sent manually. Sends nothing.";
+  if (mode === "dry_run") return "Finds, scores, and drafts permission-first outreach, then sends nothing.";
+  if (mode === "manual_approval") return "Builds the review queue. Lovable previews are created manually only after a prospect asks for one.";
   return "Pilot gate only. Email can send only when every env, cap, quality, and contact rule passes.";
 }
 
@@ -363,9 +363,33 @@ export function AutonomousGrowthWorkspace() {
       const payload = await response.json() as ApiPayload;
       if (!response.ok || !payload.item) throw new Error(apiError(payload, "Unable to update queue item."));
       await loadDashboard();
-      setNotice(status === "Prospect Said Yes" ? "Prospect said yes. A Loom Needed task was created and nothing was sent." : `${status} recorded. Nothing was sent automatically.`);
+      setNotice(status === "Prospect Said Yes" ? "Prospect said yes. A Preview Build Needed task was created. Lovable, QA, Loom, and sending remain manual." : `${status} recorded. Nothing was sent automatically.`);
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : "Unable to update queue item.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  async function saveManualPreviewLink(item: OutreachQueueItem) {
+    const previewLink = window.prompt("Paste the public Lovable preview URL after you have built and QA'd the site:", item.previewLink || "");
+    if (previewLink === null) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_manual_preview_link", queueItemId: item.id, previewLink: previewLink.trim() }),
+      });
+      const payload = await response.json() as ApiPayload;
+      if (!response.ok || !payload.item) throw new Error(apiError(payload, "Unable to save the manual preview link."));
+      await loadDashboard();
+      setNotice("Manual Lovable preview link saved. Check desktop, mobile, buttons, forms, and factual accuracy before marking Ready for Loom.");
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : "Unable to save the manual preview link.");
     } finally {
       setSaving(false);
     }
@@ -639,7 +663,7 @@ export function AutonomousGrowthWorkspace() {
 
   const groupedQueue = useMemo(() => {
     const queue = dashboard?.queue ?? [];
-    const loomStatuses = ["Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"] as OutreachQueueStatus[];
+    const loomStatuses = ["Preview Build Needed", "Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"] as OutreachQueueStatus[];
     return {
       loom: queue.filter((item) => loomStatuses.includes(item.status)),
       dryRun: queue.filter((item) => ["Draft", "Eligible", "Needs Review", "DM Draft", "First DM Sent"].includes(item.status)),
@@ -709,8 +733,8 @@ export function AutonomousGrowthWorkspace() {
       {notice && <div className="engine-success-banner" role="status"><div><b>Autonomous Growth updated</b><p>{notice}</p></div></div>}
       {metrics.loomNeeded > 0 && (
         <div className="engine-loom-banner" role="status">
-          <div><b>You have Loom walkthroughs to record.</b><p>{metrics.loomNeeded} prospect{metrics.loomNeeded === 1 ? "" : "s"} said yes and now need a manual video before the preview is sent.</p></div>
-          <span>{metrics.loomNeeded} Loom Needed</span>
+          <div><b>You have manual Lovable previews to build.</b><p>{metrics.loomNeeded} prospect{metrics.loomNeeded === 1 ? "" : "s"} asked for a preview. Build and QA the site first; record the Loom only after the public preview is ready.</p></div>
+          <span>{metrics.loomNeeded} Preview Build Needed</span>
         </div>
       )}
 
@@ -766,11 +790,11 @@ export function AutonomousGrowthWorkspace() {
       <section className="engine-metrics" aria-label="Autonomous Growth metrics">
         {[
           ["Prospects found today", metrics.prospectsFoundToday, "Queued from generated packages"],
-          ["Previews generated", metrics.previewsGeneratedToday, "Public /p/ links only"],
+          ["Manual previews saved", metrics.previewsGeneratedToday, "Built only after interest"],
           ["Email-ready leads", metrics.emailReadyLeads, "Still requires the configured mode"],
           ["Daily cap remaining", metrics.dailyCapRemaining, "Auto Email Pilot cap"],
           ["Blocked phone-only", metrics.blockedPhoneOnlyLeads, "Written outreach protection"],
-          ["Average preview QA", `${metrics.averagePreviewQualityScore}/100`, "Self-review signal"],
+          ["Builds waiting", metrics.loomNeeded, "Manual Lovable queue"],
           ["Loom needed", metrics.loomNeeded, "Manual walkthroughs to record"],
           ["Replies", metrics.replies, `${metrics.replyRate}% reply rate`],
         ].map(([label, value, detail]) => <article key={label}><span>{label}</span><strong>{value}</strong><p>{detail}</p></article>)}
@@ -865,11 +889,11 @@ export function AutonomousGrowthWorkspace() {
       <section className="engine-metrics" aria-label="Autonomous Growth metrics">
         {[
           ["Prospects found today", metrics.prospectsFoundToday, "Queued from generated packages"],
-          ["Previews generated", metrics.previewsGeneratedToday, "Public /p/ links only"],
+          ["Manual previews saved", metrics.previewsGeneratedToday, "Built only after interest"],
           ["Email-ready leads", metrics.emailReadyLeads, "Still requires the configured mode"],
           ["Daily cap remaining", metrics.dailyCapRemaining, "Auto Email Pilot cap"],
           ["Blocked phone-only", metrics.blockedPhoneOnlyLeads, "Written outreach protection"],
-          ["Average preview QA", `${metrics.averagePreviewQualityScore}/100`, "Self-review signal"],
+          ["Builds waiting", metrics.loomNeeded, "Manual Lovable queue"],
           ["Average lead score", `${metrics.averageLeadScore}/100`, "Learning score"],
           ["Loom needed", metrics.loomNeeded, "Manual walkthroughs to record"],
           ["Loom recorded", metrics.loomRecorded, "Waiting to send manually"],
@@ -939,6 +963,7 @@ export function AutonomousGrowthWorkspace() {
         copied={copied}
         items={groupedQueue.loom}
         onCopy={copyText}
+        onSavePreview={saveManualPreviewLink}
         onStatus={updateStatus}
       />
       <div id="eligible-leads" />
@@ -1871,20 +1896,22 @@ function LoomQueueSection({
   copied,
   items,
   onCopy,
+  onSavePreview,
   onStatus,
 }: {
   copied: string;
   items: OutreachQueueItem[];
   onCopy: (key: string, value: string) => Promise<void>;
+  onSavePreview: (item: OutreachQueueItem) => Promise<void>;
   onStatus: (item: OutreachQueueItem, status: OutreachQueueStatus) => Promise<void>;
 }) {
   return (
     <section className="engine-panel engine-loom-queue">
       <div className="engine-panel__head">
-        <div><h2>Loom Needed Queue</h2><p>Prospects who said yes. Polish the preview if needed, record a manual Loom, then send the Loom and preview manually.</p></div>
-        <span>{items.length} Loom task{items.length === 1 ? "" : "s"}</span>
+        <div><h2>Manual Preview Build Queue</h2><p>Prospects who said yes. Build one polished Lovable site, QA it, save the public link, then record and send the Loom manually.</p></div>
+        <span>{items.length} manual build{items.length === 1 ? "" : "s"}</span>
       </div>
-      {items.length === 0 ? <EmptyState title="No Loom walkthroughs waiting" body="Mark a prospect as Prospect Said Yes to create a Loom Needed task." /> : (
+      {items.length === 0 ? <EmptyState title="No manual preview builds waiting" body="Mark a prospect as Prospect Said Yes to create a Preview Build Needed task." /> : (
         <div className="engine-loom-task-grid">
           {items.map((item) => {
             const task = loomNeededTaskForQueueItem(item);
@@ -1900,6 +1927,17 @@ function LoomQueueSection({
                   <div><b>Send rule</b><span>Manual DM, manual Loom, no automatic sending.</span></div>
                 </div>
                 <section className="engine-loom-checklist">
+                  <h4>Manual Lovable workflow</h4>
+                  <ol>
+                    <li>Recheck the business identity and website status.</li>
+                    <li>Gather verified logo, services, brand cues, and usable images.</li>
+                    <li>Build one polished website manually in Lovable.</li>
+                    <li>Check desktop and mobile layouts.</li>
+                    <li>Verify every button and form and remove unsupported claims or fake proof.</li>
+                    <li>Save the legitimate public preview link here.</li>
+                    <li>Record the Loom manually.</li>
+                    <li>Send the preview and Loom manually.</li>
+                  </ol>
                   <h4>Review-before-Loom checklist</h4>
                   <ul>
                     {task.checklist.map((check) => (
@@ -1936,6 +1974,7 @@ function LoomQueueSection({
                   <CopyScriptButton copied={copied} copyKey={`${item.id}:not-interested`} label="Copy not interested reply" onCopy={onCopy} value={task.scripts.notInterestedReply} />
                 </section>
                 <footer className="engine-loom-actions">
+                  <button className="engine-button" onClick={() => void onSavePreview(item)} type="button">Add Lovable preview link</button>
                   <button className="engine-button" onClick={() => void onStatus(item, "Preview Needs Polish")} type="button">Preview Needs Polish</button>
                   <button className="engine-button engine-button--primary" disabled={!task.canMarkReadyForLoom} onClick={() => void onStatus(item, "Ready for Loom")} type="button">Ready for Loom</button>
                   <button className="engine-button" onClick={() => void onStatus(item, "Loom Recorded")} type="button">Loom Recorded</button>

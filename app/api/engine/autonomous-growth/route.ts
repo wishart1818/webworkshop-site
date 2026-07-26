@@ -19,6 +19,7 @@ import {
   runMarketScoutDryRunForDashboard,
   runSmartAutonomousDryRun,
   sendQueuedEmailQueueItem,
+  setManualPreviewLink,
   startAutopilotCampaign,
   stopAutopilotCampaign,
   updateAutonomousGrowthSettings,
@@ -141,6 +142,7 @@ export async function POST(request: Request) {
       feedbackLabel?: AutonomousFeedbackLabel;
       suppressionReason?: "bounce" | "complaint" | "unsubscribe" | "manual_suppression";
       note?: string;
+      previewLink?: string;
     };
     if (payload.action === "update_settings") {
       return NextResponse.json({ settings: await updateAutonomousGrowthSettings(payload.settings ?? {}) });
@@ -167,6 +169,12 @@ export async function POST(request: Request) {
       const approval = await approveAndQueueEmail(payload.queueItemId);
       if (!approval.item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item: approval.item, approval });
+    }
+    if (payload.action === "set_manual_preview_link") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      const item = await setManualPreviewLink(payload.queueItemId, payload.previewLink ?? "");
+      if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+      return NextResponse.json({ item });
     }
     if (payload.action === "record_feedback") {
       if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });

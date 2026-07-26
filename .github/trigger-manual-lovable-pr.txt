@@ -1,1 +1,0 @@
-Branch-only trigger. Removed automatically after verification.

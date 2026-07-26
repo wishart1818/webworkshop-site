@@ -198,7 +198,7 @@ function autonomousChecks() {
   const selfReview = evaluateSelfReview({ emailQuality, previewGate, prospect });
   const learning = learningSummaryForQueue([{ ...queueItem, feedbackLabels: ["Bad lead"], blockedReason: "Bad fit", status: "Bad Fit" }]);
   return [
-    check("loom_said_yes", "Prospect Said Yes creates Loom Needed", queueStatusAfterManualAction("Prospect Said Yes") === "Loom Needed", "Manual yes response creates a Loom Needed task.", "Review queueStatusAfterManualAction."),
+    check("preview_build_said_yes", "Prospect Said Yes creates Preview Build Needed", queueStatusAfterManualAction("Prospect Said Yes") === "Preview Build Needed", "A positive reply creates a manual Lovable build task without sending or implying that a preview already exists.", "Review queueStatusAfterManualAction."),
     check("loom_no_send", "Loom Needed does not send anything", loomTask.scripts.firstDm.length > 0 && /Do not automate/i.test(loomTask.checklist.find((item) => item.key === "manual_only")?.fix ?? ""), "Loom workflow remains manual.", "Review loomReadinessChecklist."),
     check("loom_queue_checklist", "Ready for Loom checklist appears", loomTask.checklist.length > 0, "Loom tasks include a readiness checklist.", "Review loomNeededTaskForQueueItem."),
     check("loom_follow_up", "Loom Sent creates follow-up recommendation copy", Boolean(loomTask.scripts.followUpAfterLoom), "Follow-up after Loom script is available.", "Review casualDmPlaybook follow-up copy."),

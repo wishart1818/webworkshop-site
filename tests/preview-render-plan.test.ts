@@ -42,17 +42,18 @@ function photo(src: string, service: string) {
   return { src, alt: `${service} project`, service };
 }
 
-test("all production preview entry points use the authoritative research-aware pipeline", () => {
+test("preview-building entry points use research while first-touch outreach does not auto-build", () => {
   const worker = readFileSync("lib/top-prospect-worker.ts", "utf8");
   const repository = readFileSync("lib/top-prospect-repository.ts", "utf8");
   const autonomous = readFileSync("lib/autonomous-growth-repository.ts", "utf8");
   const regeneration = readFileSync("app/api/engine/outreach-sync/route.ts", "utf8");
   const commands = readFileSync("lib/operator-command-center.ts", "utf8");
+  const firstTouchSync = autonomous.match(/async function syncTopProspectResultIntoQueue[\s\S]*?export async function getAutonomousGrowthDashboard/)?.[0] ?? "";
 
   assert.match(worker, /await prepareTopProspectArtifactsWithResearch\(/);
   assert.match(repository, /await prepareTopProspectArtifactsWithResearch\(/);
-  assert.match(autonomous, /await prepareTopProspectArtifactsWithResearch\(/);
-  assert.match(autonomous, /await prepareProspectForPreview\(prospect\)/);
+  assert.doesNotMatch(firstTouchSync, /prepareTopProspectArtifactsWithResearch|prepareProspectForPreview|createPublicPreviewToken/);
+  assert.match(firstTouchSync, /No preview was generated/);
   assert.match(regeneration, /await prepareProspectForPreview\(prospect, \{ mode: "regenerate"/);
   assert.match(commands, /await prepareProspectForPreview\(prospect, \{ mode: "regenerate"/);
 });

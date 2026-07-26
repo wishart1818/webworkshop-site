@@ -1,1 +1,0 @@
-This branch is intentionally unmerged while its temporary GitHub Actions migration applies and verifies the manual Lovable preview workflow.

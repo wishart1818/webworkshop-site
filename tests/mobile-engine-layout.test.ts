@@ -165,10 +165,10 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /No email, form, social, phone, or Loom outreach is sent automatically/);
   assert.match(topProspectsWorkspace, /autopilotCampaignDraftStorageKey/);
   assert.match(topProspectsWorkspace, /autopilotDraftFromRecommendedMarket/);
-  assert.match(autonomousGrowthWorkspace, /You have Loom walkthroughs to record/);
-  assert.match(autonomousGrowthWorkspace, /Loom Needed Queue/);
-  assert.match(autonomousGrowthWorkspace, /Review-before-Loom checklist/);
-  assert.match(autonomousGrowthWorkspace, /Copy first DM/);
+  assert.match(autonomousGrowthWorkspace, /You have manual Lovable previews to build/);
+  assert.match(autonomousGrowthWorkspace, /Manual Preview Build Queue/);
+  assert.match(autonomousGrowthWorkspace, /Manual Lovable workflow/);
+  assert.match(autonomousGrowthWorkspace, /Add Lovable preview link/);
   assert.match(autonomousGrowthWorkspace, /Copy Loom script/);
   assert.match(autonomousGrowthWorkspace, /Copy \$49\/month pricing/);
   assert.match(autonomousGrowthWorkspace, /Prospect Said Yes/);

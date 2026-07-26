@@ -11,6 +11,7 @@ import {
   displayTradeCategory,
   prospectContactMethodIsUsable,
   prospectEmailNeedsManualVerification,
+  prospectWebsiteAbsenceNeedsManualReview,
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
   scorePreviewQuality,
@@ -634,10 +635,11 @@ export function evaluateOutreachEmailQuality(
   outreachPreference: OutreachPreference = "written_only",
   environment: NodeJS.ProcessEnv = process.env,
 ): OutreachEmailQuality {
+  void previewLink;
   const outreach = prospect.outreach;
   const drafts = outreach ? [outreach.concise, outreach.detailed, ...outreach.followUps] : [];
   const combined = drafts.join("\n");
-  const mainEmails = outreach ? [outreach.concise, outreach.detailed] : [];
+  const firstTouch = outreach?.concise ?? "";
   const writtenContactReady = prospectHasWrittenContactMethod(prospect);
   const phoneOnlyBlocked = outreachPreference === "written_only"
     && !writtenContactReady
@@ -655,16 +657,6 @@ export function evaluateOutreachEmailQuality(
     || !hasClearLocalServiceIntent(prospect);
   const socialFirstDm = ["facebook", "instagram", "linkedin"].includes(prospect.bestManualContactMethod || "");
   const optOutPattern = webworkshopOptOutPattern();
-  const followUpsKeepPermissionFlow = Boolean(outreach?.followUps.every((draft) => (
-    draft.includes(previewLink)
-    || /earlier message|earlier note|earlier email|send it over|send the preview|want to see|last note|close the loop|timing is not right/i.test(draft)
-  )));
-  const publicLinkReady = isPublicPreviewLink(previewLink)
-    && Boolean(mainEmails[0])
-    && !mainEmails[0].includes(previewLink)
-    && Boolean(mainEmails[1])
-    && mainEmails[1].includes(previewLink)
-    && followUpsKeepPermissionFlow;
   const senderPostalAddress = webworkshopPostalAddress(environment);
   const emailNeedsVerification = prospectEmailNeedsManualVerification(prospect)
     && !prospect.quoteFormUrl
@@ -678,46 +670,54 @@ export function evaluateOutreachEmailQuality(
   const optOutReady = socialFirstDm
     ? drafts.length >= 4 && drafts.slice(1).every((draft) => optOutPattern.test(draft))
     : drafts.length >= 4 && drafts.every((draft) => optOutPattern.test(draft));
-  const clearCtaReady = socialFirstDm
-    ? mainEmails.length === 2
-      && /would you like to see it|would you want to see it|want to see it/i.test(mainEmails[0])
-      && /here's the preview|here is the preview/i.test(mainEmails[1])
-    : mainEmails.length === 2
-      && /would you be open to taking a look|would you like to see it|would you want to see it|would you want me to send|would you like me to send|would you want me to send it over|want me to send it over/i.test(mainEmails[0])
-      && /would it be worth sending over|would you want me to send over|would you like me to send|i can send over the simple pricing\/options/i.test(mainEmails[1]);
+  const permissionCtaReady = /would you like me to (?:put together|create|make|build)(?: you)? (?:a )?(?:quick )?(?:website )?preview\?/i.test(firstTouch);
+  const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
+  const firstTouchLinkFree = !/https?:\/\/|\/p\//i.test(firstTouch);
+  const businessContextReady = Boolean(prospect.businessName) && firstTouch.toLowerCase().includes(prospect.businessName.toLowerCase());
+  const relevantReasonReady = /couldn't find a dedicated website|website direction|website idea|easier for people to (?:see|call|request)|call or request a quote/i.test(firstTouch);
+  const uncertainWebsiteAbsence = prospectWebsiteAbsenceNeedsManualReview(prospect);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
     {
-      key: "public_preview_link",
-      label: "Public preview link exists and is included after permission",
-      passed: publicLinkReady,
+      key: "truthful_permission_first",
+      label: "First touch truthfully asks permission to create a preview",
+      passed: Boolean(firstTouch) && permissionCtaReady && firstTouchLinkFree && !pastTensePreviewClaim,
+      reason: "The first touch must ask whether Brendan should create a preview and must not imply that one already exists.",
+      suggestion: "Use the permission-first manual Lovable template.",
+    },
+    {
+      key: "business_context",
+      label: "Outreach matches the current business identity",
+      passed: businessContextReady,
+    },
+    {
+      key: "relevant_reason",
+      label: "Outreach gives a naturally relevant website reason",
+      passed: relevantReasonReady,
+      reason: "Do not add a random service, generic compliment, or unrelated fact simply to personalize the email.",
+      suggestion: "Use a verified website-related reason or the clean fallback.",
+    },
+    {
+      key: "website_absence_evidence",
+      label: "Website-absence wording is supported by saved evidence",
+      passed: !uncertainWebsiteAbsence,
+      reason: "The system has a no-website signal but not enough verified evidence to queue the claim automatically.",
+      suggestion: "Verify the official website status before approval.",
+    },
+    {
+      key: "clear_cta",
+      label: "Outreach includes a clear call to action",
+      passed: permissionCtaReady,
     },
     {
       key: "no_internal_scores",
       label: "Outreach contains no internal score language",
       passed: drafts.length > 0
-        && !/\b\d{1,3}\s*\/\s*100\b|\bscore(?:d)?(?:\s+of|:)?\s+\d{1,3}\b|\b(?:overall|website|opportunity|conversion readiness|mobile experience|trust signals|contactability|weighted sales)\s+score\b|\b(?:website quality|revenue opportunity|contactability|local market competitiveness|ai website replacement confidence|weighted sales|mobile experience|conversion readiness|trust signals|opportunity)\b.{0,30}\b\d{1,3}\b/i.test(combined),
-    },
-    {
-      key: "real_strength",
-      label: "Outreach includes simple business context",
-      passed: mainEmails.length === 2 && /I was looking at|I came across|dedicated website|public business presence/i.test(combined),
-    },
-    {
-      key: "missed_opportunity",
-      label: "Outreach uses simple preview wording",
-      passed: mainEmails.length === 2
-        && !/one missed opportunity:/i.test(combined)
-        && /cleaner|calls|quote requests|easier|services|quote|call/i.test(combined),
-    },
-    {
-      key: "clear_cta",
-      label: "Outreach includes a clear call to action",
-      passed: clearCtaReady,
+        && !/\b\d{1,3}\s*\/\s*100\b|\bscore(?:d)?(?:\s+of|:)?\s+\d{1,3}\b|\b(?:overall|website|opportunity|conversion readiness|mobile experience|trust signals|contactability|weighted sales)\s+score\b/i.test(combined),
     },
     {
       key: "opt_out",
-      label: "Every draft includes opt-out language",
+      label: "Every applicable draft includes opt-out language",
       passed: optOutReady,
     },
     {
@@ -762,26 +762,22 @@ export function evaluateOutreachEmailQuality(
     .filter((check) => !check.passed)
     .map((check) => check.phrase
       ? `${check.label}: "${check.phrase}" (${check.reason} Suggested replacement: ${check.suggestion}.)`
-      : check.label);
+      : [check.label, check.reason].filter(Boolean).join(": "));
   const readinessLabel: SendReadinessLabel = issues.length === 0
     ? "Send-ready"
     : badFit
       ? "Bad fit"
-      : !publicLinkReady
-        ? "Preview quality issue"
-        : !postalAddressReady
-          ? "Needs sender postal address before sending"
-          : emailNeedsVerification
-            ? "Verify email manually"
-            : phoneOnlyBlocked
-              ? "Phone-only / written outreach blocked"
-              : !writtenContactReady && outreachPreference === "written_only"
-                ? "Missing written contact method"
-                : checks.some((check) => check.key === "supported_facts_only" && !check.passed)
-                  ? "Unsupported claim"
-                  : checks.some((check) => ["real_strength", "missed_opportunity", "clear_cta"].includes(check.key) && !check.passed)
-                    ? "Too generic"
-                    : "Needs review";
+      : !postalAddressReady
+        ? "Needs sender postal address before sending"
+        : emailNeedsVerification
+          ? "Verify email manually"
+          : phoneOnlyBlocked
+            ? "Phone-only / written outreach blocked"
+            : !writtenContactReady && outreachPreference === "written_only"
+              ? "Missing written contact method"
+              : checks.some((check) => check.key === "supported_facts_only" && !check.passed)
+                ? "Unsupported claim"
+                : "Needs review";
   return { ready: issues.length === 0, readinessLabel, checks, issues };
 }
 
