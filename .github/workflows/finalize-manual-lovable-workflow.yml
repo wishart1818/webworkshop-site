@@ -36,6 +36,223 @@ jobs:
         run: |
           set -o pipefail
           python3 .github/scripts/finalize_manual_lovable_workflow.py 2>&1 | tee final-corrections.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              content = file.read_text(encoding="utf-8")
+              count = content.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one match in {path}, found {count}: {old[:120]!r}")
+              file.write_text(content.replace(old, new, 1), encoding="utf-8")
+
+          def replace_all(path: str, old: str, new: str, expected: int) -> None:
+              file = Path(path)
+              content = file.read_text(encoding="utf-8")
+              count = content.count(old)
+              if count != expected:
+                  raise SystemExit(f"Expected {expected} matches in {path}, found {count}: {old[:120]!r}")
+              file.write_text(content.replace(old, new), encoding="utf-8")
+
+          # A preview is no longer required for interrupted pre-interest outreach recovery.
+          replace_once(
+              "tests/top-prospects.test.ts",
+              '  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), false);',
+              '  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), true);',
+          )
+
+          workspace_path = Path("components/engine/AutonomousGrowthWorkspace.tsx")
+          workspace = workspace_path.read_text(encoding="utf-8")
+
+          old_state = '''  const [copied, setCopied] = useState("");
+          const [sendingQueueItemId, setSendingQueueItemId] = useState("");
+          const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);'''
+          new_state = '''  const [copied, setCopied] = useState("");
+          const [approvingQueueItemId, setApprovingQueueItemId] = useState("");
+          const [sendingQueueItemId, setSendingQueueItemId] = useState("");
+          const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);'''
+          if workspace.count(old_state) != 1:
+              raise SystemExit("Approval progress state insertion target was not found exactly once.")
+          workspace = workspace.replace(old_state, new_state, 1)
+
+          approval_pattern = r'''  async function approveAndQueueEmail\(item: OutreachQueueItem\) \{[\s\S]*?\n  \}\n\n  async function copyText'''
+          approval_replacement = '''  async function approveAndQueueEmail(item: OutreachQueueItem) {
+            setApprovingQueueItemId(item.id);
+            setSaving(true);
+            setError("");
+            setNotice("");
+            try {
+              const response = await fetch("/api/engine/autonomous-growth", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "approve_and_queue_email",
+                  queueItemId: item.id,
+                  expectedApprovalSnapshot: {
+                    businessName: item.businessName,
+                    email: item.email,
+                    subjectLine: item.subjectLine,
+                    emailBody: item.emailBody,
+                    outreachCopyVersion: item.outreachCopyVersion,
+                    updatedAt: item.updatedAt,
+                  },
+                }),
+              });
+              const payload = await response.json() as ApiPayload;
+              if (!response.ok || !payload.item || !payload.approval) throw new Error(apiError(payload, "Unable to approve and queue email."));
+              const approvedItem = payload.item;
+              const approval = payload.approval;
+              if (approval.queued) {
+                setDashboard((current) => current ? {
+                  ...current,
+                  queue: current.queue.map((entry) => entry.id === approvedItem.id ? approvedItem : entry),
+                } : current);
+              }
+              setNotice(approval.queued
+                ? `Email approved and queued for ${approvedItem.businessName}. It has not been sent yet.`
+                : `Email was not queued: ${approval.blockedReasons.join("; ")}`);
+              await loadDashboard();
+            } catch (approvalError) {
+              setError(approvalError instanceof Error ? approvalError.message : "Unable to approve and queue email.");
+            } finally {
+              setApprovingQueueItemId("");
+              setSaving(false);
+            }
+          }
+
+          async function copyText'''
+          workspace, matches = re.subn(approval_pattern, approval_replacement, workspace, count=1)
+          if matches != 1:
+              raise SystemExit(f"Expected one approval handler, found {matches}.")
+
+          queue_call_old = '''      <QueueSection
+                  copied={copied}'''
+          queue_call_new = '''      <QueueSection
+                  approvingItemId={approvingQueueItemId}
+                  copied={copied}'''
+          if workspace.count(queue_call_old) != 3:
+              raise SystemExit(f"Expected three QueueSection calls, found {workspace.count(queue_call_old)}.")
+          workspace = workspace.replace(queue_call_old, queue_call_new)
+
+          workspace = workspace.replace(
+              '''function QueueSection({
+            copied,''',
+              '''function QueueSection({
+            approvingItemId,
+            copied,''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''}: {
+            copied: string;
+            description: string;''',
+              '''}: {
+            approvingItemId: string;
+            copied: string;
+            description: string;''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''              <QueueItemRow
+                        copied={copied}''',
+              '''              <QueueItemRow
+                        approving={approvingItemId === item.id}
+                        copied={copied}''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''function QueueItemRow({
+            copied,''',
+              '''function QueueItemRow({
+            approving,
+            copied,''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''}: {
+            copied: string;
+            item: OutreachQueueItem;''',
+              '''}: {
+            approving: boolean;
+            copied: string;
+            item: OutreachQueueItem;''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''  const displayStatus = sending
+              ? "Sending"''',
+              '''  const displayStatus = approving
+              ? "Approving"
+              : sending
+                ? "Sending"''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>''',
+              '''      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{approving ? "Validating the exact draft and safety gates" : item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>''',
+              1,
+          )
+          workspace = workspace.replace(
+              '''        {["Eligible", "Needs Review"].includes(item.status)
+                    ? <button className="engine-button engine-button--primary" onClick={() => void onApproveEmail(item)} type="button">Approve &amp; Queue Email</button>
+                    : null}''',
+              '''        {["Eligible", "Needs Review"].includes(item.status)
+                    ? <button aria-busy={approving} className="engine-button engine-button--primary" disabled={approving} onClick={() => void onApproveEmail(item)} type="button">{approving ? "Approving..." : "Approve & Queue Email"}</button>
+                    : null}''',
+              1,
+          )
+
+          wording_replacements = [
+              (
+                  '  if (mode === "dry_run") return "Finds, scores, generates previews and copy, then sends nothing.";',
+                  '  if (mode === "dry_run") return "Finds, scores, and drafts permission-first outreach, then sends nothing.";',
+              ),
+              (
+                  'Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.',
+                  'Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, truthful first-touch, opt-out, postal address, and audit gates.',
+              ),
+              (
+                  'description="Leads blocked by contact rules, preview quality, unsupported claims, opt-out, or bad fit logic."',
+                  'description="Leads blocked by contact rules, unsupported claims, opt-out, stale evidence, or bad fit logic."',
+              ),
+              (
+                  '<div><dt>Needs preview</dt><dd>{existing.needsPreview}</dd></div>',
+                  '<div><dt>Post-interest preview work</dt><dd>{existing.needsPreview}</dd></div>',
+              ),
+              (
+                  '<label>Max previews/run<input min="0" name="maxPreviewsPerRun"',
+                  '<label>Legacy/post-interest preview cap<input min="0" name="maxPreviewsPerRun"',
+              ),
+              (
+                  'type="checkbox" />Require preview QA 85+</label>',
+                  'type="checkbox" />Require preview QA 85+ before a manual Loom</label>',
+              ),
+          ]
+          for old, new in wording_replacements:
+              count = workspace.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected one wording target, found {count}: {old[:100]!r}")
+              workspace = workspace.replace(old, new, 1)
+
+          workspace_path.write_text(workspace, encoding="utf-8")
+
+          Path("tests/approval-feedback.test.ts").write_text(r'''import assert from "node:assert/strict";
+          import test from "node:test";
+          import { readFileSync } from "node:fs";
+
+          test("queue approval shows row-specific progress and optimistic confirmation", () => {
+            const source = readFileSync("components/engine/AutonomousGrowthWorkspace.tsx", "utf8");
+            assert.match(source, /approvingQueueItemId/);
+            assert.match(source, /aria-busy=\{approving\}/);
+            assert.match(source, /Approving\.\.\./);
+            assert.match(source, /Validating the exact draft and safety gates/);
+            assert.match(source, /queue: current\.queue\.map/);
+            assert.match(source, /It has not been sent yet/);
+          });
+          ''', encoding="utf-8")
+          PY
 
       - name: Upload final correction failure
         if: steps.corrections.outcome == 'failure'
@@ -54,7 +271,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npx tsx --test tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts tests/preview-render-plan.test.ts 2>&1 | tee focused-finalizer-tests.log
+          npx tsx --test tests/approval-feedback.test.ts tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts tests/preview-render-plan.test.ts 2>&1 | tee focused-finalizer-tests.log
 
       - name: Upload focused finalizer failure
         if: steps.focused.outcome == 'failure'
