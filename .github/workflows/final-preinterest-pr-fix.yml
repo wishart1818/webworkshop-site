@@ -23,6 +23,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          show-progress: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -31,7 +32,24 @@ jobs:
           cache: npm
 
       - name: Apply scoped Autopilot and feedback fixes
-        run: python scripts/final-preinterest-autopilot-fix.py
+        id: apply_fix
+        continue-on-error: true
+        shell: bash
+        run: python scripts/final-preinterest-autopilot-fix.py > final-fix.log 2>&1
+
+      - name: Upload fixer result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-preinterest-fix-log
+          path: final-fix.log
+          if-no-files-found: error
+
+      - name: Stop after a failed transformation
+        if: steps.apply_fix.outcome == 'failure'
+        run: |
+          cat final-fix.log
+          exit 1
 
       - name: Remove temporary migration files
         run: |
