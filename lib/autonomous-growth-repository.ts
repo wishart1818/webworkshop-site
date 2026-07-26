@@ -370,8 +370,8 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
   const todayItems = queue.filter((item) => new Date(item.createdAt).getTime() >= today);
   const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate).getTime() >= today).length;
   const sent = queue.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate);
-  const replies = queue.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested"].includes(item.status) || item.replyStatus).length;
-  const positiveReplies = queue.filter((item) => ["Positive Reply", "Prospect Said Yes", "Preview Build Needed", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length;
+  const replies = queue.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Preview Build Needed", "Preview Needs Polish", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Won"].includes(item.status) || item.replyStatus).length;
+  const positiveReplies = queue.filter((item) => ["Positive Reply", "Prospect Said Yes", "Preview Build Needed", "Preview Needs Polish", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length;
   const tradeCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.trade]: (counts[item.trade] ?? 0) + 1 }), {});
   const bestTrade = Object.entries(tradeCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
   const subjectCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
@@ -978,6 +978,28 @@ export type ApproveAndQueueEmailResult = {
   blockedReasons: string[];
 };
 
+
+export type EmailApprovalSnapshot = {
+  businessName: string;
+  email: string;
+  subjectLine: string;
+  emailBody: string;
+  outreachCopyVersion: string;
+  updatedAt: string;
+};
+
+function approvalSnapshotContentMatches(item: OutreachQueueItem, expected: EmailApprovalSnapshot) {
+  return item.businessName === expected.businessName
+    && normalizeEmailAddress(item.email) === normalizeEmailAddress(expected.email)
+    && item.subjectLine === expected.subjectLine
+    && item.emailBody === expected.emailBody
+    && item.outreachCopyVersion === expected.outreachCopyVersion;
+}
+
+function approvalSnapshotMatches(item: OutreachQueueItem, expected: EmailApprovalSnapshot) {
+  return item.updatedAt === expected.updatedAt && approvalSnapshotContentMatches(item, expected);
+}
+
 export type AutoEmailPilotCycleResult = {
   attempted: number;
   sent: number;
@@ -1053,6 +1075,7 @@ const protectedQueueStatuses = new Set<OutreachQueueStatus>([
   "First DM Sent",
   "Prospect Said Yes",
   "Preview Build Needed",
+  "Preview Needs Polish",
   "Loom Needed",
   "Ready for Loom",
   "Loom Recorded",
@@ -1275,14 +1298,31 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
   return await persistQueueSnapshot(reconciled, item) ?? reconciled;
 }
 
-export async function approveAndQueueEmail(id: string): Promise<ApproveAndQueueEmailResult> {
+export async function approveAndQueueEmail(
+  id: string,
+  expectedSnapshot?: EmailApprovalSnapshot,
+): Promise<ApproveAndQueueEmailResult> {
   const queue = await listOutreachQueueItems();
   const existing = queue.find((entry) => entry.id === id) ?? null;
   if (!existing) return { item: null, queued: false, blockedReasons: ["Queue item was not found."] };
+  if (expectedSnapshot && !approvalSnapshotMatches(existing, expectedSnapshot)) {
+    return {
+      item: existing,
+      queued: false,
+      blockedReasons: ["The recipient or email draft changed after review. Refresh and review the exact current draft again."],
+    };
+  }
   if (protectedQueueStatuses.has(existing.status) || existing.sentDate || queueItemHasAmbiguousOutcome(existing)) {
     return { item: existing, queued: false, blockedReasons: ["This prospect is already contacted, suppressed, closed, or otherwise protected."] };
   }
   const refreshed = await reconcileQueueItem(existing);
+  if (expectedSnapshot && !approvalSnapshotContentMatches(refreshed, expectedSnapshot)) {
+    return {
+      item: refreshed,
+      queued: false,
+      blockedReasons: ["The recipient or email draft changed during the final safety refresh. Review the updated draft before approval."],
+    };
+  }
   if (!approvableQueueStatuses.has(refreshed.status)) {
     return {
       item: refreshed,

@@ -1169,6 +1169,31 @@ export function prepareTopProspectArtifacts(prospect: Prospect, previewLink: str
   return prepareTopProspectArtifactsFromPreview(prospect, generatePreview(prospect), previewLink, outreachPreference);
 }
 
+
+export function prepareTopProspectOutreachArtifacts(
+  prospect: Prospect,
+  outreachPreference: OutreachPreference = "written_only",
+) {
+  let outreach = generateOutreach(prospect, "");
+  let withArtifacts: Prospect = { ...prospect, outreach };
+  let emailQuality = evaluateOutreachEmailQuality(withArtifacts, "", outreachPreference);
+  if (emailQuality.readinessLabel === "Unsupported claim") {
+    outreach = repairUnsupportedOutreachClaims(outreach);
+    withArtifacts = { ...withArtifacts, outreach };
+    emailQuality = evaluateOutreachEmailQuality(withArtifacts, "", outreachPreference);
+  }
+  const assessment = prospect.prospectType === "no_website_social_only"
+    ? assessNoWebsiteOpportunity(withArtifacts)
+    : assessOpportunity(withArtifacts);
+  return {
+    prospect: withArtifacts,
+    assessment,
+    buildPrompt: "",
+    previewLink: "",
+    emailQuality,
+  };
+}
+
 const stateCodePattern = /^[A-Za-z]{2}$/;
 
 function normalizeCityToken(value: string) {

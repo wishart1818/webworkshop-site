@@ -50,10 +50,14 @@ test("preview-building entry points use research while first-touch outreach does
   const commands = readFileSync("lib/operator-command-center.ts", "utf8");
   const firstTouchSync = autonomous.match(/async function syncTopProspectResultIntoQueue[\s\S]*?export async function getAutonomousGrowthDashboard/)?.[0] ?? "";
 
-  assert.match(worker, /await prepareTopProspectArtifactsWithResearch\(/);
-  assert.match(repository, /await prepareTopProspectArtifactsWithResearch\(/);
+  assert.doesNotMatch(worker, /prepareTopProspectArtifactsWithResearch|prepareProspectForPreview|createPublicPreviewToken|publicProspectPreviewLink/);
+  assert.match(worker, /prepareTopProspectOutreachArtifacts\(/);
+  assert.doesNotMatch(repository.match(/if \(action === "generate"\)[\s\S]*?} else {/)?.[0] ?? "", /prepareTopProspectArtifactsWithResearch|prepareProspectForPreview|createPublicPreviewToken|publicProspectPreviewLink/);
+  assert.match(repository, /prepareTopProspectOutreachArtifacts\(/);
   assert.doesNotMatch(firstTouchSync, /prepareTopProspectArtifactsWithResearch|prepareProspectForPreview|createPublicPreviewToken/);
   assert.match(firstTouchSync, /No preview was generated/);
+  assert.match(worker, /without building a preview/);
+  assert.match(repository, /without building a preview/);
   assert.match(regeneration, /await prepareProspectForPreview\(prospect, \{ mode: "regenerate"/);
   assert.match(commands, /await prepareProspectForPreview\(prospect, \{ mode: "regenerate"/);
 });

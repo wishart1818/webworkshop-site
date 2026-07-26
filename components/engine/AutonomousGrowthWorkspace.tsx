@@ -259,6 +259,7 @@ export function AutonomousGrowthWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState("");
+  const [approvingQueueItemId, setApprovingQueueItemId] = useState("");
   const [sendingQueueItemId, setSendingQueueItemId] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [activeView, setActiveView] = useState<AutonomousGrowthView>("pilot");
@@ -396,6 +397,7 @@ export function AutonomousGrowthWorkspace() {
   }
 
   async function approveAndQueueEmail(item: OutreachQueueItem) {
+    setApprovingQueueItemId(item.id);
     setSaving(true);
     setError("");
     setNotice("");
@@ -403,17 +405,37 @@ export function AutonomousGrowthWorkspace() {
       const response = await fetch("/api/engine/autonomous-growth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "approve_and_queue_email", queueItemId: item.id }),
+        body: JSON.stringify({
+          action: "approve_and_queue_email",
+          queueItemId: item.id,
+          expectedApprovalSnapshot: {
+            businessName: item.businessName,
+            email: item.email,
+            subjectLine: item.subjectLine,
+            emailBody: item.emailBody,
+            outreachCopyVersion: item.outreachCopyVersion,
+            updatedAt: item.updatedAt,
+          },
+        }),
       });
       const payload = await response.json() as ApiPayload;
       if (!response.ok || !payload.item || !payload.approval) throw new Error(apiError(payload, "Unable to approve and queue email."));
+      const approvedItem = payload.item;
+      const approval = payload.approval;
+      if (approval.queued) {
+        setDashboard((current) => current ? {
+          ...current,
+          queue: current.queue.map((entry) => entry.id === approvedItem.id ? approvedItem : entry),
+        } : current);
+      }
+      setNotice(approval.queued
+        ? `Email approved and queued for ${approvedItem.businessName}. It has not been sent yet.`
+        : `Email was not queued: ${approval.blockedReasons.join("; ")}`);
       await loadDashboard();
-      setNotice(payload.approval.queued
-        ? "Email approved and queued for the guarded Auto Email Pilot cycle. It has not been marked sent."
-        : `Email was not queued: ${payload.approval.blockedReasons.join("; ")}`);
     } catch (approvalError) {
       setError(approvalError instanceof Error ? approvalError.message : "Unable to approve and queue email.");
     } finally {
+      setApprovingQueueItemId("");
       setSaving(false);
     }
   }
@@ -441,7 +463,7 @@ export function AutonomousGrowthWorkspace() {
       const payload = await response.json() as ApiPayload;
       if (!response.ok) throw new Error(apiError(payload, "Unable to regenerate this Outreach Package."));
       await loadDashboard();
-      setNotice("Preview and outreach package regenerated for review. Nothing was sent.");
+      setNotice("Permission-first outreach package regenerated for review. No preview was built and nothing was sent.");
     } catch (regenerateError) {
       setError(regenerateError instanceof Error ? regenerateError.message : "Unable to regenerate this Outreach Package.");
     } finally {
@@ -951,7 +973,7 @@ export function AutonomousGrowthWorkspace() {
           <button className="engine-button engine-button--danger" disabled={saving || env.emailKillSwitchEnabled || !env.fullAutoSendEnabled} onClick={() => void runFullAutoEmailBatch()} type="button">
             Run full auto email batch
           </button>
-          <p>Fully automatic batch sending is separate from <b>Send approved email</b>. It stays off unless <code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code>, and <code>OUTREACH_EMAIL_DISABLED=true</code> stops all email sends immediately. Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, public preview, opt-out, postal address, and audit gates.</p>
+          <p>Fully automatic batch sending is separate from <b>Send approved email</b>. It stays off unless <code>OUTREACH_FULL_AUTO_SEND_ENABLED=true</code>, and <code>OUTREACH_EMAIL_DISABLED=true</code> stops all email sends immediately. Eligible batches still send only Queued public-email leads that pass suppression, cooldown, daily cap, truthful first-touch, opt-out, postal address, and audit gates.</p>
         </div>
       </section>
         </>
@@ -968,6 +990,7 @@ export function AutonomousGrowthWorkspace() {
       />
       <div id="eligible-leads" />
       <QueueSection
+        approvingItemId={approvingQueueItemId}
         copied={copied}
         description="Generated packages waiting for review, copy, edit, or manual approval."
         items={groupedQueue.dryRun}
@@ -983,8 +1006,9 @@ export function AutonomousGrowthWorkspace() {
         title="Dry-run and review queue"
       />
       <QueueSection
+        approvingItemId={approvingQueueItemId}
         copied={copied}
-        description="Leads blocked by contact rules, preview quality, unsupported claims, opt-out, or bad fit logic."
+        description="Leads blocked by contact rules, unsupported claims, opt-out, stale evidence, or bad fit logic."
         items={groupedQueue.blocked}
         onApproveEmail={approveAndQueueEmail}
         onCopy={copyText}
@@ -998,6 +1022,7 @@ export function AutonomousGrowthWorkspace() {
         title="Blocked queue"
       />
       <QueueSection
+        approvingItemId={approvingQueueItemId}
         copied={copied}
         description="Items queued or manually marked through outreach follow-up states."
         items={groupedQueue.sent}
@@ -1105,7 +1130,7 @@ function SmartGrowthPanel({
             <div><dt>Ready for Facebook/Instagram manual DM</dt><dd>{existing.readyForFacebookInstagramManualDm}</dd></div>
             <div><dt>Ready for contact form/manual research</dt><dd>{existing.readyForContactFormManualResearch}</dd></div>
             <div><dt>Needs refreshed copy</dt><dd>{existing.needsRefreshedCopy}</dd></div>
-            <div><dt>Needs preview</dt><dd>{existing.needsPreview}</dd></div>
+            <div><dt>Post-interest preview work</dt><dd>{existing.needsPreview}</dd></div>
             <div><dt>Found only in Top Prospects results</dt><dd>{existing.foundOnlyInTopProspectsResults}</dd></div>
             <div><dt>Already saved as queue/package</dt><dd>{existing.alreadySavedAsQueuePackage}</dd></div>
             <div><dt>Blocked/skipped</dt><dd>{existing.skippedCount}</dd></div>
@@ -1793,10 +1818,10 @@ function AutopilotCampaignPanel({
           {autopilotCadences.map((cadence) => <option key={cadence} value={cadence}>{cadence === "manual_only" ? "Manual only" : optionLabel(cadence)}</option>)}
         </select></label>
         <label>Max prospects/run<input min="5" name="maxProspectsPerRun" onChange={(event) => updateFormSetting("maxProspectsPerRun", Number(event.target.value))} type="number" value={formSettings.maxProspectsPerRun} /></label>
-        <label>Max previews/run<input min="0" name="maxPreviewsPerRun" onChange={(event) => updateFormSetting("maxPreviewsPerRun", Number(event.target.value))} type="number" value={formSettings.maxPreviewsPerRun} /></label>
+        <label>Legacy/post-interest preview cap<input min="0" name="maxPreviewsPerRun" onChange={(event) => updateFormSetting("maxPreviewsPerRun", Number(event.target.value))} type="number" value={formSettings.maxPreviewsPerRun} /></label>
         <label>Max prospects total<input min="1" name="maxProspectsTotal" onChange={(event) => updateFormSetting("maxProspectsTotal", Number(event.target.value))} type="number" value={formSettings.maxProspectsTotal} /></label>
         <label className="engine-toggle"><input checked={formSettings.excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => updateFormSetting("excludePreviouslyReviewed", event.target.checked)} type="checkbox" />Exclude previously reviewed prospects</label>
-        <label className="engine-toggle"><input checked={formSettings.requirePreviewQuality85} name="requirePreviewQuality85" onChange={(event) => updateFormSetting("requirePreviewQuality85", event.target.checked)} type="checkbox" />Require preview QA 85+</label>
+        <label className="engine-toggle"><input checked={formSettings.requirePreviewQuality85} name="requirePreviewQuality85" onChange={(event) => updateFormSetting("requirePreviewQuality85", event.target.checked)} type="checkbox" />Require preview QA 85+ before a manual Loom</label>
         <label className="engine-toggle"><input checked={formSettings.requireWrittenContact} name="requireWrittenContact" onChange={(event) => updateFormSetting("requireWrittenContact", event.target.checked)} type="checkbox" />Require written contact</label>
         <label className="engine-toggle"><input checked={formSettings.manualDmMode} name="manualDmMode" onChange={(event) => updateFormSetting("manualDmMode", event.target.checked)} type="checkbox" />Manual DM mode</label>
         <label className="engine-toggle"><input checked={formSettings.loomNotifications} name="loomNotifications" onChange={(event) => updateFormSetting("loomNotifications", event.target.checked)} type="checkbox" />Dashboard Loom notifications</label>
@@ -1992,6 +2017,7 @@ function LoomQueueSection({
 }
 
 function QueueSection({
+  approvingItemId,
   copied,
   description,
   items,
@@ -2006,6 +2032,7 @@ function QueueSection({
   sendingItemId,
   title,
 }: {
+  approvingItemId: string;
   copied: string;
   description: string;
   items: OutreachQueueItem[];
@@ -2028,6 +2055,7 @@ function QueueSection({
           <div className="engine-autonomous-table__head" role="row"><span>Business</span><span>Self-review</span><span>Contact</span><span>Status</span><span>Actions</span></div>
           {items.map((item) => (
             <QueueItemRow
+              approving={approvingItemId === item.id}
               copied={copied}
               item={item}
               key={item.id}
@@ -2049,6 +2077,7 @@ function QueueSection({
 }
 
 function QueueItemRow({
+  approving,
   copied,
   item,
   onApproveEmail,
@@ -2061,6 +2090,7 @@ function QueueItemRow({
   onStatus,
   sending,
 }: {
+  approving: boolean;
   copied: string;
   item: OutreachQueueItem;
   onApproveEmail: (item: OutreachQueueItem) => Promise<void>;
@@ -2076,9 +2106,11 @@ function QueueItemRow({
   const scripts = loomNeededTaskForQueueItem(item).scripts;
   const explanation = queueContactExplanation(item);
   const manualStatusOptions = manualQueueStatusTargets(item.status);
-  const displayStatus = sending
-    ? "Sending"
-    : item.status === "Needs Review" && /Auto Email Pilot send failed safely/i.test(item.notes)
+  const displayStatus = approving
+    ? "Approving"
+    : sending
+      ? "Sending"
+      : item.status === "Needs Review" && /Auto Email Pilot send failed safely/i.test(item.notes)
       ? "Failed"
       : item.status;
   return (
@@ -2093,7 +2125,7 @@ function QueueItemRow({
         {item.blockedReason ? <small>{item.blockedReason}</small> : null}
       </div>
       <div><span>{item.email || "No public email"}</span><span>{item.contactSource}</span></div>
-      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>
+      <div><i className={`engine-package-state engine-package-state--${item.status.toLowerCase().replaceAll(" ", "-")}`}>{displayStatus}</i><span>{approving ? "Validating the exact draft and safety gates" : item.status === "Queued" ? "Approved / Queued" : item.status === "Sending" ? "Provider dispatch in progress" : item.subjectLine}</span></div>
       <div className="engine-result-actions">
         {item.previewLink ? <a className="engine-button" href={item.previewLink} rel="noreferrer" target="_blank">Open preview</a> : null}
         <CopyScriptButton copied={copied} copyKey={`${item.id}:first-dm`} label="Copy first DM" onCopy={onCopy} value={item.dmScript || scripts.firstDm} />
@@ -2105,7 +2137,7 @@ function QueueItemRow({
         {manualStatusOptions.includes("DM Draft") ? <button className="engine-button" onClick={() => void onStatus(item, "DM Draft")} type="button">DM Draft</button> : null}
         {manualStatusOptions.includes("First DM Sent") ? <button className="engine-button" onClick={() => void onStatus(item, "First DM Sent")} type="button">First DM Sent</button> : null}
         {["Eligible", "Needs Review"].includes(item.status)
-          ? <button className="engine-button engine-button--primary" onClick={() => void onApproveEmail(item)} type="button">Approve &amp; Queue Email</button>
+          ? <button aria-busy={approving} className="engine-button engine-button--primary" disabled={approving} onClick={() => void onApproveEmail(item)} type="button">{approving ? "Approving..." : "Approve & Queue Email"}</button>
           : null}
         {item.status === "Queued" ? <button className="engine-button engine-button--primary" disabled={sending} onClick={() => void onSendEmail(item)} type="button">{sending ? "Sending..." : "Send approved email"}</button> : null}
         {manualStatusOptions.includes("Prospect Said Yes") ? <button className="engine-button engine-button--primary" onClick={() => void onStatus(item, "Prospect Said Yes")} type="button">Prospect Said Yes</button> : null}

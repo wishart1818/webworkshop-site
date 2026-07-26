@@ -65,7 +65,7 @@ import {
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
-import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
+import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, prepareTopProspectOutreachArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
 import { reconcileProspectContactRouting, seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 import { resetProspectMemoryForTests, setProspectMemoryForTests } from "../lib/prospect-repository";
 import { prospectCurrentBucket } from "../lib/prospect-funnel";
@@ -2990,4 +2990,92 @@ test("manual preview build notification is internal-only and secret-safe", () =>
   assert.match(notification.subject, /Manual preview build needed: Sample Roofing/);
   assert.match(notification.body, /manual|Lovable/i);
   assert.doesNotMatch(JSON.stringify(notification), /secret-resend-key|operator@example.com|alerts@webworkshop.dev/);
+});
+
+
+test("pre-interest Top Prospect artifacts create outreach without a preview", () => {
+  const prospect = { ...eligibleProspect(), preview: undefined };
+  const prepared = prepareTopProspectOutreachArtifacts(prospect, "written_only");
+  assert.equal(prepared.previewLink, "");
+  assert.equal(prepared.buildPrompt, "");
+  assert.equal(prepared.prospect.preview, undefined);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+});
+
+test("approval snapshot rejects a changed reviewed draft", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  try {
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: "",
+      prospect: eligibleProspect(),
+      topProspectResultId: "stale-approval-snapshot",
+    });
+    const result = await approveAndQueueEmail(eligible.id, {
+      businessName: eligible.businessName,
+      email: eligible.email,
+      subjectLine: eligible.subjectLine,
+      emailBody: `${eligible.emailBody}\nchanged after review`,
+      outreachCopyVersion: eligible.outreachCopyVersion,
+      updatedAt: eligible.updatedAt,
+    });
+    assert.equal(result.queued, false);
+    assert.match(result.blockedReasons.join(" "), /changed after review/i);
+    assert.notEqual(result.item?.status, "Queued");
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("post-interest polish state is protected from pre-contact reconciliation", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  const prospect = eligibleProspectFor({
+    id: "protected-polish-prospect",
+    businessName: "Protected Polish Plumbing",
+    website: "https://protectedpolishplumbing.com",
+    email: "approved@protectedpolishplumbing.com",
+  });
+  try {
+    setProspectMemoryForTests([{ ...prospect, email: "changed@protectedpolishplumbing.com" }]);
+    const protectedItem = queueItem({
+      id: "protected-polish-item",
+      prospectId: prospect.id,
+      businessName: prospect.businessName,
+      website: prospect.website,
+      email: "approved@protectedpolishplumbing.com",
+      status: "Preview Needs Polish",
+      previewLink: "https://lovable.app/protected-polish-preview",
+    });
+    setOutreachQueueMemoryForTests([protectedItem]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
+    await processExistingQualifiedProspects({ dryRun: false });
+    const current = outreachQueueMemoryForTests().find((item) => item.id === protectedItem.id);
+    assert.equal(current?.status, "Preview Needs Polish");
+    assert.equal(current?.email, "approved@protectedpolishplumbing.com");
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("real approval UI submits the exact draft snapshot instead of clicking a rendered row", () => {
+  const route = readFileSync(new URL("../app/api/engine/autonomous-growth/route.ts", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/engine/AutonomousGrowthWorkspace.tsx", import.meta.url), "utf8");
+  const helper = readFileSync(new URL("../components/engine/EmailDraftReviewHelper.tsx", import.meta.url), "utf8");
+  assert.match(route, /expectedApprovalSnapshot[\s\S]*Review the exact current recipient/);
+  assert.match(workspace, /expectedApprovalSnapshot:[\s\S]*emailBody: item\.emailBody[\s\S]*updatedAt: item\.updatedAt/);
+  assert.match(helper, /expectedApprovalSnapshot:[\s\S]*emailBody: selectedItem\.emailBody[\s\S]*updatedAt: selectedItem\.updatedAt/);
+  assert.doesNotMatch(helper, /approveButton\.click\(\)/);
 });

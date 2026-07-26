@@ -1052,5 +1052,5 @@ test("interrupted Top Prospects artifacts can be recovered only by their active 
 
   assert.equal(recoverableTopProspect(prospect, jobCreatedAt), true);
   assert.equal(recoverableTopProspect(prospect, new Date(jobCreatedAt.getTime() + 2_000)), false);
-  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), false);
+  assert.equal(recoverableTopProspect({ ...prospect, preview: undefined }, jobCreatedAt), true);
 });
