@@ -131,6 +131,32 @@ def align_remaining_assertions() -> None:
         raise RuntimeError(f"Missing-public-link UI assertion count was {ui_content.count(old_ui_assertion)}, expected 1.")
     ui_path.write_text(ui_content.replace(old_ui_assertion, new_ui_assertion, 1), encoding="utf-8")
 
+    operator_path = ROOT / "components/engine/OperatorTestCenterWorkspace.tsx"
+    operator_content = operator_path.read_text(encoding="utf-8")
+    old_operator_row = '<div><dt>Yes reply includes public preview</dt><dd>{lastAction.packagePreview.yesReplyIncludesPublicPreview ? "Yes" : "No"}</dd></div>'
+    new_operator_row = '<div><dt>Yes reply stays link-free</dt><dd>{lastAction.packagePreview.yesReplyLinkFree ? "Yes" : "No"}</dd></div>'
+    if operator_content.count(old_operator_row) != 1:
+        raise RuntimeError(f"Operator Test Center yes-reply row count was {operator_content.count(old_operator_row)}, expected 1.")
+    operator_path.write_text(operator_content.replace(old_operator_row, new_operator_row, 1), encoding="utf-8")
+
+    style_path = ROOT / "lib/outreach-style-guide.ts"
+    style_content = style_path.read_text(encoding="utf-8")
+    style_replacements = [
+        (
+            'export function webworkshopYesReply(_previewLink = "") {\n  return [',
+            'export function webworkshopYesReply(_previewLink = "") {\n  void _previewLink;\n  return [',
+        ),
+        (
+            'export function webworkshopFirstTouchOpening(_trade: string, _city: string) {\n  return "I came across your business.";',
+            'export function webworkshopFirstTouchOpening(_trade: string, _city: string) {\n  void _trade;\n  void _city;\n  return "I came across your business.";',
+        ),
+    ]
+    for before, after in style_replacements:
+        if style_content.count(before) != 1:
+            raise RuntimeError(f"Generated style-guide lint target count was {style_content.count(before)}, expected 1.")
+        style_content = style_content.replace(before, after, 1)
+    style_path.write_text(style_content, encoding="utf-8")
+
     for candidate in ROOT.rglob("*"):
         if candidate.is_file() and candidate.suffix in {".ts", ".tsx"}:
             source = candidate.read_text(encoding="utf-8")
