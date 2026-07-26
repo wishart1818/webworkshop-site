@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   apply-and-verify:
-    if: ${{ !contains(github.event.pull_request.head.sha, '[manual-lovable-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -49,7 +48,7 @@ jobs:
         run: git diff --check
 
       - name: Remove temporary migration files
-        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml
+        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md
 
       - name: Commit verified changes
         run: |
