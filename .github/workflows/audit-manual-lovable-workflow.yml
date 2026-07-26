@@ -105,11 +105,25 @@ jobs:
 
           repository_path = Path("lib/autonomous-growth-repository.ts")
           repository = repository_path.read_text(encoding="utf-8")
-          old_inline_count = 'emailsSentToday: queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length,'
-          new_inline_count = 'emailsSentToday: emailsSentOnCurrentBusinessDate(queue),'
-          if repository.count(old_inline_count) != 1:
-              raise SystemExit(f"Expected one package-eligibility daily count target, found {repository.count(old_inline_count)}.")
-          repository_path.write_text(repository.replace(old_inline_count, new_inline_count, 1), encoding="utf-8")
+          replacements = [
+              (
+                  'emailsSentToday: queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length,',
+                  'emailsSentToday: emailsSentOnCurrentBusinessDate(queue),',
+                  'package-eligibility daily count',
+              ),
+              (
+                  'const emailsSentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;',
+                  'const emailsSentToday = emailsSentOnCurrentBusinessDate(queue);',
+                  'backfill daily count',
+              ),
+          ]
+          for old, new, label in replacements:
+              if repository.count(old) != 1:
+                  raise SystemExit(f"Expected one {label} target, found {repository.count(old)}.")
+              repository = repository.replace(old, new, 1)
+          if "todayStart" in repository:
+              raise SystemExit(f"Unexpected todayStart references remain: {repository.count('todayStart')}.")
+          repository_path.write_text(repository, encoding="utf-8")
 
           for filename in ["lib/prospect-engine.ts", "lib/autonomous-growth-repository.ts"]:
               path = Path(filename)
@@ -118,7 +132,7 @@ jobs:
               if "\x08" in content:
                   raise SystemExit(f"Hidden regex control character remains in {filename}.")
               path.write_text(content, encoding="utf-8")
-          print("Generated regular expressions and daily counts sanitized.")
+          print("Generated regular expressions and all daily counts sanitized.")
           PY
           } 2>&1 | tee final-audit.log
 
