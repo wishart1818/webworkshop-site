@@ -70,6 +70,7 @@ jobs:
           path.write_text(content, encoding='utf-8')
           PY
           python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
+          python3 .github/scripts/align_manual_lovable_tests.py 2>&1 | tee -a manual-lovable-migration.log
 
       - name: Upload migration failure log
         if: steps.migrate.outcome == 'failure'
@@ -102,7 +103,23 @@ jobs:
         run: exit 1
 
       - name: Run full test suite
-        run: npm test
+        id: full_tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee full-tests.log
+
+      - name: Upload full test failure log
+        if: steps.full_tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-lovable-full-tests
+          path: full-tests.log
+
+      - name: Stop after full test failure
+        if: steps.full_tests.outcome == 'failure'
+        run: exit 1
 
       - name: Run lint
         run: npm run lint
@@ -114,7 +131,7 @@ jobs:
         run: git diff --check
 
       - name: Remove temporary migration files
-        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log focused-tests.log
+        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/scripts/align_manual_lovable_tests.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log focused-tests.log full-tests.log
 
       - name: Commit verified changes
         run: |
