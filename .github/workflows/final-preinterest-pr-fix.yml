@@ -1,0 +1,60 @@
+name: Final pre-interest PR fix
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: final-preinterest-pr-fix
+  cancel-in-progress: false
+
+jobs:
+  fix-and-verify:
+    if: github.head_ref == 'feature/manual-lovable-preview-workflow'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply scoped Autopilot and feedback fixes
+        run: python scripts/final-preinterest-autopilot-fix.py
+
+      - name: Remove temporary migration files
+        run: |
+          rm -f .github/workflows/final-preinterest-autopilot-fix.yml
+          rm -f .github/workflows/final-preinterest-pr-fix.yml
+          rm -f scripts/final-preinterest-autopilot-fix.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify focused regressions
+        run: npx tsx --test tests/final-preinterest-autopilot.test.ts
+
+      - name: Verify full application
+        run: |
+          npm run verify
+          git diff --check
+
+      - name: Commit verified changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: remove final pre-interest preview assumptions"
+          git push origin HEAD:feature/manual-lovable-preview-workflow
