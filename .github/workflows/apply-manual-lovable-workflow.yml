@@ -49,6 +49,10 @@ jobs:
               raise SystemExit(f'Expected two duplicated status transforms, found {content.count(duplicate)}.')
           content = content.replace(duplicate, duplicate.replace('replace_once', 'replace_all'), 1)
           content = content.replace(duplicate, '', 1)
+          optional = '''replace_all("lib/autonomous-growth.ts", '"Generate a public /p/ preview first."', '"Save a legitimate public Lovable preview link first."')'''
+          if optional not in content:
+              raise SystemExit('Optional legacy preview wording transform was not found.')
+          content = content.replace(optional, optional[:-1] + ', minimum=0)', 1)
           path.write_text(content, encoding='utf-8')
           PY
           python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
