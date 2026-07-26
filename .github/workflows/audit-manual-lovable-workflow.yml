@@ -102,6 +102,15 @@ jobs:
             python3 .github/scripts/audit_manual_lovable_workflow.py
             python3 - <<'PY'
           from pathlib import Path
+
+          repository_path = Path("lib/autonomous-growth-repository.ts")
+          repository = repository_path.read_text(encoding="utf-8")
+          old_inline_count = 'emailsSentToday: queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length,'
+          new_inline_count = 'emailsSentToday: emailsSentOnCurrentBusinessDate(queue),'
+          if repository.count(old_inline_count) != 1:
+              raise SystemExit(f"Expected one package-eligibility daily count target, found {repository.count(old_inline_count)}.")
+          repository_path.write_text(repository.replace(old_inline_count, new_inline_count, 1), encoding="utf-8")
+
           for filename in ["lib/prospect-engine.ts", "lib/autonomous-growth-repository.ts"]:
               path = Path(filename)
               content = path.read_text(encoding="utf-8")
@@ -109,7 +118,7 @@ jobs:
               if "\x08" in content:
                   raise SystemExit(f"Hidden regex control character remains in {filename}.")
               path.write_text(content, encoding="utf-8")
-          print("Generated regular expressions sanitized.")
+          print("Generated regular expressions and daily counts sanitized.")
           PY
           } 2>&1 | tee final-audit.log
 
