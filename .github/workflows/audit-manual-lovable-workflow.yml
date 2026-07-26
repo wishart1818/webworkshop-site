@@ -54,12 +54,20 @@ jobs:
               "post-interest protected status",
           )"""
           new_status = """# Protect every post-interest workflow state from copy regeneration.
-          replace_regex(
-              "lib/autonomous-growth.ts",
-              r'''(const contactedOrClosedStatuses = new Set<OutreachQueueStatus>\\(\\[[\\s\\S]*?  "Preview Build Needed",\\n)(  "Loom Needed",)''',
-              r'''\\1  "Preview Needs Polish",\\n\\2''',
-              "post-interest protected status",
-          )"""
+          growth_path = "lib/autonomous-growth.ts"
+          growth_source = read(growth_path)
+          growth_start = growth_source.index("const contactedOrClosedStatuses = new Set<OutreachQueueStatus>([")
+          growth_end = growth_source.index("]);", growth_start) + 3
+          growth_block = growth_source[growth_start:growth_end]
+          old_growth_status = '''  "Preview Build Needed",
+            "Loom Needed",'''
+          new_growth_status = '''  "Preview Build Needed",
+            "Preview Needs Polish",
+            "Loom Needed",'''
+          if growth_block.count(old_growth_status) != 1:
+              raise SystemExit(f"Expected one protected post-interest status target, found {growth_block.count(old_growth_status)}.")
+          growth_block = growth_block.replace(old_growth_status, new_growth_status, 1)
+          write(growth_path, growth_source[:growth_start] + growth_block + growth_source[growth_end:])"""
           if source.count(old_status) != 1:
               raise SystemExit(f'Targeted protected-status transform count: {source.count(old_status)}')
           source = source.replace(old_status, new_status, 1)
@@ -92,6 +100,17 @@ jobs:
           print('Audit preprocessor completed.')
           PY
             python3 .github/scripts/audit_manual_lovable_workflow.py
+            python3 - <<'PY'
+          from pathlib import Path
+          for filename in ["lib/prospect-engine.ts", "lib/autonomous-growth-repository.ts"]:
+              path = Path(filename)
+              content = path.read_text(encoding="utf-8")
+              content = content.replace("\x08", r"\b")
+              if "\x08" in content:
+                  raise SystemExit(f"Hidden regex control character remains in {filename}.")
+              path.write_text(content, encoding="utf-8")
+          print("Generated regular expressions sanitized.")
+          PY
           } 2>&1 | tee final-audit.log
 
       - name: Upload audit failure log
