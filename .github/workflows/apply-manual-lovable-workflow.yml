@@ -79,6 +79,7 @@ jobs:
           PY
           python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
           python3 .github/scripts/align_manual_lovable_tests.py 2>&1 | tee -a manual-lovable-migration.log
+          python3 .github/scripts/align_manual_lovable_full_suite.py 2>&1 | tee -a manual-lovable-migration.log
           python3 - <<'PY'
           from pathlib import Path
           path = Path('tests/top-prospects.test.ts')
@@ -166,7 +167,7 @@ jobs:
         run: git diff --check
 
       - name: Remove temporary migration files
-        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/scripts/align_manual_lovable_tests.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log focused-tests.log full-tests.log
+        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/scripts/align_manual_lovable_tests.py .github/scripts/align_manual_lovable_full_suite.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log focused-tests.log full-tests.log
 
       - name: Commit verified changes
         run: |
