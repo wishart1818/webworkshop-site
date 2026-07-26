@@ -1054,9 +1054,9 @@ export function AutonomousGrowthWorkspace() {
           </article>
         </div>
         <dl>
-          <div><dt>Best trade</dt><dd>{metrics.bestTrade}</dd></div>
-          <div><dt>Best subject line</dt><dd>{metrics.bestSubjectLine}</dd></div>
-          <div><dt>Best outreach angle</dt><dd>{metrics.bestOutreachAngle}</dd></div>
+          <div><dt>Best trade by positive email replies</dt><dd>{metrics.bestTrade}</dd></div>
+          <div><dt>Best subject by positive email replies</dt><dd>{metrics.bestSubjectLine}</dd></div>
+          <div><dt>Best angle by positive email replies</dt><dd>{metrics.bestOutreachAngle}</dd></div>
           <div><dt>Won/lost prospects</dt><dd>{metrics.wonLostProspects}</dd></div>
           <div><dt>Positive reply rate</dt><dd>{metrics.positiveReplyRate}%</dd></div>
           <div><dt>Common failure reasons</dt><dd>{formatList(dashboard.learning.commonFailureReasons)}</dd></div>

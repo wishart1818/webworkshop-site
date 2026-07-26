@@ -1444,6 +1444,7 @@ const contactedOrClosedStatuses = new Set<OutreachQueueStatus>([
   "First DM Sent",
   "Prospect Said Yes",
   "Preview Build Needed",
+  "Preview Needs Polish",
   "Loom Needed",
   "Ready for Loom",
   "Loom Recorded",

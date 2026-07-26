@@ -311,7 +311,6 @@ async function listOutreachQueueItems() {
   await ensureTopProspectSchema();
   const rows = await getProspectDatabase().outreachQueueItem.findMany({
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    take: 100,
   });
   return rows.map(queueToDomain);
 }
@@ -359,29 +358,85 @@ async function listAutonomousRunReviews() {
   return rows.map(reviewToDomain);
 }
 
-function todayStart() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
+const businessDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function businessDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? businessDateFormatter.format(date) : "";
+}
+
+function emailSendRecorded(item: OutreachQueueItem) {
+  return item.status === "Sent" || Boolean(item.sentDate && item.contactSource === "Public email");
+}
+
+function emailsSentOnCurrentBusinessDate(queue: OutreachQueueItem[]) {
+  const today = businessDateKey(new Date());
+  return queue.filter((item) => emailSendRecorded(item) && item.sentDate && businessDateKey(item.sentDate) === today).length;
+}
+
+const actualReplyStatuses = new Set<OutreachQueueStatus>([
+  "Replied",
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+  "Not Interested",
+]);
+
+const positiveReplyStatuses = new Set<OutreachQueueStatus>([
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+]);
+
+function replyStatusIndicatesReply(value: string) {
+  return /\b(?:replied|reply|positive|negative|interested|not[_ -]?interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:bounce|bounced|complaint|complained|spam|unsubscribe|unsubscribed|opt[_ -]?out|suppressed)\b/i.test(value);
+}
+
+function replyStatusIndicatesPositiveReply(value: string) {
+  return /\b(?:positive|interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:not[_ -]?interested|negative|bounce|complaint|spam|unsubscribe|opt[_ -]?out|suppressed)\b/i.test(value);
 }
 
 function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthSettings): AutonomousGrowthMetrics {
-  const today = todayStart().getTime();
-  const todayItems = queue.filter((item) => new Date(item.createdAt).getTime() >= today);
-  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate).getTime() >= today).length;
-  const sent = queue.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate);
-  const replies = queue.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Preview Build Needed", "Preview Needs Polish", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Won"].includes(item.status) || item.replyStatus).length;
-  const positiveReplies = queue.filter((item) => ["Positive Reply", "Prospect Said Yes", "Preview Build Needed", "Preview Needs Polish", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length;
-  const tradeCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.trade]: (counts[item.trade] ?? 0) + 1 }), {});
-  const bestTrade = Object.entries(tradeCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
-  const subjectCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
-  const bestSubjectLine = Object.entries(subjectCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
+  const today = businessDateKey(new Date());
+  const todayItems = queue.filter((item) => businessDateKey(item.createdAt) === today);
+  const emailSends = queue.filter(emailSendRecorded);
+  const repliedEmailItems = emailSends.filter((item) => actualReplyStatuses.has(item.status) || replyStatusIndicatesReply(item.replyStatus));
+  const positiveReplyItems = emailSends.filter((item) => positiveReplyStatuses.has(item.status) || replyStatusIndicatesPositiveReply(item.replyStatus));
+  const sentToday = emailsSentOnCurrentBusinessDate(queue);
+  const tradeCounts = positiveReplyItems.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.trade]: (counts[item.trade] ?? 0) + 1 }), {});
+  const bestTrade = Object.entries(tradeCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough positive reply data";
+  const subjectCounts = positiveReplyItems.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
+  const bestSubjectLine = Object.entries(subjectCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough positive reply data";
   const ready = queue.filter((item) => ["Eligible", "Queued", "DM Draft", "Ready for Loom"].includes(item.status));
   const loomNeeded = queue.filter((item) => ["Preview Build Needed", "Loom Needed"].includes(item.status)).length;
   const loomRecorded = queue.filter((item) => item.status === "Loom Recorded").length;
   const loomSent = queue.filter((item) => item.status === "Loom Sent").length;
   const followUpsDue = queue.filter((item) => item.status === "Follow-up Needed").length;
-  const scored = queue.filter((item) => item.reviewScore || item.previewQualityScore);
+  const previewScored = queue.filter((item) => item.previewQualityScore > 0);
+  const leadScored = queue.filter((item) => (item.reviewScore || item.previewQualityScore) > 0);
   return {
     prospectsFoundToday: todayItems.length,
     previewsGeneratedToday: todayItems.filter((item) => item.previewLink).length,
@@ -391,24 +446,25 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
     emailsQueued: queue.filter((item) => item.status === "Queued").length,
     emailsSentToday: sentToday,
     dailyCapRemaining: Math.max(0, Math.min(settings.maxEmailsSentPerDay, outreachEnvironment().dailyCap) - sentToday),
-    replies,
-    positiveReplies,
+    replies: repliedEmailItems.length,
+    positiveReplies: positiveReplyItems.length,
     loomNeeded,
     loomRecorded,
     loomSent,
     followUpsDue,
-    replyRate: sent.length ? Math.round((replies / sent.length) * 100) : 0,
-    positiveReplyRate: sent.length ? Math.round((positiveReplies / sent.length) * 100) : 0,
+    replyRate: emailSends.length ? Math.round((repliedEmailItems.length / emailSends.length) * 100) : 0,
+    positiveReplyRate: emailSends.length ? Math.round((positiveReplyItems.length / emailSends.length) * 100) : 0,
     bestTrade,
     bestSubjectLine,
-    bestOutreachAngle: ready[0]?.eligibilityReason ?? "Not enough data",
+    bestOutreachAngle: positiveReplyItems[0]?.eligibilityReason ?? "Not enough positive reply data",
     wonLostProspects: `${queue.filter((item) => item.status === "Won").length} won / ${queue.filter((item) => ["Lost", "Not Interested", "Bad Fit"].includes(item.status)).length} lost`,
-    averagePreviewQualityScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + item.previewQualityScore, 0) / scored.length) : 0,
-    averageLeadScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + (item.reviewScore || item.previewQualityScore), 0) / scored.length) : 0,
+    averagePreviewQualityScore: previewScored.length ? Math.round(previewScored.reduce((sum, item) => sum + item.previewQualityScore, 0) / previewScored.length) : 0,
+    averageLeadScore: leadScored.length ? Math.round(leadScored.reduce((sum, item) => sum + (item.reviewScore || item.previewQualityScore), 0) / leadScored.length) : 0,
   };
 }
 
-function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
+function buildCurrentAutopilotDashboard
+(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
   return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus(), autopilotEnvironmentKillSwitchEnabled());
 }
 
@@ -1056,6 +1112,19 @@ export function normalizeRecipientEmailDomain(value: string) {
   return domain && !domain.includes("@") ? domain : "";
 }
 
+const sharedMailboxProviderDomains = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+]);
+
 const protectedQueueStatuses = new Set<OutreachQueueStatus>([
   "Sending",
   "Sent",
@@ -1262,7 +1331,7 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
   const emailQuality = evaluateOutreachEmailQuality(prospect, item.previewLink, "written_only");
   const autoEligibility = evaluateAutoSendEligibility({
     emailQuality,
-    emailsSentToday: queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length,
+    emailsSentToday: emailsSentOnCurrentBusinessDate(queue),
     previewGate,
     previewLink: item.previewLink,
     prospect,
@@ -1899,7 +1968,7 @@ export async function sendQueuedEmailQueueItem(
   const item = initialItem ? await reconcileQueueItem(initialItem) : null;
   if (!item) return { item: null, sent: false, blockedReasons: ["Queue item was not found."] };
   const queue = await listOutreachQueueItems();
-  const emailsSentToday = queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length;
+  const emailsSentToday = emailsSentOnCurrentBusinessDate(queue);
   const readiness = evaluateQueuedEmailSendReadiness({ emailSendsToday: emailsSentToday, item, queue, settings });
   if (!readiness.ready) {
     await safeRecordAudit({
@@ -1926,12 +1995,14 @@ export async function sendQueuedEmailQueueItem(
   try {
     const recipientDomain = normalizeRecipientEmailDomain(claim.item.email);
     if (!recipientDomain) throw new Error("Recipient business email domain is invalid.");
-    await enforceRateLimit({
-      action: "autonomous_email_send_domain",
-      subject: recipientDomain,
-      limit: 1,
-      windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
-    });
+    if (!sharedMailboxProviderDomains.has(recipientDomain)) {
+      await enforceRateLimit({
+        action: "autonomous_email_send_domain",
+        subject: recipientDomain,
+        limit: 1,
+        windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
+      });
+    }
     await enforceRateLimit({
       action: "autonomous_email_send",
       subject: "global",
@@ -2050,7 +2121,7 @@ async function executeAutoEmailPilotCycle(): Promise<AutoEmailPilotCycleResult> 
   for (const item of queuedPublicEmailItems) {
     if (await queueItemHasPersistedApproval(item)) approvedItems.push(item);
   }
-  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const sentToday = emailsSentOnCurrentBusinessDate(queue);
   const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
   const result: AutoEmailPilotCycleResult = {
     attempted: 0,
@@ -2083,7 +2154,13 @@ async function executeAutoEmailPilotCycle(): Promise<AutoEmailPilotCycleResult> 
     return result;
   }
 
-  const candidates = approvedItems.slice(0, remainingDailyCap);
+  const candidates = [...approvedItems]
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.queuedDate || left.updatedAt || left.createdAt);
+      const rightTime = Date.parse(right.queuedDate || right.updatedAt || right.createdAt);
+      return leftTime - rightTime || left.id.localeCompare(right.id);
+    })
+    .slice(0, remainingDailyCap);
   result.attempted = candidates.length;
   for (const item of candidates) {
     const send = await sendQueuedEmailQueueItem(item.id);
@@ -2155,7 +2232,7 @@ export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult>
   for (const item of queue.filter((candidate) => candidate.status === "Queued" && candidate.contactSource === "Public email")) {
     if (await queueItemHasPersistedApproval(item)) queued.push(item);
   }
-  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const sentToday = emailsSentOnCurrentBusinessDate(queue);
   const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
   const batchLimit = Math.min(queued.length, remainingDailyCap, 5);
   const result: FullAutoEmailBatchResult = {
@@ -2340,7 +2417,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
   const previewGate = evaluatePreviewQualityGate(prospect);
   const emailQuality = evaluateOutreachEmailQuality(prospect, previewLink, outreachPreference);
   const queue = await listOutreachQueueItems();
-  const emailsSentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const emailsSentToday = emailsSentOnCurrentBusinessDate(queue);
   const autoEligibility = evaluateAutoSendEligibility({
     emailQuality,
     emailsSentToday,

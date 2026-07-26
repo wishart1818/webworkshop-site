@@ -2064,12 +2064,15 @@ export function outreachDraftLooksCurrent(outreach: Pick<OutreachDraft, "concise
   const firstTouch = outreach.concise ?? "";
   const combined = [firstTouch, outreach.detailed, ...(outreach.followUps ?? [])].join("\n");
   const address = webworkshopPostalAddress(environment);
+  const permissionFirstCta = /would you like me to (?:put together|create|make|build)(?: you)? (?:a )?(?:quick )?(?:website )?preview\?/i.test(firstTouch);
+  const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   return outreach.outreachCopyVersion === OUTREACH_COPY_VERSION
     && !/https?:\/\/|\/p\/|\/engine(?:\/|$)/i.test(firstTouch)
     && !/\b10[-\s]?minute call\b/i.test(combined)
     && !/\[[^\]]*(postal address|before sending|placeholder|insert)[^\]]*\]/i.test(combined)
     && !/\bwill get you more calls\b/i.test(combined)
-    && /want me to send it over|would you like me to send it over|would you want me to send it over|want to see it/i.test(firstTouch)
+    && permissionFirstCta
+    && !pastTensePreviewClaim
     && /would rather not receive another note|rather not hear from me again|close the loop/i.test(combined)
     && (!address || combined.includes(address));
 }
@@ -2079,10 +2082,11 @@ export function inferOutreachCopyVersion(outreach: Pick<OutreachDraft, "concise"
     ...outreach,
     outreachCopyVersion: outreach.outreachCopyVersion || LEGACY_OUTREACH_COPY_VERSION,
   };
-  return outreachDraftLooksCurrent(candidate, environment) ? OUTREACH_COPY_VERSION : candidate.outreachCopyVersion === OUTREACH_COPY_VERSION ? OUTREACH_COPY_VERSION : LEGACY_OUTREACH_COPY_VERSION;
+  return outreachDraftLooksCurrent(candidate, environment) ? OUTREACH_COPY_VERSION : LEGACY_OUTREACH_COPY_VERSION;
 }
 
-export function prospectHasUnusableWebsite(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
+export function prospectHasUnusableWebsite
+(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
   return prospect.prospectType === "no_website_social_only"
     || !["unknown", "usable"].includes(prospect.websiteStatus);
 }
