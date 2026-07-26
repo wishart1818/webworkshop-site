@@ -119,6 +119,18 @@ def align_remaining_assertions() -> None:
             raise RuntimeError(f"Past-tense assertion count in {file_name} was {test_content.count(before)}, expected 1.")
         test_path.write_text(test_content.replace(before, after, 1), encoding="utf-8")
 
+    ui_path = ROOT / "tests/ui-rendering.test.ts"
+    ui_content = ui_path.read_text(encoding="utf-8")
+    old_ui_assertion = '  assert.match(html, /No public preview link is available yet/);'
+    new_ui_assertion = '\n'.join([
+        '  assert.match(html, /Create public preview/i);',
+        '  assert.match(html, /Public link/);',
+        '  assert.match(html, /Missing/);',
+    ])
+    if ui_content.count(old_ui_assertion) != 1:
+        raise RuntimeError(f"Missing-public-link UI assertion count was {ui_content.count(old_ui_assertion)}, expected 1.")
+    ui_path.write_text(ui_content.replace(old_ui_assertion, new_ui_assertion, 1), encoding="utf-8")
+
     for candidate in ROOT.rglob("*"):
         if candidate.is_file() and candidate.suffix in {".ts", ".tsx"}:
             source = candidate.read_text(encoding="utf-8")
