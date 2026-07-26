@@ -70,6 +70,56 @@ jobs:
           cat final-fix.log
           exit 1
 
+      - name: Update superseded preview-first test expectations
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected 1 occurrence, found {count}")
+              return text.replace(old, new)
+
+          autonomous_path = Path("tests/autonomous-growth.test.ts")
+          autonomous = autonomous_path.read_text()
+          autonomous = replace_once(
+              autonomous,
+              '  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, true);',
+              '  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, false);',
+              "default preview gate expectation",
+          )
+          autonomous = replace_once(
+              autonomous,
+              '  assert.equal(settings.maxPreviewsPerRun, 20);',
+              '  assert.equal(settings.maxPreviewsPerRun, 0);',
+              "recommended preview cap expectation",
+          )
+          autonomous = replace_once(
+              autonomous,
+              '  assert.equal(settings.requirePreviewQuality85, true);',
+              '  assert.equal(settings.requirePreviewQuality85, false);',
+              "recommended preview gate expectation",
+          )
+          autonomous_path.write_text(autonomous)
+
+          mobile_path = Path("tests/mobile-engine-layout.test.ts")
+          mobile = mobile_path.read_text()
+          mobile = replace_once(
+              mobile,
+              '  assert.match(autonomousGrowthWorkspace, /Start Autopilot prepares prospects, previews, scripts, and queues\\. It does not send emails, DMs, forms, phone calls, or Looms automatically\\./);',
+              '  assert.match(autonomousGrowthWorkspace, /Start Autopilot prepares prospects, permission-first drafts, and review queues\\. It does not build previews before interest or send emails, DMs, forms, phone calls, or Looms automatically\\./);',
+              "Autopilot action copy expectation",
+          )
+          mobile = replace_once(
+              mobile,
+              '  assert.match(autonomousGrowthWorkspace, /Needs Preview Review/);',
+              '  assert.match(autonomousGrowthWorkspace, /Needs Email Review/);',
+              "Autopilot review queue label expectation",
+          )
+          mobile_path.write_text(mobile)
+          PY
+
       - name: Remove temporary migration files
         run: |
           rm -f .github/workflows/final-preinterest-autopilot-fix.yml
