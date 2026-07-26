@@ -35,8 +35,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 - <<'PY'
+          {
+            python3 - <<'PY'
           from pathlib import Path
+          import re
+
           path = Path('.github/scripts/audit_manual_lovable_workflow.py')
           source = path.read_text(encoding='utf-8')
 
@@ -57,8 +60,8 @@ jobs:
               r'''\\1  "Preview Needs Polish",\\n\\2''',
               "post-interest protected status",
           )"""
-          if old_status not in source:
-              raise SystemExit('Targeted protected-status transform was not found in the audit script.')
+          if source.count(old_status) != 1:
+              raise SystemExit(f'Targeted protected-status transform count: {source.count(old_status)}')
           source = source.replace(old_status, new_status, 1)
 
           old_daily = """replace_once(
@@ -75,28 +78,21 @@ jobs:
           if daily_count_matches != 2:
               raise SystemExit(f"Expected two scheduled/full-auto daily count targets, found {daily_count_matches}.")
           write(daily_count_path, daily_count_source.replace(old_daily_count, new_daily_count))"""
-          if old_daily not in source:
-              raise SystemExit('Two-path daily-count transform was not found in the audit script.')
+          if source.count(old_daily) != 1:
+              raise SystemExit(f'Two-path daily-count transform count: {source.count(old_daily)}')
           source = source.replace(old_daily, new_daily, 1)
 
-          old_false_claim = '''  const falseBuiltClaim = {
-            ...current,
-            concise: current.concise.replace(
-              "I had an idea for what one could look like",
-              "I built a preview of what one could look like",
-            ),
-          };'''
-          new_false_claim = '''  const falseBuiltClaim = {
-            ...current,
-            concise: current.concise.replace(/I had an idea[^.]*\./i, "I built a website preview for the business."),
-          };'''
-          if old_false_claim not in source:
-              raise SystemExit('Prospect-agnostic false-built-claim test target was not found.')
-          source = source.replace(old_false_claim, new_false_claim, 1)
+          false_claim_pattern = r'''concise: current\.concise\.replace\(\n\s+"I had an idea for what one could look like",\n\s+"I built a preview of what one could look like",\n\s+\),'''
+          false_claim_replacement = '''concise: current.concise.replace(/I had an idea[^.]*\\./i, "I built a website preview for the business."),'''
+          source, false_claim_count = re.subn(false_claim_pattern, false_claim_replacement, source, count=1)
+          if false_claim_count != 1:
+              raise SystemExit(f'Prospect-agnostic false-built-claim transform count: {false_claim_count}')
 
           path.write_text(source, encoding='utf-8')
+          print('Audit preprocessor completed.')
           PY
-          python3 .github/scripts/audit_manual_lovable_workflow.py 2>&1 | tee final-audit.log
+            python3 .github/scripts/audit_manual_lovable_workflow.py
+          } 2>&1 | tee final-audit.log
 
       - name: Upload audit failure log
         if: steps.audit.outcome == 'failure'
