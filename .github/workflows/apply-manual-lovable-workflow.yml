@@ -35,6 +35,16 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_manual_lovable_workflow.py')
+          content = path.read_text(encoding='utf-8')
+          old = 'updated, matches = re.subn(pattern, replacement, content, count=count, flags=re.S)'
+          new = 'updated, matches = re.subn(pattern, lambda _match: replacement, content, count=count, flags=re.S)'
+          if old not in content:
+              raise SystemExit('Migration helper replacement target was not found.')
+          path.write_text(content.replace(old, new, 1), encoding='utf-8')
+          PY
           python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
 
       - name: Upload migration failure log
