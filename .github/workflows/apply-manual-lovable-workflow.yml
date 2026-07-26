@@ -57,6 +57,12 @@ jobs:
           if content.count(loom_prefix) != 2:
               raise SystemExit(f'Expected two LoomQueueSection migration strings, found {content.count(loom_prefix)}.')
           content = content.replace(loom_prefix, "'''      <LoomQueueSection\\n", 2)
+          loom_props_old = "          copied={copied}\\n          items={groupedQueue.loom}\\n          onCopy={copyText}"
+          if content.count(loom_props_old) != 2:
+              raise SystemExit(f'Expected two LoomQueueSection prop blocks, found {content.count(loom_props_old)}.')
+          content = content.replace(loom_props_old, "        copied={copied}\\n        items={groupedQueue.loom}\\n        onCopy={copyText}", 2)
+          content = content.replace("          onStatus={updateStatus}", "        onStatus={updateStatus}", 2)
+          content = content.replace("          onSavePreview={saveManualPreviewLink}", "        onSavePreview={saveManualPreviewLink}", 1)
           loom_suffix = "\\n        />'''"
           if content.count(loom_suffix) < 2:
               raise SystemExit('Expected LoomQueueSection closing indentation strings.')
