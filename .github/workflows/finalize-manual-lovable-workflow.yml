@@ -30,7 +30,23 @@ jobs:
         run: npm ci
 
       - name: Apply final corrections
-        run: python3 .github/scripts/finalize_manual_lovable_workflow.py
+        id: corrections
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/finalize_manual_lovable_workflow.py 2>&1 | tee final-corrections.log
+
+      - name: Upload final correction failure
+        if: steps.corrections.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-manual-lovable-corrections
+          path: final-corrections.log
+
+      - name: Stop after captured correction failure
+        if: steps.corrections.outcome == 'failure'
+        run: exit 1
 
       - name: Run focused workflow tests
         run: npx tsx --test tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts tests/preview-render-plan.test.ts
@@ -48,7 +64,7 @@ jobs:
         run: git diff --check
 
       - name: Remove temporary finalizer
-        run: rm -f .github/scripts/finalize_manual_lovable_workflow.py .github/workflows/finalize-manual-lovable-workflow.yml
+        run: rm -f .github/scripts/finalize_manual_lovable_workflow.py .github/workflows/finalize-manual-lovable-workflow.yml final-corrections.log
 
       - name: Commit verified corrections
         run: |
