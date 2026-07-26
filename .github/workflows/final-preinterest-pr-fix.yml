@@ -83,9 +83,26 @@ jobs:
         run: npx tsx --test tests/final-preinterest-autopilot.test.ts
 
       - name: Verify full application
+        id: full_verify
+        continue-on-error: true
+        shell: bash
         run: |
-          npm run verify
-          git diff --check
+          set -o pipefail
+          { npm run verify && git diff --check; } > final-verify.log 2>&1
+
+      - name: Upload full verification result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-preinterest-verify-log
+          path: final-verify.log
+          if-no-files-found: error
+
+      - name: Stop after failed full verification
+        if: steps.full_verify.outcome == 'failure'
+        run: |
+          tail -n 200 final-verify.log
+          exit 1
 
       - name: Commit verified changes
         run: |
