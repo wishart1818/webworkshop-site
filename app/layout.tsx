@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { BrandIdentity } from "@/components/BrandIdentity";
+import { EmailDraftReviewHelper } from "@/components/engine/EmailDraftReviewHelper";
 import { siteUrl } from "@/lib/site";
 import "./globals.css";
 
@@ -69,6 +70,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
           type="application/ld+json"
         />
+        <EmailDraftReviewHelper />
         <a className="skip-link" href="#main-content">
           Skip to main content
         </a>
