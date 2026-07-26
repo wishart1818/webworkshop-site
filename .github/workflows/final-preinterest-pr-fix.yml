@@ -31,6 +31,25 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Correct strict migration matcher
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/final-preinterest-autopilot-fix.py")
+          source = path.read_text()
+          source = source.replace(
+              'autopilot = replace_exact(autopilot, \'  maxPreviewsPerRun: 20,\', \'  maxPreviewsPerRun: 0,\', "retire default preview cap")',
+              'autopilot = replace_exact(autopilot, \'  maxPreviewsPerRun: 20,\', \'  maxPreviewsPerRun: 0,\', "retire default preview cap", expected=2)',
+          )
+          source = source.replace(
+              'autopilot = replace_exact(autopilot, \'  requirePreviewQuality85: true,\', \'  requirePreviewQuality85: false,\', "retire default preview requirement")',
+              'autopilot = replace_exact(autopilot, \'  requirePreviewQuality85: true,\', \'  requirePreviewQuality85: false,\', "retire default preview requirement", expected=2)',
+          )
+          source = source.replace('autopilot = replace_exact(autopilot, \'    maxPreviewsPerRun: 20,\', \'    maxPreviewsPerRun: 0,\', "retire recommended preview cap")\n', '')
+          source = source.replace('autopilot = replace_exact(autopilot, \'    requirePreviewQuality85: true,\', \'    requirePreviewQuality85: false,\', "retire recommended preview requirement")\n', '')
+          path.write_text(source)
+          PY
+
       - name: Apply scoped Autopilot and feedback fixes
         id: apply_fix
         continue-on-error: true
