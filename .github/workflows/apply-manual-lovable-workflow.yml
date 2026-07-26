@@ -23,14 +23,30 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Apply manual Lovable workflow changes
-        run: python3 .github/scripts/apply_manual_lovable_workflow.py
+        id: migrate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
+
+      - name: Upload migration failure log
+        if: steps.migrate.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-lovable-migration-log
+          path: manual-lovable-migration.log
+
+      - name: Stop after migration failure
+        if: steps.migrate.outcome == 'failure'
+        run: exit 1
 
       - name: Run focused workflow tests
         run: npx tsx --test tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts tests/prospect-engine.test.ts tests/top-prospects.test.ts
@@ -48,7 +64,7 @@ jobs:
         run: git diff --check
 
       - name: Remove temporary migration files
-        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md
+        run: rm -f .github/scripts/apply_manual_lovable_workflow.py .github/workflows/apply-manual-lovable-workflow.yml .github/manual-lovable-pr-marker.md .github/workflows/README-manual-lovable-migration.md .github/trigger-manual-lovable-pr.txt .github/README-manual-lovable-pr.md .github/pr-ready .github/STOP .github/final-trigger.txt manual-lovable-migration.log
 
       - name: Commit verified changes
         run: |
