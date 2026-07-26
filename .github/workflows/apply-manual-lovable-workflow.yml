@@ -68,9 +68,27 @@ jobs:
               raise SystemExit('Expected LoomQueueSection closing indentation strings.')
           content = content.replace(loom_suffix, "\\n      />'''", 2)
           path.write_text(content, encoding='utf-8')
+
+          align_path = Path('.github/scripts/align_manual_lovable_tests.py')
+          align = align_path.read_text(encoding='utf-8')
+          marker = '# The unsupported-claim test now starts from the shorter opening.'
+          marker_index = align.find(marker)
+          if marker_index < 0:
+              raise SystemExit('Unsupported-claim alignment marker was not found.')
+          align_path.write_text(align[:marker_index] + 'print("Manual Lovable source and tests aligned.")\n', encoding='utf-8')
           PY
           python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
           python3 .github/scripts/align_manual_lovable_tests.py 2>&1 | tee -a manual-lovable-migration.log
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/top-prospects.test.ts')
+          content = path.read_text(encoding='utf-8')
+          old = r'/I was looking at [^\n]+/'
+          new = r'/I came across your business\./'
+          if old not in content:
+              raise SystemExit('Unsupported-claim test opening was not found.')
+          path.write_text(content.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Upload migration failure log
         if: steps.migrate.outcome == 'failure'
