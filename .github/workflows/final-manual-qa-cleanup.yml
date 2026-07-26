@@ -30,10 +30,37 @@ jobs:
         run: npm ci
 
       - name: Apply manual QA cleanup
-        run: python3 .github/scripts/final_manual_qa_cleanup.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/final_manual_qa_cleanup.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("lib/autonomous-growth.ts")
+          content = path.read_text(encoding="utf-8").replace("\x08", r"\b")
+          if "\x08" in content:
+              raise SystemExit("Hidden regex control characters remain in autonomous-growth.ts.")
+          path.write_text(content, encoding="utf-8")
+          PY
 
       - name: Run focused tests
-        run: npx tsx --test tests/manual-preview-qa.test.ts tests/final-manual-workflow-audit.test.ts tests/approval-feedback.test.ts tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts
+        id: focused
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsx --test tests/manual-preview-qa.test.ts tests/final-manual-workflow-audit.test.ts tests/approval-feedback.test.ts tests/manual-lovable-workflow.test.ts tests/autonomous-growth.test.ts 2>&1 | tee manual-qa-focused-tests.log
+
+      - name: Upload focused test failure
+        if: steps.focused.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-lovable-qa-focused-tests
+          path: manual-qa-focused-tests.log
+
+      - name: Stop after focused test failure
+        if: steps.focused.outcome == 'failure'
+        run: exit 1
 
       - name: Run full test suite
         run: npm test
@@ -51,6 +78,7 @@ jobs:
         run: |
           rm -f .github/scripts/final_manual_qa_cleanup.py
           rm -f .github/workflows/final-manual-qa-cleanup.yml
+          rm -f manual-qa-focused-tests.log
 
       - name: Commit verified cleanup
         run: |
