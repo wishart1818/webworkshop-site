@@ -162,8 +162,29 @@ async function processLead''',
 )
 replace_once(
     "lib/top-prospect-worker.ts",
-    '''  return Boolean(prospect.outreach && prospect.preview && prospect.activities.some((item) => item.createdAt >= jobCreatedAt.toISOString()));''',
-    '''  return Boolean(prospect.outreach && prospect.activities.some((item) => item.createdAt >= jobCreatedAt.toISOString()));''',
+    '''export function recoverableTopProspect(prospect: Awaited<ReturnType<typeof findProspectByWebsite>>, jobCreatedAt: Date) {
+  return Boolean(
+    prospect
+    && Date.parse(prospect.createdAt) >= jobCreatedAt.getTime()
+    && (prospect.prospectType === "no_website_social_only" || prospect.analysis)
+    && prospect.outreach
+    && prospect.preview
+    && prospect.activities.some((item) =>
+      item.label.startsWith("Automated Top Prospects analysis completed")
+      || item.label.startsWith("Automated online presence gap review completed")),
+  );
+}''',
+    '''export function recoverableTopProspect(prospect: Awaited<ReturnType<typeof findProspectByWebsite>>, jobCreatedAt: Date) {
+  return Boolean(
+    prospect
+    && Date.parse(prospect.createdAt) >= jobCreatedAt.getTime()
+    && (prospect.prospectType === "no_website_social_only" || prospect.analysis)
+    && prospect.outreach
+    && prospect.activities.some((item) =>
+      item.label.startsWith("Automated Top Prospects analysis completed")
+      || item.label.startsWith("Automated online presence gap review completed")),
+  );
+}''',
 )
 replace_once(
     "lib/top-prospect-worker.ts",
