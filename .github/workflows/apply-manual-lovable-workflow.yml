@@ -53,6 +53,14 @@ jobs:
           if optional not in content:
               raise SystemExit('Optional legacy preview wording transform was not found.')
           content = content.replace(optional, optional[:-1] + ', minimum=0)', 1)
+          loom_prefix = "'''        <LoomQueueSection\\n"
+          if content.count(loom_prefix) != 2:
+              raise SystemExit(f'Expected two LoomQueueSection migration strings, found {content.count(loom_prefix)}.')
+          content = content.replace(loom_prefix, "'''      <LoomQueueSection\\n", 2)
+          loom_suffix = "\\n        />'''"
+          if content.count(loom_suffix) < 2:
+              raise SystemExit('Expected LoomQueueSection closing indentation strings.')
+          content = content.replace(loom_suffix, "\\n      />'''", 2)
           path.write_text(content, encoding='utf-8')
           PY
           python3 .github/scripts/apply_manual_lovable_workflow.py 2>&1 | tee manual-lovable-migration.log
