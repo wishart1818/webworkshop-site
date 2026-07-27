@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 
 type EmailQueueItem = {
@@ -13,6 +13,8 @@ type EmailQueueItem = {
   contactSource: string;
   reviewSummary?: string;
   detectedIssues?: string[];
+  outreachCopyVersion: string;
+  updatedAt: string;
 };
 
 type DashboardPayload = {
@@ -43,15 +45,11 @@ function findQueueItemForRow(row: HTMLElement, items: EmailQueueItem[]) {
 export function EmailDraftReviewHelper() {
   const pathname = usePathname();
   const [items, setItems] = useState<EmailQueueItem[]>([]);
-  const [selectedItemId, setSelectedItemId] = useState("");
+  const [selectedItem, setSelectedItem] = useState<EmailQueueItem | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [approvalError, setApprovalError] = useState("");
+  const [approving, setApproving] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const selectedRowRef = useRef<HTMLElement | null>(null);
-
-  const selectedItem = useMemo(
-    () => items.find((item) => item.id === selectedItemId) ?? null,
-    [items, selectedItemId],
-  );
 
   const loadQueue = useCallback(async () => {
     if (pathname !== "/engine") return;
@@ -70,10 +68,11 @@ export function EmailDraftReviewHelper() {
   }, [pathname]);
 
   const closeDialog = useCallback(() => {
-    setSelectedItemId("");
-    selectedRowRef.current = null;
+    if (approving) return;
+    setSelectedItem(null);
+    setApprovalError("");
     setCopyState("idle");
-  }, []);
+  }, [approving]);
 
   useEffect(() => {
     if (pathname !== "/engine") return;
@@ -103,10 +102,9 @@ export function EmailDraftReviewHelper() {
         button.textContent = "View Email Draft";
         button.setAttribute(injectedButtonAttribute, "true");
         button.addEventListener("click", () => {
-          selectedRowRef.current = row;
-          setSelectedItemId(item.id);
+          setSelectedItem(structuredClone(item));
+          setApprovalError("");
           setCopyState("idle");
-          void loadQueue();
         });
 
         const approveButton = findRowButton(row, "Approve & Queue Email");
@@ -144,11 +142,13 @@ export function EmailDraftReviewHelper() {
   if (pathname !== "/engine") return null;
 
   const canApprove = Boolean(
-    selectedItem?.email &&
-      selectedItem?.subjectLine.trim() &&
-      selectedItem?.emailBody.trim() &&
-      selectedRowRef.current &&
-      findRowButton(selectedRowRef.current, "Approve & Queue Email"),
+    selectedItem?.email
+      && selectedItem?.subjectLine.trim()
+      && selectedItem?.emailBody.trim()
+      && selectedItem?.updatedAt
+      && selectedItem?.outreachCopyVersion
+      && ["Eligible", "Needs Review"].includes(selectedItem.status)
+      && !approving,
   );
 
   async function copyDraft() {
@@ -168,13 +168,38 @@ export function EmailDraftReviewHelper() {
     }
   }
 
-  function approveFromDialog() {
-    const row = selectedRowRef.current;
-    if (!row) return;
-    const approveButton = findRowButton(row, "Approve & Queue Email");
-    if (!approveButton) return;
-    approveButton.click();
-    closeDialog();
+  async function approveFromDialog() {
+    if (!selectedItem || !canApprove) return;
+    setApproving(true);
+    setApprovalError("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "approve_and_queue_email",
+          queueItemId: selectedItem.id,
+          expectedApprovalSnapshot: {
+            businessName: selectedItem.businessName,
+            email: selectedItem.email,
+            subjectLine: selectedItem.subjectLine,
+            emailBody: selectedItem.emailBody,
+            outreachCopyVersion: selectedItem.outreachCopyVersion,
+            updatedAt: selectedItem.updatedAt,
+          },
+        }),
+      });
+      const payload = await response.json() as { approval?: { queued: boolean; blockedReasons: string[] }; error?: string };
+      if (!response.ok || !payload.approval?.queued) {
+        throw new Error(payload.error || payload.approval?.blockedReasons.join("; ") || "Unable to approve this exact draft.");
+      }
+      await loadQueue();
+      window.location.reload();
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : "Unable to approve this exact draft.");
+    } finally {
+      setApproving(false);
+    }
   }
 
   return (
@@ -246,6 +271,7 @@ export function EmailDraftReviewHelper() {
             ) : null}
 
             {loadError ? <p className="email-draft-review-error">Latest refresh warning: {loadError}</p> : null}
+            {approvalError ? <p className="email-draft-review-error">Approval blocked: {approvalError}</p> : null}
 
             <footer className="email-draft-review-actions">
               <button className="engine-button" onClick={closeDialog} type="button">
@@ -257,11 +283,11 @@ export function EmailDraftReviewHelper() {
               <button
                 className="engine-button engine-button--primary"
                 disabled={!canApprove}
-                onClick={approveFromDialog}
-                title={canApprove ? "Approve this exact saved draft" : "A complete saved draft and the original approval action are required"}
+                onClick={() => void approveFromDialog()}
+                title={canApprove ? "Approve this exact saved draft and version" : "A complete current draft in an approvable status is required"}
                 type="button"
               >
-                Approve &amp; Queue Email
+                {approving ? "Approving exact draft..." : "Approve & Queue Email"}
               </button>
             </footer>
           </section>

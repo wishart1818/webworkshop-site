@@ -26,7 +26,6 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
-import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { analyzePublicWebsite, classifyWebsiteAnalysisFailure, discoverWebsiteContactPaths } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
@@ -36,13 +35,12 @@ import {
   normalizeWebsite,
   parseTopProspectCityTargets,
   citySearchBudgets,
-  publicProspectPreviewLink,
+  prepareTopProspectOutreachArtifacts,
   type CitySearchTarget,
   type OutreachPreference,
   type ProspectMode,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
-import { prepareTopProspectArtifactsWithResearch } from "@/lib/top-prospect-preview-preparation";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import {
   encodeTopProspectJobFailure,
@@ -592,7 +590,6 @@ export function recoverableTopProspect(prospect: Awaited<ReturnType<typeof findP
     && Date.parse(prospect.createdAt) >= jobCreatedAt.getTime()
     && (prospect.prospectType === "no_website_social_only" || prospect.analysis)
     && prospect.outreach
-    && prospect.preview
     && prospect.activities.some((item) =>
       item.label.startsWith("Automated Top Prospects analysis completed")
       || item.label.startsWith("Automated online presence gap review completed")),
@@ -650,16 +647,24 @@ async function saveTopProspectResult(
   const database = getProspectDatabase();
   const existingResult = await database.topProspectResult.findUnique({
     where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
-    select: { publicPreviewToken: true },
+    select: { buildPrompt: true, previewLink: true, publicPreviewToken: true },
   });
-  const publicPreviewToken = existingResult?.publicPreviewToken ?? createPublicPreviewToken();
-  const prepared = await prepareTopProspectArtifactsWithResearch(prospect, publicProspectPreviewLink(publicPreviewToken), outreachPreference);
+  const prepared = prepareTopProspectOutreachArtifacts(prospect, outreachPreference);
   const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode, outreachPreference);
   const scores = prepared.assessment.salesScores;
   await saveProspect({
     ...prepared.prospect,
     priorityScore: scores.weightedSalesScore,
+    activities: [
+      activity("outreach", "Permission-first Top Prospects outreach package generated without building a preview."),
+      ...prepared.prospect.activities,
+    ],
   });
+  const preservedPreview = {
+    buildPrompt: existingResult?.buildPrompt ?? "",
+    previewLink: existingResult?.previewLink ?? "",
+    publicPreviewToken: existingResult?.publicPreviewToken ?? null,
+  };
   await database.topProspectResult.upsert({
     where: { jobId_prospectId: { jobId, prospectId: prospect.id } },
     update: {
@@ -672,9 +677,7 @@ async function saveTopProspectResult(
       mainWeakness: prepared.assessment.mainWeakness,
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
-      buildPrompt: prepared.buildPrompt,
-      previewLink: prepared.previewLink,
-      publicPreviewToken,
+      ...preservedPreview,
       packageStatus: "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
       packageReviewedAt: null,
@@ -695,9 +698,8 @@ async function saveTopProspectResult(
       mainWeakness: prepared.assessment.mainWeakness,
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
-      buildPrompt: prepared.buildPrompt,
-      previewLink: prepared.previewLink,
-      publicPreviewToken,
+      buildPrompt: "",
+      previewLink: "",
       packageStatus: "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
       selected: rejectionReason === null,
@@ -761,7 +763,7 @@ async function processLead(
     }
     if (
       recoverableTopProspect(existing, jobCreatedAt)
-      || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach && existing.preview)
+      || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach)
     ) {
       const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
@@ -803,8 +805,7 @@ async function processLead(
     ...prospect,
     activities: [
       activity("note", `Found in Top Prospects run ${jobId}${lead.matchedCities?.length ? ` for ${lead.matchedCities.join(", ")}` : ""}.`),
-      activity("preview", "Website preview and build prompt added to the Auto Prospect Queue."),
-      activity("outreach", "Personalized outreach draft added to the Auto Prospect Queue for human approval."),
+      activity("outreach", "Permission-first outreach draft added to the Auto Prospect Queue for human approval. No preview was built."),
       ...prospect.activities,
     ],
   };

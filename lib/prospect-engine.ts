@@ -2064,12 +2064,15 @@ export function outreachDraftLooksCurrent(outreach: Pick<OutreachDraft, "concise
   const firstTouch = outreach.concise ?? "";
   const combined = [firstTouch, outreach.detailed, ...(outreach.followUps ?? [])].join("\n");
   const address = webworkshopPostalAddress(environment);
+  const permissionFirstCta = /would you like me to (?:put together|create|make|build)(?: you)? (?:a )?(?:quick )?(?:website )?preview\?/i.test(firstTouch);
+  const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   return outreach.outreachCopyVersion === OUTREACH_COPY_VERSION
     && !/https?:\/\/|\/p\/|\/engine(?:\/|$)/i.test(firstTouch)
     && !/\b10[-\s]?minute call\b/i.test(combined)
     && !/\[[^\]]*(postal address|before sending|placeholder|insert)[^\]]*\]/i.test(combined)
     && !/\bwill get you more calls\b/i.test(combined)
-    && /want me to send it over|would you like me to send it over|would you want me to send it over|want to see it/i.test(firstTouch)
+    && permissionFirstCta
+    && !pastTensePreviewClaim
     && /would rather not receive another note|rather not hear from me again|close the loop/i.test(combined)
     && (!address || combined.includes(address));
 }
@@ -2079,10 +2082,11 @@ export function inferOutreachCopyVersion(outreach: Pick<OutreachDraft, "concise"
     ...outreach,
     outreachCopyVersion: outreach.outreachCopyVersion || LEGACY_OUTREACH_COPY_VERSION,
   };
-  return outreachDraftLooksCurrent(candidate, environment) ? OUTREACH_COPY_VERSION : candidate.outreachCopyVersion === OUTREACH_COPY_VERSION ? OUTREACH_COPY_VERSION : LEGACY_OUTREACH_COPY_VERSION;
+  return outreachDraftLooksCurrent(candidate, environment) ? OUTREACH_COPY_VERSION : LEGACY_OUTREACH_COPY_VERSION;
 }
 
-export function prospectHasUnusableWebsite(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
+export function prospectHasUnusableWebsite
+(prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
   return prospect.prospectType === "no_website_social_only"
     || !["unknown", "usable"].includes(prospect.websiteStatus);
 }
@@ -2194,8 +2198,8 @@ function noWebsiteFirstTouchIdea() {
   return webworkshopPreviewValueLine("no_website");
 }
 
-function askToSendPreview() {
-  return "Want me to send it over?";
+function askToCreatePreview() {
+  return "Would you like me to put together a quick preview?";
 }
 
 function socialManualMethod(method: string) {
@@ -2209,6 +2213,18 @@ function noOwnedWebsiteProspect(prospect: Prospect) {
     || prospect.classification === "listing_only"
     || prospect.websiteStatus === "no_owned_website"
     || (!prospect.website && Boolean(prospect.profileUrl || prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl));
+}
+
+export function prospectWebsiteAbsenceNeedsManualReview(prospect: Prospect) {
+  if (!noOwnedWebsiteProspect(prospect)) return false;
+  if (prospect.websiteStatus === "no_owned_website") return false;
+  const verifiedAbsence = prospect.previewResearchFacts?.some((fact) => (
+    fact.factType === "website"
+    && fact.verificationStatus === "verified"
+    && fact.confidence === "verified"
+    && /no (?:owned |dedicated )?website|website not found|not found|unavailable/i.test(`${fact.label} ${fact.value}`)
+  ));
+  return !verifiedAbsence;
 }
 
 function contactPathCouldBeClearer(prospect: Prospect) {
@@ -2267,14 +2283,14 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
     const detailedDraft = `${webworkshopYesReply(previewLink)}\n\n${complianceFooter}`;
     return {
       subjects: [
-        `Quick website preview for ${prospect.businessName}`,
+        `Quick website idea for ${prospect.businessName}`,
         `${displayTradeCategory(trade)} website idea for ${titleCaseLocation(prospect.city)}`,
-        `More calls and quote requests for ${prospect.businessName}`,
+        `Website idea for ${prospect.businessName}`,
       ],
       concise: firstDraft,
       detailed: detailedDraft,
       followUps: [
-        `Hi again,\n\nJust following up on the ${draftLabel} note I sent about the quick website preview. It's built to look cleaner and help get you more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+        `Hi again,\n\nJust following up on the ${draftLabel} note I sent about the website idea. I would keep it focused on the business's real services and an easy call or quote-request path.\n\n${askToCreatePreview()}\n\n${complianceFooter}`,
         `Hi again,\n\nLast note from me. If this is not useful or timing is off, no problem. I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
@@ -2286,14 +2302,14 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
   if (prospect.prospectType === "no_website_social_only") {
     return {
       subjects: [
-        `Quick website preview for ${prospect.businessName}`,
+        `Quick website idea for ${prospect.businessName}`,
         `Own the online home for ${prospect.businessName}`,
         `Turn ${titleCaseLocation(prospect.city)} searches into direct inquiries`,
       ],
       concise: firstTouchEmailDraft(prospect, complianceFooter),
       detailed: `${webworkshopYesReply(previewLink)}\n\n${complianceFooter}`,
       followUps: [
-        `Hi again,\n\nJust wanted to follow up on the website preview I mentioned. It's built to look cleaner and help get you more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+        `Hi again,\n\nJust wanted to follow up on the website idea I mentioned. I would keep it focused on the business's real services and an easy call or quote-request path.\n\n${askToCreatePreview()}\n\n${complianceFooter}`,
         `Hi again,\n\nLast note from me. If this is not useful or timing is off, no problem. I will close the loop.\n\n${complianceFooter}`,
       ],
       approved: false,
@@ -2305,14 +2321,14 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
   const trade = prospectTrade(prospect);
   return {
     subjects: [
-      `Quick website preview for ${prospect.businessName}`,
+      `Quick website idea for ${prospect.businessName}`,
       `${displayTradeCategory(trade)} website notes for ${titleCaseLocation(prospect.city)}`,
-      `More calls and quote requests for ${prospect.businessName}`,
+      `Website idea for ${prospect.businessName}`,
     ],
     concise: firstTouchEmailDraft(prospect, complianceFooter),
     detailed: `${webworkshopYesReply(previewLink)}\n\n${complianceFooter}`,
     followUps: [
-      `Hi again,\n\nJust wanted to follow up on the preview I mentioned. It's built to look cleaner and help get you more calls and quote requests.\n\n${askToSendPreview()}\n\n${complianceFooter}`,
+      `Hi again,\n\nJust wanted to follow up on the website idea I mentioned. I would keep it focused on the business's real services and an easy call or quote-request path.\n\n${askToCreatePreview()}\n\n${complianceFooter}`,
       `Hi again,\n\nLast note from me. If this is not useful or timing is off, no problem. I will close the loop.\n\n${complianceFooter}`,
     ],
     approved: false,

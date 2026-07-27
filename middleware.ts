@@ -6,6 +6,7 @@ export function middleware(request: NextRequest) {
     request.nextUrl.pathname === "/api/engine/config-check"
     || request.nextUrl.pathname === "/api/engine/env-names"
     || request.nextUrl.pathname === "/api/engine/deployment-context"
+    || request.nextUrl.pathname === "/api/engine/outreach-events"
   ) {
     return NextResponse.next();
   }

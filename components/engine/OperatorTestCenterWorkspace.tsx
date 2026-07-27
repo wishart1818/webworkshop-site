@@ -387,7 +387,7 @@ export function OperatorTestCenterWorkspace() {
           <dl className="engine-operator-check-grid">
             <div><dt>First email link-free</dt><dd>{lastAction.packagePreview.firstEmailLinkFree ? "Yes" : "No"}</dd></div>
             <div><dt>First DM link-free</dt><dd>{lastAction.packagePreview.firstDmLinkFree ? "Yes" : "No"}</dd></div>
-            <div><dt>Yes reply includes public preview</dt><dd>{lastAction.packagePreview.yesReplyIncludesPublicPreview ? "Yes" : "No"}</dd></div>
+            <div><dt>Yes reply stays link-free</dt><dd>{lastAction.packagePreview.yesReplyLinkFree ? "Yes" : "No"}</dd></div>
             <div><dt>Preview link type</dt><dd>{lastAction.packagePreview.publicPreviewLink.includes("/p/") ? "Public /p/" : "Needs review"}</dd></div>
           </dl>
           {lastAction.fakePackage ? (

@@ -65,7 +65,7 @@ import {
   runFakeAutopilotSmokeTest,
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
-import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
+import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, prepareTopProspectOutreachArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
 import { reconcileProspectContactRouting, seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 import { resetProspectMemoryForTests, setProspectMemoryForTests } from "../lib/prospect-repository";
 import { prospectCurrentBucket } from "../lib/prospect-funnel";
@@ -296,7 +296,24 @@ test("Auto Email Pilot only passes for eligible email leads with all sender gate
   }), "Queued");
 });
 
-test("queued email send readiness enforces suppression, public links, compliance, and review state", () => {
+test("queued email send readiness enforces suppression, truthful first touch, compliance, and review state", () => {
+  const safeBody = [
+    "Hi Ready Pressure Washing team,",
+    "",
+    "I came across your business.",
+    "",
+    "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
+    "",
+    "Would you like me to put together a quick preview?",
+    "",
+    "Thanks,",
+    "",
+    "Brendan",
+    "WebWorkshop",
+    "123 Main St, Toledo, OH",
+    "",
+    "If you'd rather not hear from me again, just let me know.",
+  ].join("\n");
   const item = {
     id: "queued-email",
     prospectId: "prospect-1",
@@ -308,10 +325,10 @@ test("queued email send readiness enforces suppression, public links, compliance
     email: "owner@readypressurewashing.com",
     contactSource: "Public email",
     contactConfidence: 90,
-    previewLink: publicLink,
-    previewQualityScore: 92,
-    subjectLine: "Quick website preview for Ready Pressure Washing",
-    emailBody: "Hi Ready Pressure Washing team,\n\nI was looking at pressure washing businesses around Tampa and noticed the path to call or request a quote could probably be clearer, so I put together a quick website preview for you.\n\nIt's built to make the page look cleaner and help get you more calls and quote requests.\n\nWould you like me to send it over?\n\nThanks,\nBrendan\nWebWorkshop\n123 Main St, Toledo, OH\n\nIf you would rather not receive another note, just reply and I will close the loop.",
+    previewLink: "",
+    previewQualityScore: 0,
+    subjectLine: "Quick website idea for Ready Pressure Washing",
+    emailBody: safeBody,
     dmScript: "",
     loomTalkingPoints: "",
     eligibilityReason: "Ready",
@@ -333,23 +350,29 @@ test("queued email send readiness enforces suppression, public links, compliance
     notes: "",
     outreachCopyVersion: currentOutreachCopyVersion,
     outreachCopyGeneratedAt: new Date(0).toISOString(),
-    previewVersion: "preview-v1",
+    previewVersion: "",
     lastRegeneratedAt: "",
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   } satisfies OutreachQueueItem;
   const settings = { ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot" as const, killSwitch: false };
   const ready = evaluateQueuedEmailSendReadiness({ environment: env(), item, queue: [item], settings });
-  assert.equal(ready.ready, true);
+  assert.equal(ready.ready, true, ready.blockedReasons.join("; "));
 
-  const protectedLink = evaluateQueuedEmailSendReadiness({
+  const builtClaim = evaluateQueuedEmailSendReadiness({
     environment: env(),
-    item: { ...item, previewLink: "https://webworkshop.dev/engine/previews/prospect-1", emailBody: item.emailBody.replace(publicLink, "https://webworkshop.dev/engine/previews/prospect-1") },
+    item: {
+      ...item,
+      emailBody: safeBody.replace(
+        "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
+        "I put together a quick website preview for you.",
+      ),
+    },
     queue: [item],
     settings,
   });
-  assert.equal(protectedLink.ready, false);
-  assert.match(protectedLink.blockedReasons.join(" "), /protected \/engine preview links/i);
+  assert.equal(builtClaim.ready, false);
+  assert.match(builtClaim.blockedReasons.join(" "), /cannot imply that a preview is already built/i);
 
   const suppressed = evaluateQueuedEmailSendReadiness({
     environment: env(),
@@ -375,7 +398,7 @@ test("queued email send readiness enforces suppression, public links, compliance
 
   const sharedMailboxDomain = evaluateQueuedEmailSendReadiness({
     environment: env(),
-    item: { ...item, email: "second@gmail.com", emailBody: item.emailBody.replace("owner@readypressurewashing.com", "second@gmail.com") },
+    item: { ...item, email: "second@gmail.com" },
     queue: [item, { ...item, id: "sent-gmail", status: "Sent", email: "first@gmail.com", sentDate: new Date(0).toISOString() }],
     settings,
   });
@@ -383,7 +406,7 @@ test("queued email send readiness enforces suppression, public links, compliance
 
   const suspiciousEmail = evaluateQueuedEmailSendReadiness({
     environment: env(),
-    item: { ...item, email: "admin@totalwptheme.com", emailBody: item.emailBody.replace("owner@readypressurewashing.com", "admin@totalwptheme.com") },
+    item: { ...item, email: "admin@totalwptheme.com" },
     queue: [item],
     settings,
   });
@@ -1903,10 +1926,8 @@ test("social or form prospects remain manual reviewable instead of phone-only bl
   }
 });
 
-test("missing public preview, protected engine links, and weak previews block send readiness", () => {
+test("missing or weak previews do not block truthful first-touch eligibility", () => {
   const prospect = eligibleProspect();
-  assert.equal(eligibilityFor({ ...prospect, preview: undefined }).eligible, false);
-  assert.equal(eligibilityFor(prospect, { previewLink: "https://webworkshop.dev/engine/previews/prospect-1" }).eligible, false);
   const weak = {
     ...prospect,
     preview: {
@@ -1924,18 +1945,29 @@ test("missing public preview, protected engine links, and weak previews block se
       },
     },
   };
-  const gate = evaluatePreviewQualityGate(weak);
-  assert.equal(gate.status, "Blocked");
-  assert.equal(eligibilityFor(weak).eligible, false);
+  const weakGate = evaluatePreviewQualityGate(weak);
+  assert.notEqual(weakGate.status, "Eligible");
+  assert.equal(eligibilityFor({ ...prospect, preview: undefined }, { previewLink: "", previewGate: weakGate }).eligible, true);
+  assert.equal(eligibilityFor(weak, { previewLink: "", previewGate: weakGate }).eligible, true);
+
+  const unsafeCopy = {
+    ...prospect,
+    outreach: {
+      ...prospect.outreach!,
+      concise: `${prospect.outreach!.concise}\nhttps://webworkshop.dev/engine/previews/prospect-1`,
+    },
+  };
+  const quality = evaluateOutreachEmailQuality(unsafeCopy, "");
+  assert.equal(quality.ready, false);
+  assert.match(quality.issues.join(" "), /first touch|link/i);
 });
 
-test("preview below 85 creates a regeneration plan and remains not send-ready", () => {
+test("preview quality does not create a pre-interest regeneration requirement", () => {
   const prospect = eligibleProspect();
   const weak = {
     ...prospect,
     preview: {
       ...prospect.preview!,
-      heroHeadline: "hvac help in toledo",
       qualityScore: {
         visualPolish: 78,
         businessSpecificity: 72,
@@ -1949,12 +1981,12 @@ test("preview below 85 creates a regeneration plan and remains not send-ready", 
     },
   };
   const previewGate = evaluatePreviewQualityGate(weak);
-  const emailQuality = evaluateOutreachEmailQuality(weak, publicLink);
+  const emailQuality = evaluateOutreachEmailQuality(weak, "");
   const review = evaluateSelfReview({ emailQuality, previewGate, prospect: weak });
   assert.notEqual(previewGate.status, "Eligible");
-  assert.equal(review.recommendedNextAction, "Regenerate Preview");
-  assert.ok(review.regenerationPlan.includes("fix image relevance") || review.regenerationPlan.includes("improve CTA section"));
-  assert.equal(eligibilityFor(weak, { previewGate, emailQuality }).eligible, false);
+  assert.notEqual(review.recommendedNextAction, "Regenerate Preview");
+  assert.deepEqual(review.regenerationPlan, []);
+  assert.equal(eligibilityFor(weak, { previewLink: "", previewGate, emailQuality }).eligible, true);
 });
 
 test("missing sender settings, missing postal address, disabled env flag, and daily cap block Auto Email Pilot", () => {
@@ -1971,7 +2003,7 @@ test("Autopilot defaults to one-trade manual-safe review mode", () => {
   assert.equal(defaultAutopilotCampaignSettings.cadence, "manual_only");
   assert.equal(defaultAutopilotCampaignSettings.manualDmMode, true);
   assert.equal(defaultAutopilotCampaignSettings.excludePreviouslyReviewed, true);
-  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, true);
+  assert.equal(defaultAutopilotCampaignSettings.requirePreviewQuality85, false);
   assert.equal(defaultAutopilotCampaignSettings.requireWrittenContact, true);
   assert.notEqual(defaultAutopilotCampaignSettings.trade, "All Core Service Trades");
   assert.ok(autopilotActionLabels.includes("Start Autopilot"));
@@ -2071,11 +2103,11 @@ test("recommended first real Autopilot run selects Florida Pressure Washing with
   assert.equal(settings.duration, "run_once");
   assert.equal(settings.cadence, "manual_only");
   assert.equal(settings.maxProspectsPerRun, 100);
-  assert.equal(settings.maxPreviewsPerRun, 20);
+  assert.equal(settings.maxPreviewsPerRun, 0);
   assert.equal(settings.maxProspectsTotal, 20);
   assert.equal(settings.outreachStyle, "manual_social_safe");
   assert.equal(settings.excludePreviouslyReviewed, true);
-  assert.equal(settings.requirePreviewQuality85, true);
+  assert.equal(settings.requirePreviewQuality85, false);
   assert.equal(settings.requireWrittenContact, true);
   assert.equal(settings.manualDmMode, true);
   assert.equal(settings.loomNotifications, true);
@@ -2579,8 +2611,8 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
   ].join("\n"));
 
   assert.match(rewritten, /rather not hear from me again/);
-  assert.match(rewritten, /help you get more calls and quote requests/i);
-  assert.match(rewritten, /Want me to send it over\?/);
+  assert.match(rewritten, /make it easier for people to see what you do and call or request a quote/i);
+  assert.match(rewritten, /Would you like me to put together a quick preview\?/);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
 });
@@ -2661,7 +2693,7 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     assert.equal(summary.updated, 2);
     assert.equal(summary.oldUnsentPackagesNeedingRegeneration, 2);
     assert.equal(regenerated?.outreachCopyVersion, currentOutreachCopyVersion);
-    assert.match(regenerated?.emailBody ?? "", /help you get more calls and quote requests/i);
+    assert.match(regenerated?.emailBody ?? "", /make it easier for people to see what you do and call or request a quote/i);
     assert.doesNotMatch(regenerated?.emailBody ?? "", /One missed opportunity|https:\/\/webworkshop\.dev\/p\//i);
     assert.equal(regeneratedMissingPreview?.outreachCopyVersion, currentOutreachCopyVersion);
     assert.match(regeneratedMissingPreview?.loomTalkingPoints ?? "", /Preview missing - generate\/review preview before sending yes-reply/);
@@ -2844,10 +2876,11 @@ test("feedback updates learning summary and dashboard empty states can be repres
   assert.ok(summary.recommendedWordingImprovements.includes("make the email shorter"));
 });
 
-test("casual DM playbook keeps the first DM link-free and creates Loom-safe scripts", () => {
+test("casual DM playbook asks permission before the manual Lovable build", () => {
   const prospect = {
     ...eligibleProspect(),
     website: "",
+    websiteStatus: "no_owned_website",
     profileUrl: "https://facebook.com/sample-roofing",
     prospectType: "no_website_social_only",
     classification: "social_only",
@@ -2855,29 +2888,25 @@ test("casual DM playbook keeps the first DM link-free and creates Loom-safe scri
   } as Prospect;
   const playbook = casualDmPlaybook(prospect, publicLink);
 
-  assert.match(playbook.firstDm, /help get you more calls and quote requests/i);
-  assert.match(playbook.firstDm, /Want to see it\?/);
-  assert.match(playbook.firstDm, /noticed I couldn't find a full website/i);
-  assert.match(playbook.firstDm, /made a quick preview of what one could look like/i);
+  assert.match(playbook.firstDm, /couldn't find a dedicated website/i);
+  assert.match(playbook.firstDm, /Would you like me to put together a quick preview\?/i);
   assert.doesNotMatch(playbook.firstDm, /https?:\/\/|\/p\//);
-  assert.doesNotMatch(playbook.firstDm, /AI website|free audit|One missed opportunity|customer proof/i);
-  assert.match(playbook.yesReply, /Sounds good - here's the preview/i);
-  assert.match(playbook.yesReply, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
-  assert.match(playbook.yesReply, /helping get more calls and quote requests/i);
+  assert.doesNotMatch(playbook.firstDm, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,50}\bpreview\b/i);
+  assert.match(playbook.yesReply, /I'll put together a quick preview/i);
+  assert.doesNotMatch(playbook.yesReply, /https?:\/\/|\/p\//);
   assert.match(playbook.sendAfterLoom, /Loom walkthrough/);
   assert.match(playbook.sendAfterLoom, /Preview:/);
   assert.match(playbook.sendAfterLoom, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
-  assert.doesNotMatch(playbook.sendAfterLoom, /One missed opportunity|customer proof you can verify/i);
   assert.match(playbook.pricingReply, /\$1,000 total/);
   assert.match(playbook.pricingReply, /\$49\/month/);
   assert.match(playbook.higherSupportReply, /\$79\/month/);
   assert.match(playbook.starterPageReply, /\$500/);
 });
 
-test("Prospect Said Yes creates a Loom Needed task status instead of sending", () => {
+test("Prospect Said Yes creates a Preview Build Needed task instead of sending", () => {
   assert.ok(outreachQueueStatuses.includes("Prospect Said Yes"));
-  assert.ok(outreachQueueStatuses.includes("Loom Needed"));
-  assert.equal(queueStatusAfterManualAction("Prospect Said Yes"), "Loom Needed");
+  assert.ok(outreachQueueStatuses.includes("Preview Build Needed"));
+  assert.equal(queueStatusAfterManualAction("Prospect Said Yes"), "Preview Build Needed");
   assert.equal(queueStatusAfterManualAction("First DM Sent"), "First DM Sent");
 });
 
@@ -2891,7 +2920,7 @@ test("Loom Needed task exposes checklist, fix notes, scripts, and no auto-send p
 
   assert.equal(task.businessName, "Sample Roofing");
   assert.equal(task.canMarkReadyForLoom, false);
-  assert.ok(task.checklist.some((check) => check.key === "preview_quality" && !check.passed));
+  assert.ok(task.checklist.some((check) => check.key === "manual_preview_qa" && !check.passed));
   assert.ok(task.fixNotes.includes("make layout more believable"));
   assert.equal(task.recommendation.recommended, false);
   assert.match(task.recommendation.whyRecommended, /Wait until/);
@@ -2948,8 +2977,8 @@ test("Loom recommendation appears only for high-value prospects with visual reas
   assert.equal(weakPreview.recommended, false);
 });
 
-test("Loom notification draft is internal-only and secret-safe", () => {
-  const item = queueItem({ status: "Loom Needed" });
+test("manual preview build notification is internal-only and secret-safe", () => {
+  const item = queueItem({ status: "Preview Build Needed" });
   const notification = loomNeededNotificationDraft(item, {
     OUTREACH_NOTIFY_EMAIL: "operator@example.com",
     OUTREACH_NOTIFY_FROM_EMAIL: "alerts@webworkshop.dev",
@@ -2958,8 +2987,95 @@ test("Loom notification draft is internal-only and secret-safe", () => {
   });
 
   assert.equal(notification.configured, true);
-  assert.match(notification.subject, /Loom needed: Sample Roofing/);
-  assert.match(notification.body, /manual/i);
-  assert.match(notification.body, /webworkshop\.dev\/p\//);
-  assert.doesNotMatch(JSON.stringify(notification), /secret-resend-key|operator@example.com|alerts@webworkshop\.dev/);
+  assert.match(notification.subject, /Manual preview build needed: Sample Roofing/);
+  assert.match(notification.body, /manual|Lovable/i);
+  assert.doesNotMatch(JSON.stringify(notification), /secret-resend-key|operator@example.com|alerts@webworkshop.dev/);
+});
+
+
+test("pre-interest Top Prospect artifacts create outreach without a preview", () => {
+  const prospect = { ...eligibleProspect(), preview: undefined };
+  const prepared = prepareTopProspectOutreachArtifacts(prospect, "written_only");
+  assert.equal(prepared.previewLink, "");
+  assert.equal(prepared.buildPrompt, "");
+  assert.equal(prepared.prospect.preview, undefined);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+});
+
+test("approval snapshot rejects a changed reviewed draft", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  try {
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: "",
+      prospect: eligibleProspect(),
+      topProspectResultId: "stale-approval-snapshot",
+    });
+    const result = await approveAndQueueEmail(eligible.id, {
+      businessName: eligible.businessName,
+      email: eligible.email,
+      subjectLine: eligible.subjectLine,
+      emailBody: `${eligible.emailBody}\nchanged after review`,
+      outreachCopyVersion: eligible.outreachCopyVersion,
+      updatedAt: eligible.updatedAt,
+    });
+    assert.equal(result.queued, false);
+    assert.match(result.blockedReasons.join(" "), /changed after review/i);
+    assert.notEqual(result.item?.status, "Queued");
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("post-interest polish state is protected from pre-contact reconciliation", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  const prospect = eligibleProspectFor({
+    id: "protected-polish-prospect",
+    businessName: "Protected Polish Plumbing",
+    website: "https://protectedpolishplumbing.com",
+    email: "approved@protectedpolishplumbing.com",
+  });
+  try {
+    setProspectMemoryForTests([{ ...prospect, email: "changed@protectedpolishplumbing.com" }]);
+    const protectedItem = queueItem({
+      id: "protected-polish-item",
+      prospectId: prospect.id,
+      businessName: prospect.businessName,
+      website: prospect.website,
+      email: "approved@protectedpolishplumbing.com",
+      status: "Preview Needs Polish",
+      previewLink: "https://lovable.app/protected-polish-preview",
+    });
+    setOutreachQueueMemoryForTests([protectedItem]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "manual_approval", killSwitch: false });
+    await processExistingQualifiedProspects({ dryRun: false });
+    const current = outreachQueueMemoryForTests().find((item) => item.id === protectedItem.id);
+    assert.equal(current?.status, "Preview Needs Polish");
+    assert.equal(current?.email, "approved@protectedpolishplumbing.com");
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("real approval UI submits the exact draft snapshot instead of clicking a rendered row", () => {
+  const route = readFileSync(new URL("../app/api/engine/autonomous-growth/route.ts", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/engine/AutonomousGrowthWorkspace.tsx", import.meta.url), "utf8");
+  const helper = readFileSync(new URL("../components/engine/EmailDraftReviewHelper.tsx", import.meta.url), "utf8");
+  assert.match(route, /expectedApprovalSnapshot[\s\S]*Review the exact current recipient/);
+  assert.match(workspace, /expectedApprovalSnapshot:[\s\S]*emailBody: item\.emailBody[\s\S]*updatedAt: item\.updatedAt/);
+  assert.match(helper, /expectedApprovalSnapshot:[\s\S]*emailBody: selectedItem\.emailBody[\s\S]*updatedAt: selectedItem\.updatedAt/);
+  assert.doesNotMatch(helper, /approveButton\.click\(\)/);
 });

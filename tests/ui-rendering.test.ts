@@ -245,10 +245,10 @@ test("phone-only outreach drafts show written-outreach block before approval", (
   assert.match(html, /disabled=""/);
 });
 
-test("Prospect Detail open preview uses public preview links instead of internal Preview tabs", () => {
+test("Prospect Detail does not infer a public preview link from permission-first outreach", () => {
   const token = "abcdefghijklmnopqrstuvwxyzABCDEF";
   const base = withPreview(withAnalysis(structuredClone(seedProspects[0])));
-  const publicProspect = {
+  const permissionFirstProspect = {
     ...base,
     outreach: generateOutreach(base, `https://webworkshop.dev/p/${token}`),
   };
@@ -256,13 +256,15 @@ test("Prospect Detail open preview uses public preview links instead of internal
     ...base,
     outreach: generateOutreach(base, `https://webworkshop.dev/engine/previews/${base.id}`),
   };
-  const html = renderDetail(publicProspect, "Preview");
+  const html = renderDetail(permissionFirstProspect, "Preview");
   const detailSource = readFileSync(new URL("../components/engine/ProspectDetail.tsx", import.meta.url), "utf8");
   const engineSource = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
 
-  assert.equal(publicPreviewUrlForProspect(publicProspect), `/p/${token}`);
+  assert.equal(publicPreviewUrlForProspect(permissionFirstProspect), "");
   assert.equal(publicPreviewUrlForProspect(protectedProspect), "");
-  assert.match(html, /Open preview/);
+  assert.match(html, /Create public preview/i);
+  assert.match(html, /Public link/);
+  assert.match(html, /Missing/);
   assert.match(html, /View internal Preview tab/);
   assert.match(detailSource, /window\.location\.assign\(publicPreviewUrl\)/);
   assert.match(detailSource, /No public preview link is available yet/);
