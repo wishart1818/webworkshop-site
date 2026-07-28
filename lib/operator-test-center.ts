@@ -105,7 +105,7 @@ export type OperatorActionResult = {
     subject: string;
     firstEmailLinkFree: boolean;
     firstDmLinkFree: boolean;
-    yesReplyIncludesPublicPreview: boolean;
+    yesReplyLinkFree: boolean;
     publicPreviewLink: string;
   };
   fakePackage?: {
@@ -401,8 +401,9 @@ function readinessRecordsForQueue(queue: Awaited<ReturnType<typeof getAutonomous
       && prospectEmailNeedsManualVerification({ businessName: item.businessName, website: item.website, email: item.email })
     ) add(item, "Email needs manual verification", "The stored address is suspicious, placeholder-like, or does not clearly match the business.", "Remove it from email eligibility until the address is manually verified.");
     if (item.outreachCopyVersion !== currentOutreachCopyVersion && !item.sentDate && !/sent|replied|not interested|lost|won/i.test(item.status)) add(item, "Outdated outreach copy", `Package uses ${item.outreachCopyVersion || "no recorded version"}.`, `Regenerate unsent outreach copy to ${currentOutreachCopyVersion}.`);
-    if (!item.previewLink) add(item, "Missing preview", "No public preview link is stored.", "Regenerate the Outreach Package so a public /p/ preview is created.", "prospect_preview");
-    if (item.previewLink && (!/\/p\//i.test(item.previewLink) || /\/engine(?:\/|$|\?)/i.test(item.previewLink))) add(item, "Invalid public preview", "Preview link is missing or points to a protected engine route.", "Regenerate the package and verify the prospect-facing link starts with /p/.", "prospect_preview");
+    const previewRequired = ["Preview Build Needed", "Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"].includes(item.status);
+    if (previewRequired && !item.previewLink) add(item, "Missing manual preview", "The prospect asked for a preview, but no public Lovable preview link is stored.", "Build and QA the site manually in Lovable, then save its legitimate public HTTPS link.", "prospect_preview");
+    if (previewRequired && item.previewLink && (!/^https:\/\//i.test(item.previewLink) || /\/engine(?:\/|$|\?)/i.test(item.previewLink))) add(item, "Invalid public preview", "The saved post-interest preview link is missing or points to a protected engine route.", "Save the legitimate public Lovable preview URL after manual QA.", "prospect_preview");
     if (/https?:\/\/[^\s]+\/p\//i.test(emailBody)) add(item, "First-touch preview-link violation", "The first-touch email includes a public preview link.", "Regenerate the draft so the first email asks permission before sending the preview.");
     if (!webworkshopOptOutPattern().test(emailBody)) add(item, "Missing opt-out wording", "The first-touch email does not include the approved opt-out line.", "Regenerate the draft with the current WebWorkshop script.");
     if (!env.hasPostalAddress && item.contactSource === "Public email") add(item, "Missing postal address", "Postal address is not configured for email readiness.", "Add the approved sender postal address before any real email test.");
@@ -437,7 +438,7 @@ function nextRecommendedTest(input: {
     return "Provider coverage needs attention. Next: run Provider Smoke Test before any larger run.";
   }
   if (input.queueLength > 0) return "Top Prospects generated packages. Next: review one package.";
-  return "First-touch copy is link-free. Next: test yes-reply preview link with Generate One Test Outreach Package.";
+  return "First-touch copy is link-free. Next: test the manual-build confirmation with Generate One Test Outreach Package.";
 }
 
 function buildCards(input: {
@@ -610,7 +611,7 @@ export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = 
     { label: "First email script", body: outreach.concise },
     { label: "First Facebook/Instagram DM script", body: playbook.firstDm },
     { label: "Softer DM script", body: playbook.softerFirstDm },
-    { label: "Yes-reply / preview-send script", body: playbook.yesReply },
+    { label: "Yes-reply / manual-build confirmation", body: playbook.yesReply },
     { label: "Pricing reply", body: playbook.pricingReply },
     { label: "Follow-up", body: playbook.followUpAfterLoom },
     { label: "Not interested reply", body: playbook.notInterestedReply },
@@ -621,7 +622,7 @@ export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = 
     "No prospect record created.",
     "No email, DM, form, phone call, or Loom was sent.",
     "First email and first DM are link-free.",
-    "Yes-reply uses a fake public /p/ preview link.",
+    "Yes-reply confirms the manual Lovable build and remains link-free.",
     `Copy version: ${currentOutreachCopyVersion}.`,
   ].join("\n");
   const fullSummary = [
@@ -644,7 +645,7 @@ export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = 
       subject: outreach.subjects[0],
       firstEmailLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(outreach.concise),
       firstDmLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(allFirstTouch),
-      yesReplyIncludesPublicPreview: playbook.yesReply.includes(publicPreviewLink),
+      yesReplyLinkFree: !/https?:\/\/|\/p\//i.test(playbook.yesReply),
       publicPreviewLink,
     },
     fakePackage: {
@@ -858,9 +859,9 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const firstEmail = fakeScripts.find((script) => script.label === "First email script")?.body ?? "";
   const firstDm = fakeScripts.find((script) => script.label === "First Facebook/Instagram DM script")?.body ?? "";
   const softerDm = fakeScripts.find((script) => script.label === "Softer DM script")?.body ?? "";
-  const yesReply = fakeScripts.find((script) => script.label === "Yes-reply / preview-send script")?.body ?? "";
+  const yesReply = fakeScripts.find((script) => script.label === "Yes-reply / manual-build confirmation")?.body ?? "";
   const fakeCopyBlob = `${firstEmail}\n${firstDm}\n${softerDm}\n${yesReply}`;
-  const firstEmailHasApprovedReason = /I was looking at .+ businesses around the .+ area and came across your business\.[\s\S]+(?:I noticed you don't have a website|I put together a quick preview showing what your website could look like)/i.test(firstEmail);
+  const firstEmailHasApprovedReason = /I came across your business\.[\s\S]+(?:couldn't find a dedicated website|had an idea for a simpler website direction)[\s\S]+Would you like me to put together a quick preview\?/i.test(firstEmail);
   const configuredPostalAddress = environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
   const smartBackfill = await processExistingQualifiedProspects({ dryRun: true }).catch((error) => ({
     ok: false,
@@ -986,20 +987,20 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "copy-version", category: "Outreach copy quality", label: "Latest outreachCopyVersion is current", passed: /permission[_-]first/i.test(currentOutreachCopyVersion), detail: `Current version: ${currentOutreachCopyVersion}.` });
   check(checks, { key: "first-email-link-free", category: "Outreach copy quality", label: "First-touch email has no preview link", passed: fakePackage.packagePreview?.firstEmailLinkFree === true && !/https:\/\/webworkshop\.dev\/p\//i.test(firstEmail), detail: "Fake first email asks permission before sending the preview." });
   check(checks, { key: "first-dm-link-free", category: "Outreach copy quality", label: "First-touch social DM has no preview link", passed: fakePackage.packagePreview?.firstDmLinkFree === true && !/https:\/\/webworkshop\.dev\/p\//i.test(`${firstDm}\n${softerDm}`), detail: "Fake first DM asks permission before sending the preview." });
-  check(checks, { key: "yes-reply-public-preview", category: "Outreach copy quality", label: "Yes-reply includes public /p/ preview link", passed: fakePackage.packagePreview?.yesReplyIncludesPublicPreview === true && /https:\/\/webworkshop\.dev\/p\//i.test(yesReply), detail: "Preview link appears only in the yes-reply / preview-send script." });
+  check(checks, { key: "yes-reply-manual-build", category: "Outreach copy quality", label: "Yes-reply confirms a manual build and stays link-free", passed: fakePackage.packagePreview?.yesReplyLinkFree === true && !/https?:\/\/|\/p\//i.test(yesReply) && /I'll put together a quick preview/i.test(yesReply), detail: "A positive reply creates the manual Lovable build expectation without pretending a preview already exists." });
   check(checks, { key: "email-opt-out", category: "Outreach copy quality", label: "Email includes opt-out language", passed: webworkshopOptOutPattern().test(firstEmail), detail: "Fake first email includes a simple opt-out line." });
   check(checks, { key: "email-postal", category: "Outreach copy quality", label: "Email includes postal address", passed: env.hasPostalAddress && Boolean(configuredPostalAddress) && firstEmail.includes(configuredPostalAddress), detail: env.hasPostalAddress ? "Fake first email includes the configured postal address line." : "Postal address is missing, so final email cannot be send-ready.", fix: "Add OUTREACH_POSTAL_ADDRESS before any real email test." });
   check(checks, { key: "no-scores", category: "Outreach copy quality", label: "No internal score language", passed: !/\b\d{1,3}\/100\b|website quality score|opportunity score|internal score/i.test(fakeCopyBlob), detail: "Fake copy does not expose scoring language." });
   check(checks, { key: "no-engine-links", category: "Outreach copy quality", label: "No internal Prospect Engine links", passed: !/\/engine(?:\/|$|\?)/i.test(fakeCopyBlob), detail: "Prospect-facing fake copy contains no protected engine links." });
   check(checks, { key: "no-guarantees", category: "Outreach copy quality", label: "No guaranteed-result claims", passed: !/\bwill get you more calls|guarantee|guaranteed\b/i.test(fakeCopyBlob), detail: "Fake copy uses help/get wording, not guarantees." });
-  check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses more calls and quote requests wording", passed: /help get (?:you )?more calls and quote requests/i.test(fakeCopyBlob), detail: "Fake copy uses the current direct, casual wording." });
+  check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses the current permission-first website wording", passed: /easier for people to (?:see what you do and )?call or request a quote/i.test(fakeCopyBlob) && /Would you like me to put together a quick preview\?/i.test(fakeCopyBlob), detail: "Fake copy uses the current direct, truthful manual-build wording." });
   check(checks, { key: "why-reaching-out", category: "Outreach copy quality", label: "First-touch email explains why I am reaching out", passed: firstEmailHasApprovedReason, detail: firstEmailHasApprovedReason ? "Current generated fake package includes the approved reason sentence before the CTA." : "Current generated fake package is missing the approved reason sentence before the CTA.", fix: "Regenerate the fake package with the current outreach style guide." });
 
   check(checks, { key: "existing-qualified", category: "Existing prospect readiness", label: "Existing qualified unsent prospects checked", passed: Boolean(existing), detail: existing ? `${existing.total} existing qualified unsent prospect(s) checked.` : "Smart snapshot was unavailable.", fix: "Open Autonomous Growth or rerun the readiness test after database health is restored." });
   check(checks, { key: "saved-results", category: "Existing prospect readiness", label: "Saved Top Prospects results checked", passed: Boolean(sourceCounts), detail: sourceCounts ? `${sourceCounts.savedTopProspectsResults} saved result(s), ${sourceCounts.rankedProspects} ranked, ${sourceCounts.reviewablePackages} reviewable.` : `${jobs.length} Top Prospects job(s) available.` });
   check(checks, { key: "queue-items", category: "Existing prospect readiness", label: "Outreach queue items checked", passed: dashboard !== null, detail: `${queue.length} queue item(s) checked.` });
   check(checks, { key: "outdated-copy", category: "Existing prospect readiness", label: "Outdated unsent copy detected", info: true, detail: `${existing?.needsRefreshedCopy ?? 0} package(s) need refreshed copy.` });
-  check(checks, { key: "missing-packages", category: "Existing prospect readiness", label: "Missing packages detected", info: true, detail: `${existing?.needsPreview ?? 0} prospect(s) need preview/package work.` });
+  check(checks, { key: "missing-packages", category: "Existing prospect readiness", label: "Missing first-touch packages detected", info: true, detail: `${existing?.needsPreview ?? 0} prospect(s) need first-touch package work. A website preview is not required until a prospect asks for one.` });
   check(checks, { key: "queue-counts", category: "Existing prospect readiness", label: "Queue bucket counts checked", passed: Boolean(queueCounts), detail: queueCounts ? `Email ${queueCounts.readyForEmailReview}, Facebook DM ${queueCounts.readyForFacebookDm}, Instagram DM ${queueCounts.readyForInstagramDm}, manual research ${queueCounts.needsManualResearch}, bad-fit ${queueCounts.badFitBlocked}, suppressed ${queueCounts.suppressedDoNotContact}, contacted ${queueCounts.alreadyContacted}.` : "Queue counts unavailable." });
   check(checks, {
     key: "exact-failed-records",

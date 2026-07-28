@@ -4,6 +4,7 @@ import {
   normalizeTradeCategory,
   outreachComplianceFooter,
   prospectEmailNeedsManualVerification,
+  prospectWebsiteAbsenceNeedsManualReview,
   prospectWrittenContactMethodIsUsable,
   type PreviewConcept,
   type Prospect,
@@ -54,8 +55,9 @@ export const outreachQueueStatuses = [
   "DM Draft",
   "First DM Sent",
   "Prospect Said Yes",
-  "Loom Needed",
+  "Preview Build Needed",
   "Preview Needs Polish",
+  "Loom Needed",
   "Ready for Loom",
   "Loom Recorded",
   "Loom Sent",
@@ -642,7 +644,7 @@ export function smartQueueKeyForItem(item: OutreachQueueItem): SmartQueueKey {
   if (item.sentDate || /sent|replied|positive reply|won|lost|not interested|first dm sent|loom sent|pricing sent|follow-up/i.test(statusText)) return "alreadyContacted";
   if (/bad fit|blocked/i.test(statusText) && !/phone(?:\s|-)?only/i.test(statusText)) return "badFitBlocked";
   if (/phone(?:\s|-)?only|call first/i.test(`${item.contactSource} ${statusText}`)) return "phoneOnlyBlocked";
-  if (!resultHasPublicPreview(item)) return "needsPreviewReview";
+  if (["Preview Build Needed", "Loom Needed", "Preview Needs Polish", "Ready for Loom"].includes(item.status) && !resultHasPublicPreview(item)) return "needsPreviewReview";
   if (/facebook/i.test(item.contactSource)) return "readyForFacebookDm";
   if (/instagram|linkedin|social/i.test(item.contactSource)) return "readyForInstagramDm";
   if (/contact form|quote form/i.test(item.contactSource)) return "readyForContactFormReview";
@@ -1305,8 +1307,9 @@ function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJ
     !webworkshopOptOutPattern().test(combined) ? "Opt-out language is missing." : "",
     postalAddresses.length && !postalAddresses.some((address) => item.emailBody.includes(address)) ? "Configured sender postal address is missing from the email body." : "",
     !postalAddresses.length ? "Configured sender postal address is missing." : "",
-    /\/engine(?:\/|$)/i.test(item.previewLink) ? "Protected /engine preview links are blocked." : "",
-    !publicPreviewReady(item.previewLink) ? "Public /p/ preview link is missing from the outreach package." : "",
+    /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(item.emailBody)
+      ? "First-touch email cannot imply that a preview is already built."
+      : "",
   ].filter(Boolean);
 }
 
@@ -1359,7 +1362,9 @@ export function evaluateQueuedEmailSendReadiness({
 function publicPreviewReady(value: string) {
   try {
     const url = new URL(value);
-    return url.pathname.startsWith("/p/") && validPublicPreviewToken(url.pathname.slice(3));
+    return url.protocol === "https:"
+      && !["localhost", "127.0.0.1"].includes(url.hostname)
+      && !url.pathname.startsWith("/engine");
   } catch {
     return false;
   }
@@ -1382,6 +1387,8 @@ export function evaluateAutoSendEligibility({
   prospect: Prospect;
   settings: AutonomousGrowthSettings;
 }): AutoSendEligibility {
+  void previewGate;
+  void previewLink;
   const env = outreachEnvironment(environment);
   const blockedReasons = [
     settings.mode !== "auto_email_pilot" ? `${autonomousGrowthModeLabels[settings.mode]} sends nothing automatically.` : "",
@@ -1392,8 +1399,7 @@ export function evaluateAutoSendEligibility({
     !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
     emailsSentToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",
     !prospect.email ? "Public email is missing." : "",
-    !publicPreviewReady(previewLink) ? "Public /p/ preview link is missing." : "",
-    previewGate.status !== "Eligible" || previewGate.score < 85 ? "Preview quality gate did not pass." : "",
+    prospectWebsiteAbsenceNeedsManualReview(prospect) ? "Website absence needs manual verification before approval." : "",
     !emailQuality.ready ? `Email quality check is not send-ready: ${emailQuality.readinessLabel}.` : "",
     !prospectWrittenContactMethodIsUsable(prospect) ? "Written contact method is not usable." : "",
     prospect.status === "Contacted" || prospect.status === "Interested" || prospect.status === "Proposal Sent" || prospect.status === "Closed Won" || prospect.status === "Closed Lost" ? "Business has already been contacted or closed." : "",
@@ -1425,18 +1431,20 @@ export function queueStatusForPackage({
   previewGate: PreviewQualityGate;
   settings: AutonomousGrowthSettings;
 }): OutreachQueueStatus {
+  void previewGate;
   if (settings.mode === "off") return "Draft";
-  if (autoEligibility.blockedReasons.some((reason) => /Phone-only leads never auto-send/i.test(reason))) return "Blocked";
-  if (previewGate.status === "Blocked") return "Blocked";
-  if (previewGate.status === "Needs Review" || !emailQuality.ready) return "Needs Review";
+  if (autoEligibility.blockedReasons.some((reason) => /Phone-only leads never auto-send|Bad-fit|Do-not-contact/i.test(reason))) return "Blocked";
+  if (!emailQuality.ready) return "Needs Review";
   if (settings.mode === "auto_email_pilot" && autoEligibility.eligible) return "Queued";
-  if (settings.mode === "auto_email_pilot") return "Blocked";
+  if (settings.mode === "auto_email_pilot") return "Needs Review";
   return "Eligible";
 }
 
 const contactedOrClosedStatuses = new Set<OutreachQueueStatus>([
   "First DM Sent",
   "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
   "Loom Needed",
   "Ready for Loom",
   "Loom Recorded",
@@ -1471,15 +1479,13 @@ export function outreachCopyRegenerationEligibility(item: OutreachQueueItem): Ou
   if (contactedOrClosedStatuses.has(item.status)) return { eligible: false, reason: `status is ${item.status}` };
   if (/phone(?:\s|-)?only/i.test(`${item.contactSource} ${item.blockedReason}`)) return { eligible: false, reason: "phone-only" };
   if (/suppressed|opted out|bounced|complained|never contact|bad fit/i.test(`${item.status} ${item.blockedReason} ${item.notes}`)) return { eligible: false, reason: "suppressed or blocked" };
-  if (!item.previewLink) return { eligible: true, reason: "preview missing" };
   if (/\/engine(?:\/|$)/i.test(item.previewLink)) return { eligible: false, reason: "protected preview link" };
-  if (!/\/p\//i.test(item.previewLink)) return { eligible: true, reason: "preview missing" };
   if (/phone(?:\s|-)?only|unknown|manual research/i.test(item.contactSource)) return { eligible: false, reason: "no usable written contact path" };
   return { eligible: true, reason: "safe to regenerate" };
 }
 
 export function queueStatusAfterManualAction(status: OutreachQueueStatus): OutreachQueueStatus {
-  return status === "Prospect Said Yes" ? "Loom Needed" : status;
+  return status === "Prospect Said Yes" ? "Preview Build Needed" : status;
 }
 
 const manualQueueTransitionMap: Partial<Record<OutreachQueueStatus, readonly OutreachQueueStatus[]>> = {
@@ -1488,9 +1494,10 @@ const manualQueueTransitionMap: Partial<Record<OutreachQueueStatus, readonly Out
   "Needs Review": ["Eligible", "DM Draft", "Preview Needs Polish", "Skipped", "Bad Fit"],
   "DM Draft": ["Eligible", "Needs Review", "First DM Sent", "Skipped", "Bad Fit"],
   "First DM Sent": ["Prospect Said Yes", "Follow-up Needed", "Replied", "No Response", "Not Interested"],
-  "Prospect Said Yes": ["Loom Needed", "Ready for Loom", "Pricing Requested", "Positive Reply", "Won", "Lost", "Not Interested"],
-  "Loom Needed": ["Preview Needs Polish", "Ready for Loom", "Loom Recorded", "Pricing Requested", "Lost", "Not Interested"],
-  "Preview Needs Polish": ["Eligible", "Needs Review", "Ready for Loom", "Skipped", "Bad Fit"],
+  "Prospect Said Yes": ["Preview Build Needed", "Lost", "Not Interested"],
+  "Preview Build Needed": ["Preview Needs Polish", "Ready for Loom", "Lost", "Not Interested"],
+  "Loom Needed": ["Preview Build Needed", "Preview Needs Polish", "Ready for Loom", "Lost", "Not Interested"],
+  "Preview Needs Polish": ["Preview Build Needed", "Ready for Loom", "Lost", "Not Interested"],
   "Ready for Loom": ["Preview Needs Polish", "Loom Recorded", "Lost", "Not Interested"],
   "Loom Recorded": ["Loom Sent", "Pricing Requested", "Lost", "Not Interested"],
   "Loom Sent": ["Pricing Requested", "Follow-up Needed", "Replied", "Positive Reply", "Won", "Lost", "No Response", "Not Interested"],
@@ -1561,11 +1568,9 @@ export function rewriteOutreachWithFixes(emailBody: string) {
   return [
     greeting,
     "",
-    "I came across your business while looking at local service companies and put together a quick website preview.",
+    "I came across your business and had a simple website idea that could make it easier for people to see what you do and call or request a quote.",
     "",
-    "It's built to make the page look cleaner and help you get more calls and quote requests.",
-    "",
-    "Want me to send it over?",
+    "Would you like me to put together a quick preview?",
     "",
     optOut,
   ].join("\n");
@@ -1582,8 +1587,9 @@ export function evaluateSelfReview({
   previewGate: PreviewQualityGate;
   prospect: Prospect;
 }) {
-  const detectedIssues = new Set<string>([...previewGate.reasons, ...emailQuality.issues]);
-  const regenerationPlan = previewRegenerationPlan(previewGate, feedbackLabels);
+  void previewGate;
+  const detectedIssues = new Set<string>(emailQuality.issues);
+  const regenerationPlan: string[] = [];
   const rewritePlan = outreachRewritePlan(prospect.outreach?.concise ?? "", feedbackLabels);
   if (!prospectWrittenContactMethodIsUsable(prospect)) detectedIssues.add("Written contact method is weak or missing.");
   if (hasFeedback(feedbackLabels, "Bad lead")) detectedIssues.add("Manual feedback marked this as a bad lead.");
@@ -1591,27 +1597,23 @@ export function evaluateSelfReview({
   let recommendedNextAction: AutonomousNextAction = "Needs Human Review";
   if (hasFeedback(feedbackLabels, "Never contact") || prospect.recommendedContactMethod === "do_not_contact") recommendedNextAction = "Never Contact";
   else if (hasFeedback(feedbackLabels, "Bad fit") || prospect.classification === "national_large_brand" || prospect.classification === "duplicate_bad_fit" || prospect.inactive) recommendedNextAction = "Bad Fit";
-  else if (previewGate.status !== "Eligible" || hasFeedback(feedbackLabels, "Preview looked bad")) recommendedNextAction = "Regenerate Preview";
   else if (!emailQuality.ready || rewritePlan.length || hasFeedback(feedbackLabels, "Outreach sounded too AI-ish")) recommendedNextAction = "Rewrite Outreach";
   else if (hasFeedback(feedbackLabels, "Bad lead")) recommendedNextAction = "Skip";
   else if (hasFeedback(feedbackLabels, "Good lead") || emailQuality.ready) recommendedNextAction = "Keep";
   const reviewScore = Math.max(0, Math.min(100, Math.round(
-    previewGate.score * 0.38
-    + (emailQuality.ready ? 24 : 8)
-    + (prospectWrittenContactMethodIsUsable(prospect) ? 18 : 4)
-    + (hasFeedback(feedbackLabels, "Good lead") ? 10 : 0)
-    + (hasFeedback(feedbackLabels, "Preview looked good") ? 5 : 0)
-    + (hasFeedback(feedbackLabels, "Outreach sounded good") ? 5 : 0)
-    - (detectedIssues.size * 4),
+    (emailQuality.ready ? 58 : 25)
+    + (prospectWrittenContactMethodIsUsable(prospect) ? 24 : 5)
+    + (prospect.sourceConfidence >= 70 ? 12 : prospect.sourceConfidence >= 40 ? 6 : 0)
+    + (hasFeedback(feedbackLabels, "Good lead") ? 6 : 0)
+    - (detectedIssues.size * 5),
   )));
   const improvementSuggestions = [
-    ...regenerationPlan,
     ...rewritePlan,
     !prospectWrittenContactMethodIsUsable(prospect) ? "verify a usable written contact path before outreach" : "",
   ].filter(Boolean);
   return {
     reviewScore,
-    reviewSummary: `${prospect.businessName} review: ${recommendedNextAction}. Preview ${previewGate.score}/100; email ${emailQuality.readinessLabel}.`,
+    reviewSummary: `${prospect.businessName} first-touch review: ${recommendedNextAction}. Email ${emailQuality.readinessLabel}; a preview is built manually only after interest.`,
     improvementSuggestions,
     detectedIssues: [...detectedIssues],
     recommendedNextAction,
@@ -1666,18 +1668,21 @@ export function loomTalkingPoints(prospect: Prospect, previewLink: string) {
 
 export function loomReadinessChecklist(item: OutreachQueueItem): LoomReadinessCheck[] {
   const previewReady = publicPreviewReady(item.previewLink);
+  const manualQaClear = previewReady
+    && item.status !== "Preview Needs Polish"
+    && item.regenerationPlan.length === 0;
   return [
     {
       key: "public_preview_link",
-      label: "Public preview link exists",
+      label: "Public Lovable preview link exists",
       passed: previewReady,
-      fix: "Generate the Outreach Package again so the prospect gets a safe /p/ link.",
+      fix: "Build the preview manually in Lovable, QA it, then save its public HTTPS link.",
     },
     {
-      key: "preview_quality",
-      label: "Preview quality is high enough for a walkthrough",
-      passed: item.previewQualityScore >= 85 && !item.regenerationPlan.length,
-      fix: "Mark Preview Needs Polish and fix layout, copy, imagery, or truthfulness issues before recording.",
+      key: "manual_preview_qa",
+      label: "Manual desktop, mobile, form, and factual QA is clear",
+      passed: manualQaClear,
+      fix: "Review desktop and mobile, test every button and form, verify imagery and facts, and use Preview Needs Polish when anything still needs work.",
     },
     {
       key: "business_context",
@@ -1687,14 +1692,15 @@ export function loomReadinessChecklist(item: OutreachQueueItem): LoomReadinessCh
     },
     {
       key: "manual_only",
-      label: "Manual social outreach only",
+      label: "Manual build and outreach only",
       passed: true,
-      fix: "Do not automate Facebook, Instagram, contact forms, Loom recording, or Loom sending.",
+      fix: "Do not automate Lovable building, Facebook, Instagram, contact forms, Loom recording, or Loom sending.",
     },
   ];
 }
 
-function hasUsableManualContactForLoom(item: OutreachQueueItem) {
+function hasUsableManualContactForLoom
+(item: OutreachQueueItem) {
   return Boolean(item.contactSource)
     && !/phone(?:\s|-)?only|^phone$/i.test(item.contactSource)
     && item.contactSource !== "Unknown"
@@ -1710,10 +1716,12 @@ function visualIssueForLoom(item: OutreachQueueItem) {
 export function loomRecommendationForQueueItem(item: OutreachQueueItem): LoomRecommendation {
   const visualIssue = visualIssueForLoom(item);
   const highValue = item.reviewScore >= 70;
-  const strongPreview = item.previewQualityScore >= 85 && item.regenerationPlan.length === 0;
-  const usableContact = hasUsableManualContactForLoom(item);
   const publicPreview = publicPreviewReady(item.previewLink);
-  const recommended = highValue && strongPreview && usableContact && publicPreview && Boolean(visualIssue);
+  const manualQaClear = publicPreview
+    && item.status !== "Preview Needs Polish"
+    && item.regenerationPlan.length === 0;
+  const usableContact = hasUsableManualContactForLoom(item);
+  const recommended = highValue && manualQaClear && usableContact && Boolean(visualIssue);
   const currentSiteIssue = visualIssue || "No specific visual website issue has been recorded yet.";
   const previewImprovement = item.improvementSuggestions.find((suggestion) => /preview|quote|contact|layout|service/i.test(suggestion))
     ?? "Show how the public preview makes services and quote requests easier to find.";
@@ -1729,12 +1737,13 @@ export function loomRecommendationForQueueItem(item: OutreachQueueItem): LoomRec
     previewImprovement,
     previewLink: publicPreview ? item.previewLink : "",
     whyRecommended: recommended
-      ? "High-value prospect with a strong preview, usable manual contact path, and a visual issue worth showing."
-      : "Wait until the prospect has a strong score, public preview, usable manual contact path, and a clear visual issue.",
+      ? "High-value prospect with a manually QA'd public preview, usable manual contact path, and a visual issue worth showing."
+      : "Wait until the public preview is manually QA'd, the contact path is usable, and there is a clear visual issue to show.",
   };
 }
 
-export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededTask {
+export function loomNeededTaskForQueueItem
+(item: OutreachQueueItem): LoomNeededTask {
   const prospect = {
     id: item.prospectId,
     businessName: item.businessName,
@@ -1765,7 +1774,11 @@ export function loomNeededTaskForQueueItem(item: OutreachQueueItem): LoomNeededT
     trade: item.trade,
     city: item.city,
     previewLink: item.previewLink,
-    previewQuality: `${item.previewQualityScore || item.reviewScore || 0}/100`,
+    previewQuality: !publicPreviewReady(item.previewLink)
+      ? "Manual QA pending"
+      : item.status === "Preview Needs Polish" || item.regenerationPlan.length
+        ? "Manual QA needs polish"
+        : "Manual QA ready",
     fixNotes: [...new Set(fixNotes)].slice(0, 6),
     recommendation: loomRecommendationForQueueItem(item),
     checklist,
@@ -1785,14 +1798,14 @@ export function loomNeededNotificationDraft(item: OutreachQueueItem, environment
     configured,
     toConfigured: Boolean(environment.OUTREACH_NOTIFY_EMAIL?.trim()),
     fromConfigured: Boolean(environment.OUTREACH_NOTIFY_FROM_EMAIL?.trim()),
-    subject: `Loom needed: ${item.businessName}`,
+    subject: `Manual preview build needed: ${item.businessName}`,
     body: [
-      `${item.businessName} is ready for a manual Loom walkthrough.`,
+      `${item.businessName} requested a preview and is ready for a manual Lovable build.`,
       `Trade/city: ${item.trade} in ${item.city}`,
       `Preview: ${item.previewLink || "Missing public preview link"}`,
-      `Preview quality: ${item.previewQualityScore || item.reviewScore || 0}/100`,
+      `Manual QA: ${!publicPreviewReady(item.previewLink) ? "pending" : item.status === "Preview Needs Polish" || item.regenerationPlan.length ? "needs polish" : "ready"}`,
       "",
-      "Record the walkthrough manually. Do not auto-send social DMs or Loom links.",
+      "Build and QA the preview manually, save the public link, then record and send the Loom manually.",
     ].join("\n"),
   };
 }
@@ -1829,6 +1842,46 @@ function average(values: number[]) {
   return valid.length ? Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length) : 0;
 }
 
+const actualReplyLearningStatuses = new Set<OutreachQueueStatus>([
+  "Replied",
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+  "Not Interested",
+]);
+
+const positiveReplyLearningStatuses = new Set<OutreachQueueStatus>([
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+]);
+
+function learningReplyStatusIsActual(value: string) {
+  return /\b(?:replied|reply|positive|negative|interested|not[_ -]?interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:bounce|bounced|complaint|complained|spam|unsubscribe|unsubscribed|opt[_ -]?out|suppressed)\b/i.test(value);
+}
+
+function learningReplyStatusIsPositive(value: string) {
+  return /\b(?:positive|interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:not[_ -]?interested|negative|bounce|complaint|spam|unsubscribe|opt[_ -]?out|suppressed)\b/i.test(value);
+}
+
 function tradePerformance(queue: OutreachQueueItem[]) {
   const grouped = queue.reduce<Record<string, OutreachQueueItem[]>>((accumulator, item) => {
     const trade = item.trade || "Unknown";
@@ -1836,23 +1889,37 @@ function tradePerformance(queue: OutreachQueueItem[]) {
     return accumulator;
   }, {});
   return Object.entries(grouped)
-    .map(([trade, items]) => ({
-      trade,
-      averageScore: average(items.map((item) => item.reviewScore || item.previewQualityScore)),
-      replies: items.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested"].includes(item.status) || item.replyStatus).length,
-      positiveReplies: items.filter((item) => ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length,
-      sent: items.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate || ["Replied", "Positive Reply", "Not Interested", "Pricing Requested", "Won", "Lost"].includes(item.status)).length,
-    }))
-    .sort((left, right) => right.averageScore - left.averageScore);
+    .map(([trade, items]) => {
+      const emailSends = items.filter((item) => Boolean(item.sentDate) && item.contactSource === "Public email");
+      const replies = emailSends.filter((item) => actualReplyLearningStatuses.has(item.status) || learningReplyStatusIsActual(item.replyStatus)).length;
+      const positiveReplies = emailSends.filter((item) => positiveReplyLearningStatuses.has(item.status) || learningReplyStatusIsPositive(item.replyStatus)).length;
+      return {
+        trade,
+        averageScore: average(items.map((item) => item.reviewScore || item.previewQualityScore)),
+        replies,
+        positiveReplies,
+        sent: emailSends.length,
+        replyRate: emailSends.length ? Math.round((replies / emailSends.length) * 100) : 0,
+        positiveReplyRate: emailSends.length ? Math.round((positiveReplies / emailSends.length) * 100) : 0,
+      };
+    })
+    .sort((left, right) =>
+      right.positiveReplyRate - left.positiveReplyRate
+      || right.positiveReplies - left.positiveReplies
+      || right.replyRate - left.replyRate
+      || right.replies - left.replies
+      || right.averageScore - left.averageScore
+      || left.trade.localeCompare(right.trade));
 }
 
-export function generateAutonomousRunReview(
+export function generateAutonomousRunReview
+(
   settings: AutonomousGrowthSettings,
   queue: OutreachQueueItem[],
   id = `review-${Date.now()}`,
   createdAt = new Date().toISOString(),
 ): AutonomousRunReview {
-  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "DM Draft", "First DM Sent", "Prospect Said Yes", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won"];
+  const keptStatuses: OutreachQueueStatus[] = ["Eligible", "DM Draft", "First DM Sent", "Prospect Said Yes", "Preview Build Needed", "Loom Needed", "Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Queued", "Sent", "Follow-up Needed", "Follow-up Sent", "Replied", "Positive Reply", "Won"];
   const blockedStatuses: OutreachQueueStatus[] = ["Blocked", "Preview Needs Polish", "Bad Fit", "Never Contact", "Opted Out", "Skipped", "Lost", "No Response", "Not Interested"];
   const commonPreviewIssues = topCounts(queue.flatMap((item) => item.regenerationPlan.length ? item.regenerationPlan : item.detectedIssues));
   const commonLeadIssues = topCounts(queue.flatMap((item) => [
@@ -1862,7 +1929,9 @@ export function generateAutonomousRunReview(
   const outreachQualityNotes = topCounts(queue.flatMap((item) => item.rewritePlan));
   const recommendedFixes = topCounts(queue.flatMap((item) => item.improvementSuggestions));
   const previewsGenerated = queue.filter((item) => item.previewLink).length;
-  const previewsPassed = queue.filter((item) => item.previewQualityScore >= 85 && item.regenerationPlan.length === 0).length;
+  const previewPassedStatuses = new Set<OutreachQueueStatus>(["Ready for Loom", "Loom Recorded", "Loom Sent", "Pricing Requested", "Pricing Sent", "Won"]);
+  const previewsPassed = queue.filter((item) => item.previewLink && item.regenerationPlan.length === 0 && (item.previewQualityScore >= 85 || previewPassedStatuses.has(item.status))).length;
+  const previewsFailed = queue.filter((item) => item.previewLink && (item.status === "Preview Needs Polish" || item.regenerationPlan.length > 0)).length;
   const prospectsKept = queue.filter((item) => keptStatuses.includes(item.status)).length;
   const prospectsBlocked = queue.filter((item) => blockedStatuses.includes(item.status) || item.blockedReason).length;
   return {
@@ -1873,7 +1942,7 @@ export function generateAutonomousRunReview(
     prospectsBlocked,
     previewsGenerated,
     previewsPassed,
-    previewsFailed: Math.max(0, previewsGenerated - previewsPassed),
+    previewsFailed,
     commonPreviewIssues,
     commonLeadIssues,
     outreachQualityNotes,
@@ -1894,8 +1963,8 @@ export function learningSummaryForQueue(
   const worstPerformingTrades = [...performance].reverse().slice(0, 3).filter((entry) => entry.averageScore < 70).map((entry) => entry.trade);
   const replyRateByTrade = performance.map((entry) => ({
     trade: entry.trade,
-    replyRate: entry.sent ? Math.round((entry.replies / entry.sent) * 100) : 0,
-    positiveReplyRate: entry.sent ? Math.round((entry.positiveReplies / entry.sent) * 100) : 0,
+    replyRate: entry.replyRate,
+    positiveReplyRate: entry.positiveReplyRate,
   }));
   const previewFixes = topCounts(queue.flatMap((item) => item.regenerationPlan));
   const wordingFixes = topCounts(queue.flatMap((item) => item.rewritePlan));

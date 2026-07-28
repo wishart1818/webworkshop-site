@@ -1,0 +1,201 @@
+name: Vercel Control
+
+on:
+  issue_comment:
+    types: [created]
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/.cron-health-trigger
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: webworkshop-vercel-control
+  cancel-in-progress: true
+
+jobs:
+  control:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.issue.number == 4 &&
+      github.actor == 'wishart1818' &&
+      !github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/vercel '))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      COMMAND: ${{ github.event_name == 'push' && '/vercel cron-health' || github.event.comment.body }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_NAME: webworkshop-site
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Vercel token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+            gh issue comment 4 --repo "$GITHUB_REPOSITORY" --body "❌ Vercel control is not configured. Add the GitHub Actions secret \`VERCEL_TOKEN\`, then retry."
+            exit 1
+          fi
+
+      - name: Link selected Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-link.log 2>&1; then
+            gh issue comment 4 --repo "$GITHUB_REPOSITORY" --body "❌ The Vercel token could not link to \`$VERCEL_PROJECT_NAME\`. No settings were changed."
+            exit 1
+          fi
+          npx --yes vercel@latest project inspect --token "$VERCEL_TOKEN" >/dev/null
+
+      - name: Execute whitelisted command
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          comment() {
+            gh issue comment 4 --repo "$GITHUB_REPOSITORY" --body "$1"
+          }
+
+          set_env() {
+            local key="$1"
+            local value="$2"
+            printf '%s' "$value" | npx --yes vercel@latest env add "$key" production --force --token "$VERCEL_TOKEN" >/dev/null
+          }
+
+          disable_outreach() {
+            set_env AUTOPILOT_DISABLED true
+            set_env OUTREACH_AUTO_SEND_ENABLED false
+            set_env OUTREACH_FULL_AUTO_SEND_ENABLED false
+            set_env OUTREACH_DAILY_CAP 1
+            set_env OUTREACH_EMAIL_DISABLED true
+          }
+
+          enable_reviewed_pilot() {
+            set_env AUTOPILOT_DISABLED false
+            set_env OUTREACH_AUTO_SEND_ENABLED true
+            set_env OUTREACH_FULL_AUTO_SEND_ENABLED false
+            set_env OUTREACH_DAILY_CAP 1
+            set_env OUTREACH_EMAIL_DISABLED false
+            set_env OUTREACH_SEND_PROVIDER resend
+          }
+
+          deploy_production() {
+            npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+          }
+
+          required_variables_present() {
+            npx --yes vercel@latest env ls production --token "$VERCEL_TOKEN" >/tmp/vercel-env-list.txt
+            local required=(DATABASE_URL RESEND_API_KEY OUTREACH_FROM_EMAIL OUTREACH_REPLY_TO_EMAIL WEBWORKSHOP_POSTAL_ADDRESS CRON_SECRET)
+            local missing=()
+            local key
+            for key in "${required[@]}"; do
+              grep -q "$key" /tmp/vercel-env-list.txt || missing+=("$key")
+            done
+            if (( ${#missing[@]} > 0 )); then
+              comment "❌ Required Production variable name(s) are missing: \`${missing[*]}\`. No prospect email was sent."
+              return 1
+            fi
+          }
+
+          required_base_variables_present() {
+            npx --yes vercel@latest env ls production --token "$VERCEL_TOKEN" >/tmp/vercel-env-list.txt
+            local required=(DATABASE_URL RESEND_API_KEY OUTREACH_FROM_EMAIL OUTREACH_REPLY_TO_EMAIL WEBWORKSHOP_POSTAL_ADDRESS)
+            local missing=()
+            local key
+            for key in "${required[@]}"; do
+              grep -q "$key" /tmp/vercel-env-list.txt || missing+=("$key")
+            done
+            if (( ${#missing[@]} > 0 )); then
+              comment "❌ Required Production variable name(s) are missing: \`${missing[*]}\`. No prospect email was sent."
+              return 1
+            fi
+          }
+
+          case "$COMMAND" in
+            "/vercel status")
+              required_variables_present
+              comment "✅ Vercel connection and required Production variable names are available for \`$VERCEL_PROJECT_NAME\`. No settings changed and no deployment started."
+              ;;
+
+            "/vercel pilot-off")
+              disable_outreach
+              url="$(deploy_production)"
+              comment "✅ Outreach was disabled and production was redeployed. Daily cap remains 1. Deployment: ${url}"
+              ;;
+
+            "/vercel pilot-test CONFIRM")
+              required_variables_present
+              enable_reviewed_pilot
+              url="$(deploy_production)"
+              comment "✅ Reviewed Auto Email Pilot test mode was enabled with a daily cap of 1 and full-auto disabled. Production was redeployed: ${url}"
+              ;;
+
+            "/vercel health")
+              required_variables_present
+              disable_outreach
+              url="$(deploy_production)"
+              set +e
+              response="$(npx --yes vercel@latest curl "${url}/api/health/autopilot" 2>&1)"
+              status=$?
+              set -e
+              safe_response="$(printf '%s' "$response" | head -c 1200 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g')"
+              if [[ $status -eq 0 ]] && printf '%s' "$response" | grep -q '"ok":true'; then
+                comment "✅ Fail-closed production health probe passed. Required environment variables are present, the database/dashboard queue is readable, outreach is disabled, and the daily cap is 1. Deployment: ${url}. Probe: \`${safe_response}\`"
+              else
+                comment "❌ Fail-closed production health probe did not pass. Outreach remains disabled and the daily cap remains 1. Deployment: ${url}. Probe: \`${safe_response:-empty}\`"
+                exit 1
+              fi
+              ;;
+
+            "/vercel cron-health")
+              required_base_variables_present
+              disable_outreach
+              npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --yes --token "$VERCEL_TOKEN" >/dev/null
+              set -a
+              source /tmp/webworkshop-production.env
+              set +a
+              cron_secret_created=false
+              if [[ -z "${CRON_SECRET:-}" ]]; then
+                CRON_SECRET="$(openssl rand -hex 32)"
+                set_env CRON_SECRET "$CRON_SECRET"
+                cron_secret_created=true
+              fi
+              url="$(deploy_production)"
+              set +e
+              response="$(npx --yes vercel@latest curl "${url}/api/cron/autopilot" -H "Authorization: Bearer ${CRON_SECRET}" 2>&1)"
+              status=$?
+              set -e
+              safe_response="$(printf '%s' "$response" | head -c 1200 | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/`/'"'"'/g')"
+              if [[ $status -eq 0 ]] && printf '%s' "$response" | grep -q '"ok":true' && printf '%s' "$response" | grep -q '"sent":0'; then
+                if [[ "$cron_secret_created" == "true" ]]; then
+                  setup_note=" A new secure CRON_SECRET was created in Vercel Production."
+                else
+                  setup_note=" The existing CRON_SECRET was retained."
+                fi
+                comment "✅ Scheduled Auto Email Pilot endpoint passed in fail-closed mode.${setup_note} Authentication worked, the real inventory-processing path executed, and zero emails were sent while outreach remained disabled. Deployment: ${url}. Probe: \`${safe_response}\`"
+              else
+                comment "❌ Scheduled Auto Email Pilot endpoint did not pass safely. Outreach remains disabled and the daily cap remains 1. Deployment: ${url}. Probe: \`${safe_response:-empty}\`"
+                exit 1
+              fi
+              ;;
+
+            "/vercel redeploy")
+              url="$(deploy_production)"
+              comment "✅ Production was redeployed without changing environment variables: ${url}"
+              ;;
+
+            *)
+              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, \`/vercel cron-health\`, and \`/vercel redeploy\`."
+              exit 1
+              ;;
+          esac

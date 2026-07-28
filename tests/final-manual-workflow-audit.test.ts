@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+import {
+  generateOutreach,
+  inferOutreachCopyVersion,
+  LEGACY_OUTREACH_COPY_VERSION,
+  outreachDraftLooksCurrent,
+  OUTREACH_COPY_VERSION,
+  seedProspects,
+} from "../lib/prospect-engine";
+
+const environment = { WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840" } as NodeJS.ProcessEnv;
+
+test("permission-first V3 copy is current while the old already-built CTA is stale", () => {
+  const prospect = structuredClone(seedProspects[0]);
+  const current = generateOutreach(prospect, "", environment);
+  assert.equal(current.outreachCopyVersion, OUTREACH_COPY_VERSION);
+  assert.equal(outreachDraftLooksCurrent(current, environment), true);
+  assert.equal(inferOutreachCopyVersion(current, environment), OUTREACH_COPY_VERSION);
+
+  const oldCta = {
+    ...current,
+    concise: current.concise.replace("Would you like me to put together a quick preview?", "Want me to send it over?"),
+    outreachCopyVersion: OUTREACH_COPY_VERSION,
+  };
+  assert.equal(outreachDraftLooksCurrent(oldCta, environment), false);
+  assert.equal(inferOutreachCopyVersion(oldCta, environment), LEGACY_OUTREACH_COPY_VERSION);
+
+  const falseBuiltClaim = {
+    ...current,
+    concise: current.concise.replace(/I had an idea[^.]*\./i, "I built a website preview for the business."),
+  };
+  assert.equal(outreachDraftLooksCurrent(falseBuiltClaim, environment), false);
+});
+
+test("final safety audit removes truncated queue reads and false reply counting", () => {
+  const repository = readFileSync("lib/autonomous-growth-repository.ts", "utf8");
+  assert.doesNotMatch(repository, /outreachQueueItem\.findMany\([\s\S]{0,180}take:\s*100/);
+  assert.match(repository, /replyStatusIndicatesReply/);
+  assert.match(repository, /emailsSentOnCurrentBusinessDate/);
+  assert.match(repository, /America\/New_York/);
+  assert.match(repository, /sharedMailboxProviderDomains\.has\(recipientDomain\)/);
+  assert.match(repository, /Date\.parse\(left\.queuedDate/);
+  assert.doesNotMatch(repository, /\|\| item\.replyStatus\)\.length/);
+});
+
+test("suppression webhook bypasses only engine Basic auth and retains its token guard", () => {
+  const middleware = readFileSync("middleware.ts", "utf8");
+  const webhook = readFileSync("app/api/engine/outreach-events/route.ts", "utf8");
+  assert.match(middleware, /\/api\/engine\/outreach-events/);
+  assert.match(webhook, /timingSafeEqual/);
+  assert.match(webhook, /OUTREACH_SUPPRESSION_WEBHOOK_TOKEN/);
+  assert.match(webhook, /return NextResponse\.json\(\{ error: "Unauthorized\." \}/);
+});
+
+test("post-interest preview polish remains protected from copy regeneration", () => {
+  const growth = readFileSync("lib/autonomous-growth.ts", "utf8");
+  assert.match(growth, /contactedOrClosedStatuses[\s\S]*"Preview Build Needed",[\s\S]*"Preview Needs Polish",[\s\S]*"Loom Needed"/);
+});

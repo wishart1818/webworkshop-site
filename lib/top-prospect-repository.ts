@@ -2,7 +2,6 @@ import type { Prisma } from "@prisma/client";
 import { activity, displayStateCode, normalizeTradeCategory, titleCaseLocation } from "@/lib/prospect-engine";
 import { upsertAutonomousQueueItemFromPackage } from "@/lib/autonomous-growth-repository";
 import { getProspectDatabase, getProspect, saveProspect } from "@/lib/prospect-repository";
-import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { discoveryDiagnosticsFromJson, discoveryLeadsFromJson } from "@/lib/lead-discovery";
 import { encodeTopProspectJobFailure, parseTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import type {
@@ -22,13 +21,12 @@ import {
   normalizeTopProspectWorkflowType,
   parseTopProspectCityTargets,
   outreachPackageActionAllowed,
-  publicProspectPreviewLink,
+  prepareTopProspectOutreachArtifacts,
   topProspectNextRunRecommendations,
   topProspectResultBucket,
   topProspectResultDisposition,
   validPublicPreviewToken,
 } from "@/lib/top-prospects";
-import { prepareTopProspectArtifactsWithResearch } from "@/lib/top-prospect-preview-preparation";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const resultInclude = { prospect: true } satisfies Prisma.TopProspectResultInclude;
@@ -415,13 +413,14 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
   }
 
   if (action === "generate") {
-    const publicPreviewToken = result.publicPreviewToken ?? createPublicPreviewToken();
-    const prepared = await prepareTopProspectArtifactsWithResearch(prospect, publicProspectPreviewLink(publicPreviewToken), normalizeOutreachPreference(result.job?.outreachPreference));
+    const prepared = prepareTopProspectOutreachArtifacts(
+      prospect,
+      normalizeOutreachPreference(result.job?.outreachPreference),
+    );
     const saved = await saveProspect({
       ...prepared.prospect,
       activities: [
-        activity("preview", "Outreach Package website preview generated for human review."),
-        activity("outreach", "Outreach Package email sequence generated and left unapproved."),
+        activity("outreach", "Permission-first Outreach Package generated for human review without building a preview."),
         ...prepared.prospect.activities,
       ],
     });
@@ -437,9 +436,6 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
         mainWeakness: prepared.assessment.mainWeakness,
         whyMayBuy: prepared.assessment.whyMayBuy,
         pitchAngle: prepared.assessment.pitchAngle,
-        buildPrompt: prepared.buildPrompt,
-        previewLink: prepared.previewLink,
-        publicPreviewToken,
         packageStatus: "PACKAGE_GENERATED",
         packageGeneratedAt: new Date(),
         packageReviewedAt: null,
@@ -448,11 +444,11 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
         packageSkippedAt: null,
       },
     });
-    console.info("[outreach-package] Package generated.", { resultId, prospectId: saved.id });
+    console.info("[outreach-package] Permission-first package generated without a preview.", { resultId, prospectId: saved.id });
     try {
       await upsertAutonomousQueueItemFromPackage({
         outreachPreference: normalizeOutreachPreference(result.job?.outreachPreference),
-        previewLink: prepared.previewLink,
+        previewLink: result.previewLink,
         prospect: saved,
         topProspectResultId: resultId,
       });

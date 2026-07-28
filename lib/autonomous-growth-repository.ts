@@ -50,14 +50,11 @@ import {
   reconcileProspectContactRouting,
   type Prospect,
 } from "@/lib/prospect-engine";
-import { prepareProspectForPreview } from "@/lib/preview-preparation";
 import { getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
-import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
 import { evaluateOutreachEmailQuality, publicProspectPreviewLink, type OutreachPreference } from "@/lib/top-prospects";
-import { prepareTopProspectArtifactsWithResearch } from "@/lib/top-prospect-preview-preparation";
 import {
   attachAutopilotRunReport,
   buildAutopilotDashboard,
@@ -314,7 +311,6 @@ async function listOutreachQueueItems() {
   await ensureTopProspectSchema();
   const rows = await getProspectDatabase().outreachQueueItem.findMany({
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    take: 100,
   });
   return rows.map(queueToDomain);
 }
@@ -362,29 +358,85 @@ async function listAutonomousRunReviews() {
   return rows.map(reviewToDomain);
 }
 
-function todayStart() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
+const businessDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function businessDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? businessDateFormatter.format(date) : "";
+}
+
+function emailSendRecorded(item: OutreachQueueItem) {
+  return item.status === "Sent" || Boolean(item.sentDate && item.contactSource === "Public email");
+}
+
+function emailsSentOnCurrentBusinessDate(queue: OutreachQueueItem[]) {
+  const today = businessDateKey(new Date());
+  return queue.filter((item) => emailSendRecorded(item) && item.sentDate && businessDateKey(item.sentDate) === today).length;
+}
+
+const actualReplyStatuses = new Set<OutreachQueueStatus>([
+  "Replied",
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+  "Not Interested",
+]);
+
+const positiveReplyStatuses = new Set<OutreachQueueStatus>([
+  "Positive Reply",
+  "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+  "Loom Sent",
+  "Pricing Requested",
+  "Pricing Sent",
+  "Won",
+]);
+
+function replyStatusIndicatesReply(value: string) {
+  return /\b(?:replied|reply|positive|negative|interested|not[_ -]?interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:bounce|bounced|complaint|complained|spam|unsubscribe|unsubscribed|opt[_ -]?out|suppressed)\b/i.test(value);
+}
+
+function replyStatusIndicatesPositiveReply(value: string) {
+  return /\b(?:positive|interested|prospect[_ -]?said[_ -]?yes|pricing[_ -]?requested)\b/i.test(value)
+    && !/\b(?:not[_ -]?interested|negative|bounce|complaint|spam|unsubscribe|opt[_ -]?out|suppressed)\b/i.test(value);
 }
 
 function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthSettings): AutonomousGrowthMetrics {
-  const today = todayStart().getTime();
-  const todayItems = queue.filter((item) => new Date(item.createdAt).getTime() >= today);
-  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate).getTime() >= today).length;
-  const sent = queue.filter((item) => ["Sent", "First DM Sent", "Loom Sent", "Pricing Sent"].includes(item.status) || item.sentDate);
-  const replies = queue.filter((item) => ["Replied", "Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested"].includes(item.status) || item.replyStatus).length;
-  const positiveReplies = queue.filter((item) => ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) || /positive|prospect_said_yes|pricing_requested/i.test(item.replyStatus)).length;
-  const tradeCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.trade]: (counts[item.trade] ?? 0) + 1 }), {});
-  const bestTrade = Object.entries(tradeCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
-  const subjectCounts = queue.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
-  const bestSubjectLine = Object.entries(subjectCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough data";
+  const today = businessDateKey(new Date());
+  const todayItems = queue.filter((item) => businessDateKey(item.createdAt) === today);
+  const emailSends = queue.filter(emailSendRecorded);
+  const repliedEmailItems = emailSends.filter((item) => actualReplyStatuses.has(item.status) || replyStatusIndicatesReply(item.replyStatus));
+  const positiveReplyItems = emailSends.filter((item) => positiveReplyStatuses.has(item.status) || replyStatusIndicatesPositiveReply(item.replyStatus));
+  const sentToday = emailsSentOnCurrentBusinessDate(queue);
+  const tradeCounts = positiveReplyItems.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.trade]: (counts[item.trade] ?? 0) + 1 }), {});
+  const bestTrade = Object.entries(tradeCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough positive reply data";
+  const subjectCounts = positiveReplyItems.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.subjectLine]: (counts[item.subjectLine] ?? 0) + 1 }), {});
+  const bestSubjectLine = Object.entries(subjectCounts).sort(([, left], [, right]) => right - left)[0]?.[0] ?? "Not enough positive reply data";
   const ready = queue.filter((item) => ["Eligible", "Queued", "DM Draft", "Ready for Loom"].includes(item.status));
-  const loomNeeded = queue.filter((item) => item.status === "Loom Needed").length;
+  const loomNeeded = queue.filter((item) => ["Preview Build Needed", "Loom Needed"].includes(item.status)).length;
   const loomRecorded = queue.filter((item) => item.status === "Loom Recorded").length;
   const loomSent = queue.filter((item) => item.status === "Loom Sent").length;
   const followUpsDue = queue.filter((item) => item.status === "Follow-up Needed").length;
-  const scored = queue.filter((item) => item.reviewScore || item.previewQualityScore);
+  const previewScored = queue.filter((item) => item.previewQualityScore > 0);
+  const leadScored = queue.filter((item) => (item.reviewScore || item.previewQualityScore) > 0);
   return {
     prospectsFoundToday: todayItems.length,
     previewsGeneratedToday: todayItems.filter((item) => item.previewLink).length,
@@ -394,24 +446,25 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
     emailsQueued: queue.filter((item) => item.status === "Queued").length,
     emailsSentToday: sentToday,
     dailyCapRemaining: Math.max(0, Math.min(settings.maxEmailsSentPerDay, outreachEnvironment().dailyCap) - sentToday),
-    replies,
-    positiveReplies,
+    replies: repliedEmailItems.length,
+    positiveReplies: positiveReplyItems.length,
     loomNeeded,
     loomRecorded,
     loomSent,
     followUpsDue,
-    replyRate: sent.length ? Math.round((replies / sent.length) * 100) : 0,
-    positiveReplyRate: sent.length ? Math.round((positiveReplies / sent.length) * 100) : 0,
+    replyRate: emailSends.length ? Math.round((repliedEmailItems.length / emailSends.length) * 100) : 0,
+    positiveReplyRate: emailSends.length ? Math.round((positiveReplyItems.length / emailSends.length) * 100) : 0,
     bestTrade,
     bestSubjectLine,
-    bestOutreachAngle: ready[0]?.eligibilityReason ?? "Not enough data",
+    bestOutreachAngle: positiveReplyItems[0]?.eligibilityReason ?? "Not enough positive reply data",
     wonLostProspects: `${queue.filter((item) => item.status === "Won").length} won / ${queue.filter((item) => ["Lost", "Not Interested", "Bad Fit"].includes(item.status)).length} lost`,
-    averagePreviewQualityScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + item.previewQualityScore, 0) / scored.length) : 0,
-    averageLeadScore: scored.length ? Math.round(scored.reduce((sum, item) => sum + (item.reviewScore || item.previewQualityScore), 0) / scored.length) : 0,
+    averagePreviewQualityScore: previewScored.length ? Math.round(previewScored.reduce((sum, item) => sum + item.previewQualityScore, 0) / previewScored.length) : 0,
+    averageLeadScore: leadScored.length ? Math.round(leadScored.reduce((sum, item) => sum + (item.reviewScore || item.previewQualityScore), 0) / leadScored.length) : 0,
   };
 }
 
-function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
+function buildCurrentAutopilotDashboard
+(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
   return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus(), autopilotEnvironmentKillSwitchEnabled());
 }
 
@@ -444,7 +497,14 @@ async function listTopProspectJobsSafely() {
 }
 
 function topProspectHasPublicPreview(previewLink: string) {
-  return /\/p\//i.test(previewLink) && !/\/engine(?:\/|$)/i.test(previewLink);
+  try {
+    const url = new URL(previewLink);
+    return url.protocol === "https:"
+      && !["localhost", "127.0.0.1"].includes(url.hostname)
+      && !url.pathname.startsWith("/engine");
+  } catch {
+    return false;
+  }
 }
 
 function topProspectBackfillBlockedReason(result: TopProspectJob["results"][number]) {
@@ -463,34 +523,28 @@ async function syncTopProspectResultIntoQueue(
   result: TopProspectJob["results"][number],
   outreachPreference: OutreachPreference,
 ) {
-  const previewLink = topProspectHasPublicPreview(result.previewLink)
-    ? result.previewLink
-    : publicProspectPreviewLink(createPublicPreviewToken());
-  const prepared = await prepareTopProspectArtifactsWithResearch(result.prospect, previewLink, outreachPreference);
-  const saved = hasDatabase
-    ? await saveProspect(prepared.prospect)
-    : prepared.prospect;
+  const previewLink = topProspectHasPublicPreview(result.previewLink) ? result.previewLink : "";
+  const nowIso = new Date().toISOString();
+  const prospect = reconcileProspectContactRouting(result.prospect);
+  const outreach = {
+    ...generateOutreach(prospect, previewLink),
+    approved: false,
+    lastRegeneratedAt: nowIso,
+  };
+  const preparedProspect: Prospect = {
+    ...prospect,
+    outreach,
+    activities: [
+      activity("outreach", "Permission-first first-touch package prepared. No preview was generated and nothing was sent."),
+      ...prospect.activities,
+    ],
+  };
+  const saved = hasDatabase ? await saveProspect(preparedProspect) : preparedProspect;
   if (hasDatabase) {
-    const scores = prepared.assessment.salesScores;
-    const token = previewLink.split("/p/")[1] ?? null;
     const refreshed = await getProspectDatabase().topProspectResult.updateMany({
-      where: {
-        id: result.id,
-        packageSentAt: null,
-        NOT: { packageStatus: "SENT" },
-      },
+      where: { id: result.id, packageSentAt: null, NOT: { packageStatus: "SENT" } },
       data: {
-        opportunityScore: prepared.assessment.opportunityScore,
-        ...scores,
-        onlinePresenceGapScore: prepared.assessment.presenceScores?.onlinePresenceGapScore ?? 0,
-        businessActivityScore: prepared.assessment.presenceScores?.businessActivityScore ?? 0,
-        websiteNeedScore: prepared.assessment.presenceScores?.websiteNeedScore ?? 0,
-        mainWeakness: prepared.assessment.mainWeakness,
-        whyMayBuy: prepared.assessment.whyMayBuy,
-        pitchAngle: prepared.assessment.pitchAngle,
-        buildPrompt: prepared.buildPrompt,
-        previewLink: prepared.previewLink,
-        ...(token ? { publicPreviewToken: token } : {}),
+        previewLink: previewLink || result.previewLink,
         packageStatus: "PACKAGE_GENERATED",
         packageGeneratedAt: new Date(),
         packageReviewedAt: null,
@@ -499,14 +553,12 @@ async function syncTopProspectResultIntoQueue(
         packageSkippedAt: null,
       },
     });
-    if (refreshed.count !== 1) {
-      throw new Error("The Top Prospect package changed before refresh completed.");
-    }
+    if (refreshed.count !== 1) throw new Error("The Top Prospect package changed before refresh completed.");
   }
   return upsertAutonomousQueueItemFromPackage({
     internalSmsEnabled: false,
     outreachPreference,
-    previewLink: prepared.previewLink,
+    previewLink,
     prospect: saved,
     sourceProvider: "Smart Backfill",
     topProspectResultId: result.id,
@@ -869,36 +921,49 @@ function feedbackCategory(label: AutonomousFeedbackLabel) {
   return "lead";
 }
 
-function feedbackReview(item: OutreachQueueItem, feedbackLabels = item.feedbackLabels) {
+const postInterestPreviewFeedbackStatuses = new Set<OutreachQueueItem["status"]>([
+  "Preview Build Needed",
+  "Preview Needs Polish",
+  "Loom Needed",
+  "Ready for Loom",
+  "Loom Recorded",
+]);
+
+export function feedbackReview(item: OutreachQueueItem, feedbackLabels = item.feedbackLabels) {
+  const previewFeedbackEnabled = postInterestPreviewFeedbackStatuses.has(item.status);
+  const effectivePreviewFeedback = previewFeedbackEnabled
+    ? feedbackLabels
+    : feedbackLabels.filter((label) => !/preview/i.test(label));
   const previewGate = {
     status: item.previewQualityScore >= 85 ? "Eligible" as const : item.previewQualityScore < 70 ? "Blocked" as const : "Needs Review" as const,
     score: item.previewQualityScore,
     checks: [],
     reasons: item.detectedIssues,
   };
-  const regenerationPlan = previewRegenerationPlan(previewGate, feedbackLabels);
+  const regenerationPlan = previewFeedbackEnabled ? previewRegenerationPlan(previewGate, effectivePreviewFeedback) : [];
   const rewritePlan = outreachRewritePlan(item.emailBody, feedbackLabels);
-  const detectedIssues = new Set(item.detectedIssues);
+  const detectedIssues = new Set(previewFeedbackEnabled ? item.detectedIssues : item.detectedIssues.filter((issue) => !/preview/i.test(issue)));
   if (feedbackLabels.includes("Bad lead")) detectedIssues.add("Manual feedback marked this as a bad lead.");
   if (feedbackLabels.includes("Wrong contact")) detectedIssues.add("Manual feedback marked the contact as wrong.");
   if (feedbackLabels.includes("Never contact")) detectedIssues.add("Manual feedback marked this as never contact.");
-  let recommendedNextAction: AutonomousNextAction = item.recommendedNextAction;
+  let recommendedNextAction: AutonomousNextAction = !previewFeedbackEnabled && item.recommendedNextAction === "Regenerate Preview" ? "Needs Human Review" : item.recommendedNextAction;
   if (feedbackLabels.includes("Never contact")) recommendedNextAction = "Never Contact";
   else if (feedbackLabels.includes("Bad fit")) recommendedNextAction = "Bad Fit";
-  else if (feedbackLabels.includes("Preview looked bad") || regenerationPlan.length) recommendedNextAction = "Regenerate Preview";
+  else if (previewFeedbackEnabled && (effectivePreviewFeedback.includes("Preview looked bad") || regenerationPlan.length)) recommendedNextAction = "Regenerate Preview";
   else if (feedbackLabels.includes("Outreach sounded too AI-ish") || rewritePlan.length) recommendedNextAction = "Rewrite Outreach";
   else if (feedbackLabels.includes("Bad lead")) recommendedNextAction = "Skip";
-  else if (feedbackLabels.includes("Good lead") || feedbackLabels.includes("Preview looked good") || feedbackLabels.includes("Outreach sounded good")) recommendedNextAction = "Keep";
+  else if (feedbackLabels.includes("Good lead") || (previewFeedbackEnabled && effectivePreviewFeedback.includes("Preview looked good")) || feedbackLabels.includes("Outreach sounded good")) recommendedNextAction = "Keep";
   const reviewScore = Math.max(0, Math.min(100, item.reviewScore
     + (feedbackLabels.includes("Good lead") ? 8 : 0)
     + (feedbackLabels.includes("Positive reply") ? 12 : 0)
     - (feedbackLabels.includes("Bad lead") ? 18 : 0)
-    - (feedbackLabels.includes("Preview looked bad") ? 10 : 0)
+    - (previewFeedbackEnabled && effectivePreviewFeedback.includes("Preview looked bad") ? 10 : 0)
     - (feedbackLabels.includes("Outreach sounded too AI-ish") ? 8 : 0)));
+  const existingSuggestions = previewFeedbackEnabled ? item.improvementSuggestions : item.improvementSuggestions.filter((suggestion) => !/preview/i.test(suggestion));
   return {
     reviewScore,
     reviewSummary: `${item.businessName} review: ${recommendedNextAction}. Feedback has been recorded for future recommendations.`,
-    improvementSuggestions: [...new Set([...item.improvementSuggestions, ...regenerationPlan, ...rewritePlan])],
+    improvementSuggestions: [...new Set([...existingSuggestions, ...regenerationPlan, ...rewritePlan])],
     detectedIssues: [...detectedIssues],
     recommendedNextAction,
     regenerationPlan,
@@ -948,7 +1013,7 @@ async function recordLearningEvent(item: OutreachQueueItem) {
       previewQualityScore: item.previewQualityScore,
       reviewScore: item.reviewScore,
       replyStatus: item.replyStatus || null,
-      positiveReplyStatus: ["Positive Reply", "Prospect Said Yes", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) ? "positive" : null,
+      positiveReplyStatus: ["Positive Reply", "Prospect Said Yes", "Preview Build Needed", "Loom Needed", "Pricing Requested", "Won"].includes(item.status) ? "positive" : null,
       lostReason: ["Lost", "No Response", "Not Interested", "Bad Fit", "Skipped", "Never Contact"].includes(item.status) ? item.status : null,
       manualNote: item.notes || null,
       feedbackLabels: item.feedbackLabels,
@@ -981,6 +1046,28 @@ export type ApproveAndQueueEmailResult = {
   queued: boolean;
   blockedReasons: string[];
 };
+
+
+export type EmailApprovalSnapshot = {
+  businessName: string;
+  email: string;
+  subjectLine: string;
+  emailBody: string;
+  outreachCopyVersion: string;
+  updatedAt: string;
+};
+
+function approvalSnapshotContentMatches(item: OutreachQueueItem, expected: EmailApprovalSnapshot) {
+  return item.businessName === expected.businessName
+    && normalizeEmailAddress(item.email) === normalizeEmailAddress(expected.email)
+    && item.subjectLine === expected.subjectLine
+    && item.emailBody === expected.emailBody
+    && item.outreachCopyVersion === expected.outreachCopyVersion;
+}
+
+function approvalSnapshotMatches(item: OutreachQueueItem, expected: EmailApprovalSnapshot) {
+  return item.updatedAt === expected.updatedAt && approvalSnapshotContentMatches(item, expected);
+}
 
 export type AutoEmailPilotCycleResult = {
   attempted: number;
@@ -1050,6 +1137,19 @@ export function normalizeRecipientEmailDomain(value: string) {
   return domain && !domain.includes("@") ? domain : "";
 }
 
+const sharedMailboxProviderDomains = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+]);
+
 const protectedQueueStatuses = new Set<OutreachQueueStatus>([
   "Sending",
   "Sent",
@@ -1068,6 +1168,8 @@ const protectedQueueStatuses = new Set<OutreachQueueStatus>([
   "Positive Reply",
   "First DM Sent",
   "Prospect Said Yes",
+  "Preview Build Needed",
+  "Preview Needs Polish",
   "Loom Needed",
   "Ready for Loom",
   "Loom Recorded",
@@ -1254,7 +1356,7 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
   const emailQuality = evaluateOutreachEmailQuality(prospect, item.previewLink, "written_only");
   const autoEligibility = evaluateAutoSendEligibility({
     emailQuality,
-    emailsSentToday: queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length,
+    emailsSentToday: emailsSentOnCurrentBusinessDate(queue),
     previewGate,
     previewLink: item.previewLink,
     prospect,
@@ -1279,10 +1381,10 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
     contactConfidence: prospect.sourceConfidence,
     status: nextStatus,
     queuedDate: nextStatus === "Queued" ? item.queuedDate || nowIso : "",
-    blockedReason: blockedReasonText(autoEligibility.blockedReasons, previewGate.reasons),
-    eligibilityReason: emailQuality.ready && previewGate.status === "Eligible"
-      ? `${prospect.trade} prospect has a public preview, send-safe copy, and a usable written contact path.`
-      : "Package generated, but review is required before any outreach.",
+    blockedReason: blockedReasonText(autoEligibility.blockedReasons, []),
+    eligibilityReason: emailQuality.ready
+      ? `${prospect.trade} prospect has send-safe permission-first copy and a usable written contact path. The preview will be built manually only after interest.`
+      : "First-touch package generated, but review is required before any outreach.",
     recommendedNextAction: nextStatus === "Eligible" || nextStatus === "Queued" ? "Keep" : "Needs Human Review",
     updatedAt: nowIso,
   };
@@ -1290,14 +1392,31 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
   return await persistQueueSnapshot(reconciled, item) ?? reconciled;
 }
 
-export async function approveAndQueueEmail(id: string): Promise<ApproveAndQueueEmailResult> {
+export async function approveAndQueueEmail(
+  id: string,
+  expectedSnapshot?: EmailApprovalSnapshot,
+): Promise<ApproveAndQueueEmailResult> {
   const queue = await listOutreachQueueItems();
   const existing = queue.find((entry) => entry.id === id) ?? null;
   if (!existing) return { item: null, queued: false, blockedReasons: ["Queue item was not found."] };
+  if (expectedSnapshot && !approvalSnapshotMatches(existing, expectedSnapshot)) {
+    return {
+      item: existing,
+      queued: false,
+      blockedReasons: ["The recipient or email draft changed after review. Refresh and review the exact current draft again."],
+    };
+  }
   if (protectedQueueStatuses.has(existing.status) || existing.sentDate || queueItemHasAmbiguousOutcome(existing)) {
     return { item: existing, queued: false, blockedReasons: ["This prospect is already contacted, suppressed, closed, or otherwise protected."] };
   }
   const refreshed = await reconcileQueueItem(existing);
+  if (expectedSnapshot && !approvalSnapshotContentMatches(refreshed, expectedSnapshot)) {
+    return {
+      item: refreshed,
+      queued: false,
+      blockedReasons: ["The recipient or email draft changed during the final safety refresh. Review the updated draft before approval."],
+    };
+  }
   if (!approvableQueueStatuses.has(refreshed.status)) {
     return {
       item: refreshed,
@@ -1874,7 +1993,7 @@ export async function sendQueuedEmailQueueItem(
   const item = initialItem ? await reconcileQueueItem(initialItem) : null;
   if (!item) return { item: null, sent: false, blockedReasons: ["Queue item was not found."] };
   const queue = await listOutreachQueueItems();
-  const emailsSentToday = queue.filter((entry) => entry.sentDate && new Date(entry.sentDate) >= todayStart()).length;
+  const emailsSentToday = emailsSentOnCurrentBusinessDate(queue);
   const readiness = evaluateQueuedEmailSendReadiness({ emailSendsToday: emailsSentToday, item, queue, settings });
   if (!readiness.ready) {
     await safeRecordAudit({
@@ -1901,12 +2020,14 @@ export async function sendQueuedEmailQueueItem(
   try {
     const recipientDomain = normalizeRecipientEmailDomain(claim.item.email);
     if (!recipientDomain) throw new Error("Recipient business email domain is invalid.");
-    await enforceRateLimit({
-      action: "autonomous_email_send_domain",
-      subject: recipientDomain,
-      limit: 1,
-      windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
-    });
+    if (!sharedMailboxProviderDomains.has(recipientDomain)) {
+      await enforceRateLimit({
+        action: "autonomous_email_send_domain",
+        subject: recipientDomain,
+        limit: 1,
+        windowMs: Math.max(1, settings.emailCooldownMinutes) * 60_000,
+      });
+    }
     await enforceRateLimit({
       action: "autonomous_email_send",
       subject: "global",
@@ -2025,7 +2146,7 @@ async function executeAutoEmailPilotCycle(): Promise<AutoEmailPilotCycleResult> 
   for (const item of queuedPublicEmailItems) {
     if (await queueItemHasPersistedApproval(item)) approvedItems.push(item);
   }
-  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const sentToday = emailsSentOnCurrentBusinessDate(queue);
   const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
   const result: AutoEmailPilotCycleResult = {
     attempted: 0,
@@ -2058,7 +2179,13 @@ async function executeAutoEmailPilotCycle(): Promise<AutoEmailPilotCycleResult> 
     return result;
   }
 
-  const candidates = approvedItems.slice(0, remainingDailyCap);
+  const candidates = [...approvedItems]
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.queuedDate || left.updatedAt || left.createdAt);
+      const rightTime = Date.parse(right.queuedDate || right.updatedAt || right.createdAt);
+      return leftTime - rightTime || left.id.localeCompare(right.id);
+    })
+    .slice(0, remainingDailyCap);
   result.attempted = candidates.length;
   for (const item of candidates) {
     const send = await sendQueuedEmailQueueItem(item.id);
@@ -2130,7 +2257,7 @@ export async function runFullAutoEmailBatch(): Promise<FullAutoEmailBatchResult>
   for (const item of queue.filter((candidate) => candidate.status === "Queued" && candidate.contactSource === "Public email")) {
     if (await queueItemHasPersistedApproval(item)) queued.push(item);
   }
-  const sentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const sentToday = emailsSentOnCurrentBusinessDate(queue);
   const remainingDailyCap = Math.max(0, Math.min(settings.maxEmailsSentPerDay, env.dailyCap) - sentToday);
   const batchLimit = Math.min(queued.length, remainingDailyCap, 5);
   const result: FullAutoEmailBatchResult = {
@@ -2315,7 +2442,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
   const previewGate = evaluatePreviewQualityGate(prospect);
   const emailQuality = evaluateOutreachEmailQuality(prospect, previewLink, outreachPreference);
   const queue = await listOutreachQueueItems();
-  const emailsSentToday = queue.filter((item) => item.sentDate && new Date(item.sentDate) >= todayStart()).length;
+  const emailsSentToday = emailsSentOnCurrentBusinessDate(queue);
   const autoEligibility = evaluateAutoSendEligibility({
     emailQuality,
     emailsSentToday,
@@ -2346,10 +2473,10 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
     emailBody: outreach?.concise ?? "",
     dmScript: manualDmScript(prospect, previewLink),
     loomTalkingPoints: loomTalkingPoints(prospect, previewLink),
-    eligibilityReason: emailQuality.ready && previewGate.status === "Eligible"
-      ? `${prospect.trade} prospect has a public preview, send-safe copy, and a usable written contact path.`
-      : "Package generated, but review is required before any outreach.",
-    blockedReason: blockedReasonText(autoEligibility.blockedReasons, previewGate.reasons) || null,
+    eligibilityReason: emailQuality.ready
+      ? `${prospect.trade} prospect has send-safe permission-first copy and a usable written contact path. The preview will be built manually only after interest.`
+      : "First-touch package generated, but review is required before any outreach.",
+    blockedReason: blockedReasonText(autoEligibility.blockedReasons, []) || null,
     reviewScore: selfReview.reviewScore,
     reviewSummary: selfReview.reviewSummary,
     improvementSuggestions: selfReview.improvementSuggestions,
@@ -2400,7 +2527,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
         title: "Phone-only prospect needs manual research",
         marketTrade: `${domain.trade} in ${domain.city}`,
         resultCount: 1,
-        attention: `${domain.businessName} has a preview/package, but written outreach is blocked.`,
+        attention: `${domain.businessName} has a first-touch package, but written outreach is blocked.`,
         nextAction: "Find a written contact path or leave it blocked.",
         pagePath: "/engine?tab=operator-test-center",
       }, { sms: input.internalSmsEnabled !== false });
@@ -2411,7 +2538,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
         marketTrade: `${domain.trade} in ${domain.city}`,
         resultCount: 1,
         attention: `${domain.businessName} is in the manual review queue.`,
-        nextAction: "Review preview, copy, contact path, and approval gates.",
+        nextAction: "Review the exact copy, contact path, website evidence, and approval gates.",
         pagePath: "/engine?tab=operator-test-center",
       }, { sms: input.internalSmsEnabled !== false });
     }
@@ -2452,7 +2579,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
       title: "Phone-only prospect needs manual research",
       marketTrade: `${domain.trade} in ${domain.city}`,
       resultCount: 1,
-      attention: `${domain.businessName} has a preview/package, but written outreach is blocked.`,
+      attention: `${domain.businessName} has a first-touch package, but written outreach is blocked.`,
       nextAction: "Find a written contact path or leave it blocked.",
       pagePath: "/engine?tab=operator-test-center",
     }, { sms: input.internalSmsEnabled !== false });
@@ -2463,12 +2590,54 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
       marketTrade: `${domain.trade} in ${domain.city}`,
       resultCount: 1,
       attention: `${domain.businessName} is in the manual review queue.`,
-      nextAction: "Review preview, copy, contact path, and approval gates.",
+      nextAction: "Review the exact copy, contact path, website evidence, and approval gates.",
       pagePath: "/engine?tab=operator-test-center",
     }, { sms: input.internalSmsEnabled !== false });
   }
   await recordLearningEvent(domain);
   await recordRunReview(settings, await listOutreachQueueItems());
+  return domain;
+}
+
+
+export async function setManualPreviewLink(id: string, previewLink: string) {
+  if (!topProspectHasPublicPreview(previewLink)) {
+    throw new Error("Enter a legitimate public HTTPS preview link. Localhost and protected /engine links are not allowed.");
+  }
+  const allowedStatuses = new Set<OutreachQueueStatus>(["Preview Build Needed", "Loom Needed", "Preview Needs Polish"]);
+  const nowIso = new Date().toISOString();
+  if (!hasDatabase) {
+    const item = memoryQueue().find((entry) => entry.id === id);
+    if (!item) return null;
+    if (!allowedStatuses.has(item.status)) throw new Error(`A manual preview link cannot be added while status is ${item.status}.`);
+    item.previewLink = previewLink.trim();
+    item.status = "Preview Build Needed";
+    item.recommendedNextAction = "Needs Human Review";
+    item.notes = [item.notes, `Manual Lovable preview link saved on ${nowIso}. QA and Loom remain manual.`].filter(Boolean).join("\n");
+    item.updatedAt = nowIso;
+    await recordRunReview(memorySettings(), memoryQueue());
+    return structuredClone(item);
+  }
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const current = await database.outreachQueueItem.findUnique({ where: { id } });
+  if (!current) return null;
+  const currentStatus = current.status as OutreachQueueStatus;
+  if (!allowedStatuses.has(currentStatus)) throw new Error(`A manual preview link cannot be added while status is ${currentStatus}.`);
+  const updated = await database.outreachQueueItem.updateMany({
+    where: { id, status: current.status, updatedAt: current.updatedAt, sentDate: null },
+    data: {
+      previewLink: previewLink.trim(),
+      status: "Preview Build Needed",
+      recommendedNextAction: "Needs Human Review",
+      notes: [current.notes ?? "", `Manual Lovable preview link saved on ${nowIso}. QA and Loom remain manual.`].filter(Boolean).join("\n"),
+    },
+  });
+  if (updated.count !== 1) throw new Error("The queue item changed before the preview link was saved. Refresh and try again.");
+  const row = await database.outreachQueueItem.findUniqueOrThrow({ where: { id } });
+  const domain = queueToDomain(row);
+  await recordLearningEvent(domain);
+  await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
   return domain;
 }
 
@@ -2483,6 +2652,9 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
     if (!manualQueueStatusTransitionAllowed(item.status, status)) {
       throw new Error(`Status cannot change from ${item.status} to ${status} through the general queue action.`);
     }
+    if (status === "Ready for Loom" && !topProspectHasPublicPreview(item.previewLink)) {
+      throw new Error("Save and QA a legitimate public Lovable preview link before marking Ready for Loom.");
+    }
     const effectiveStatus = nextStatus;
     item.status = effectiveStatus;
     item.followUpDate = effectiveStatus === "Follow-up Needed" ? nowIso : item.followUpDate;
@@ -2490,7 +2662,7 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
     if (effectiveStatus === "Bad Fit") item.recommendedNextAction = "Bad Fit";
     if (["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(effectiveStatus)) item.recommendedNextAction = "Never Contact";
     if (effectiveStatus === "Preview Needs Polish") item.recommendedNextAction = "Regenerate Preview";
-    if (effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom") item.recommendedNextAction = "Needs Human Review";
+    if (effectiveStatus === "Preview Build Needed" || effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom") item.recommendedNextAction = "Needs Human Review";
     item.updatedAt = nowIso;
     await recordRunReview(memorySettings(), memoryQueue());
     await sendLoomNeededNotificationIfConfigured(item, status);
@@ -2500,8 +2672,8 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
         title: "Prospect said yes",
         marketTrade: `${item.trade} in ${item.city}`,
         resultCount: 1,
-        attention: `${item.businessName} needs the manual preview, Loom, or pricing step.`,
-        nextAction: "Open the queue, send the public preview manually, and prepare Loom if recommended.",
+        attention: `${item.businessName} requested a preview and needs a manual Lovable build.`,
+        nextAction: "Recheck the business details, build and QA one polished Lovable site, save the public link, then record and send the Loom manually.",
         pagePath: "/engine?tab=operator-test-center",
       });
     }
@@ -2516,13 +2688,16 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
   if (!manualQueueStatusTransitionAllowed(currentStatus, status)) {
     throw new Error(`Status cannot change from ${currentStatus} to ${status} through the general queue action.`);
   }
+  if (status === "Ready for Loom" && !topProspectHasPublicPreview(current.previewLink)) {
+    throw new Error("Save and QA a legitimate public Lovable preview link before marking Ready for Loom.");
+  }
   const now = new Date();
   const effectiveStatus = nextStatus;
   const extraReviewData =
     effectiveStatus === "Bad Fit" ? { recommendedNextAction: "Bad Fit" }
       : ["Never Contact", "Opted Out", "Bounced", "Complained", "Suppressed"].includes(effectiveStatus) ? { recommendedNextAction: "Never Contact" }
         : effectiveStatus === "Preview Needs Polish" ? { recommendedNextAction: "Regenerate Preview" }
-          : effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
+          : effectiveStatus === "Preview Build Needed" || effectiveStatus === "Loom Needed" || effectiveStatus === "Ready for Loom" ? { recommendedNextAction: "Needs Human Review" }
             : {};
   const update = await database.outreachQueueItem.updateMany({
     where: { id, status: current.status, updatedAt: current.updatedAt },
@@ -2543,8 +2718,8 @@ export async function updateOutreachQueueStatus(id: string, status: OutreachQueu
       title: "Prospect said yes",
       marketTrade: `${domain.trade} in ${domain.city}`,
       resultCount: 1,
-      attention: `${domain.businessName} needs the manual preview, Loom, or pricing step.`,
-      nextAction: "Open the queue, send the public preview manually, and prepare Loom if recommended.",
+      attention: `${domain.businessName} requested a preview and needs a manual Lovable build.`,
+      nextAction: "Recheck the business details, build and QA one polished Lovable site, save the public link, then record and send the Loom manually.",
       pagePath: "/engine?tab=operator-test-center",
     });
   }
@@ -2604,71 +2779,29 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
   const existingQueueItem = await findExistingQueueItemForProspect(prospect.id);
   if (existingQueueItem && queueItemDraftMutationIsProtected(existingQueueItem)) return existingQueueItem;
   const previewInfo = await publicPreviewForProspect(prospect.id);
+  const previewLink = topProspectHasPublicPreview(previewInfo.previewLink) ? previewInfo.previewLink : "";
   const nowIso = new Date().toISOString();
-  const prospectWithPreview = prospect.preview ? prospect : (await prepareProspectForPreview(prospect)).prospect;
   const outreach = {
-    ...generateOutreach(prospectWithPreview, previewInfo.previewLink),
+    ...generateOutreach(prospect, previewLink),
     approved: false,
     lastRegeneratedAt: nowIso,
   };
   const saved = await saveProspect({
-    ...prospectWithPreview,
+    ...prospect,
     outreach,
     activities: [
-      activity("outreach", "Current Autonomous Growth review package created or refreshed. Nothing was sent."),
-      ...prospectWithPreview.activities,
+      activity("outreach", "Permission-first Autonomous Growth review package created or refreshed. No preview was generated and nothing was sent."),
+      ...prospect.activities,
     ],
   });
-  const queueItem = await upsertAutonomousQueueItemFromPackage({
+  return upsertAutonomousQueueItemFromPackage({
     forceReviewOnly: true,
     outreachPreference: "written_only",
-    previewLink: previewInfo.previewLink,
+    previewLink,
     prospect: saved,
     sourceProvider: "Legacy Outreach Backfill",
     topProspectResultId: previewInfo.topProspectResultId,
   });
-  if (!previewInfo.previewLink) {
-    if (queueItemDraftMutationIsProtected(queueItem)) return queueItem;
-    const note = "No valid public /p/ preview link was found. Generate/review a public preview before send-ready approval.";
-    if (!hasDatabase) {
-      const memory = memoryQueue().find((item) => item.id === queueItem.id);
-      if (memory && memory.status === queueItem.status && memory.updatedAt === queueItem.updatedAt && !queueItemDraftMutationIsProtected(memory)) {
-        memory.status = "Needs Review";
-        memory.blockedReason = [memory.blockedReason, note].filter(Boolean).join(" ");
-        memory.recommendedNextAction = "Regenerate Preview";
-        memory.notes = [memory.notes, note].filter(Boolean).join("\n");
-        memory.updatedAt = new Date().toISOString();
-        return structuredClone(memory);
-      }
-    } else {
-      const database = getProspectDatabase();
-      const updated = await database.outreachQueueItem.updateMany({
-        where: {
-          id: queueItem.id,
-          status: queueItem.status,
-          updatedAt: new Date(queueItem.updatedAt),
-          sentDate: null,
-          NOT: [
-            { status: { in: ["Queued", ...protectedQueueStatuses] } },
-            { notes: { contains: ambiguousOutcomeMarker } },
-          ],
-        },
-        data: {
-          status: "Needs Review",
-          blockedReason: [queueItem.blockedReason, note].filter(Boolean).join(" "),
-          recommendedNextAction: "Regenerate Preview",
-          notes: [queueItem.notes, note].filter(Boolean).join("\n") || null,
-        },
-      });
-      if (updated.count !== 1) {
-        const current = await database.outreachQueueItem.findUnique({ where: { id: queueItem.id } });
-        return current ? queueToDomain(current) : null;
-      }
-      const row = await database.outreachQueueItem.findUniqueOrThrow({ where: { id: queueItem.id } });
-      return queueToDomain(row);
-    }
-  }
-  return queueItem;
 }
 
 export async function recordAutonomousFeedback(id: string, feedbackLabel: AutonomousFeedbackLabel, note = "") {
