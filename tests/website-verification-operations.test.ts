@@ -283,6 +283,44 @@ test("protected sent queue history blocks existing-record repair even when the p
   }
 });
 
+test("protected queue history is preflighted before any editable approval is revoked", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({
+    websiteStatus: "usable",
+    websiteStatusDetail: "A meaningful public business website was verified.",
+    websiteVerification: {
+      version: "website-verification-v1",
+      status: "usable",
+      confidence: "high",
+      canonicalUrl: "https://truecleanprowash.com/",
+      attempts: [],
+      usableSignals: ["business name", "service content", "contact or quote form"],
+      explanation: "A meaningful public business website was verified.",
+      checkedAt: now,
+    },
+    fitDisposition: "manual_review_required",
+  });
+  const editable = { ...queueItem(prospect, "Queued"), id: "queue-editable" };
+  const sent = { ...queueItem(prospect, "Sent"), id: "queue-sent" };
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([editable, sent]);
+  try {
+    await assert.rejects(
+      confirmUsableWebsiteNotFit(prospect.id, true),
+      /protected outreach or contact history/i,
+    );
+    const queueAfter = outreachQueueMemoryForTests();
+    assert.equal(queueAfter.find((item) => item.id === editable.id)?.status, "Queued");
+    assert.match(queueAfter.find((item) => item.id === editable.id)?.notes ?? "", /\[auto-email-approved\]/);
+    assert.equal(queueAfter.find((item) => item.id === sent.id)?.status, "Sent");
+    assert.equal((await getProspect(prospect.id))?.fitDisposition, "manual_review_required");
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
 test("usable-not-fit disposition removes eligibility without recording contact or sending", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();

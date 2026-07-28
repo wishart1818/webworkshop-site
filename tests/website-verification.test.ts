@@ -207,6 +207,26 @@ test("an unstored website is inconclusive until owned-site absence has structure
   assert.equal(result.prospect.recommendedContactMethod, "needs_manual_contact_research");
 });
 
+test("bounded provider and official social evidence preserves a discovered no-website opportunity", async () => {
+  const result = await verifyProspectWebsite(prospect({
+    website: "",
+    prospectType: "no_website_social_only",
+    profileUrl: "https://www.facebook.com/truecleanprowash",
+    activitySignals: ["discovery_source:google", "public_profile"],
+    sourceConfidence: 42,
+  }), verificationDependencies(
+    (async () => {
+      throw new Error("No website request should run for bounded provider absence evidence.");
+    }) as typeof fetch,
+  ));
+
+  assert.equal(result.report.status, "no_owned_website");
+  assert.equal(result.report.confidence, "high");
+  assert.match(result.report.explanation, /google/i);
+  assert.equal(result.prospect.prospectType, "no_website_social_only");
+  assert.equal(result.prospect.websiteStatus, "no_owned_website");
+});
+
 test("a foreign canonical declaration cannot replace the verified owned website", async () => {
   const homepage = trueCleanHomepage.replace(
     "https://truecleanprowash.com/",

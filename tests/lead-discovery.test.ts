@@ -234,9 +234,11 @@ test("No Website / Social Only discovery keeps active businesses and classifies 
   assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Social Only Roofing", "Directory Only Roofing", "No Phone Roofing"]);
   assert.ok(result.leads.every((lead) => lead.prospectType === "no_website_social_only" && lead.website === ""));
   assert.match(result.leads[0].profileUrl, /facebook/);
+  assert.ok(result.leads[0].activitySignals?.includes("discovery_source:google"));
   assert.equal(result.leads[0].classification, "social_only");
   assert.equal(result.leads[0].recommendedContactMethod, "message_on_facebook");
   assert.equal(result.leads[1].classification, "phone_only");
+  assert.ok(result.leads[1].activitySignals?.includes("discovery_source:yelp"));
   assert.equal(result.leads[1].recommendedContactMethod, "needs_manual_contact_research");
   assert.equal(result.leads[2].classification, "not_enough_contact_info");
   assert.equal(result.leads[2].recommendedContactMethod, "do_not_contact");

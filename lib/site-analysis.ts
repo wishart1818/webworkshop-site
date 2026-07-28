@@ -1151,11 +1151,62 @@ function fitDispositionForVerifiedWebsite(
   return "manual_review_required";
 }
 
+const discoveryAbsenceSources = new Set(["osm", "google", "bing", "yelp", "yellowPages"]);
+const authoritativeAbsenceSources = new Set(["google", "bing", "yelp"]);
+
+function officialSocialProfileStored(prospect: Prospect) {
+  const values = [
+    prospect.profileUrl,
+    prospect.facebookUrl,
+    prospect.instagramUrl,
+    prospect.linkedinUrl,
+  ].filter(Boolean);
+  return values.some((value) => {
+    try {
+      const host = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+      return [
+        "facebook.com",
+        "instagram.com",
+        "linkedin.com",
+        "x.com",
+        "twitter.com",
+        "youtube.com",
+      ].some((domain) => host === domain || host.endsWith(`.${domain}`));
+    } catch {
+      return false;
+    }
+  });
+}
+
+function boundedNoOwnedWebsiteEvidence(prospect: Prospect) {
+  if (prospect.website.trim() || prospect.prospectType !== "no_website_social_only" || prospect.inactive) return [];
+  const sources = [...new Set(prospect.activitySignals
+    .filter((signal) => signal.startsWith("discovery_source:"))
+    .map((signal) => signal.slice("discovery_source:".length))
+    .filter((source) => discoveryAbsenceSources.has(source)))];
+  const hasGroundedIdentity = Boolean(
+    prospect.businessName.trim()
+    && prospect.city.trim()
+    && (prospect.phone.trim() || prospect.email.trim() || prospect.profileUrl.trim()),
+  );
+  if (!hasGroundedIdentity) return [];
+  const multipleIndependentListings = sources.length >= 2 && prospect.sourceConfidence >= 36;
+  const authoritativeListingAndSocial = sources.some((source) => authoritativeAbsenceSources.has(source))
+    && officialSocialProfileStored(prospect)
+    && prospect.sourceConfidence >= 22;
+  return multipleIndependentListings || authoritativeListingAndSocial ? sources : [];
+}
+
 function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDependencies): WebsiteVerificationReport {
   const checkedAt = verificationNow(dependencies).toISOString();
-  const verifiedAbsence = prospect.websiteVerification?.version === "website-verification-v1"
+  const priorVerifiedAbsence = prospect.websiteVerification?.version === "website-verification-v1"
     && prospect.websiteVerification.status === "no_owned_website"
     && prospect.websiteVerification.confidence === "high";
+  const boundedEvidence = boundedNoOwnedWebsiteEvidence(prospect);
+  const verifiedAbsence = priorVerifiedAbsence || boundedEvidence.length > 0;
+  const evidenceDetail = boundedEvidence.length
+    ? ` Independent provider evidence: ${boundedEvidence.join(", ")}.`
+    : "";
   return {
     version: "website-verification-v1",
     status: verifiedAbsence ? "no_owned_website" : "inconclusive",
@@ -1164,7 +1215,7 @@ function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDe
     attempts: [],
     usableSignals: [],
     explanation: verifiedAbsence
-      ? "Verified public research found no owned business website."
+      ? `Verified bounded public research found no owned business website.${evidenceDetail}`.trim()
       : "No owned website URL is stored, but absence has not been independently verified.",
     checkedAt,
   };

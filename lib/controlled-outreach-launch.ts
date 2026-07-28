@@ -115,6 +115,8 @@ export type ProspectEmailEmergencyStopResult = {
 export type ControlledPilotPostSendReport = {
   status: "PILOT SEND VERIFIED" | "PILOT SEND REQUIRES REVIEW";
   generatedAt: string;
+  activationAuditId: string;
+  approvingOperator: string;
   sentToday: number;
   queueItemId: string;
   prospectId: string;
@@ -691,13 +693,38 @@ export async function validateControlledPilotSend(input: {
     && businessDateKey(item.sentDate) === today
   ));
   const sent = sentToday[0] ?? null;
-  const successAudits = sent
+  const sentAt = Date.parse(sent?.sentDate ?? "");
+  const activationAudits = Number.isFinite(sentAt)
+    ? auditEvents.filter((event) => (
+        event.action === "controlled_email_pilot_activation"
+        && event.outcome === "success"
+        && Date.parse(event.createdAt) <= sentAt
+      )).sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    : [];
+  const activation = activationAudits[0] ?? null;
+  const activationAt = Date.parse(activation?.createdAt ?? "");
+  const approvalAudits = sent && Number.isFinite(activationAt)
+    ? auditEvents.filter((event) => (
+        event.action === "autonomous_email_approval"
+        && event.outcome === "success"
+        && String(event.metadata?.queueItemId ?? "") === sent.id
+        && Date.parse(event.createdAt) >= activationAt
+        && Date.parse(event.createdAt) <= sentAt
+      ))
+    : [];
+  const approval = approvalAudits
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] ?? null;
+  const approvalAt = Date.parse(approval?.createdAt ?? "");
+  const successAudits = sent && Number.isFinite(approvalAt)
     ? auditEvents.filter((event) => (
         event.action === "autonomous_email_send"
         && event.outcome === "success"
         && String(event.metadata?.queueItemId ?? "") === sent.id
+        && Date.parse(event.createdAt) >= approvalAt
+        && Date.parse(event.createdAt) <= now.getTime()
       ))
     : [];
+  const approvingOperator = String(approval?.metadata?.approvedBy ?? "");
   const providerMessageId = sent?.notes.match(/Resend message ID:\s*([^\s]+)/i)?.[1]
     ?? String(successAudits[0]?.metadata?.providerMessageId ?? "");
   const settings = dashboard.settings;
@@ -705,6 +732,11 @@ export async function validateControlledPilotSend(input: {
   const issues = [
     sentToday.length !== 1 ? `Expected exactly one prospect email today; found ${sentToday.length}.` : "",
     !sent ? "No controlled-pilot sent item is available." : "",
+    sent && !activation ? "No successful controlled-pilot activation precedes this send." : "",
+    sent && activation && approvalAudits.length !== 1
+      ? `Expected one post-activation approval for this queue item; found ${approvalAudits.length}.`
+      : "",
+    sent && approval && !approvingOperator ? "The approving operator was not recorded." : "",
     sent && !providerMessageId ? "Provider message ID is missing." : "",
     sent && successAudits.length !== 1 ? `Expected one provider-success audit; found ${successAudits.length}.` : "",
     sent && !sent.email ? "Exact recipient is missing." : "",
@@ -718,6 +750,8 @@ export async function validateControlledPilotSend(input: {
   const report: ControlledPilotPostSendReport = {
     status: issues.length ? "PILOT SEND REQUIRES REVIEW" : "PILOT SEND VERIFIED",
     generatedAt: now.toISOString(),
+    activationAuditId: activation?.id ?? "",
+    approvingOperator,
     sentToday: sentToday.length,
     queueItemId: sent?.id ?? "",
     prospectId: sent?.prospectId ?? "",
@@ -741,6 +775,8 @@ export async function validateControlledPilotSend(input: {
       status: report.status,
       sentToday: report.sentToday,
       queueItemId: report.queueItemId,
+      activationAuditId: report.activationAuditId,
+      approvingOperator: report.approvingOperator,
       providerSuccessAuditCount: report.providerSuccessAuditCount,
       issues: report.issues,
     }),

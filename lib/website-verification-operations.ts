@@ -133,14 +133,17 @@ function repairFieldChanges(before: Prospect, after: Prospect) {
 async function revokeStaleQueueApproval(prospect: Prospect, reason: string) {
   const queue = await listOutreachQueueItemsForBackfill();
   const matchingItems = queue.filter((candidate) => candidate.prospectId === prospect.id);
-  const activeItems = matchingItems.filter((item) => (
+  const protectedItems = matchingItems.filter((item) => (
+    Boolean(safeReadinessRepairProtectionReason(item, prospect.status))
+  ));
+  const activeItems = protectedItems.filter((item) => (
     item.status === "Sending"
     || item.notes.includes("[auto-email-ambiguous]")
   ));
-  if (activeItems.length) {
+  if (protectedItems.length) {
     return {
       approvalsRevoked: 0,
-      protectedQueueItems: matchingItems.length,
+      protectedQueueItems: protectedItems.length,
       activeQueueItems: activeItems.length,
     };
   }

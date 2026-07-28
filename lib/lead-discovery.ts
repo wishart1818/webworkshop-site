@@ -958,7 +958,10 @@ export function mergeDiscoveryCandidates(input: {
         rating: candidate.rating,
         reviewCount: candidate.reviewCount,
         recentReviewCount: candidate.recentReviewCount,
-        activitySignals: [...new Set(activitySignals)],
+        activitySignals: [...new Set([
+          ...activitySignals,
+          ...candidate.sources.map((source) => `discovery_source:${source}`),
+        ])],
         originCity: `${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`,
         matchedCities: [`${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`],
         recommendedContactMethod,

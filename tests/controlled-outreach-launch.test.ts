@@ -428,6 +428,8 @@ test("emergency stop works without readiness and preserves all records", async (
 });
 
 test("post-send validation requires exactly one provider-confirmed send and an exhausted cap", async () => {
+  const activationAt = new Date(now.getTime() - 2 * 60_000).toISOString();
+  const approvalAt = new Date(now.getTime() - 60_000).toISOString();
   const sentItem = {
     ...queueItemFor(eligibleProspect()),
     status: "Sent" as const,
@@ -444,6 +446,23 @@ test("post-send validation requires exactly one provider-confirmed send and an e
         killSwitch: false,
       },
       auditEvents: [{
+        id: "audit-activation-1",
+        action: "controlled_email_pilot_activation",
+        outcome: "success",
+        subject: "authenticated-engine-operator",
+        metadata: { confirmationMatched: true, outreachSent: 0 },
+        createdAt: activationAt,
+      }, {
+        id: "audit-approval-1",
+        action: "autonomous_email_approval",
+        outcome: "success",
+        subject: sentItem.email,
+        metadata: {
+          queueItemId: sentItem.id,
+          approvedBy: "authenticated-engine-operator",
+        },
+        createdAt: approvalAt,
+      }, {
         id: "audit-send-1",
         action: "autonomous_email_send",
         outcome: "success",
@@ -459,10 +478,48 @@ test("post-send validation requires exactly one provider-confirmed send and an e
   });
 
   assert.equal(result.status, "PILOT SEND VERIFIED");
+  assert.equal(result.activationAuditId, "audit-activation-1");
+  assert.equal(result.approvingOperator, "authenticated-engine-operator");
   assert.equal(result.sentToday, 1);
   assert.equal(result.providerMessageId, "provider-live-message-id");
   assert.equal(result.providerSuccessAuditCount, 1);
   assert.equal(result.dailyCapExhausted, true);
   assert.equal(result.noSecondProspectSent, true);
   assert.equal(result.fullAutonomousSendingDisabled, true);
+});
+
+test("an unrelated same-day send cannot pass controlled-pilot post-send verification", async () => {
+  const sentItem = {
+    ...queueItemFor(eligibleProspect()),
+    status: "Sent" as const,
+    sentDate: now.toISOString(),
+    notes: "Resend message ID: provider-unrelated-message-id",
+  };
+  const result = await validateControlledPilotSend({
+    environment: environment(),
+    dependencies: dependencies({
+      item: sentItem,
+      currentSettings: {
+        ...settings(),
+        mode: "auto_email_pilot",
+        killSwitch: false,
+      },
+      auditEvents: [{
+        id: "audit-send-unrelated",
+        action: "autonomous_email_send",
+        outcome: "success",
+        subject: sentItem.businessName,
+        metadata: {
+          queueItemId: sentItem.id,
+          providerMessageId: "provider-unrelated-message-id",
+        },
+        createdAt: now.toISOString(),
+      }],
+    }),
+    now,
+  });
+
+  assert.equal(result.status, "PILOT SEND REQUIRES REVIEW");
+  assert.match(result.issues.join(" "), /activation/i);
+  assert.equal(result.activationAuditId, "");
 });
