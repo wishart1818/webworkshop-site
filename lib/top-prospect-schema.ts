@@ -25,6 +25,8 @@ export const CONTACT_DISCOVERY_MIGRATION_ID = "20260708_contact_discovery_paths"
 export const CONTACT_DISCOVERY_MIGRATION_CHECKSUM = "52f780ce07ef337a11e24f9474e6cb78e5c77a20e3d250b43d7c3847a1821206";
 export const OUTREACH_COPY_VERSIONING_MIGRATION_ID = "20260711_outreach_copy_versioning";
 export const OUTREACH_COPY_VERSIONING_MIGRATION_CHECKSUM = "2c3d1a4bb516a79f78197ba9dd261ae0ce6201a9ecc5bab2589f8d97e7dbae49";
+export const WEBSITE_VERIFICATION_EVIDENCE_MIGRATION_ID = "20260728_website_verification_evidence";
+export const WEBSITE_VERIFICATION_EVIDENCE_MIGRATION_CHECKSUM = "9267973af1760e0c96512a5fced3014343d3cc968870ec2d4af804e7f35bea4e";
 export const TOP_PROSPECT_MIGRATION_STATEMENTS = [
   `CREATE TABLE "TopProspectJob" ("id" TEXT NOT NULL, "tradeCategory" TEXT NOT NULL, "city" TEXT NOT NULL, "state" TEXT NOT NULL, "radiusKm" INTEGER NOT NULL, "businessesToScan" INTEGER NOT NULL DEFAULT 50, "finalProspectsWanted" INTEGER NOT NULL DEFAULT 10, "status" TEXT NOT NULL DEFAULT 'QUEUED', "stage" TEXT NOT NULL DEFAULT 'DISCOVER', "discoveredLeads" JSONB, "nextLeadIndex" INTEGER NOT NULL DEFAULT 0, "scannedCount" INTEGER NOT NULL DEFAULT 0, "qualifiedCount" INTEGER NOT NULL DEFAULT 0, "skippedCount" INTEGER NOT NULL DEFAULT 0, "skipSummary" JSONB, "errorMessage" TEXT, "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "completedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TopProspectJob_pkey" PRIMARY KEY ("id"))`,
   `CREATE TABLE "TopProspectResult" ("id" TEXT NOT NULL, "jobId" TEXT NOT NULL, "prospectId" TEXT NOT NULL, "rank" INTEGER, "selected" BOOLEAN NOT NULL DEFAULT false, "opportunityScore" INTEGER NOT NULL, "mainWeakness" TEXT NOT NULL, "whyMayBuy" TEXT NOT NULL, "pitchAngle" TEXT NOT NULL, "buildPrompt" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "TopProspectResult_pkey" PRIMARY KEY ("id"))`,
@@ -99,6 +101,9 @@ export const CONTACT_DISCOVERY_MIGRATION_STATEMENTS = [
 ] as const;
 export const OUTREACH_COPY_VERSIONING_MIGRATION_STATEMENTS = [
   `ALTER TABLE "OutreachQueueItem" ADD COLUMN IF NOT EXISTS "outreachCopyVersion" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "outreachCopyGeneratedAt" TIMESTAMP(3), ADD COLUMN IF NOT EXISTS "previewVersion" TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS "lastRegeneratedAt" TIMESTAMP(3)`,
+] as const;
+export const WEBSITE_VERIFICATION_EVIDENCE_MIGRATION_STATEMENTS = [
+  `ALTER TABLE "Prospect" ADD COLUMN IF NOT EXISTS "contactEvidence" JSONB NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS "websiteVerification" JSONB, ADD COLUMN IF NOT EXISTS "fitDisposition" TEXT NOT NULL DEFAULT 'unreviewed'`,
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
@@ -210,6 +215,13 @@ async function applyOutreachCopyVersioningUpgrade(transaction: SchemaTransaction
   await recordMigration(transaction, OUTREACH_COPY_VERSIONING_MIGRATION_ID, OUTREACH_COPY_VERSIONING_MIGRATION_CHECKSUM, "000000000015");
 }
 
+async function applyWebsiteVerificationEvidenceUpgrade(transaction: SchemaTransaction) {
+  for (const statement of WEBSITE_VERIFICATION_EVIDENCE_MIGRATION_STATEMENTS) {
+    await transaction.$executeRawUnsafe(statement);
+  }
+  await recordMigration(transaction, WEBSITE_VERIFICATION_EVIDENCE_MIGRATION_ID, WEBSITE_VERIFICATION_EVIDENCE_MIGRATION_CHECKSUM, "000000000016");
+}
+
 export class TopProspectSchemaLockUnavailableError extends Error {
   constructor() {
     super("Another Top Prospects schema initialization currently holds the transaction lock.");
@@ -255,6 +267,7 @@ export async function initializeTopProspectSchema(
         await applyAutonomousLearningUpgrade(transaction);
         await applyContactDiscoveryUpgrade(transaction);
         await applyOutreachCopyVersioningUpgrade(transaction);
+        await applyWebsiteVerificationEvidenceUpgrade(transaction);
         return "ready" as const;
       }
       if (existing.size > 0) throw new Error("Top Prospects schema is partially initialized.");
@@ -274,6 +287,7 @@ export async function initializeTopProspectSchema(
       await applyAutonomousLearningUpgrade(transaction);
       await applyContactDiscoveryUpgrade(transaction);
       await applyOutreachCopyVersioningUpgrade(transaction);
+      await applyWebsiteVerificationEvidenceUpgrade(transaction);
       const created = await presentTables(transaction);
       if (created.size !== TOP_PROSPECT_TABLES.length) throw new Error("Top Prospects schema verification failed.");
       return "initialized" as const;

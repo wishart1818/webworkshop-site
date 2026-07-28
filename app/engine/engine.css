@@ -1330,6 +1330,46 @@ body:has(.engine-shell) {
   animation: engine-button-spin 700ms linear infinite;
 }
 
+.engine-verification-panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--engine-line);
+  border-radius: var(--engine-radius-lg);
+  background: var(--engine-surface);
+}
+
+.engine-verification-panel .engine-detail-facts {
+  margin: 0;
+}
+
+.engine-verification-panel details {
+  border-top: 1px solid var(--engine-line);
+  padding-top: 0.75rem;
+}
+
+.engine-verification-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.engine-verification-panel li {
+  overflow-wrap: anywhere;
+}
+
+.engine-confirmation-panel {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--engine-warning) 45%, var(--engine-line));
+  border-radius: var(--engine-radius);
+  background: color-mix(in srgb, var(--engine-warning) 8%, var(--engine-surface));
+}
+
+.engine-confirmation-panel p {
+  margin: 0;
+}
+
 @keyframes engine-button-spin {
   to {
     transform: rotate(360deg);
@@ -1349,6 +1389,17 @@ body:has(.engine-shell) {
 
 .engine-button--subtle {
   background: #f8faf8;
+}
+
+.engine-button--danger {
+  border-color: #a33a2d;
+  background: #a33a2d;
+  color: #fff;
+}
+
+.engine-button--danger:hover {
+  border-color: #7f291f;
+  background: #7f291f;
 }
 
 .engine-error-banner {
@@ -4519,6 +4570,23 @@ body:has(.engine-shell) {
   margin: 0.35rem 0 0;
   color: var(--engine-muted);
   line-height: 1.5;
+}
+
+.engine-operator-safety-note .engine-field {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.engine-operator-safety-note .engine-field input {
+  width: min(100%, 34rem);
+  min-height: var(--engine-control-height);
+  border: 1px solid var(--engine-line-strong);
+  background: var(--engine-surface);
+  color: var(--engine-ink);
+  padding: 0.6rem 0.7rem;
 }
 
 .engine-operator-check-grid {

@@ -11,6 +11,7 @@ import {
   displayTradeCategory,
   prospectContactMethodIsUsable,
   prospectEmailNeedsManualVerification,
+  prospectWebsiteVerificationBlockReason,
   prospectWebsiteAbsenceNeedsManualReview,
   prospectWrittenContactMethodIsUsable,
   previewStyleProfile,
@@ -132,6 +133,8 @@ export const topProspectRejectionReasons = [
   "Third-party listing only",
   "No clear local service intent",
   "Phone-only / written outreach blocked",
+  "Website verification required",
+  "Confirmed usable website / not a fit",
   "Below final cutoff",
 ] as const;
 export type TopProspectRejectionReason = (typeof topProspectRejectionReasons)[number];
@@ -978,7 +981,7 @@ function hasMeaningfulImprovementGap(prospect: Pick<Prospect, "analysis">) {
 }
 
 export function topProspectRejectionReason(
-  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence" | "websiteStatus" | "websiteVerification" | "fitDisposition">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
   outreachPreference: OutreachPreference = "written_only",
@@ -990,6 +993,9 @@ export function topProspectRejectionReason(
   if (!hasClearLocalServiceIntent(prospect)) return "No clear local service intent";
   if (prospect.inactive) return "Inactive business";
   if (prospect.classification === "duplicate_bad_fit") return "Duplicate/bad fit";
+  const websiteVerificationBlock = prospectWebsiteVerificationBlockReason(prospect, { requireStructuredEvidence: true });
+  if (websiteVerificationBlock === "Confirmed usable website / not a fit.") return "Confirmed usable website / not a fit";
+  if (websiteVerificationBlock) return "Website verification required";
   if (thirdPartyListingOnly(prospect)) return "Third-party listing only";
   const usableContact = outreachPreference === "phone_allowed"
     ? prospectContactMethodIsUsable(prospect)
@@ -1023,7 +1029,7 @@ export function topProspectRejectionReason(
 
 export function topProspectResultDisposition(
   persistedSelected: boolean,
-  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence">,
+  prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence" | "websiteStatus" | "websiteVerification" | "fitDisposition">,
   assessment: OpportunityAssessment,
   mode: ProspectMode = "strict",
   outreachPreference: OutreachPreference = "written_only",

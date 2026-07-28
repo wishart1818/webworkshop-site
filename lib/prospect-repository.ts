@@ -1,10 +1,13 @@
-import { PrismaClient, ProspectStatus as PrismaProspectStatus, type Prisma } from "@prisma/client";
+import { Prisma, PrismaClient, ProspectStatus as PrismaProspectStatus } from "@prisma/client";
 import {
   displayStateCode,
   normalizeTradeCategory,
   OUTREACH_COPY_VERSION,
+  contactEvidenceKinds,
+  contactEvidenceMethods,
   inferOutreachCopyVersion,
   outreachDraftLooksCurrent,
+  prospectFitDispositions,
   seedProspects,
   titleCaseLocation,
   type Activity,
@@ -13,7 +16,9 @@ import {
   type PreviewConcept,
   type Prospect,
   type ProspectStatus,
+  type ContactRouteEvidence,
 } from "@/lib/prospect-engine";
+import { parseWebsiteVerificationReport } from "@/lib/prospect-validation";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 
 const globalStore = globalThis as typeof globalThis & {
@@ -89,6 +94,32 @@ function stringArray(value: Prisma.JsonValue): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function contactEvidenceArray(value: Prisma.JsonValue): ContactRouteEvidence[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const item = candidate as Record<string, unknown>;
+    if (
+      !contactEvidenceKinds.includes(item.kind as ContactRouteEvidence["kind"])
+      || !contactEvidenceMethods.includes(item.extractionMethod as ContactRouteEvidence["extractionMethod"])
+      || !["high", "medium", "low"].includes(String(item.confidence))
+      || typeof item.value !== "string"
+      || typeof item.sourceUrl !== "string"
+      || typeof item.domainMatchesBusiness !== "boolean"
+      || typeof item.discoveredAt !== "string"
+    ) return [];
+    return [{
+      kind: item.kind as ContactRouteEvidence["kind"],
+      value: item.value,
+      sourceUrl: item.sourceUrl,
+      extractionMethod: item.extractionMethod as ContactRouteEvidence["extractionMethod"],
+      confidence: item.confidence as ContactRouteEvidence["confidence"],
+      domainMatchesBusiness: item.domainMatchesBusiness,
+      discoveredAt: item.discoveredAt,
+    }];
+  });
+}
+
 function toDomain(row: StoredProspect): Prospect {
   const analysisRow = row.analyses[0];
   const outreachRow = row.outreach[0];
@@ -151,6 +182,7 @@ function toDomain(row: StoredProspect): Prospect {
     contactConfidence: row.contactConfidence as Prospect["contactConfidence"],
     bestManualContactMethod: row.bestManualContactMethod as Prospect["bestManualContactMethod"],
     contactDiscoveryNotes: stringArray(row.contactDiscoveryNotes),
+    contactEvidence: contactEvidenceArray(row.contactEvidence),
     address: row.address ?? "",
     city: titleCaseLocation(row.city),
     state: displayStateCode(row.state),
@@ -169,6 +201,10 @@ function toDomain(row: StoredProspect): Prospect {
     websiteStatus: row.websiteStatus as Prospect["websiteStatus"],
     websiteStatusDetail: row.websiteStatusDetail ?? "",
     websiteAnalysisAttemptedAt: row.websiteAnalysisAttemptedAt?.toISOString() ?? "",
+    websiteVerification: parseWebsiteVerificationReport(row.websiteVerification),
+    fitDisposition: prospectFitDispositions.includes(row.fitDisposition as Prospect["fitDisposition"])
+      ? row.fitDisposition as Prospect["fitDisposition"]
+      : "unreviewed",
     analysis,
     outreach,
     preview,
@@ -216,6 +252,7 @@ async function persistProspect(prospect: Prospect) {
         contactConfidence: prospect.contactConfidence,
         bestManualContactMethod: prospect.bestManualContactMethod,
         contactDiscoveryNotes: prospect.contactDiscoveryNotes,
+        contactEvidence: prospect.contactEvidence,
         address: prospect.address || null,
         city: titleCaseLocation(prospect.city),
         state: displayStateCode(prospect.state),
@@ -233,6 +270,8 @@ async function persistProspect(prospect: Prospect) {
         websiteStatus: prospect.websiteStatus,
         websiteStatusDetail: prospect.websiteStatusDetail || null,
         websiteAnalysisAttemptedAt: prospect.websiteAnalysisAttemptedAt ? new Date(prospect.websiteAnalysisAttemptedAt) : null,
+        websiteVerification: prospect.websiteVerification ?? undefined,
+        fitDisposition: prospect.fitDisposition,
         status: toPrismaStatus[prospect.status],
         createdAt: new Date(prospect.createdAt),
       },
@@ -258,6 +297,7 @@ async function persistProspect(prospect: Prospect) {
         contactConfidence: prospect.contactConfidence,
         bestManualContactMethod: prospect.bestManualContactMethod,
         contactDiscoveryNotes: prospect.contactDiscoveryNotes,
+        contactEvidence: prospect.contactEvidence,
         address: prospect.address || null,
         city: titleCaseLocation(prospect.city),
         state: displayStateCode(prospect.state),
@@ -275,6 +315,8 @@ async function persistProspect(prospect: Prospect) {
         websiteStatus: prospect.websiteStatus,
         websiteStatusDetail: prospect.websiteStatusDetail || null,
         websiteAnalysisAttemptedAt: prospect.websiteAnalysisAttemptedAt ? new Date(prospect.websiteAnalysisAttemptedAt) : null,
+        websiteVerification: prospect.websiteVerification ?? Prisma.JsonNull,
+        fitDisposition: prospect.fitDisposition,
         status: toPrismaStatus[prospect.status],
       },
     });

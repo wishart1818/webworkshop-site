@@ -88,14 +88,105 @@ export type ProspectType = (typeof prospectTypes)[number];
 export const websiteAvailabilityStatuses = [
   "unknown",
   "usable",
+  "confirmed_broken",
+  "confirmed_inactive",
+  "crawler_blocked",
+  "temporarily_unavailable",
+  "inconclusive",
   "no_owned_website",
   "invalid_website",
+  // Legacy persisted values remain readable until records are explicitly re-checked.
   "http_404",
   "unreachable_website",
   "broken_website",
   "inactive_website",
 ] as const;
 export type WebsiteAvailabilityStatus = (typeof websiteAvailabilityStatuses)[number];
+export const websiteVerificationConfidenceLevels = ["high", "medium", "low"] as const;
+export type WebsiteVerificationConfidence = (typeof websiteVerificationConfidenceLevels)[number];
+export const websiteVerificationFailureCategories = [
+  "none",
+  "http_client",
+  "http_transient",
+  "http_inactive",
+  "bot_block",
+  "robots_block",
+  "timeout",
+  "dns",
+  "connection",
+  "redirect",
+  "invalid_url",
+  "unsafe_url",
+  "unsupported_content",
+  "empty_or_error_page",
+  "unknown",
+] as const;
+export type WebsiteVerificationFailureCategory = (typeof websiteVerificationFailureCategories)[number];
+export type WebsiteVerificationAttempt = {
+  requestedUrl: string;
+  normalizedUrl: string;
+  finalUrl: string;
+  httpStatus: number | null;
+  redirectChain: string[];
+  contentType: string;
+  durationMs: number;
+  failureCategory: WebsiteVerificationFailureCategory;
+  robotsAllowed: boolean;
+  botBlocked: boolean;
+  browserCompatibleHeaders: boolean;
+  timestamp: string;
+};
+export type WebsiteVerificationReport = {
+  version: "website-verification-v1";
+  status: WebsiteAvailabilityStatus;
+  confidence: WebsiteVerificationConfidence;
+  canonicalUrl: string;
+  attempts: WebsiteVerificationAttempt[];
+  usableSignals: string[];
+  explanation: string;
+  checkedAt: string;
+};
+export const contactEvidenceKinds = [
+  "email",
+  "phone",
+  "contact_page",
+  "contact_form",
+  "quote_form",
+  "facebook",
+  "instagram",
+  "linkedin",
+  "x",
+  "youtube",
+] as const;
+export type ContactEvidenceKind = (typeof contactEvidenceKinds)[number];
+export const contactEvidenceMethods = [
+  "visible_text",
+  "mailto",
+  "tel",
+  "json_ld",
+  "metadata",
+  "same_origin_link",
+  "form_markup",
+  "existing_provider",
+] as const;
+export type ContactEvidenceMethod = (typeof contactEvidenceMethods)[number];
+export type ContactRouteEvidence = {
+  kind: ContactEvidenceKind;
+  value: string;
+  sourceUrl: string;
+  extractionMethod: ContactEvidenceMethod;
+  confidence: ContactConfidence;
+  domainMatchesBusiness: boolean;
+  discoveredAt: string;
+};
+export const prospectFitDispositions = [
+  "unreviewed",
+  "genuine_redesign_opportunity",
+  "weak_redesign_opportunity",
+  "confirmed_usable_not_fit",
+  "manual_review_required",
+] as const;
+export type ProspectFitDisposition = (typeof prospectFitDispositions)[number];
 export const prospectSearchTypes = [...prospectTypes, "all"] as const;
 export type ProspectSearchType = (typeof prospectSearchTypes)[number];
 export const prospectClassifications = [
@@ -572,6 +663,7 @@ export type Prospect = {
   contactConfidence: ContactConfidence;
   bestManualContactMethod: ManualContactMethod;
   contactDiscoveryNotes: string[];
+  contactEvidence: ContactRouteEvidence[];
   address: string;
   city: string;
   state: string;
@@ -590,6 +682,8 @@ export type Prospect = {
   websiteStatus: WebsiteAvailabilityStatus;
   websiteStatusDetail: string;
   websiteAnalysisAttemptedAt: string;
+  websiteVerification?: WebsiteVerificationReport;
+  fitDisposition: ProspectFitDisposition;
   analysis?: Analysis;
   outreach?: OutreachDraft;
   preview?: PreviewConcept;
@@ -2048,12 +2142,17 @@ export function classifyProspectPresence(input: Pick<Prospect, "website" | "prof
 export const websiteAvailabilityLabels: Record<WebsiteAvailabilityStatus, string> = {
   unknown: "Website not analyzed yet",
   usable: "Usable website",
+  confirmed_broken: "Website confirmed broken",
+  confirmed_inactive: "Website confirmed inactive",
+  crawler_blocked: "Website blocked the crawler",
+  temporarily_unavailable: "Website temporarily unavailable",
+  inconclusive: "Website verification inconclusive",
   no_owned_website: "No owned website detected",
-  invalid_website: "No usable website found",
-  http_404: "Website returned 404",
-  unreachable_website: "Website appears broken",
-  broken_website: "Website appears broken",
-  inactive_website: "Website appears inactive",
+  invalid_website: "Website URL is invalid",
+  http_404: "Legacy 404 result needs re-check",
+  unreachable_website: "Legacy unreachable result needs re-check",
+  broken_website: "Legacy broken result needs re-check",
+  inactive_website: "Legacy inactive result needs re-check",
 };
 
 export const OUTREACH_COPY_VERSION = WEBWORKSHOP_OUTREACH_COPY_VERSION;
@@ -2087,14 +2186,70 @@ export function inferOutreachCopyVersion(outreach: Pick<OutreachDraft, "concise"
 
 export function prospectHasUnusableWebsite
 (prospect: Pick<Prospect, "prospectType" | "websiteStatus">) {
-  return prospect.prospectType === "no_website_social_only"
-    || !["unknown", "usable"].includes(prospect.websiteStatus);
+  return ["confirmed_broken", "confirmed_inactive", "no_owned_website"].includes(prospect.websiteStatus);
+}
+
+export function prospectWebsiteVerificationBlockReason(
+  prospect: Pick<Prospect, "website" | "websiteStatus" | "websiteVerification" | "fitDisposition">,
+  options: { requireStructuredEvidence?: boolean } = {},
+) {
+  if (["crawler_blocked", "temporarily_unavailable", "inconclusive"].includes(prospect.websiteStatus)) {
+    return websiteAvailabilityLabels[prospect.websiteStatus];
+  }
+  if (["http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) {
+    return "Legacy single-result website classification requires re-check.";
+  }
+  if (prospect.websiteStatus === "invalid_website") return "Website URL requires manual correction.";
+  if (prospect.websiteStatus === "unknown") return "Website verification has not run.";
+  if (
+    options.requireStructuredEvidence
+    && prospect.websiteStatus === "usable"
+    && prospect.websiteVerification?.status !== "usable"
+  ) {
+    return "Usable website status lacks current structured verification evidence.";
+  }
+  if (
+    options.requireStructuredEvidence
+    && prospect.websiteStatus === "usable"
+    && prospect.websiteVerification?.status === "usable"
+    && !prospect.websiteVerification.usableSignals.includes("business name")
+  ) {
+    return "Website verification did not confirm that the site belongs to this business.";
+  }
+  if (
+    options.requireStructuredEvidence
+    && !prospect.website
+    && prospect.websiteStatus === "no_owned_website"
+    && prospect.websiteVerification?.status !== "no_owned_website"
+  ) {
+    return "No-owned-website status lacks current structured verification evidence.";
+  }
+  if (prospect.fitDisposition === "confirmed_usable_not_fit") return "Confirmed usable website / not a fit.";
+  return "";
+}
+
+export function prospectVerifiedEmailEvidence(
+  prospect: Pick<Prospect, "email" | "contactEvidence">,
+) {
+  const email = prospect.email.trim().toLowerCase();
+  if (!email) return null;
+  return prospect.contactEvidence.find((item) => (
+    item.kind === "email"
+    && item.value.trim().toLowerCase() === email
+    && Boolean(item.sourceUrl)
+    && ["high", "medium"].includes(item.confidence)
+  )) ?? null;
 }
 
 export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" | "classification" | "email" | "contactFormUrl" | "recommendedContactMethod"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "bestManualContactMethod">>) {
   const labels: string[] = [];
   if (prospect.websiteStatus === "no_owned_website" || prospect.classification === "no_website") labels.push("No website found");
-  if (["invalid_website", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) labels.push("Broken website");
+  if (prospect.websiteStatus === "confirmed_broken") labels.push("Website confirmed broken");
+  if (prospect.websiteStatus === "confirmed_inactive") labels.push("Website confirmed inactive");
+  if (prospect.websiteStatus === "crawler_blocked") labels.push("Crawler blocked / manual verification required");
+  if (prospect.websiteStatus === "temporarily_unavailable") labels.push("Temporary website failure / not outreach eligible");
+  if (prospect.websiteStatus === "inconclusive") labels.push("Website verification inconclusive");
+  if (["invalid_website", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) labels.push("Legacy website result needs re-check");
   if (prospect.classification === "listing_only" || prospect.classification === "social_only") labels.push("Listing only");
   if (prospect.classification === "phone_only") labels.push("Phone only");
   if (prospect.classification === "phone_only" || prospect.recommendedContactMethod === "call_first") labels.push("Phone-only / written outreach blocked");
@@ -2216,8 +2371,9 @@ function noOwnedWebsiteProspect(prospect: Prospect) {
 }
 
 export function prospectWebsiteAbsenceNeedsManualReview(prospect: Prospect) {
+  if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) return true;
   if (!noOwnedWebsiteProspect(prospect)) return false;
-  if (prospect.websiteStatus === "no_owned_website") return false;
+  if (prospect.websiteStatus === "no_owned_website" && prospect.websiteVerification?.status === "no_owned_website") return false;
   const verifiedAbsence = prospect.previewResearchFacts?.some((fact) => (
     fact.factType === "website"
     && fact.verificationStatus === "verified"
@@ -2553,7 +2709,7 @@ export function withAnalysis(prospect: Prospect): Prospect {
 
 export function withPresenceGapReview(
   prospect: Prospect,
-  websiteStatus: Exclude<WebsiteAvailabilityStatus, "unknown" | "usable"> = prospect.website ? "broken_website" : "no_owned_website",
+  websiteStatus: Extract<WebsiteAvailabilityStatus, "confirmed_broken" | "confirmed_inactive" | "no_owned_website"> = prospect.website ? "confirmed_broken" : "no_owned_website",
   websiteStatusDetail = websiteAvailabilityLabels[websiteStatus],
 ): Prospect {
   const switchingToPresenceGap = prospect.prospectType !== "no_website_social_only";
@@ -2680,8 +2836,8 @@ export function previewRegenerationBlockReason(prospect: Prospect) {
 
 type CreateProspectInput = Omit<
   Prospect,
-  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactPageUrl" | "contactFormUrl" | "quoteFormUrl" | "contactFormDetected" | "quoteFormDetected" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "xUrl" | "youtubeUrl" | "contactPersonName" | "contactConfidence" | "bestManualContactMethod" | "contactDiscoveryNotes" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt"
-> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactPageUrl" | "contactFormUrl" | "quoteFormUrl" | "contactFormDetected" | "quoteFormDetected" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "xUrl" | "youtubeUrl" | "contactPersonName" | "contactConfidence" | "bestManualContactMethod" | "contactDiscoveryNotes" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt">>;
+  "id" | "createdAt" | "priorityScore" | "notes" | "activities" | "profileUrl" | "prospectType" | "classification" | "contactPageUrl" | "contactFormUrl" | "quoteFormUrl" | "contactFormDetected" | "quoteFormDetected" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "xUrl" | "youtubeUrl" | "contactPersonName" | "contactConfidence" | "bestManualContactMethod" | "contactDiscoveryNotes" | "contactEvidence" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt" | "websiteVerification" | "fitDisposition"
+> & Partial<Pick<Prospect, "profileUrl" | "prospectType" | "classification" | "contactPageUrl" | "contactFormUrl" | "quoteFormUrl" | "contactFormDetected" | "quoteFormDetected" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "xUrl" | "youtubeUrl" | "contactPersonName" | "contactConfidence" | "bestManualContactMethod" | "contactDiscoveryNotes" | "contactEvidence" | "address" | "rating" | "reviewCount" | "recentReviewCount" | "sourceConfidence" | "activitySignals" | "recommendedContactMethod" | "inactive" | "websiteStatus" | "websiteStatusDetail" | "websiteAnalysisAttemptedAt" | "websiteVerification" | "fitDisposition">>;
 
 export function createProspect(input: CreateProspectInput): Prospect {
   const createdAt = now();
@@ -2715,6 +2871,7 @@ export function createProspect(input: CreateProspectInput): Prospect {
     contactConfidence: input.contactConfidence ?? prospectContactConfidence(input),
     bestManualContactMethod: input.bestManualContactMethod ?? prospectBestManualContactMethod(input),
     contactDiscoveryNotes: input.contactDiscoveryNotes ?? [],
+    contactEvidence: input.contactEvidence ?? [],
     address: input.address ?? "",
     rating: input.rating ?? 0,
     reviewCount: input.reviewCount ?? 0,
@@ -2726,6 +2883,8 @@ export function createProspect(input: CreateProspectInput): Prospect {
     websiteStatus: input.websiteStatus ?? (input.website ? "unknown" : "no_owned_website"),
     websiteStatusDetail: input.websiteStatusDetail ?? "",
     websiteAnalysisAttemptedAt: input.websiteAnalysisAttemptedAt ?? "",
+    websiteVerification: input.websiteVerification,
+    fitDisposition: input.fitDisposition ?? "unreviewed",
     id: crypto.randomUUID(),
     createdAt,
     priorityScore: calculatePriority(undefined, input.sizeIndicator, input.serviceArea),
@@ -2771,6 +2930,7 @@ export const seedProspects: Prospect[] = [
   contactConfidence: email ? "high" : "low",
   bestManualContactMethod: email ? "email" : "phone_only",
   contactDiscoveryNotes: [],
+  contactEvidence: [],
   address: "",
   city,
   state,
@@ -2789,6 +2949,8 @@ export const seedProspects: Prospect[] = [
   websiteStatus: "unknown",
   websiteStatusDetail: "",
   websiteAnalysisAttemptedAt: "",
+  websiteVerification: undefined,
+  fitDisposition: "unreviewed",
   notes: [],
   activities: [
     {

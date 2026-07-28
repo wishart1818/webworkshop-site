@@ -60,6 +60,11 @@ export function OperatorTestCenterWorkspace() {
   const [providerSmokeSummary, setProviderSmokeSummary] = useState("");
   const [activeView, setActiveView] = useState<TestCenterView>("readiness");
   const [repairConfirmationOpen, setRepairConfirmationOpen] = useState(false);
+  const [pilotConfirmationOpen, setPilotConfirmationOpen] = useState(false);
+  const [pilotConfirmation, setPilotConfirmation] = useState("");
+  const [emergencyStopConfirmationOpen, setEmergencyStopConfirmationOpen] = useState(false);
+  const [websiteRepairConfirmationOpen, setWebsiteRepairConfirmationOpen] = useState(false);
+  const [websiteRepairConfirmation, setWebsiteRepairConfirmation] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,7 +109,14 @@ export function OperatorTestCenterWorkspace() {
       if (!response.ok) throw new Error(apiError(body, "Operator action failed safely."));
       setLastAction(body);
       setNotice(body.message);
-      setActiveView(action === "run_full_autonomous_readiness_test" || action === "run_safe_readiness_repair" ? "readiness" : "results");
+      setActiveView(
+        action === "run_full_autonomous_readiness_test"
+        || action === "run_safe_readiness_repair"
+        || action === "run_controlled_outreach_launch_readiness"
+        || action === "validate_controlled_pilot_send"
+          ? "readiness"
+          : "results",
+      );
       await load();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Operator action failed safely.");
@@ -132,6 +144,98 @@ export function OperatorTestCenterWorkspace() {
       await load();
     } catch (repairError) {
       setError(repairError instanceof Error ? repairError.message : "Safe readiness repair failed without sending outreach.");
+    } finally {
+      setActionState("idle");
+    }
+  }
+
+  async function confirmControlledPilotActivation() {
+    setActionState("running");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/operator-test-center", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "enable_controlled_email_pilot",
+          confirmation: pilotConfirmation,
+        }),
+      });
+      const body = (await response.json()) as OperatorActionResult & { error?: string };
+      setLastAction(body);
+      setActiveView("readiness");
+      if (!response.ok || !body.controlledActivation?.activated) {
+        throw new Error(apiError(body, "Controlled Email Pilot was not activated."));
+      }
+      setNotice(body.message);
+      setPilotConfirmation("");
+      setPilotConfirmationOpen(false);
+      await load();
+    } catch (activationError) {
+      setError(activationError instanceof Error ? activationError.message : "Controlled Email Pilot was not activated.");
+    } finally {
+      setActionState("idle");
+    }
+  }
+
+  async function confirmEmergencyStop() {
+    setActionState("running");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/operator-test-center", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "disable_all_prospect_email_sending" }),
+      });
+      const body = (await response.json()) as OperatorActionResult & { error?: string };
+      if (!response.ok || !body.emergencyStop?.disabled) {
+        throw new Error(apiError(body, "Prospect email emergency stop failed safely."));
+      }
+      setLastAction(body);
+      setNotice(body.message);
+      setEmergencyStopConfirmationOpen(false);
+      setActiveView("readiness");
+      await load();
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : "Prospect email emergency stop failed safely.");
+    } finally {
+      setActionState("idle");
+    }
+  }
+
+  async function runWebsiteRecordAudit(apply: boolean) {
+    setActionState("running");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/website-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: apply ? "apply_existing_record_repair" : "audit_existing_records",
+          ...(apply ? { confirmation: websiteRepairConfirmation } : {}),
+        }),
+      });
+      const body = (await response.json()) as NonNullable<OperatorActionResult["websiteRepair"]> & { error?: string };
+      if (!response.ok || !body.mode) throw new Error(apiError(body, "Website-record audit failed safely."));
+      setLastAction({
+        ok: true,
+        message: apply
+          ? `Verified website repair updated ${body.changed} record(s). Nothing was sent.`
+          : `Website verification dry run inspected ${body.inspected} record(s). Nothing was changed or sent.`,
+        websiteRepair: body,
+      });
+      setNotice(apply
+        ? `Verified website repair updated ${body.changed} record(s). Nothing was sent.`
+        : `Website verification dry run inspected ${body.inspected} record(s). Nothing was changed or sent.`);
+      setWebsiteRepairConfirmationOpen(false);
+      setWebsiteRepairConfirmation("");
+      setActiveView("results");
+      await load();
+    } catch (auditError) {
+      setError(auditError instanceof Error ? auditError.message : "Website-record audit failed safely.");
     } finally {
       setActionState("idle");
     }
@@ -289,6 +393,26 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button engine-button--primary engine-operator-master-button" disabled={busy} onClick={() => void runOperatorAction("run_full_autonomous_readiness_test")} type="button">Run Full Autonomous Readiness Test</button>
           <button className="engine-button" disabled={busy} onClick={() => setRepairConfirmationOpen(true)} type="button">Repair Readiness Issues Safely</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("check_email_safety_gates")} type="button">Check Email Safety Gates</button>
+          <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runOperatorAction("run_controlled_outreach_launch_readiness")} type="button">Controlled Outreach Launch Readiness</button>
+          <button
+            className="engine-button"
+            disabled={busy || lastAction?.controlledReadiness?.activationEnabled !== true}
+            onClick={() => setPilotConfirmationOpen(true)}
+            type="button"
+          >
+            Enable Controlled Email Pilot
+          </button>
+          <button className="engine-button engine-button--danger" disabled={busy} onClick={() => setEmergencyStopConfirmationOpen(true)} type="button">Disable All Prospect Email Sending</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("validate_controlled_pilot_send")} type="button">Validate First Pilot Send</button>
+          <button className="engine-button" disabled={busy} onClick={() => void runWebsiteRecordAudit(false)} type="button">Audit Legacy Website Records</button>
+          <button
+            className="engine-button"
+            disabled={busy || lastAction?.websiteRepair?.mode !== "dry_run"}
+            onClick={() => setWebsiteRepairConfirmationOpen(true)}
+            type="button"
+          >
+            Apply Verified Website Repairs
+          </button>
           <button className="engine-button" disabled={busy} onClick={() => void runProviderSmokeTest()} type="button">Run Provider Smoke Test</button>
           <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runSmallTopProspectsTest()} type="button">Run Small Top Prospects Test</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("generate_test_package")} type="button">Generate One Fake Test Outreach Package</button>
@@ -316,6 +440,76 @@ export function OperatorTestCenterWorkspace() {
                 {busy ? "Repairing safely..." : "Confirm Safe Repair"}
               </button>
               <button className="engine-button" disabled={busy} onClick={() => setRepairConfirmationOpen(false)} type="button">Cancel</button>
+            </div>
+          </section>
+        ) : null}
+        {pilotConfirmationOpen && lastAction?.controlledReadiness ? (
+          <section aria-labelledby="controlled-pilot-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
+            <b id="controlled-pilot-confirmation-title">Confirm Controlled Email Pilot</b>
+            <p>This changes only the existing database mode and safety caps. It does not approve or send an email.</p>
+            <ul>
+              <li>Daily cap: 1.</li>
+              <li>Manual approval required: Yes.</li>
+              <li>Full autonomous sending: Disabled.</li>
+              <li>First-touch permission email only, with no preview link.</li>
+              <li>No automatic preview, form, DM, call, SMS, Loom, or follow-up.</li>
+              <li>Emergency stop remains available.</li>
+            </ul>
+            <label className="engine-field">
+              <span>Type {lastAction.controlledReadiness.activationConfirmation}</span>
+              <input
+                autoComplete="off"
+                onChange={(event) => setPilotConfirmation(event.target.value)}
+                value={pilotConfirmation}
+              />
+            </label>
+            <div className="engine-inline-actions">
+              <button
+                className="engine-button engine-button--primary"
+                disabled={busy || pilotConfirmation !== lastAction.controlledReadiness.activationConfirmation}
+                onClick={() => void confirmControlledPilotActivation()}
+                type="button"
+              >
+                {busy ? "Enabling controlled pilot..." : "Enable Controlled Email Pilot"}
+              </button>
+              <button className="engine-button" disabled={busy} onClick={() => setPilotConfirmationOpen(false)} type="button">Cancel</button>
+            </div>
+          </section>
+        ) : null}
+        {emergencyStopConfirmationOpen ? (
+          <section aria-labelledby="prospect-email-stop-title" className="engine-operator-safety-note" role="alertdialog">
+            <b id="prospect-email-stop-title">Disable all prospect email sending?</b>
+            <p>This immediately turns the database kill switch on and mode off. Records and audit history are preserved.</p>
+            <div className="engine-inline-actions">
+              <button className="engine-button engine-button--danger" disabled={busy} onClick={() => void confirmEmergencyStop()} type="button">
+                {busy ? "Disabling prospect email..." : "Disable All Prospect Email Sending"}
+              </button>
+              <button className="engine-button" disabled={busy} onClick={() => setEmergencyStopConfirmationOpen(false)} type="button">Cancel</button>
+            </div>
+          </section>
+        ) : null}
+        {websiteRepairConfirmationOpen ? (
+          <section aria-labelledby="website-repair-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
+            <b id="website-repair-confirmation-title">Apply only the verified website-record repairs?</b>
+            <p>The confirmed repair preserves activities and notes, revokes stale approval, returns changed records to human review, and sends nothing.</p>
+            <label className="engine-field">
+              <span>Type REPAIR VERIFIED WEBSITE RECORDS</span>
+              <input
+                autoComplete="off"
+                onChange={(event) => setWebsiteRepairConfirmation(event.target.value)}
+                value={websiteRepairConfirmation}
+              />
+            </label>
+            <div className="engine-inline-actions">
+              <button
+                className="engine-button engine-button--primary"
+                disabled={busy || websiteRepairConfirmation !== "REPAIR VERIFIED WEBSITE RECORDS"}
+                onClick={() => void runWebsiteRecordAudit(true)}
+                type="button"
+              >
+                {busy ? "Applying verified repairs..." : "Apply Verified Repairs"}
+              </button>
+              <button className="engine-button" disabled={busy} onClick={() => setWebsiteRepairConfirmationOpen(false)} type="button">Cancel</button>
             </div>
           </section>
         ) : null}
@@ -453,6 +647,184 @@ export function OperatorTestCenterWorkspace() {
               {lastAction.readiness.notDone.map((item) => <li key={item}>{item}</li>)}
             </ul>
           </details>
+        </section>
+      ) : null}
+
+      {activeView === "readiness" && lastAction?.controlledReadiness ? (
+        <section className="engine-panel engine-autonomous-readiness" aria-label="Controlled Outreach Launch Readiness result">
+          <div className="engine-autonomous-readiness__summary">
+            <div>
+              <span>Controlled Outreach Launch Readiness</span>
+              <h2>{lastAction.controlledReadiness.status}</h2>
+              <p>Activation sends nothing. A real prospect still must be manually selected, reviewed, approved, and sent through the existing one-at-a-time provider path.</p>
+            </div>
+            <div className="engine-autonomous-readiness__badges">
+              <b>Daily cap: 1</b>
+              <b>Manual approval: Required</b>
+              <b>Full auto: Disabled</b>
+              <b>Outreach sent by check: 0</b>
+            </div>
+          </div>
+          <dl className="engine-operator-check-grid">
+            <div><dt>Required checks</dt><dd>{lastAction.controlledReadiness.checks.filter((check) => check.required).length}</dd></div>
+            <div><dt>Failed</dt><dd>{lastAction.controlledReadiness.failedChecks.length}</dd></div>
+            <div><dt>Production URL</dt><dd>{lastAction.controlledReadiness.productionUrl || "Not identified"}</dd></div>
+            <div><dt>Deployment commit</dt><dd>{lastAction.controlledReadiness.deploymentCommit.slice(0, 12) || "Not identified"}</dd></div>
+          </dl>
+          {lastAction.controlledReadiness.emailPreview ? (
+            <section className="engine-readiness-failed-records" aria-label="Exact controlled pilot email">
+              <header>
+                <div>
+                  <span>Manual first-prospect candidate</span>
+                  <h3>{lastAction.controlledReadiness.emailPreview.prospect}</h3>
+                </div>
+                <b>{lastAction.controlledReadiness.emailPreview.approvalState}</b>
+              </header>
+              <dl className="engine-operator-check-grid">
+                <div><dt>Recipient</dt><dd>{lastAction.controlledReadiness.emailPreview.recipient}</dd></div>
+                <div><dt>Email source</dt><dd>{lastAction.controlledReadiness.emailPreview.sourceUrl}</dd></div>
+                <div><dt>Extraction</dt><dd>{statusLabel(lastAction.controlledReadiness.emailPreview.extractionMethod)}</dd></div>
+                <div><dt>Copy version</dt><dd>{lastAction.controlledReadiness.emailPreview.copyVersion}</dd></div>
+                <div><dt>Generated</dt><dd>{lastAction.controlledReadiness.emailPreview.generatedAt}</dd></div>
+                <div><dt>Daily cap</dt><dd>1</dd></div>
+              </dl>
+              <article>
+                <span>Exact unsent first-touch email</span>
+                <h4>{lastAction.controlledReadiness.emailPreview.subject}</h4>
+                <pre>{lastAction.controlledReadiness.emailPreview.body}</pre>
+                <p><b>Why eligible:</b> {lastAction.controlledReadiness.emailPreview.eligibilityReason}</p>
+              </article>
+            </section>
+          ) : null}
+          <div className="engine-operator-summary-grid">
+            <article>
+              <header><h3>Activation changes</h3></header>
+              <ul>{lastAction.controlledReadiness.settingsThatWillChange.map((item) => <li key={item}>{item}</li>)}</ul>
+            </article>
+            <article>
+              <header><h3>Remains disabled</h3></header>
+              <ul>{lastAction.controlledReadiness.settingsThatRemainDisabled.map((item) => <li key={item}>{item}</li>)}</ul>
+            </article>
+            <article>
+              <header><h3>Emergency rollback</h3></header>
+              <p>{lastAction.controlledReadiness.rollbackInstructions}</p>
+            </article>
+          </div>
+          <details className="engine-autonomous-readiness__details" open={lastAction.controlledReadiness.failedChecks.length > 0}>
+            <summary>View controlled-launch evidence</summary>
+            <div className="engine-autonomous-readiness__check-list">
+              {lastAction.controlledReadiness.checks.map((check) => (
+                <article
+                  className={`engine-autonomous-readiness__check engine-autonomous-readiness__check--${check.passed ? "passed" : check.required ? "failed" : "info"}`}
+                  key={check.key}
+                >
+                  <span>{check.category}</span>
+                  <h3>{check.label}</h3>
+                  <p>{check.detail}</p>
+                </article>
+              ))}
+            </div>
+          </details>
+          {lastAction.controlledActivation ? (
+            <div className={lastAction.controlledActivation.activated ? "engine-success-banner" : "engine-error-banner"} role="status">
+              <div>
+                <b>{lastAction.controlledActivation.activated ? "Controlled pilot enabled" : "Activation blocked"}</b>
+                <p>{lastAction.controlledActivation.message}</p>
+                <p>Outreach sent by activation: 0.</p>
+              </div>
+            </div>
+          ) : null}
+          {lastAction.emergencyStop ? (
+            <div className="engine-success-banner" role="status">
+              <div>
+                <b>Prospect email sending disabled</b>
+                <p>{lastAction.emergencyStop.message}</p>
+                <p>In-progress requests reported: {lastAction.emergencyStop.sendsInProgress}. Records and audit history were preserved.</p>
+              </div>
+            </div>
+          ) : null}
+          {lastAction.postSendValidation ? (
+            <section className="engine-readiness-failed-records" aria-label="Controlled pilot post-send validation">
+              <header>
+                <div>
+                  <span>Post-send validation</span>
+                  <h3>{lastAction.postSendValidation.status}</h3>
+                </div>
+                <b>{lastAction.postSendValidation.sentToday} sent today</b>
+              </header>
+              <p>{lastAction.postSendValidation.issues.join(" ") || "Exactly one approved message, one provider ID, and one provider-success audit were recorded. The daily cap is exhausted."}</p>
+            </section>
+          ) : null}
+        </section>
+      ) : null}
+
+      {activeView === "readiness" && lastAction?.emergencyStop && !lastAction.controlledReadiness ? (
+        <section className="engine-panel engine-autonomous-readiness" aria-label="Prospect email emergency stop result">
+          <div className="engine-success-banner" role="status">
+            <div>
+              <b>All new prospect email sending is disabled</b>
+              <p>{lastAction.emergencyStop.message}</p>
+              <p>In-progress requests reported: {lastAction.emergencyStop.sendsInProgress}. Records and audit history were preserved. Nothing was sent by this action.</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === "readiness" && lastAction?.postSendValidation && !lastAction.controlledReadiness ? (
+        <section className="engine-panel engine-autonomous-readiness" aria-label="Controlled pilot post-send validation">
+          <div className="engine-autonomous-readiness__summary">
+            <div>
+              <span>Post-send validation</span>
+              <h2>{lastAction.postSendValidation.status}</h2>
+              <p>{lastAction.postSendValidation.issues.join(" ") || "Exactly one approved message, provider ID, and provider-success audit were recorded."}</p>
+            </div>
+            <div className="engine-autonomous-readiness__badges">
+              <b>Sent today: {lastAction.postSendValidation.sentToday}</b>
+              <b>Daily cap exhausted: {lastAction.postSendValidation.dailyCapExhausted ? "Yes" : "No"}</b>
+              <b>Full auto disabled: {lastAction.postSendValidation.fullAutonomousSendingDisabled ? "Yes" : "No"}</b>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === "results" && lastAction?.websiteRepair ? (
+        <section className="engine-panel engine-operator-package-check" aria-label="Existing website record audit">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Existing Website Record {lastAction.websiteRepair.mode === "dry_run" ? "Dry Run" : "Repair"}</h2>
+              <p>Only bounded verification evidence is used. Protected records retain their contact, suppression, and activity history.</p>
+            </div>
+            <span>Nothing sent</span>
+          </div>
+          <dl className="engine-operator-check-grid">
+            <div><dt>Inspected</dt><dd>{lastAction.websiteRepair.inspected}</dd></div>
+            <div><dt>Changed</dt><dd>{lastAction.websiteRepair.changed}</dd></div>
+            <div><dt>Protected</dt><dd>{lastAction.websiteRepair.skippedProtected}</dd></div>
+            <div><dt>Mode</dt><dd>{statusLabel(lastAction.websiteRepair.mode)}</dd></div>
+          </dl>
+          <div className="engine-operator-summary-grid">
+            {lastAction.websiteRepair.records.map((record) => (
+              <article key={record.prospectId}>
+                <header><h3>{record.businessName}</h3></header>
+                <p>{record.oldStatus} {"->"} {record.proposedStatus}</p>
+                <p>{record.evidence}</p>
+                {record.fieldChanges.length ? (
+                  <details>
+                    <summary>Old and proposed values</summary>
+                    <ul>
+                      {record.fieldChanges.map((change) => (
+                        <li key={change.field}><b>{change.field}:</b> {change.oldValue} {"->"} {change.proposedValue}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+                {record.changedFields.length ? <p><b>Proposed fields:</b> {record.changedFields.join(", ")}</p> : null}
+                {record.newlyFoundContactPaths.length ? <p><b>New contact paths:</b> {record.newlyFoundContactPaths.join(", ")}</p> : null}
+                {record.protectedReason ? <p><b>Left unchanged:</b> {record.protectedReason}</p> : null}
+              </article>
+            ))}
+          </div>
+          <p><b>Safety:</b> No outreach was sent. Applied repairs revoke stale approval and return changed records to human review.</p>
         </section>
       ) : null}
 

@@ -26,6 +26,7 @@ import {
 } from "../lib/prospect-repository";
 import { requestProspectList } from "../lib/prospect-list-client";
 import { handleProspectList } from "../lib/prospect-list-route";
+import { parseWebsiteVerificationReport } from "../lib/prospect-validation";
 import { TopProspectSchemaLockUnavailableError } from "../lib/top-prospect-schema";
 import { resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
 import { defaultAutonomousGrowthSettings } from "../lib/autonomous-growth";
@@ -110,6 +111,54 @@ test("one malformed stored prospect does not prevent valid prospects from loadin
     assert.equal(result.diagnostics.malformedRecordsOmitted, 1);
     assert.match(JSON.stringify(logged), /malformed/);
     assert.doesNotMatch(JSON.stringify(logged), /private malformed payload/);
+  } finally {
+    console.error = previousError;
+  }
+});
+
+test("malformed persisted website-verification evidence is omitted without breaking the prospect list", () => {
+  const previousError = console.error;
+  try {
+    console.error = () => undefined;
+    const result = decodeProspectRows(
+      [
+        { id: "valid", websiteVerification: undefined },
+        {
+          id: "malformed-verification",
+          websiteVerification: {
+            version: "website-verification-v1",
+            status: "usable",
+            confidence: "high",
+            canonicalUrl: "https://example.com/",
+            attempts: [{
+              requestedUrl: "https://example.com/",
+              normalizedUrl: "https://example.com/",
+              finalUrl: "https://example.com/",
+              httpStatus: 200,
+              redirectChain: [],
+              contentType: "text/html",
+              durationMs: -1,
+              failureCategory: "none",
+              robotsAllowed: true,
+              botBlocked: false,
+              browserCompatibleHeaders: false,
+              timestamp: "2026-07-28T12:00:00.000Z",
+            }],
+            usableSignals: ["business name"],
+            explanation: "Usable business website.",
+            checkedAt: "2026-07-28T12:00:00.000Z",
+          },
+        },
+      ],
+      (row) => ({
+        ...structuredClone(seedProspects[0]),
+        id: row.id,
+        websiteVerification: parseWebsiteVerificationReport(row.websiteVerification),
+      }),
+    );
+
+    assert.deepEqual(result.prospects.map((prospect) => prospect.id), ["valid"]);
+    assert.equal(result.diagnostics.malformedRecordsOmitted, 1);
   } finally {
     console.error = previousError;
   }
@@ -491,6 +540,16 @@ test("manual no-website analysis returns a persisted Presence Gap state", async 
     classification: "phone_only" as const,
     websiteStatus: "no_owned_website" as const,
     websiteStatusDetail: "",
+    websiteVerification: {
+      version: "website-verification-v1" as const,
+      status: "no_owned_website" as const,
+      confidence: "high" as const,
+      canonicalUrl: "",
+      attempts: [],
+      usableSignals: [],
+      explanation: "Verified public research found no owned business website.",
+      checkedAt: "2026-07-28T12:00:00.000Z",
+    },
     analysis: undefined,
   };
   const response = await analyze(new Request("https://example.com/api/engine/analyze", {
@@ -505,7 +564,7 @@ test("manual no-website analysis returns a persisted Presence Gap state", async 
   assert.match(payload.prospect.activities[0].label, /Presence Gap analysis is ready/);
 });
 
-test("manual analysis safely converts an invalid legacy website into Presence Gap", async () => {
+test("manual analysis rejects an invalid legacy website without converting it into a presence gap", async () => {
   const prospect = {
     ...structuredClone(seedProspects[0]),
     id: "manual-invalid-website",
@@ -517,10 +576,8 @@ test("manual analysis safely converts an invalid legacy website into Presence Ga
   }));
   const payload = await response.json();
 
-  assert.equal(response.status, 200);
-  assert.equal(payload.prospect.website, "");
-  assert.equal(payload.prospect.websiteStatus, "invalid_website");
-  assert.equal(payload.prospect.websiteStatusDetail, "No usable website found.");
+  assert.equal(response.status, 400);
+  assert.match(payload.error, /HTTP or HTTPS/i);
 });
 
 test("Outreach Package endpoint rejects unsupported actions before persistence access", async () => {

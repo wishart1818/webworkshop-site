@@ -37,6 +37,13 @@ import {
   recordOperatorSafeTestResult,
   type OperatorSafeTestRecord,
 } from "@/lib/operator-test-history";
+import type {
+  ControlledOutreachLaunchReadiness,
+  ControlledPilotActivationResult,
+  ControlledPilotPostSendReport,
+  ProspectEmailEmergencyStopResult,
+} from "@/lib/controlled-outreach-launch";
+import type { ExistingWebsiteRepairReport } from "@/lib/website-verification-operations";
 
 export type OperatorStatusCard = {
   label: string;
@@ -102,6 +109,11 @@ export type OperatorActionResult = {
   repair?: SafeReadinessRepairReceipt;
   emailSafety?: EmailSafetyGatesResult;
   simulation?: Next24HourSimulationResult;
+  controlledReadiness?: ControlledOutreachLaunchReadiness;
+  controlledActivation?: ControlledPilotActivationResult;
+  emergencyStop?: ProspectEmailEmergencyStopResult;
+  postSendValidation?: ControlledPilotPostSendReport;
+  websiteRepair?: ExistingWebsiteRepairReport;
   packagePreview?: {
     subject: string;
     firstEmailLinkFree: boolean;

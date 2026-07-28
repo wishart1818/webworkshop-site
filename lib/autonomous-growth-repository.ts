@@ -47,6 +47,8 @@ import {
   generateOutreach,
   normalizeTradeCategory,
   prospectEmailNeedsManualVerification,
+  prospectVerifiedEmailEvidence,
+  prospectWebsiteVerificationBlockReason,
   prospectWrittenContactMethodIsUsable,
   reconcileProspectContactRouting,
   type Prospect,
@@ -1338,6 +1340,10 @@ async function queueItemHasPersistedApproval(item: OutreachQueueItem, transactio
     : Boolean(draft?.approvedAt);
 }
 
+export async function outreachQueueItemHasPersistedApproval(item: OutreachQueueItem) {
+  return queueItemHasPersistedApproval(item);
+}
+
 async function reconcileQueueItem(item: OutreachQueueItem) {
   if (item.status === "Queued" || protectedQueueStatuses.has(item.status) || queueItemHasAmbiguousOutcome(item) || !item.prospectId) return item;
   const currentProspect = await getProspect(item.prospectId);
@@ -1492,7 +1498,7 @@ export async function approveAndQueueEmail(
       action: "autonomous_email_approval",
       outcome: "success",
       subject: refreshed.email,
-      metadata: { queueItemId: refreshed.id },
+      metadata: { queueItemId: refreshed.id, approvedBy: "authenticated-engine-operator" },
     });
     return { item: saved ?? candidate, queued: true, blockedReasons: [] };
   }
@@ -1603,7 +1609,11 @@ export async function approveAndQueueEmail(
     action: "autonomous_email_approval",
     outcome: "success",
     subject: refreshed.email,
-    metadata: { queueItemId: refreshed.id, topProspectResultId: refreshed.topProspectResultId || null },
+    metadata: {
+      queueItemId: refreshed.id,
+      topProspectResultId: refreshed.topProspectResultId || null,
+      approvedBy: "authenticated-engine-operator",
+    },
   });
   await Promise.allSettled([
     (async () => recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems()))(),
@@ -1984,6 +1994,29 @@ async function markQueueItemSent(claim: EmailSendClaim, providerMessageId: strin
   return domain;
 }
 
+function providerDispatchProspectBlockReasons(
+  prospect: Prospect | null,
+  item: OutreachQueueItem,
+) {
+  if (!prospect) return ["A persisted prospect record is required before provider dispatch."];
+  const history = [...prospect.notes, ...prospect.activities.map((entry) => entry.label)].join("\n");
+  return [
+    !["New", "Reviewed"].includes(prospect.status)
+      ? `Prospect status ${prospect.status} is already contacted or closed.`
+      : "",
+    outreachHistoryTextIndicatesProtectedContact(history)
+      ? "Prospect activity or notes show protected prior contact or suppression."
+      : "",
+    prospectWebsiteVerificationBlockReason(prospect, { requireStructuredEvidence: true }),
+    normalizeEmailAddress(prospect.email) !== normalizeEmailAddress(item.email)
+      ? "The approved recipient no longer matches the prospect's verified public email."
+      : "",
+    !prospectVerifiedEmailEvidence(prospect)
+      ? "The approved recipient lacks stored public source and extraction evidence."
+      : "",
+  ].filter(Boolean);
+}
+
 export async function sendQueuedEmailQueueItem(
   id: string,
   options: { beforeProviderDispatch?: () => Promise<void> } = {},
@@ -1993,6 +2026,17 @@ export async function sendQueuedEmailQueueItem(
   const initialItem = initialQueue.find((entry) => entry.id === id) ?? null;
   const item = initialItem ? await reconcileQueueItem(initialItem) : null;
   if (!item) return { item: null, sent: false, blockedReasons: ["Queue item was not found."] };
+  const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+  const verificationBlockedReasons = providerDispatchProspectBlockReasons(prospect, item);
+  if (verificationBlockedReasons.length) {
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "rejected",
+      subject: item.email || item.businessName,
+      metadata: { queueItemId: item.id, reasons: verificationBlockedReasons, phase: "website_contact_verification" },
+    });
+    return { item, sent: false, blockedReasons: verificationBlockedReasons };
+  }
   const queue = await listOutreachQueueItems();
   const emailsSentToday = emailsSentOnCurrentBusinessDate(queue);
   const readiness = evaluateQueuedEmailSendReadiness({ emailSendsToday: emailsSentToday, item, queue, settings });
@@ -2017,6 +2061,23 @@ export async function sendQueuedEmailQueueItem(
     return { item: claimed.item, sent: false, blockedReasons: claimed.blockedReasons };
   }
   const { claim } = claimed;
+
+  const claimedProspect = claim.item.prospectId ? await getProspect(claim.item.prospectId) : null;
+  const claimedProspectBlockedReasons = providerDispatchProspectBlockReasons(claimedProspect, claim.item);
+  if (claimedProspectBlockedReasons.length) {
+    const released = await finishClaimWithReview(claim, claimedProspectBlockedReasons.join(" "), false);
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "rejected",
+      subject: claim.item.email,
+      metadata: {
+        queueItemId: claim.item.id,
+        reasons: claimedProspectBlockedReasons,
+        phase: "post_claim_verification",
+      },
+    });
+    return { item: released, sent: false, blockedReasons: claimedProspectBlockedReasons };
+  }
 
   try {
     const recipientDomain = normalizeRecipientEmailDomain(claim.item.email);
@@ -2057,6 +2118,22 @@ export async function sendQueuedEmailQueueItem(
   if (!(await claimStillOwned(claim))) {
     const current = (await listOutreachQueueItems()).find((entry) => entry.id === claim.item.id) ?? claim.item;
     return { item: current, sent: false, blockedReasons: ["The send claim was cancelled by a newer protected state before provider dispatch."] };
+  }
+  const dispatchProspect = claim.item.prospectId ? await getProspect(claim.item.prospectId) : null;
+  const dispatchBlockedReasons = providerDispatchProspectBlockReasons(dispatchProspect, claim.item);
+  if (dispatchBlockedReasons.length) {
+    const released = await finishClaimWithReview(claim, dispatchBlockedReasons.join(" "), false);
+    await safeRecordAudit({
+      action: "autonomous_email_send",
+      outcome: "rejected",
+      subject: claim.item.email,
+      metadata: {
+        queueItemId: claim.item.id,
+        reasons: dispatchBlockedReasons,
+        phase: "immediate_pre_dispatch_verification",
+      },
+    });
+    return { item: released, sent: false, blockedReasons: dispatchBlockedReasons };
   }
 
   let providerMessageId = "";
@@ -2439,6 +2516,9 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
     topProspectResultId,
   } = input;
   const prospect = reconcileProspectContactRouting(input.prospect);
+  if (!await getProspect(prospect.id)) {
+    await saveProspect(prospect);
+  }
   const settings = await getAutonomousGrowthSettings();
   const previewGate = evaluatePreviewQualityGate(prospect);
   const emailQuality = evaluateOutreachEmailQuality(prospect, previewLink, outreachPreference);
@@ -2964,7 +3044,6 @@ const safeReadinessRepairStatuses = new Set<OutreachQueueStatus>([
   "Eligible",
   "Needs Review",
   "Queued",
-  "Preview Needs Polish",
 ]);
 
 export function safeReadinessRepairProtectionReason(item: OutreachQueueItem, prospectStatus = "") {

@@ -2,6 +2,11 @@ import {
   prospectStatuses,
   prospectTypes,
   websiteAvailabilityStatuses,
+  websiteVerificationConfidenceLevels,
+  websiteVerificationFailureCategories,
+  contactEvidenceKinds,
+  contactEvidenceMethods,
+  prospectFitDispositions,
   prospectClassifications,
   recommendedContactMethods,
   manualContactMethods,
@@ -47,7 +52,10 @@ import {
   type RecommendedContactMethod,
   type ManualContactMethod,
   type ContactConfidence,
+  type ContactRouteEvidence,
   type ScoreKey,
+  type WebsiteVerificationAttempt,
+  type WebsiteVerificationReport,
 } from "@/lib/prospect-engine";
 import type { PreviewImageIntent, PreviewImageSet, PreviewImageSlot, PreviewImageSource, ResolvedPreviewImage } from "@/lib/preview-image-resolver";
 
@@ -773,6 +781,79 @@ function activityValues(value: unknown): Activity[] {
   });
 }
 
+function contactEvidenceValues(value: unknown): ContactRouteEvidence[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) throw new Error("Contact evidence must be a valid list.");
+  return value.map((candidate, index) => {
+    if (!isRecord(candidate)) throw new Error(`Contact evidence ${index + 1} must be an object.`);
+    const kind = text(candidate.kind, `Contact evidence ${index + 1} kind`, 40) as ContactRouteEvidence["kind"];
+    const extractionMethod = text(candidate.extractionMethod, `Contact evidence ${index + 1} method`, 40) as ContactRouteEvidence["extractionMethod"];
+    const confidence = text(candidate.confidence, `Contact evidence ${index + 1} confidence`, 20) as ContactConfidence;
+    if (!contactEvidenceKinds.includes(kind)) throw new Error("Contact evidence kind is not supported.");
+    if (!contactEvidenceMethods.includes(extractionMethod)) throw new Error("Contact evidence method is not supported.");
+    if (!contactConfidenceLevels.includes(confidence)) throw new Error("Contact evidence confidence is not supported.");
+    if (typeof candidate.domainMatchesBusiness !== "boolean") throw new Error("Contact evidence domain match must be true or false.");
+    return {
+      kind,
+      value: text(candidate.value, `Contact evidence ${index + 1} value`, 2048),
+      sourceUrl: text(candidate.sourceUrl, `Contact evidence ${index + 1} source URL`, 2048),
+      extractionMethod,
+      confidence,
+      domainMatchesBusiness: candidate.domainMatchesBusiness,
+      discoveredAt: dateText(candidate.discoveredAt, `Contact evidence ${index + 1} discovered date`),
+    };
+  });
+}
+
+export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificationReport | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new Error("Website verification must be an object.");
+  if (value.version !== "website-verification-v1") throw new Error("Website verification version is not supported.");
+  const status = text(value.status, "Website verification status", 40) as WebsiteAvailabilityStatus;
+  const confidence = text(value.confidence, "Website verification confidence", 20) as WebsiteVerificationReport["confidence"];
+  if (!websiteAvailabilityStatuses.includes(status)) throw new Error("Website verification status is not supported.");
+  if (!websiteVerificationConfidenceLevels.includes(confidence)) throw new Error("Website verification confidence is not supported.");
+  if (!Array.isArray(value.attempts) || value.attempts.length > 12) throw new Error("Website verification attempts must be a bounded list.");
+  const attempts = value.attempts.map((candidate, index): WebsiteVerificationAttempt => {
+    if (!isRecord(candidate)) throw new Error(`Website verification attempt ${index + 1} must be an object.`);
+    const failureCategory = text(candidate.failureCategory, `Website verification attempt ${index + 1} category`, 40) as WebsiteVerificationAttempt["failureCategory"];
+    if (!websiteVerificationFailureCategories.includes(failureCategory)) throw new Error("Website verification failure category is not supported.");
+    const statusValue = candidate.httpStatus === null ? null : Number(candidate.httpStatus);
+    if (statusValue !== null && (!Number.isInteger(statusValue) || statusValue < 100 || statusValue > 599)) {
+      throw new Error("Website verification HTTP status is invalid.");
+    }
+    const durationMs = Number(candidate.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > 120_000) throw new Error("Website verification duration is invalid.");
+    if (typeof candidate.robotsAllowed !== "boolean" || typeof candidate.botBlocked !== "boolean" || typeof candidate.browserCompatibleHeaders !== "boolean") {
+      throw new Error("Website verification attempt flags are invalid.");
+    }
+    return {
+      requestedUrl: text(candidate.requestedUrl, `Website verification attempt ${index + 1} requested URL`, 2048),
+      normalizedUrl: text(candidate.normalizedUrl, `Website verification attempt ${index + 1} normalized URL`, 2048),
+      finalUrl: text(candidate.finalUrl ?? "", `Website verification attempt ${index + 1} final URL`, 2048, false),
+      httpStatus: statusValue,
+      redirectChain: stringArray(candidate.redirectChain, `Website verification attempt ${index + 1} redirects`, 4, 2048),
+      contentType: text(candidate.contentType ?? "", `Website verification attempt ${index + 1} content type`, 200, false),
+      durationMs: Math.round(durationMs),
+      failureCategory,
+      robotsAllowed: candidate.robotsAllowed,
+      botBlocked: candidate.botBlocked,
+      browserCompatibleHeaders: candidate.browserCompatibleHeaders,
+      timestamp: dateText(candidate.timestamp, `Website verification attempt ${index + 1} timestamp`),
+    };
+  });
+  return {
+    version: "website-verification-v1",
+    status,
+    confidence,
+    canonicalUrl: text(value.canonicalUrl ?? "", "Website verification canonical URL", 2048, false),
+    attempts,
+    usableSignals: stringArray(value.usableSignals, "Website verification usable signals", 20, 120),
+    explanation: text(value.explanation, "Website verification explanation", 1000),
+    checkedAt: dateText(value.checkedAt, "Website verification checked date"),
+  };
+}
+
 export function validateProspect(input: unknown): ValidationResult {
   try {
     if (!isRecord(input)) throw new Error("Prospect payload must be an object.");
@@ -836,6 +917,8 @@ export function validateProspect(input: unknown): ValidationResult {
     if (typeof inactive !== "boolean") throw new Error("Inactive status must be true or false.");
     const websiteStatus = text(input.websiteStatus ?? (parsedWebsite ? "unknown" : "no_owned_website"), "Website status", 40) as WebsiteAvailabilityStatus;
     if (!websiteAvailabilityStatuses.includes(websiteStatus)) throw new Error("Website status is not supported.");
+    const fitDisposition = text(input.fitDisposition ?? "unreviewed", "Prospect fit disposition", 50) as Prospect["fitDisposition"];
+    if (!prospectFitDispositions.includes(fitDisposition)) throw new Error("Prospect fit disposition is not supported.");
     const websiteAnalysisAttemptedAt = text(input.websiteAnalysisAttemptedAt ?? "", "Website analysis attempt date", 100, false);
     if (websiteAnalysisAttemptedAt && !Number.isFinite(Date.parse(websiteAnalysisAttemptedAt))) {
       throw new Error("Website analysis attempt date must be valid.");
@@ -898,6 +981,7 @@ export function validateProspect(input: unknown): ValidationResult {
         contactConfidence,
         bestManualContactMethod,
         contactDiscoveryNotes: input.contactDiscoveryNotes === undefined ? [] : stringArray(input.contactDiscoveryNotes, "Contact discovery notes", 25, 500),
+        contactEvidence: contactEvidenceValues(input.contactEvidence),
         address: text(input.address ?? "", "Address", 500, false),
         city: titleCaseLocation(text(input.city, "City", 100)),
         state: displayStateCode(text(input.state, "State", 2)),
@@ -916,6 +1000,8 @@ export function validateProspect(input: unknown): ValidationResult {
         websiteStatus,
         websiteStatusDetail: text(input.websiteStatusDetail ?? "", "Website status detail", 1000, false),
         websiteAnalysisAttemptedAt: websiteAnalysisAttemptedAt ? new Date(websiteAnalysisAttemptedAt).toISOString() : "",
+        websiteVerification: parseWebsiteVerificationReport(input.websiteVerification),
+        fitDisposition,
         notes: stringArray(input.notes, "Notes", 1000, 5000),
         activities: activityValues(input.activities),
         analysis: analysisValue(input.analysis),

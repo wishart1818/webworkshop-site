@@ -40,6 +40,7 @@ model Prospect {
   contactConfidence String @default("low")
   bestManualContactMethod String @default("unknown")
   contactDiscoveryNotes Json @default("[]")
+  contactEvidence Json @default("[]")
   address       String?
   city          String
   state         String
@@ -57,6 +58,8 @@ model Prospect {
   websiteStatus String          @default("unknown")
   websiteStatusDetail String?
   websiteAnalysisAttemptedAt DateTime?
+  websiteVerification Json?
+  fitDisposition String @default("unreviewed")
   status        ProspectStatus  @default(NEW)
   analyses      Analysis[]
   outreach      OutreachDraft[]

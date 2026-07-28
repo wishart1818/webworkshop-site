@@ -13,6 +13,12 @@ import {
   sendOperatorTestSms,
   simulateNext24Hours,
 } from "@/lib/operator-test-center";
+import {
+  disableAllProspectEmailSending,
+  enableControlledEmailPilot,
+  runControlledOutreachLaunchReadiness,
+  validateControlledPilotSend,
+} from "@/lib/controlled-outreach-launch";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,7 +33,7 @@ export async function GET() {
 }
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { action?: string; confirmed?: boolean };
+    const payload = await request.json() as { action?: string; confirmed?: boolean; confirmation?: string };
     if (payload.action === "generate_test_package") {
       return NextResponse.json(generateOneTestOutreachPackage());
     }
@@ -67,6 +73,41 @@ export async function POST(request: Request) {
     if (payload.action === "check_email_safety_gates") {
       const emailSafety = await runEmailSafetyGatesCheck();
       return NextResponse.json({ ok: emailSafety.status === "Passed", message: emailSafety.summary, emailSafety });
+    }
+    if (payload.action === "run_controlled_outreach_launch_readiness") {
+      const controlledReadiness = await runControlledOutreachLaunchReadiness();
+      return NextResponse.json({
+        ok: controlledReadiness.status === "READY FOR CONTROLLED PILOT",
+        message: `Controlled Outreach Launch Readiness: ${controlledReadiness.status}. Nothing was sent.`,
+        controlledReadiness,
+      });
+    }
+    if (payload.action === "enable_controlled_email_pilot") {
+      const controlledActivation = await enableControlledEmailPilot({
+        confirmation: typeof payload.confirmation === "string" ? payload.confirmation : "",
+      });
+      return NextResponse.json({
+        ok: controlledActivation.activated,
+        message: controlledActivation.message,
+        controlledReadiness: controlledActivation.readiness,
+        controlledActivation,
+      }, { status: controlledActivation.activated ? 200 : 409 });
+    }
+    if (payload.action === "disable_all_prospect_email_sending") {
+      const emergencyStop = await disableAllProspectEmailSending();
+      return NextResponse.json({
+        ok: true,
+        message: emergencyStop.message,
+        emergencyStop,
+      });
+    }
+    if (payload.action === "validate_controlled_pilot_send") {
+      const postSendValidation = await validateControlledPilotSend();
+      return NextResponse.json({
+        ok: postSendValidation.status === "PILOT SEND VERIFIED",
+        message: postSendValidation.status,
+        postSendValidation,
+      });
     }
     return NextResponse.json({ error: "Select a supported Operator Test Center action." }, { status: 400 });
   } catch (error) {
