@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import {
   createOrRefreshAutonomousReviewPackageForProspect,
-  regenerateProspectOutreachWithCurrentScript,
 } from "@/lib/autonomous-growth-repository";
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { safeRecordAudit } from "@/lib/operational-controls";
+import { regenerateProspectOutreachWithConflictRecovery } from "@/lib/prospect-outreach-regeneration";
 import { listProspects, saveProspect } from "@/lib/prospect-repository";
 import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason } from "@/lib/prospect-engine";
 import { prepareProspectForPreview } from "@/lib/preview-preparation";
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     }
     if (payload.action === "regenerate_prospect_outreach") {
       if (!payload.prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });
-      const result = await regenerateProspectOutreachWithCurrentScript(payload.prospectId, { previewOnly: payload.previewOnly });
+      const result = await regenerateProspectOutreachWithConflictRecovery(payload.prospectId, { previewOnly: payload.previewOnly });
       if (!result) return NextResponse.json({ error: "Prospect was not found." }, { status: 404 });
       await safeRecordAudit({ action: "prospect_outreach_regenerate", outcome: "success", subject: payload.prospectId, metadata: { previewOnly: Boolean(payload.previewOnly), queueUpdated: result.wouldUpdateQueue } });
       return NextResponse.json(result);
