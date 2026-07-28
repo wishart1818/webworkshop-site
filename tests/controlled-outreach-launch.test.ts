@@ -488,6 +488,62 @@ test("post-send validation requires exactly one provider-confirmed send and an e
   assert.equal(result.fullAutonomousSendingDisabled, true);
 });
 
+test("post-send validation recognizes a sent item after it advances to a later lifecycle status", async () => {
+  const activationAt = new Date(now.getTime() - 2 * 60_000).toISOString();
+  const approvalAt = new Date(now.getTime() - 60_000).toISOString();
+  const repliedItem = {
+    ...queueItemFor(eligibleProspect()),
+    status: "Positive Reply" as const,
+    sentDate: now.toISOString(),
+    notes: "Resend message ID: provider-replied-message-id",
+  };
+  const result = await validateControlledPilotSend({
+    environment: environment(),
+    dependencies: dependencies({
+      item: repliedItem,
+      currentSettings: {
+        ...settings(),
+        mode: "auto_email_pilot",
+        killSwitch: false,
+      },
+      auditEvents: [{
+        id: "audit-activation-replied",
+        action: "controlled_email_pilot_activation",
+        outcome: "success",
+        subject: "authenticated-engine-operator",
+        metadata: { confirmationMatched: true, outreachSent: 0 },
+        createdAt: activationAt,
+      }, {
+        id: "audit-approval-replied",
+        action: "autonomous_email_approval",
+        outcome: "success",
+        subject: repliedItem.email,
+        metadata: {
+          queueItemId: repliedItem.id,
+          approvedBy: "authenticated-engine-operator",
+        },
+        createdAt: approvalAt,
+      }, {
+        id: "audit-send-replied",
+        action: "autonomous_email_send",
+        outcome: "success",
+        subject: repliedItem.businessName,
+        metadata: {
+          queueItemId: repliedItem.id,
+          providerMessageId: "provider-replied-message-id",
+        },
+        createdAt: now.toISOString(),
+      }],
+    }),
+    now,
+  });
+
+  assert.equal(result.status, "PILOT SEND VERIFIED");
+  assert.equal(result.sentToday, 1);
+  assert.equal(result.queueItemId, repliedItem.id);
+  assert.equal(result.providerMessageId, "provider-replied-message-id");
+});
+
 test("an unrelated same-day send cannot pass controlled-pilot post-send verification", async () => {
   const sentItem = {
     ...queueItemFor(eligibleProspect()),

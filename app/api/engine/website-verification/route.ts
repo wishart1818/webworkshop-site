@@ -48,10 +48,11 @@ export async function POST(request: Request) {
     return NextResponse.json(await auditExistingWebsiteRecords({
       apply: true,
       confirmation: safeText(input.confirmation, 80),
+      reviewToken: safeText(input.reviewToken, 2_000),
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Website verification failed safely.";
-    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation/i.test(message);
+    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|review|snapshot|evidence changed|signing is not configured/i.test(message);
     if (!expected) console.error("[website-verification] Safe operation failed.", {
       action,
       errorName: error instanceof Error ? error.name : "UnknownError",

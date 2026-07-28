@@ -688,8 +688,7 @@ export async function validateControlledPilotSend(input: {
   ]);
   const today = businessDateKey(now);
   const sentToday = dashboard.queue.filter((item) => (
-    item.status === "Sent"
-    && item.sentDate
+    item.sentDate
     && businessDateKey(item.sentDate) === today
   ));
   const sent = sentToday[0] ?? null;

@@ -27,6 +27,7 @@ const browserCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ap
 const maxResponseBytes = 2_000_000;
 const maxVerificationAttempts = 8;
 const maxContactPages = 8;
+const maxRequestTimeoutMs = 12_000;
 const globalAnalysis = globalThis as typeof globalThis & { analyzedHosts?: Map<string, number> };
 
 type DnsLookup = (hostname: string) => Promise<Array<{ address: string }>>;
@@ -37,6 +38,9 @@ export type WebsiteVerificationDependencies = {
   lookup?: DnsLookup;
   robotsPolicy?: RobotsPolicy;
   now?: () => Date;
+  maxVerificationAttempts?: number;
+  maxContactPages?: number;
+  requestTimeoutMs?: number;
 };
 
 export type WebsiteAnalysisFailure = {
@@ -106,6 +110,7 @@ async function fetchPublicPage(
     fetchImpl?: typeof fetch;
     lookupAddresses?: DnsLookup;
     onRedirectTarget?: (url: URL) => Promise<void>;
+    timeoutMs?: number;
   } = {},
 ) {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -123,7 +128,10 @@ async function fetchPublicPage(
           "Cache-Control": "no-cache",
         } : {}),
       },
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(Math.min(
+        maxRequestTimeoutMs,
+        Math.max(500, options.timeoutMs ?? maxRequestTimeoutMs),
+      )),
     });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -208,6 +216,7 @@ async function assertRobotsAllowed(
   options: {
     fetchImpl?: typeof fetch;
     lookupAddresses?: DnsLookup;
+    timeoutMs?: number;
   } = {},
 ) {
   try {
@@ -860,6 +869,7 @@ async function robotsAllowedFor(
       : await assertRobotsAllowed(url, {
         fetchImpl: dependencies.fetch,
         lookupAddresses: dependencies.lookup,
+        timeoutMs: dependencies.requestTimeoutMs,
       });
     cache.set(cacheKey, allowed !== false);
     return allowed !== false;
@@ -913,6 +923,7 @@ async function runVerificationAttempt(
       browserCompatible: browserCompatibleHeaders,
       fetchImpl: dependencies.fetch,
       lookupAddresses: dependencies.lookup,
+      timeoutMs: dependencies.requestTimeoutMs,
       onRedirectTarget: async (redirectUrl) => {
         if (!await robotsAllowedFor(redirectUrl, dependencies, robotsCache)) {
           throw new Error("Website robots.txt does not allow analysis of this page.");
@@ -988,6 +999,44 @@ function websiteCandidateUrls(value: string) {
 function equivalentOwnedHost(left: string, right: string) {
   const normalize = (value: string) => new URL(value).hostname.toLowerCase().replace(/^www\./, "");
   return normalize(left) === normalize(right);
+}
+
+function htmlProminentlyMatchesBusinessIdentity(html: string, businessName: string) {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const expected = normalize(businessName);
+  if (expected.length < 4) return false;
+  const title = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
+  const headings = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)].map((match) => match[1] ?? "");
+  const siteName = html.match(/<meta\b[^>]*(?:property|name)\s*=\s*["']og:site_name["'][^>]*content\s*=\s*["']([^"']+)["']/i)?.[1]
+    ?? html.match(/<meta\b[^>]*content\s*=\s*["']([^"']+)["'][^>]*(?:property|name)\s*=\s*["']og:site_name["']/i)?.[1]
+    ?? "";
+  return [title, ...headings, siteName]
+    .map((value) => normalize(value.replace(/<[^>]+>/g, " ")))
+    .some((value) => value.includes(expected));
+}
+
+function rejectUnverifiedCrossDomainRedirect(
+  result: VerificationAttemptResult,
+  ownedWebsite: string,
+  businessName: string,
+): VerificationAttemptResult {
+  const finalUrl = result.attempt.finalUrl;
+  if (
+    !result.meaningful
+    || !finalUrl
+    || equivalentOwnedHost(finalUrl, ownedWebsite)
+    || htmlProminentlyMatchesBusinessIdentity(result.html, businessName)
+  ) {
+    return result;
+  }
+  return {
+    ...result,
+    meaningful: false,
+    attempt: {
+      ...result.attempt,
+      failureCategory: "redirect",
+    },
+  };
 }
 
 async function canonicalUrlFromHtml(
@@ -1081,9 +1130,13 @@ async function collectContactPages(
   for (const path of contactPathSignals) candidates.add(new URL(`/${path}`, root.origin).href);
   const pages = [initialPage];
   let attemptedPages = 0;
+  const contactPageLimit = Math.min(
+    maxContactPages,
+    Math.max(0, dependencies.maxContactPages ?? maxContactPages),
+  );
   for (const candidate of candidates) {
     if (candidate === initialPage.url) continue;
-    if (attemptedPages >= maxContactPages) break;
+    if (attemptedPages >= contactPageLimit) break;
     attemptedPages += 1;
     try {
       const safeUrl = await assertPublicUrl(candidate, dependencies.lookup ?? defaultLookup);
@@ -1091,6 +1144,7 @@ async function collectContactPages(
       const { response, url } = await fetchPublicPage(safeUrl.href, {
         fetchImpl: dependencies.fetch,
         lookupAddresses: dependencies.lookup,
+        timeoutMs: dependencies.requestTimeoutMs,
         onRedirectTarget: async (redirectUrl) => {
           if (redirectUrl.origin !== root.origin) {
             throw new Error("Contact page redirected outside the verified website origin.");
@@ -1272,16 +1326,28 @@ export async function verifyProspectWebsite(
 
   const results: VerificationAttemptResult[] = [];
   let successful: VerificationAttemptResult | undefined;
+  const attemptLimit = Math.min(
+    maxVerificationAttempts,
+    Math.max(1, dependencies.maxVerificationAttempts ?? maxVerificationAttempts),
+  );
   for (const candidate of candidates) {
-    if (results.length >= maxVerificationAttempts) break;
-    const crawlerResult = await runVerificationAttempt(candidate, prospect.businessName, false, dependencies, robotsCache);
+    if (results.length >= attemptLimit) break;
+    const crawlerResult = rejectUnverifiedCrossDomainRedirect(
+      await runVerificationAttempt(candidate, prospect.businessName, false, dependencies, robotsCache),
+      prospect.website,
+      prospect.businessName,
+    );
     results.push(crawlerResult);
     if (crawlerResult.meaningful) {
       successful = crawlerResult;
       break;
     }
-    if (results.length < maxVerificationAttempts && retryWithBrowserHeaders(crawlerResult.attempt.failureCategory)) {
-      const browserResult = await runVerificationAttempt(candidate, prospect.businessName, true, dependencies, robotsCache);
+    if (results.length < attemptLimit && retryWithBrowserHeaders(crawlerResult.attempt.failureCategory)) {
+      const browserResult = rejectUnverifiedCrossDomainRedirect(
+        await runVerificationAttempt(candidate, prospect.businessName, true, dependencies, robotsCache),
+        prospect.website,
+        prospect.businessName,
+      );
       results.push(browserResult);
       if (browserResult.meaningful) {
         successful = browserResult;

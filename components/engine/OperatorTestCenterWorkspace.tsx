@@ -215,7 +215,10 @@ export function OperatorTestCenterWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: apply ? "apply_existing_record_repair" : "audit_existing_records",
-          ...(apply ? { confirmation: websiteRepairConfirmation } : {}),
+          ...(apply ? {
+            confirmation: websiteRepairConfirmation,
+            reviewToken: lastAction?.websiteRepair?.reviewToken ?? "",
+          } : {}),
         }),
       });
       const body = (await response.json()) as NonNullable<OperatorActionResult["websiteRepair"]> & { error?: string };

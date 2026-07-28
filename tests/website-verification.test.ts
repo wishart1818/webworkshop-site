@@ -244,6 +244,39 @@ test("a foreign canonical declaration cannot replace the verified owned website"
   assert.equal(result.report.canonicalUrl, "https://truecleanprowash.com/");
 });
 
+test("a rich cross-domain redirect cannot replace the prospect website without matching business identity", async () => {
+  const unrelatedHomepage = `
+    <!doctype html><html>
+      <head><title>Another Exterior Services Company</title><meta name="viewport" content="width=device-width" /></head>
+      <body>
+        <nav>Home Services About Contact</nav>
+        <h1>Another Exterior Services Company</h1>
+        <p>Residential pressure washing, exterior cleaning, roof cleaning, and concrete cleaning for local homeowners.</p>
+        <p>Browse our services, request an estimate, or contact our team for more information about your property.</p>
+        <p>Our directory also includes a listing for True Clean Prowash.</p>
+        <a href="tel:+14195550199">Call our office</a>
+        <a href="mailto:info@unrelated-example.net">info@unrelated-example.net</a>
+        <form><input name="email" /><button>Request a quote</button></form>
+      </body>
+    </html>
+  `;
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    if (url.hostname.endsWith("truecleanprowash.com")) {
+      return htmlResponse("", 302, { location: "https://unrelated-example.net/" });
+    }
+    return htmlResponse(unrelatedHomepage);
+  }) as typeof fetch;
+
+  const result = await verifyProspectWebsite(prospect(), verificationDependencies(fetchImpl));
+
+  assert.equal(result.report.status, "inconclusive");
+  assert.ok(result.report.attempts.every((attempt) => attempt.failureCategory === "redirect"));
+  assert.equal(result.prospect.website, "https://truecleanprowash.com");
+  assert.equal(result.prospect.email, "");
+  assert.equal(result.prospect.fitDisposition, "manual_review_required");
+});
+
 test("robots policy is evaluated for each contact path rather than inherited from the homepage", async () => {
   const robotsPaths: string[] = [];
   const fetchedPaths: string[] = [];

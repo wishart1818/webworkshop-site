@@ -1,3 +1,4 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   listOutreachQueueItemsForBackfill,
   repairOutreachQueueItemForReadiness,
@@ -17,6 +18,12 @@ const protectedProspectStatuses = new Set<Prospect["status"]>([
   "Closed Lost",
 ]);
 const transientLegacyEvidence = /\b(?:http\s*(?:403|408|429|500|502|503|504|508)|timeout|timed out|fetch failed|dns|enotfound|connection reset|econnreset|crawler|bot|waf|cloudflare|unreachable)\b/i;
+const websiteRepairReviewMaxAgeMs = 15 * 60 * 1000;
+const websiteRepairRequestBatchSize = 2;
+const websiteRepairRequestBatchLimit = 4;
+const websiteRepairAttemptLimit = 3;
+const websiteRepairContactPageLimit = 2;
+const websiteRepairRequestTimeoutMs = 6_000;
 
 export type WebsiteRecheckResult = {
   prospect: Prospect;
@@ -47,6 +54,7 @@ export type ExistingWebsiteRepairReport = {
   changed: number;
   skippedProtected: number;
   records: ExistingWebsiteRepairRecord[];
+  reviewToken: string;
   nothingSent: true;
 };
 
@@ -323,24 +331,151 @@ async function inspectExistingWebsiteRepairCandidate(
   };
 }
 
+const volatileRepairReviewKeys = new Set([
+  "analyzedAt",
+  "checkedAt",
+  "discoveredAt",
+  "durationMs",
+  "foundAt",
+  "timestamp",
+  "updatedAt",
+  "websiteAnalysisAttemptedAt",
+]);
+
+function canonicalRepairReviewValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalRepairReviewValue);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .filter((key) => !volatileRepairReviewKeys.has(key))
+      .sort()
+      .map((key) => [key, canonicalRepairReviewValue(record[key])]),
+  );
+}
+
+function proposedProspectReviewValue(prospect: Prospect) {
+  return Object.fromEntries(
+    Object.entries(prospect).filter(([key]) => key !== "activities"),
+  );
+}
+
+function repairReviewDigest(
+  inspected: Array<Awaited<ReturnType<typeof inspectExistingWebsiteRepairCandidate>>>,
+  queue: OutreachQueueItem[],
+) {
+  const snapshot = inspected.map((candidate) => ({
+    record: candidate.record,
+    currentProspect: candidate.prospect,
+    proposedProspect: candidate.verified
+      ? proposedProspectReviewValue(candidate.verified.prospect)
+      : null,
+    queueItems: queue.filter((item) => item.prospectId === candidate.prospect.id),
+  }));
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalRepairReviewValue(snapshot)))
+    .digest("hex");
+}
+
+function repairReviewToken(digest: string, secret: string, issuedAt: Date) {
+  const encodedPayload = Buffer.from(JSON.stringify({
+    version: 1,
+    digest,
+    issuedAt: issuedAt.toISOString(),
+  })).toString("base64url");
+  const signature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function verifiedRepairReviewDigest(token: string, secret: string, now: Date) {
+  const [encodedPayload, suppliedSignature, extra] = token.split(".");
+  if (!encodedPayload || !suppliedSignature || extra) {
+    throw new Error("Run a fresh website-record dry run before applying repairs.");
+  }
+  const expectedSignature = createHmac("sha256", secret).update(encodedPayload).digest();
+  let supplied: Buffer;
+  try {
+    supplied = Buffer.from(suppliedSignature, "base64url");
+  } catch {
+    throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
+  }
+  if (supplied.length !== expectedSignature.length || !timingSafeEqual(supplied, expectedSignature)) {
+    throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
+  }
+  let payload: { version?: number; digest?: string; issuedAt?: string };
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as typeof payload;
+  } catch {
+    throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
+  }
+  const issuedAt = Date.parse(payload.issuedAt ?? "");
+  if (
+    payload.version !== 1
+    || !/^[a-f0-9]{64}$/.test(payload.digest ?? "")
+    || !Number.isFinite(issuedAt)
+    || issuedAt > now.getTime() + 60_000
+    || now.getTime() - issuedAt > websiteRepairReviewMaxAgeMs
+  ) {
+    throw new Error("The reviewed website-repair snapshot expired or is invalid. Run the dry run again.");
+  }
+  return payload.digest!;
+}
+
 export async function auditExistingWebsiteRecords(input: {
   apply: boolean;
   confirmation?: string;
   dependencies?: WebsiteVerificationDependencies;
   limit?: number;
+  reviewToken?: string;
+  snapshotSecret?: string;
 }): Promise<ExistingWebsiteRepairReport> {
   if (input.apply && input.confirmation !== "REPAIR VERIFIED WEBSITE RECORDS") {
     throw new Error("Type REPAIR VERIFIED WEBSITE RECORDS to apply this audit.");
   }
-  const candidates = (await listProspects()).filter(existingRecordNeedsWebsiteAudit).slice(0, Math.min(25, Math.max(1, input.limit ?? 15)));
-  const queue = await listOutreachQueueItemsForBackfill();
-  const inspected = [];
-  for (const prospect of candidates) {
-    inspected.push(await inspectExistingWebsiteRepairCandidate(
-      prospect,
-      input.dependencies ?? {},
-      queue.filter((item) => item.prospectId === prospect.id),
+  const snapshotSecret = input.snapshotSecret ?? process.env.ENGINE_PASSWORD?.trim() ?? "";
+  if (!snapshotSecret) {
+    throw new Error("Website-repair review signing is not configured.");
+  }
+  const now = input.dependencies?.now?.() ?? new Date();
+  const candidates = (await listProspects())
+    .filter(existingRecordNeedsWebsiteAudit)
+    .slice(0, Math.min(
+      websiteRepairRequestBatchLimit,
+      Math.max(1, input.limit ?? websiteRepairRequestBatchSize),
     ));
+  const queue = await listOutreachQueueItemsForBackfill();
+  const boundedDependencies: WebsiteVerificationDependencies = {
+    ...(input.dependencies ?? {}),
+    maxVerificationAttempts: Math.min(
+      websiteRepairAttemptLimit,
+      Math.max(1, input.dependencies?.maxVerificationAttempts ?? websiteRepairAttemptLimit),
+    ),
+    maxContactPages: Math.min(
+      websiteRepairContactPageLimit,
+      Math.max(0, input.dependencies?.maxContactPages ?? websiteRepairContactPageLimit),
+    ),
+    requestTimeoutMs: Math.min(
+      websiteRepairRequestTimeoutMs,
+      Math.max(500, input.dependencies?.requestTimeoutMs ?? websiteRepairRequestTimeoutMs),
+    ),
+  };
+  const inspected = await Promise.all(candidates.map((prospect) => (
+    inspectExistingWebsiteRepairCandidate(
+      prospect,
+      boundedDependencies,
+      queue.filter((item) => item.prospectId === prospect.id),
+    )
+  )));
+  const currentDigest = repairReviewDigest(inspected, queue);
+  if (input.apply) {
+    const reviewedDigest = verifiedRepairReviewDigest(
+      input.reviewToken ?? "",
+      snapshotSecret,
+      now,
+    );
+    if (reviewedDigest !== currentDigest) {
+      throw new Error("Website or contact evidence changed since the reviewed dry run. Run a fresh dry run before applying repairs.");
+    }
   }
   let changed = 0;
   let skippedProtected = 0;
@@ -397,6 +532,7 @@ export async function auditExistingWebsiteRecords(input: {
     changed,
     skippedProtected,
     records: inspected.map((candidate) => candidate.record),
+    reviewToken: input.apply ? "" : repairReviewToken(currentDigest, snapshotSecret, now),
     nothingSent: true,
   };
 }

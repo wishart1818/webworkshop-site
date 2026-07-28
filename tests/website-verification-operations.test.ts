@@ -26,6 +26,7 @@ import {
 } from "../lib/website-verification-operations";
 
 const now = "2026-07-28T15:00:00.000Z";
+const snapshotSecret = "website-repair-review-test-secret";
 const postalEnvironment = {
   OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
 } as unknown as NodeJS.ProcessEnv;
@@ -107,7 +108,7 @@ function userAgent(init?: RequestInit) {
   return new Headers(init?.headers).get("user-agent") ?? "";
 }
 
-function verificationDependencies() {
+function verificationDependencies(contactEmail = "info@truecleanprowash.com") {
   const homepage = `
     <!doctype html><html><head>
       <title>True Clean Prowash | Exterior Cleaning in Columbus</title>
@@ -127,7 +128,7 @@ function verificationDependencies() {
     <!doctype html><html><head><title>Contact True Clean Prowash</title></head><body>
       <h1>Request an exterior cleaning estimate</h1>
       <p>Tell our team which surfaces need attention around your Columbus property.</p>
-      <a href="mailto:info@truecleanprowash.com">info@truecleanprowash.com</a>
+      <a href="mailto:${contactEmail}">${contactEmail}</a>
       <form><input name="email" /><textarea name="message"></textarea><button>Request estimate</button></form>
     </body></html>
   `;
@@ -163,6 +164,7 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
     const dryRun = await auditExistingWebsiteRecords({
       apply: false,
       dependencies: verificationDependencies(),
+      snapshotSecret,
     });
     assert.equal(dryRun.mode, "dry_run");
     assert.equal(dryRun.changed, 0);
@@ -172,12 +174,14 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
       dryRun.records[0]?.fieldChanges.find((change) => change.field === "email"),
       { field: "email", oldValue: "not recorded", proposedValue: "info@truecleanprowash.com" },
     );
+    assert.ok(dryRun.reviewToken.length > 40);
     assert.equal((await getProspect(prospect.id))?.websiteStatus, "unreachable_website");
     await assert.rejects(
       auditExistingWebsiteRecords({
         apply: true,
         confirmation: "repair",
         dependencies: verificationDependencies(),
+        snapshotSecret,
       }),
       /REPAIR VERIFIED WEBSITE RECORDS/,
     );
@@ -210,10 +214,18 @@ test("confirmed repair preserves history, revokes stale approval, and returns th
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([queued]);
   try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+    });
     const result = await auditExistingWebsiteRecords({
       apply: true,
       confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies: verificationDependencies(),
+      dependencies,
+      reviewToken: review.reviewToken,
+      snapshotSecret,
     });
     const saved = await getProspect(prospect.id);
     const repairedQueue = result.records[0];
@@ -236,6 +248,61 @@ test("confirmed repair preserves history, revokes stale approval, and returns th
   }
 });
 
+test("repair apply rejects changed website evidence instead of applying a different proposal", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect();
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect)]);
+  try {
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies("info@truecleanprowash.com"),
+      snapshotSecret,
+    });
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies: verificationDependencies("sales@truecleanprowash.com"),
+        reviewToken: review.reviewToken,
+        snapshotSecret,
+      }),
+      /evidence changed since the reviewed dry run/i,
+    );
+    assert.equal((await getProspect(prospect.id))?.websiteStatus, "unreachable_website");
+    assert.equal((await getProspect(prospect.id))?.email, "");
+    assert.equal(outreachQueueMemoryForTests()[0]?.status, "Queued");
+    assert.match(outreachQueueMemoryForTests()[0]?.notes ?? "", /\[auto-email-approved\]/);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("legacy website audit uses a small bounded request batch", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospects = Array.from({ length: 6 }, (_, index) => legacyProspect({
+    id: `legacy-batch-${index + 1}`,
+  }));
+  setProspectMemoryForTests(prospects);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    const result = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+    });
+    assert.equal(result.inspected, 2);
+    assert.equal(result.records.length, 2);
+    assert.equal(result.nothingSent, true);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
 test("protected contacted records are never changed by existing-record repair", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
@@ -243,10 +310,18 @@ test("protected contacted records are never changed by existing-record repair", 
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([queueItem(prospect, "Sent")]);
   try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+    });
     const result = await auditExistingWebsiteRecords({
       apply: true,
       confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies: verificationDependencies(),
+      dependencies,
+      reviewToken: review.reviewToken,
+      snapshotSecret,
     });
     assert.equal(result.changed, 0);
     assert.equal(result.skippedProtected, 1);
@@ -266,10 +341,18 @@ test("protected sent queue history blocks existing-record repair even when the p
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([queueItem(prospect, "Sent")]);
   try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+    });
     const result = await auditExistingWebsiteRecords({
       apply: true,
       confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies: verificationDependencies(),
+      dependencies,
+      reviewToken: review.reviewToken,
+      snapshotSecret,
     });
     assert.equal(result.changed, 0);
     assert.equal(result.skippedProtected, 1);

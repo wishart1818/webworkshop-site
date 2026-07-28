@@ -298,6 +298,7 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(controlledLaunchSource, /ENABLE CONTROLLED PILOT/);
   assert.match(testCenterSource, /Disable All Prospect Email Sending/);
   assert.match(testCenterSource, /REPAIR VERIFIED WEBSITE RECORDS/);
+  assert.match(testCenterSource, /reviewToken: lastAction\?\.websiteRepair\?\.reviewToken/);
   assert.match(testCenterSource, /Activation sends nothing/);
 });
 
