@@ -202,6 +202,23 @@ export type OutreachQueueItem = {
   updatedAt: string;
 };
 
+const noSendAuditPatterns = [
+  /\bnothing\s+(?:was|has been|had been|will be)\s+sent\b/gi,
+  /\bno\s+(?:outreach|emails?|messages?|dms?|contact\s+forms?|forms?|phone\s+calls?|calls?|looms?)(?:(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)(?:outreach|emails?|messages?|dms?|contact\s+forms?|forms?|phone\s+calls?|calls?|looms?))*\s+(?:(?:was|were|has been|have been|had been|will be)\s+)?(?:sent|submitted|placed|recorded)(?:\s+(?:and|or)\s+(?:sent|submitted|placed|recorded))*\b/gi,
+  /\b(?:emails?|outreach|messages?|dms?|forms?|calls?|looms?)\s+sent\s*:\s*0\b/gi,
+  /\b(?:emails?|outreach|messages?|dms?|forms?|calls?|looms?)\s+sent\s*=\s*0\b/gi,
+] as const;
+
+export function outreachHistoryTextIndicatesProtectedContact(value: string) {
+  const withoutNoSendAudit = noSendAuditPatterns.reduce(
+    (text, pattern) => text.replace(pattern, " "),
+    value,
+  );
+  return /\b(?:sent|contacted|suppressed|opted out|bounced|complained|unsubscribe|never contact|do not contact|not interested|bad fit|lost)\b/i.test(
+    withoutNoSendAudit,
+  );
+}
+
 export type OutreachCopyRegenerationEligibility = {
   eligible: boolean;
   reason: string;
@@ -640,15 +657,21 @@ function prospectQueueKey(prospect: Prospect): SmartQueueKey {
 
 export function smartQueueKeyForItem(item: OutreachQueueItem): SmartQueueKey {
   const statusText = `${item.status} ${item.blockedReason} ${item.notes} ${item.replyStatus}`;
+  const contactSourceNeedsVerification = /\b(?:verify|verification|unverified|suspicious|placeholder|invalid)\b/i.test(item.contactSource);
   if (/suppressed|opted out|bounced|complained|never contact/i.test(statusText)) return "suppressedDoNotContact";
-  if (item.sentDate || /sent|replied|positive reply|won|lost|not interested|first dm sent|loom sent|pricing sent|follow-up/i.test(statusText)) return "alreadyContacted";
+  if (
+    item.sentDate
+    || outreachHistoryTextIndicatesProtectedContact(statusText)
+    || /replied|positive reply|won|first dm sent|loom sent|pricing sent|follow-up/i.test(statusText)
+  ) return "alreadyContacted";
   if (/bad fit|blocked/i.test(statusText) && !/phone(?:\s|-)?only/i.test(statusText)) return "badFitBlocked";
   if (/phone(?:\s|-)?only|call first/i.test(`${item.contactSource} ${statusText}`)) return "phoneOnlyBlocked";
   if (["Preview Build Needed", "Loom Needed", "Preview Needs Polish", "Ready for Loom"].includes(item.status) && !resultHasPublicPreview(item)) return "needsPreviewReview";
   if (/facebook/i.test(item.contactSource)) return "readyForFacebookDm";
   if (/instagram|linkedin|social/i.test(item.contactSource)) return "readyForInstagramDm";
   if (/contact form|quote form/i.test(item.contactSource)) return "readyForContactFormReview";
-  if (item.email && !/verify/i.test(item.contactSource)) return "readyForEmailReview";
+  if (contactSourceNeedsVerification) return "needsManualResearch";
+  if (item.email) return "readyForEmailReview";
   if (/manual research|unknown/i.test(item.contactSource)) return "needsManualResearch";
   return "needsPreviewReview";
 }

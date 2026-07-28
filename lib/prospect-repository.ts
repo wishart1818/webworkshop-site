@@ -69,6 +69,22 @@ const prospectInclude = {
 
 type StoredProspect = Prisma.ProspectGetPayload<{ include: typeof prospectInclude }>;
 
+export type ProspectListDiagnostics = {
+  malformedRecordsOmitted: number;
+};
+
+export type ProspectListResult = {
+  prospects: Prospect[];
+  diagnostics: ProspectListDiagnostics;
+};
+
+export class ProspectRecordsUnreadableError extends Error {
+  constructor(public readonly recordCount: number) {
+    super("Saved prospect records could not be decoded.");
+    this.name = "ProspectRecordsUnreadableError";
+  }
+}
+
 function stringArray(value: Prisma.JsonValue): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -336,16 +352,50 @@ async function persistProspect(prospect: Prospect) {
   });
 }
 
-export async function listProspects(): Promise<Prospect[]> {
+export function decodeProspectRows<T extends { id: string }>(
+  rows: T[],
+  decode: (row: T) => Prospect,
+): ProspectListResult {
+  const prospects: Prospect[] = [];
+  let malformedRecordsOmitted = 0;
+  for (const row of rows) {
+    try {
+      prospects.push(decode(row));
+    } catch (error) {
+      malformedRecordsOmitted += 1;
+      console.error("[prospect-repository] Saved prospect record was omitted after a decode failure.", {
+        prospectId: row.id,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+  return { prospects, diagnostics: { malformedRecordsOmitted } };
+}
+
+export async function listProspectsWithDiagnostics(): Promise<ProspectListResult> {
   assertPersistenceAvailable();
-  if (!hasDatabase) return structuredClone(getMemoryStore());
+  if (!hasDatabase) {
+    return {
+      prospects: structuredClone(getMemoryStore()),
+      diagnostics: { malformedRecordsOmitted: 0 },
+    };
+  }
   await ensureTopProspectSchema();
   const prisma = getProspectDatabase();
   const count = await prisma.prospect.count();
   if (count === 0) {
     for (const prospect of seedProspects) await persistProspect(prospect);
   }
-  return (await prisma.prospect.findMany({ include: prospectInclude, orderBy: { priorityScore: "desc" } })).map(toDomain);
+  const rows = await prisma.prospect.findMany({ include: prospectInclude, orderBy: { priorityScore: "desc" } });
+  const result = decodeProspectRows(rows, toDomain);
+  if (rows.length > 0 && result.prospects.length === 0) {
+    throw new ProspectRecordsUnreadableError(rows.length);
+  }
+  return result;
+}
+
+export async function listProspects(): Promise<Prospect[]> {
+  return (await listProspectsWithDiagnostics()).prospects;
 }
 
 export async function saveProspect(prospect: Prospect): Promise<Prospect> {

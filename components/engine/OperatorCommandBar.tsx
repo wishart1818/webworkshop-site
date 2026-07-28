@@ -98,6 +98,7 @@ export function OperatorCommandBar({
     "Show me email-ready leads.",
     "Why is sending blocked?",
     "Run the full readiness test.",
+    "COMMAND: RUN_SAFE_READINESS_REPAIR\nACTION: EXECUTE",
     "Show previews that need regeneration.",
     "Regenerate the preview for Pinnacle Pressure Washing of Toledo.",
     "Regenerate all eligible unsent previews using the newest generator.",

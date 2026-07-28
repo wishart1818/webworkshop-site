@@ -59,6 +59,7 @@ export function OperatorTestCenterWorkspace() {
   const [copied, setCopied] = useState("");
   const [providerSmokeSummary, setProviderSmokeSummary] = useState("");
   const [activeView, setActiveView] = useState<TestCenterView>("readiness");
+  const [repairConfirmationOpen, setRepairConfirmationOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,10 +104,34 @@ export function OperatorTestCenterWorkspace() {
       if (!response.ok) throw new Error(apiError(body, "Operator action failed safely."));
       setLastAction(body);
       setNotice(body.message);
-      setActiveView(action === "run_full_autonomous_readiness_test" ? "readiness" : "results");
+      setActiveView(action === "run_full_autonomous_readiness_test" || action === "run_safe_readiness_repair" ? "readiness" : "results");
       await load();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Operator action failed safely.");
+    } finally {
+      setActionState("idle");
+    }
+  }
+
+  async function confirmSafeReadinessRepair() {
+    setActionState("running");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/engine/operator-test-center", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run_safe_readiness_repair", confirmed: true }),
+      });
+      const body = (await response.json()) as OperatorActionResult & { error?: string };
+      if (!response.ok) throw new Error(apiError(body, "Safe readiness repair failed without sending outreach."));
+      setLastAction(body);
+      setNotice(body.message);
+      setRepairConfirmationOpen(false);
+      setActiveView("readiness");
+      await load();
+    } catch (repairError) {
+      setError(repairError instanceof Error ? repairError.message : "Safe readiness repair failed without sending outreach.");
     } finally {
       setActionState("idle");
     }
@@ -262,6 +287,7 @@ export function OperatorTestCenterWorkspace() {
         </div>
         <div className="engine-operator-button-grid">
           <button className="engine-button engine-button--primary engine-operator-master-button" disabled={busy} onClick={() => void runOperatorAction("run_full_autonomous_readiness_test")} type="button">Run Full Autonomous Readiness Test</button>
+          <button className="engine-button" disabled={busy} onClick={() => setRepairConfirmationOpen(true)} type="button">Repair Readiness Issues Safely</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("check_email_safety_gates")} type="button">Check Email Safety Gates</button>
           <button className="engine-button" disabled={busy} onClick={() => void runProviderSmokeTest()} type="button">Run Provider Smoke Test</button>
           <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runSmallTopProspectsTest()} type="button">Run Small Top Prospects Test</button>
@@ -274,6 +300,25 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_notification")} type="button">Send Internal Test Notification</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_resend_test")} type="button">Send Internal Test Email Through Resend</button>
         </div>
+        {repairConfirmationOpen ? (
+          <section aria-labelledby="safe-readiness-repair-title" className="engine-operator-safety-note" role="alertdialog">
+            <b id="safe-readiness-repair-title">Confirm safe readiness repair</b>
+            <p>The workflow will rerun readiness, repair only eligible unsent and uncontacted records, and rerun Email Safety Gates.</p>
+            <ul>
+              <li>No outreach will be sent.</li>
+              <li>No settings, caps, or environment variables will change.</li>
+              <li>Suppression and contact history will be preserved.</li>
+              <li>No prospect will be approved and no preview will be built.</li>
+              <li>Ambiguous records will remain for manual review.</li>
+            </ul>
+            <div className="engine-inline-actions">
+              <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void confirmSafeReadinessRepair()} type="button">
+                {busy ? "Repairing safely..." : "Confirm Safe Repair"}
+              </button>
+              <button className="engine-button" disabled={busy} onClick={() => setRepairConfirmationOpen(false)} type="button">Cancel</button>
+            </div>
+          </section>
+        ) : null}
         <div className="engine-operator-safety-note">
           <b>Safety lock</b>
           <p>Prospect emails still obey OUTREACH_EMAIL_DISABLED, OUTREACH_AUTO_SEND_ENABLED, queue gates, public preview rules, suppression, cooldown, and approval status. Internal email notifications remain separate from prospect outreach. Full auto still requires OUTREACH_FULL_AUTO_SEND_ENABLED.</p>
@@ -305,6 +350,36 @@ export function OperatorTestCenterWorkspace() {
             <div><dt>Optional / info</dt><dd>{lastAction.readiness.optional.length}</dd></div>
             <div><dt>Generated</dt><dd>{new Date(lastAction.readiness.generatedAt).toLocaleString()}</dd></div>
           </dl>
+          {lastAction.repair ? (
+            <section className="engine-readiness-failed-records" aria-label="Safe readiness repair receipt">
+              <header>
+                <div>
+                  <span>Persisted operator receipt</span>
+                  <h3>Safe readiness repair</h3>
+                </div>
+                <b>{lastAction.repair.finalEmailSafetyStatus}</b>
+              </header>
+              <dl className="engine-operator-check-grid">
+                <div><dt>Inspected</dt><dd>{lastAction.repair.recordsInspected.length}</dd></div>
+                <div><dt>Auto-fixed</dt><dd>{lastAction.repair.recordsAutoFixed.length}</dd></div>
+                <div><dt>Removed from email eligibility</dt><dd>{lastAction.repair.recordsRemovedFromEligibility.length}</dd></div>
+                <div><dt>Manual review</dt><dd>{lastAction.repair.recordsRequiringManualReview.length}</dd></div>
+                <div><dt>Outreach sent</dt><dd>0</dd></div>
+              </dl>
+              <div>
+                {lastAction.repair.recordsInspected.map((record) => (
+                  <article key={`${record.packageId}:${record.classification}`}>
+                    <span>{statusLabel(record.classification)}</span>
+                    <h4>{record.businessName}</h4>
+                    <p>{record.failureCategories.join(", ")}</p>
+                    <p><b>Action:</b> {record.actionTaken}</p>
+                  </article>
+                ))}
+              </div>
+              <p>{lastAction.repair.finalEmailSafetySummary}</p>
+              <p><b>Safety:</b> No emails, DMs, forms, calls, or Looms were sent. Settings were unchanged, and suppression/contact history was preserved.</p>
+            </section>
+          ) : null}
           {lastAction.readiness.failedRecords.length ? (
             <section className="engine-readiness-failed-records" aria-label="Failed records needing attention">
               <header>

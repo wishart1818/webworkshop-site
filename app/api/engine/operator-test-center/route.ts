@@ -3,10 +3,12 @@ import {
   getOperatorTestCenterPayload,
   generateOneTestOutreachPackage,
   regenerateOperatorUnsentOutreachCopy,
+  runEmailSafetyGatesCheck,
   runFullAutonomousReadinessTest,
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
+  runSafeReadinessRepair,
   sendOperatorTestNotification,
   sendOperatorTestSms,
   simulateNext24Hours,
@@ -25,7 +27,7 @@ export async function GET() {
 }
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { action?: string };
+    const payload = await request.json() as { action?: string; confirmed?: boolean };
     if (payload.action === "generate_test_package") {
       return NextResponse.json(generateOneTestOutreachPackage());
     }
@@ -47,6 +49,12 @@ export async function POST(request: Request) {
     if (payload.action === "run_full_autonomous_readiness_test") {
       return NextResponse.json(await runFullAutonomousReadinessTest());
     }
+    if (payload.action === "run_safe_readiness_repair") {
+      if (payload.confirmed !== true) {
+        return NextResponse.json({ error: "Confirm the safe readiness repair before changing records." }, { status: 409 });
+      }
+      return NextResponse.json(await runSafeReadinessRepair({ confirmed: true }));
+    }
     if (payload.action === "send_internal_notification") {
       return NextResponse.json(await sendOperatorTestNotification("notification"));
     }
@@ -57,8 +65,8 @@ export async function POST(request: Request) {
       return NextResponse.json(await sendOperatorTestSms());
     }
     if (payload.action === "check_email_safety_gates") {
-      const center = await getOperatorTestCenterPayload();
-      return NextResponse.json({ ok: true, message: center.summaries.emailSafety });
+      const emailSafety = await runEmailSafetyGatesCheck();
+      return NextResponse.json({ ok: emailSafety.status === "Passed", message: emailSafety.summary, emailSafety });
     }
     return NextResponse.json({ error: "Select a supported Operator Test Center action." }, { status: 400 });
   } catch (error) {

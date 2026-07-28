@@ -8,23 +8,26 @@ import {
 } from "@/lib/internal-notifications";
 import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
 import { databaseHealth, operationalMode } from "@/lib/operational-controls";
-import { createProspect, generateOutreach, seedProspects, withAnalysis } from "@/lib/prospect-engine";
+import { createProspect, generateOutreach, prospectEmailNeedsManualVerification, seedProspects, withAnalysis } from "@/lib/prospect-engine";
 import {
   getAutonomousGrowthDashboard,
   getAutonomousGrowthSettings,
   processExistingQualifiedProspects,
+  repairOutreachQueueItemForReadiness,
   regenerateUnsentOutreachCopy,
   runMarketScoutDryRunForDashboard,
   runSmartAutonomousDryRun,
+  safeReadinessRepairProtectionReason,
   type OutreachCopyRegenerationSummary,
   type SmartGrowthActionResult,
 } from "@/lib/autonomous-growth-repository";
-import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendReadiness, outreachCopyRegenerationEligibility, outreachEnvironment, providerConfigured } from "@/lib/autonomous-growth";
+import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendReadiness, outreachCopyRegenerationEligibility, outreachEnvironment, outreachHistoryTextIndicatesProtectedContact, providerConfigured } from "@/lib/autonomous-growth";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { publicProspectPreviewLink } from "@/lib/top-prospects";
 import { topProspectBuildVersion } from "@/lib/top-prospect-list-route";
+import { safeRecordAudit } from "@/lib/operational-controls";
 import {
   formatOperatorSafeTestRecord,
   isProviderSmokeRecordFresh,
@@ -96,6 +99,8 @@ export type OperatorActionResult = {
   regeneration?: OutreachCopyRegenerationSummary;
   smartGrowth?: SmartGrowthActionResult;
   readiness?: FullAutonomousReadinessResult;
+  repair?: SafeReadinessRepairReceipt;
+  emailSafety?: EmailSafetyGatesResult;
   simulation?: Next24HourSimulationResult;
   packagePreview?: {
     subject: string;
@@ -114,6 +119,52 @@ export type OperatorActionResult = {
     scripts: Array<{ label: string; body: string }>;
     safetySummary: string;
     fullSummary: string;
+  };
+};
+
+export type SafeReadinessRepairClassification =
+  | "safely_auto_fixable"
+  | "safely_removed_from_email_eligibility"
+  | "manual_review_required";
+
+export type SafeReadinessRepairRecord = {
+  packageId: string;
+  prospectId: string;
+  businessName: string;
+  classification: SafeReadinessRepairClassification;
+  failureCategories: string[];
+  failureReasons: string[];
+  actionTaken: string;
+  changed: boolean;
+};
+
+export type EmailSafetyGatesResult = {
+  status: "Passed" | "Needs attention";
+  summary: string;
+  unsafeQueuedRecords: number;
+};
+
+export type SafeReadinessRepairReceipt = {
+  id: string;
+  createdAt: string;
+  initialReadinessStatus: FullAutonomousReadinessResult["finalReadinessStatus"];
+  finalReadinessStatus: FullAutonomousReadinessResult["finalReadinessStatus"];
+  finalEmailSafetyStatus: EmailSafetyGatesResult["status"];
+  recordsInspected: SafeReadinessRepairRecord[];
+  recordsAutoFixed: SafeReadinessRepairRecord[];
+  recordsRemovedFromEligibility: SafeReadinessRepairRecord[];
+  recordsRequiringManualReview: SafeReadinessRepairRecord[];
+  finalEmailSafetySummary: string;
+  settingsChanged: false;
+  suppressionAndContactHistoryPreserved: true;
+  previewsBuilt: 0;
+  approvalsGranted: 0;
+  outreachSent: {
+    emails: 0;
+    dms: 0;
+    forms: 0;
+    calls: 0;
+    looms: 0;
   };
 };
 
@@ -298,8 +349,11 @@ function readinessExcludedReason(item: Awaited<ReturnType<typeof getAutonomousGr
   if (item.replyStatus) return "Reply, bounce, complaint, opt-out, or suppression history is recorded.";
   if (readinessHistoricalStatuses.has(item.status)) return `${item.status} records are historical/non-actionable for pilot sending.`;
   if (item.contactSource !== "Public email") return `${item.contactSource || "Non-public"} contact path is manual-only, not part of the reviewed public-email pilot workflow.`;
-  if (/\b(opted out|do not contact|never contact|not interested|bad fit|suppressed|bounced|complained|phone-only)\b/i.test(`${item.blockedReason}\n${item.notes}`)) {
-    return "Blocked, suppressed, phone-only, or do-not-contact history is recorded.";
+  if (outreachHistoryTextIndicatesProtectedContact(`${item.blockedReason}\n${item.notes}`)) {
+    return "Contact, suppression, or terminal history is recorded.";
+  }
+  if (/\bphone-only\b/i.test(`${item.blockedReason}\n${item.notes}`)) {
+    return "Phone-only history is recorded.";
   }
   return "";
 }
@@ -346,6 +400,12 @@ function readinessRecordsForQueue(queue: Awaited<ReturnType<typeof getAutonomous
     const emailBody = item.emailBody || "";
     const copy = `${item.subjectLine}\n${item.emailBody}\n${item.dmScript}\n${item.loomTalkingPoints}`;
     if (!item.businessName || !item.city || !item.trade) add(item, "Missing business context", "Business name, city, or trade is missing.", "Open the prospect and fill in the missing public business context.");
+    if (item.contactSource === "Public email" && !item.email) add(item, "Missing public email", "The record is marked as public-email eligible, but no recipient address is stored.", "Remove it from email eligibility and verify a public business address manually.");
+    if (
+      item.contactSource === "Public email"
+      && item.email
+      && prospectEmailNeedsManualVerification({ businessName: item.businessName, website: item.website, email: item.email })
+    ) add(item, "Email needs manual verification", "The stored address is suspicious, placeholder-like, or does not clearly match the business.", "Remove it from email eligibility until the address is manually verified.");
     if (item.outreachCopyVersion !== currentOutreachCopyVersion && !item.sentDate && !/sent|replied|not interested|lost|won/i.test(item.status)) add(item, "Outdated outreach copy", `Package uses ${item.outreachCopyVersion || "no recorded version"}.`, `Regenerate unsent outreach copy to ${currentOutreachCopyVersion}.`);
     const previewRequired = ["Preview Build Needed", "Loom Needed", "Preview Needs Polish", "Ready for Loom", "Loom Recorded"].includes(item.status);
     if (previewRequired && !item.previewLink) add(item, "Missing manual preview", "The prospect asked for a preview, but no public Lovable preview link is stored.", "Build and QA the site manually in Lovable, then save its legitimate public HTTPS link.", "prospect_preview");
@@ -1156,6 +1216,216 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     ok: dryRunStatus === "Ready for safe dry runs",
     message: `Full Autonomous Readiness Test finished: ${overallStatus}. ${nextSafestAction}`,
     readiness,
+  };
+}
+
+export async function runEmailSafetyGatesCheck(
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<EmailSafetyGatesResult> {
+  const env = outreachEnvironment(environment);
+  const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
+  const queue = dashboard?.queue ?? [];
+  const unsafeQueued = queue.filter((item) => (
+    item.status === "Queued"
+    && (
+      item.contactSource !== "Public email"
+      || !item.email
+      || Boolean(item.sentDate)
+      || Boolean(item.replyStatus)
+      || prospectEmailNeedsManualVerification({
+        businessName: item.businessName,
+        website: item.website,
+        email: item.email,
+      })
+      || /\b(?:suppressed|opted out|bounced|complained|never contact|do not contact|not interested|bad fit)\b/i.test(
+        `${item.blockedReason}\n${item.notes}`,
+      )
+    )
+  ));
+  const status = unsafeQueued.length === 0 ? "Passed" : "Needs attention";
+  return {
+    status,
+    unsafeQueuedRecords: unsafeQueued.length,
+    summary: safeTextLines([
+      `Email Safety Gates: ${status}.`,
+      `Unsafe queued records: ${unsafeQueued.length}.`,
+      `Prospect email kill switch: ${env.emailKillSwitchEnabled ? "enabled" : "disabled"}.`,
+      `Automatic email gate: ${env.autoSendEnabled ? "enabled but still approval-gated" : "disabled"}.`,
+      `Full-auto email gate: ${env.fullAutoSendEnabled ? "enabled but still safety-gated" : "disabled"}.`,
+      "Suppression, contact history, approval, daily-cap, cooldown, and public-email gates remain enforced.",
+      "No email, DM, form, call, or Loom was sent by this check.",
+    ]),
+  };
+}
+
+const deterministicCopyFailureCategories = new Set([
+  "Outdated outreach copy",
+  "First-touch preview-link violation",
+  "Missing opt-out wording",
+  "Internal engine link",
+  "Internal score language",
+  "Unsupported claim",
+]);
+
+const removeFromEmailEligibilityCategories = new Set([
+  "Missing public email",
+  "Email needs manual verification",
+  "Phone-only routed to email",
+  "Duplicate package",
+]);
+
+const leaveUnchangedManualCategories = new Set([
+  "Missing postal address",
+]);
+
+function readinessRepairRecord(
+  records: FullAutonomousReadinessFailedRecord[],
+  classification: SafeReadinessRepairClassification,
+  actionTaken: string,
+  changed: boolean,
+): SafeReadinessRepairRecord {
+  const first = records[0];
+  return {
+    packageId: first.packageId,
+    prospectId: first.prospectId,
+    businessName: first.businessName,
+    classification,
+    failureCategories: [...new Set(records.map((record) => record.category))],
+    failureReasons: [...new Set(records.map((record) => record.reason))],
+    actionTaken,
+    changed,
+  };
+}
+
+export async function runSafeReadinessRepair(input: {
+  confirmed?: boolean;
+  environment?: NodeJS.ProcessEnv;
+} = {}): Promise<OperatorActionResult> {
+  if (!input.confirmed) {
+    return {
+      ok: false,
+      message: "Confirmation is required before safe readiness repair. No records changed and nothing was sent.",
+    };
+  }
+
+  const environment = input.environment ?? process.env;
+  const initial = await runFullAutonomousReadinessTest(environment);
+  if (!initial.readiness) {
+    return { ok: false, message: "The readiness test did not return a repairable result. No records changed and nothing was sent." };
+  }
+  const queue = (await getAutonomousGrowthDashboard().catch(() => null))?.queue ?? [];
+  const queueById = new Map(queue.map((item) => [item.id, item]));
+  const grouped = new Map<string, FullAutonomousReadinessFailedRecord[]>();
+  for (const record of initial.readiness.failedRecords) {
+    grouped.set(record.packageId, [...(grouped.get(record.packageId) ?? []), record]);
+  }
+
+  const inspected: SafeReadinessRepairRecord[] = [];
+  for (const [packageId, records] of grouped) {
+    const item = queueById.get(packageId);
+    if (!item) {
+      inspected.push(readinessRepairRecord(records, "manual_review_required", "Queue item was not found. No record changed.", false));
+      continue;
+    }
+    const categories = new Set(records.map((record) => record.category));
+    const reasons = records.map((record) => `${record.category}: ${record.reason}`).join(" ");
+    if (safeReadinessRepairProtectionReason(item)) {
+      inspected.push(readinessRepairRecord(records, "manual_review_required", "Protected contact or suppression history was detected. No record changed.", false));
+      continue;
+    }
+
+    if ([...categories].some((category) => removeFromEmailEligibilityCategories.has(category))) {
+      const result = await repairOutreachQueueItemForReadiness({
+        id: packageId,
+        action: "remove_from_email_eligibility",
+        reason: reasons,
+      });
+      inspected.push(readinessRepairRecord(
+        records,
+        result.changed ? "safely_removed_from_email_eligibility" : "manual_review_required",
+        result.changed
+          ? "Removed from email eligibility, preserved the stored address for manual verification, and revoked stale approval when present."
+          : `No record changed. ${result.blockedReason}`,
+        result.changed,
+      ));
+      continue;
+    }
+
+    const onlyCopyFailures = [...categories].every((category) => deterministicCopyFailureCategories.has(category));
+    if (onlyCopyFailures) {
+      const result = await repairOutreachQueueItemForReadiness({
+        id: packageId,
+        action: "regenerate_current_copy",
+        reason: reasons,
+      });
+      inspected.push(readinessRepairRecord(
+        records,
+        result.changed ? "safely_auto_fixable" : "manual_review_required",
+        result.changed
+          ? `Regenerated the unsent first-touch draft with ${currentOutreachCopyVersion}, removed stale approval, and returned it to Needs Review.`
+          : `No record changed. ${result.blockedReason}`,
+        result.changed,
+      ));
+      continue;
+    }
+
+    if ([...categories].some((category) => leaveUnchangedManualCategories.has(category))) {
+      inspected.push(readinessRepairRecord(
+        records,
+        "manual_review_required",
+        "No record changed because this issue requires operator configuration review.",
+        false,
+      ));
+      continue;
+    }
+
+    const result = await repairOutreachQueueItemForReadiness({
+      id: packageId,
+      action: "mark_needs_manual_review",
+      reason: reasons,
+    });
+    inspected.push(readinessRepairRecord(
+      records,
+      "manual_review_required",
+      result.changed
+        ? "Moved to Needs Review, revoked stale approval when present, and preserved the record for operator review."
+        : `No record changed. ${result.blockedReason}`,
+      result.changed,
+    ));
+  }
+
+  const final = await runFullAutonomousReadinessTest(environment);
+  const emailSafety = await runEmailSafetyGatesCheck(environment);
+  const finalReadinessStatus = final.readiness?.finalReadinessStatus ?? initial.readiness.finalReadinessStatus;
+  const receipt: SafeReadinessRepairReceipt = {
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    initialReadinessStatus: initial.readiness.finalReadinessStatus,
+    finalReadinessStatus,
+    finalEmailSafetyStatus: emailSafety.status,
+    recordsInspected: inspected,
+    recordsAutoFixed: inspected.filter((record) => record.classification === "safely_auto_fixable" && record.changed),
+    recordsRemovedFromEligibility: inspected.filter((record) => record.classification === "safely_removed_from_email_eligibility" && record.changed),
+    recordsRequiringManualReview: inspected.filter((record) => record.classification === "manual_review_required"),
+    finalEmailSafetySummary: emailSafety.summary,
+    settingsChanged: false,
+    suppressionAndContactHistoryPreserved: true,
+    previewsBuilt: 0,
+    approvalsGranted: 0,
+    outreachSent: { emails: 0, dms: 0, forms: 0, calls: 0, looms: 0 },
+  };
+  await safeRecordAudit({
+    action: "safe_readiness_repair_receipt",
+    outcome: emailSafety.status === "Passed" ? "success" : "rejected",
+    subject: "operator-test-center",
+    metadata: JSON.parse(JSON.stringify(receipt)),
+  });
+  return {
+    ok: emailSafety.status === "Passed",
+    message: `Safe readiness repair inspected ${inspected.length} record(s), fixed ${receipt.recordsAutoFixed.length}, removed ${receipt.recordsRemovedFromEligibility.length} from email eligibility, and left ${receipt.recordsRequiringManualReview.length} for manual review. Nothing was sent.`,
+    readiness: final.readiness,
+    repair: receipt,
+    emailSafety,
   };
 }
 

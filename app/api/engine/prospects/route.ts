@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
 import { safeRecordAudit } from "@/lib/operational-controls";
-import { listProspects, persistenceMode, saveProspect } from "@/lib/prospect-repository";
+import { handleProspectList } from "@/lib/prospect-list-route";
+import { persistenceMode, saveProspect } from "@/lib/prospect-repository";
 import { validateProspect } from "@/lib/prospect-validation";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    return NextResponse.json({ prospects: await listProspects(), persistence: persistenceMode() });
-  } catch (error) {
-    console.error("Unable to load prospects.", error);
-    const unavailable = error instanceof Error && error.message.includes("DATABASE_URL is required");
-    return NextResponse.json({ error: unavailable ? error.message : "Unable to load prospects." }, { status: unavailable ? 503 : 500 });
-  }
+  return handleProspectList();
 }
 
 export async function POST(request: Request) {

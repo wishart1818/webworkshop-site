@@ -142,5 +142,5 @@ test("Top Prospects schema initializer stops before DDL when its lock remains bu
   });
 
   await assert.rejects(initializeTopProspectSchema(fake.database), TopProspectSchemaLockUnavailableError);
-  assert.equal(fake.statements.length, 5);
+  assert.equal(fake.statements.length, 20);
 });
