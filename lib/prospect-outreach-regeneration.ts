@@ -1,5 +1,6 @@
 import type { OutreachQueueItem } from "@/lib/autonomous-growth";
 import {
+  createOrRefreshAutonomousReviewPackageForProspect,
   listOutreachQueueItemsForBackfill,
   regenerateProspectOutreachWithCurrentScript,
   repairOutreachQueueItemForReadiness,
@@ -22,6 +23,7 @@ export type ProspectOutreachRegenerationDependencies = {
   saveProspect: typeof saveProspect;
   listQueueItems: typeof listOutreachQueueItemsForBackfill;
   repairQueueItem: typeof repairOutreachQueueItemForReadiness;
+  refreshQueueItem: typeof createOrRefreshAutonomousReviewPackageForProspect;
 };
 
 const defaultDependencies: ProspectOutreachRegenerationDependencies = {
@@ -30,6 +32,7 @@ const defaultDependencies: ProspectOutreachRegenerationDependencies = {
   saveProspect,
   listQueueItems: listOutreachQueueItemsForBackfill,
   repairQueueItem: repairOutreachQueueItemForReadiness,
+  refreshQueueItem: createOrRefreshAutonomousReviewPackageForProspect,
 };
 
 function errorMessage(error: unknown) {
@@ -88,6 +91,26 @@ async function repairLinkedQueueItem(
   throw new Error(latestReason || "The linked outreach package changed repeatedly. Reload and try once more.");
 }
 
+async function refreshQueueFromLatestProspect(
+  prospect: Prospect,
+  dependencies: ProspectOutreachRegenerationDependencies,
+) {
+  let latestError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const refreshed = await dependencies.refreshQueueItem(prospect);
+      if (refreshed) return refreshed;
+      latestError = new Error("The linked outreach package was not found after conflict recovery.");
+    } catch (error) {
+      if (isProtectedRegenerationError(error)) throw error;
+      latestError = error;
+    }
+  }
+  throw latestError instanceof Error
+    ? latestError
+    : new Error("The linked outreach package could not be refreshed from the latest prospect.");
+}
+
 export async function regenerateProspectOutreachWithConflictRecovery(
   prospectId: string,
   options: ProspectOutreachRegenerationOptions = {},
@@ -116,12 +139,15 @@ export async function regenerateProspectOutreachWithConflictRecovery(
     const latestProspect = await dependencies.getProspect(prospectId) ?? originalProspect;
     const updatedProspect = currentProspectDraft(latestProspect, previewLink, new Date().toISOString());
     const savedProspect = await dependencies.saveProspect(updatedProspect);
+    const refreshedQueueItem = existingQueueItem
+      ? await refreshQueueFromLatestProspect(savedProspect, dependencies)
+      : null;
 
     return {
       prospect: originalProspect,
       updatedProspect: savedProspect,
-      queueItem: repairedQueueItem ?? existingQueueItem,
-      previewLink,
+      queueItem: refreshedQueueItem ?? repairedQueueItem ?? existingQueueItem,
+      previewLink: refreshedQueueItem?.previewLink ?? previewLink,
       wouldUpdateQueue: Boolean(existingQueueItem),
     };
   }
