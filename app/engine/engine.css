@@ -1320,6 +1320,22 @@ body:has(.engine-shell) {
   transform: none;
 }
 
+.engine-button__spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: 0 0 0.85rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: engine-button-spin 700ms linear infinite;
+}
+
+@keyframes engine-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .engine-button--primary {
   border-color: var(--engine-accent);
   background: var(--engine-accent);
@@ -10715,6 +10731,12 @@ body:has(.engine-shell) {
 
   .engine-skeleton {
     animation: none;
+  }
+
+  .engine-button__spinner {
+    animation: none;
+    border-right-color: currentColor;
+    opacity: 0.65;
   }
 }
 

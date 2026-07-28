@@ -69,6 +69,9 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
 
 export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity" | "Details";
 type PreviewRegenerationResult = { ok: boolean; message: string };
+export type ProspectDetailActionResult = { ok: boolean; message: string };
+export type ProspectDetailActionGuard = { current: symbol | null };
+export type ProspectDetailActionOwner = { prospectId: string; selectionVersion: number };
 type PreviewStripMode = "desktop" | "mobile";
 type PreviewStripStage = "idle" | "preflight" | "loading" | "fonts" | "images" | "measuring" | "capturing" | "validating" | "ready" | "error";
 type PreviewStripCapture = {
@@ -89,9 +92,9 @@ type ProspectDetailProps = {
   onAnalyze: () => void;
   onPresenceGap: () => void;
   onOutreach: () => void;
-  onRegenerateOutreach: () => Promise<void>;
+  onRegenerateOutreach: () => Promise<ProspectDetailActionResult | void>;
   onRegeneratePreview: (feedback?: string) => Promise<PreviewRegenerationResult | void>;
-  onCreateReviewPackage: () => Promise<void>;
+  onCreateReviewPackage: () => Promise<ProspectDetailActionResult | void>;
   onPreview: () => void;
   onStatus: (status: ProspectStatus) => void;
   previewRegenerating?: boolean;
@@ -102,6 +105,33 @@ type ProspectDetailProps = {
   addNote: (event: FormEvent) => void;
   updateSelected: (updater: (prospect: Prospect) => Prospect) => void;
 };
+
+export async function runProspectDetailActionOnce<T>(
+  guard: ProspectDetailActionGuard,
+  onPendingChange: (pending: boolean) => void,
+  action: () => Promise<T>,
+): Promise<{ started: boolean; value?: T }> {
+  if (guard.current) return { started: false };
+  const actionToken = Symbol("prospect-detail-action");
+  guard.current = actionToken;
+  onPendingChange(true);
+  try {
+    return { started: true, value: await action() };
+  } finally {
+    if (guard.current === actionToken) {
+      guard.current = null;
+      onPendingChange(false);
+    }
+  }
+}
+
+export function prospectDetailActionIsCurrent(
+  owner: ProspectDetailActionOwner,
+  currentProspectId: string,
+  currentSelectionVersion: number,
+) {
+  return owner.prospectId === currentProspectId && owner.selectionVersion === currentSelectionVersion;
+}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -811,8 +841,24 @@ export function ProspectDetail({
   const [previewOpenMessage, setPreviewOpenMessage] = useState("");
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
   const [localPreviewImprovementSignal, setLocalPreviewImprovementSignal] = useState(0);
+  const [outreachRegenerationProspectId, setOutreachRegenerationProspectId] = useState("");
+  const [reviewPackageRefreshProspectId, setReviewPackageRefreshProspectId] = useState("");
+  const [outreachActionFeedback, setOutreachActionFeedback] = useState<{ prospectId: string; tone: "success" | "error"; message: string } | null>(null);
   const detailBodyRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const outreachRegenerationGuardRef = useRef<symbol | null>(null);
+  const reviewPackageRefreshGuardRef = useRef<symbol | null>(null);
+  const outreachFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeProspectRef = useRef({ prospectId: prospect.id, selectionVersion: 0 });
+  if (activeProspectRef.current.prospectId !== prospect.id) {
+    activeProspectRef.current = {
+      prospectId: prospect.id,
+      selectionVersion: activeProspectRef.current.selectionVersion + 1,
+    };
+  }
+  const outreachRegenerating = outreachRegenerationProspectId === prospect.id;
+  const reviewPackageRefreshing = reviewPackageRefreshProspectId === prospect.id;
+  const visibleOutreachActionFeedback = outreachActionFeedback?.prospectId === prospect.id ? outreachActionFeedback : null;
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const presenceLabels = prospectPresenceLabels(prospect);
   const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
@@ -840,11 +886,81 @@ export function ProspectDetail({
     setPreviewOpenMessage("No public preview link is available yet. Create or refresh the Autonomous Review Package to generate the prospect-safe /p/ preview.");
   }
 
+  function showOutreachActionFeedback(prospectId: string, tone: "success" | "error", message: string) {
+    if (outreachFeedbackTimerRef.current) clearTimeout(outreachFeedbackTimerRef.current);
+    setOutreachActionFeedback({ prospectId, tone, message });
+    if (tone === "success") {
+      outreachFeedbackTimerRef.current = setTimeout(() => {
+        setOutreachActionFeedback((current) => current?.prospectId === prospectId ? null : current);
+        outreachFeedbackTimerRef.current = null;
+      }, 4000);
+    }
+  }
+
+  async function regenerateOutreachWithFeedback() {
+    const owner = { ...activeProspectRef.current };
+    try {
+      const result = await runProspectDetailActionOnce(
+        outreachRegenerationGuardRef,
+        (pending) => setOutreachRegenerationProspectId((current) => pending ? owner.prospectId : current === owner.prospectId ? "" : current),
+        onRegenerateOutreach,
+      );
+      if (!result.started || !prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
+      if (result.value && !result.value.ok) {
+        showOutreachActionFeedback(owner.prospectId, "error", result.value.message);
+        return;
+      }
+      showOutreachActionFeedback(owner.prospectId, "success", "Outreach regenerated with the current script.");
+    } catch (error) {
+      if (!prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
+      showOutreachActionFeedback(owner.prospectId, "error", error instanceof Error ? error.message : "Unable to regenerate outreach.");
+    }
+  }
+
+  async function refreshReviewPackageWithFeedback() {
+    const owner = { ...activeProspectRef.current };
+    try {
+      const result = await runProspectDetailActionOnce(
+        reviewPackageRefreshGuardRef,
+        (pending) => setReviewPackageRefreshProspectId((current) => pending ? owner.prospectId : current === owner.prospectId ? "" : current),
+        onCreateReviewPackage,
+      );
+      if (!result.started || !prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
+      if (result.value && !result.value.ok) {
+        showOutreachActionFeedback(owner.prospectId, "error", result.value.message);
+        return;
+      }
+      showOutreachActionFeedback(owner.prospectId, "success", result.value?.message || "Autonomous review package created or refreshed. Nothing was sent.");
+    } catch (error) {
+      if (!prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
+      showOutreachActionFeedback(owner.prospectId, "error", error instanceof Error ? error.message : "Unable to create or refresh the review package.");
+    }
+  }
+
+  function runMobileOutreachAction(action: () => Promise<void>) {
+    setMobileActionMenuOpen(false);
+    setDetailTab("Outreach");
+    void action();
+  }
+
   useEffect(() => {
     setMobileActionMenuOpen(false);
     setPreviewOpenMessage("");
+    setOutreachActionFeedback(null);
+    setOutreachRegenerationProspectId("");
+    setReviewPackageRefreshProspectId("");
+    outreachRegenerationGuardRef.current = null;
+    reviewPackageRefreshGuardRef.current = null;
+    if (outreachFeedbackTimerRef.current) {
+      clearTimeout(outreachFeedbackTimerRef.current);
+      outreachFeedbackTimerRef.current = null;
+    }
     detailBodyRef.current?.scrollTo({ top: 0 });
   }, [prospect.id]);
+
+  useEffect(() => () => {
+    if (outreachFeedbackTimerRef.current) clearTimeout(outreachFeedbackTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!mobileActionMenuOpen) return;
@@ -907,7 +1023,15 @@ export function ProspectDetail({
           ? <AnalysisView prospect={prospect} onAnalyze={onAnalyze} />
           : <UnanalyzedWebsiteView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} />)}
         {detailTab === "Outreach" && (prospect.outreach
-          ? <OutreachView prospect={prospect} updateSelected={updateSelected} onRegenerateOutreach={onRegenerateOutreach} onCreateReviewPackage={onCreateReviewPackage} />
+          ? <OutreachView
+              actionFeedback={visibleOutreachActionFeedback}
+              onCreateReviewPackage={refreshReviewPackageWithFeedback}
+              onRegenerateOutreach={regenerateOutreachWithFeedback}
+              outreachRegenerating={outreachRegenerating}
+              prospect={prospect}
+              reviewPackageRefreshing={reviewPackageRefreshing}
+              updateSelected={updateSelected}
+            />
           : <EmptyState title="No outreach draft yet" body={prospect.prospectType === "no_website_social_only" ? "Generate an ownership-focused draft grounded in the public business profile. It will stay unsent until approved." : "Generate a personal draft grounded in the website analysis. It will stay unsent until approved."} action={onOutreach} actionLabel="Generate outreach" />)}
         {detailTab === "Preview" && (prospect.preview
           ? <PreviewRenderBoundary
@@ -935,8 +1059,8 @@ export function ProspectDetail({
             <button onClick={() => { setMobileActionMenuOpen(false); openPublicPreview(); }} type="button">Open preview</button>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">View internal Preview tab</button>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); setLocalPreviewImprovementSignal(Date.now()); }} type="button">Improve preview</button>
-            <button onClick={() => { setMobileActionMenuOpen(false); void onRegenerateOutreach(); }} type="button">Rewrite outreach</button>
-            <button onClick={() => { setMobileActionMenuOpen(false); void onCreateReviewPackage(); }} type="button">Create review package</button>
+            <button disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => runMobileOutreachAction(regenerateOutreachWithFeedback)} type="button">Rewrite outreach</button>
+            <button disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => runMobileOutreachAction(refreshReviewPackageWithFeedback)} type="button">Create review package</button>
             <button onClick={() => { setMobileActionMenuOpen(false); onStatus("Reviewed"); }} type="button">Mark reviewed</button>
           </div>
         </details>
@@ -1091,7 +1215,21 @@ function AnalysisView({ prospect, onAnalyze }: { prospect: Prospect; onAnalyze: 
   );
 }
 
-function OutreachView({ prospect, updateSelected, onRegenerateOutreach, onCreateReviewPackage }: Pick<ProspectDetailProps, "prospect" | "updateSelected" | "onRegenerateOutreach" | "onCreateReviewPackage">) {
+function OutreachView({
+  prospect,
+  updateSelected,
+  onRegenerateOutreach,
+  onCreateReviewPackage,
+  outreachRegenerating,
+  reviewPackageRefreshing,
+  actionFeedback,
+}: Pick<ProspectDetailProps, "prospect" | "updateSelected"> & {
+  onRegenerateOutreach: () => Promise<void>;
+  onCreateReviewPackage: () => Promise<void>;
+  outreachRegenerating: boolean;
+  reviewPackageRefreshing: boolean;
+  actionFeedback: { tone: "success" | "error"; message: string } | null;
+}) {
   const outreach = prospect.outreach!;
   const [complianceConfirmed, setComplianceConfirmed] = useState(false);
   const [copied, setCopied] = useState("");
@@ -1147,10 +1285,24 @@ function OutreachView({ prospect, updateSelected, onRegenerateOutreach, onCreate
         </button>
       </div>
       <div className="engine-result-actions">
-        <button className="engine-button" onClick={() => void onRegenerateOutreach()} type="button">Regenerate with Current Script</button>
-        <button className="engine-button" onClick={() => void onCreateReviewPackage()} type="button">Create/Refresh Autonomous Review Package</button>
+        <button aria-busy={outreachRegenerating} className="engine-button" disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => void onRegenerateOutreach()} type="button">
+          {outreachRegenerating ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
+          {outreachRegenerating ? "Regenerating…" : "Regenerate with Current Script"}
+        </button>
+        <button aria-busy={reviewPackageRefreshing} className="engine-button" disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => void onCreateReviewPackage()} type="button">
+          {reviewPackageRefreshing ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
+          {reviewPackageRefreshing ? "Refreshing package…" : "Create/Refresh Autonomous Review Package"}
+        </button>
         <a className="engine-button" href="/engine?tab=autonomous-growth">Open linked Autonomous Growth package</a>
       </div>
+      {actionFeedback ? (
+        <div className={actionFeedback.tone === "success" ? "engine-success-banner" : "engine-error-banner"} role={actionFeedback.tone === "success" ? "status" : "alert"}>
+          <div>
+            <b>{actionFeedback.tone === "success" ? "Outreach workspace updated" : "Action needs attention"}</b>
+            <p>{actionFeedback.message}</p>
+          </div>
+        </div>
+      ) : null}
       <section><h3>Subject options</h3><ul>{outreach.subjects.map((item) => <li key={item}>{item}</li>)}</ul></section>
       <DraftSection approved={outreach.approved && copyIsCurrent} copied={copied} label="Exact first email" onCopy={copyDraft} value={outreach.concise} />
       <DraftSection approved={outreach.approved && copyIsCurrent} copied={copied} label="Yes reply with preview link" onCopy={copyDraft} value={outreach.detailed} />
@@ -1192,7 +1344,7 @@ function PreviewWorkspaceFailure({
   prospect,
   publicPreviewUrl,
 }: {
-  onCreateReviewPackage: () => Promise<void>;
+  onCreateReviewPackage: () => Promise<ProspectDetailActionResult | void>;
   onOpenPublicPreview: () => void;
   prospect: Prospect;
   publicPreviewUrl: string;
@@ -1221,7 +1373,7 @@ function PreviewView({
   publicPreviewUrl,
 }: {
   prospect: Prospect;
-  onCreateReviewPackage: () => Promise<void>;
+  onCreateReviewPackage: () => Promise<ProspectDetailActionResult | void>;
   onOpenPublicPreview: () => void;
   onRegeneratePreview: (feedback?: string) => Promise<PreviewRegenerationResult | void>;
   onReviewOutreach: () => void;

@@ -628,7 +628,7 @@ export function ProspectEngine() {
   }
 
   async function regenerateSelectedOutreach() {
-    if (!selected) return;
+    if (!selected) return { ok: false, message: "Select a prospect before regenerating outreach." };
     setSyncState("saving");
     setSyncError("");
     try {
@@ -641,9 +641,12 @@ export function ProspectEngine() {
       if (!response.ok || !payload.updatedProspect) throw new Error(payload.error || "Unable to regenerate outreach.");
       setProspects((current) => current.map((prospect) => prospect.id === payload.updatedProspect!.id ? payload.updatedProspect! : prospect));
       setSyncState("saved");
+      return { ok: true, message: "Outreach regenerated with the current script." };
     } catch (error) {
-      setSyncError(error instanceof Error ? error.message : "Unable to regenerate outreach.");
+      const message = error instanceof Error ? error.message : "Unable to regenerate outreach.";
+      setSyncError(message);
       setSyncState("error");
+      return { ok: false, message };
     }
   }
 
@@ -695,7 +698,7 @@ export function ProspectEngine() {
   }
 
   async function createSelectedReviewPackage() {
-    if (!selected) return;
+    if (!selected) return { ok: false, message: "Select a prospect before refreshing its review package." };
     setSyncState("saving");
     setSyncError("");
     try {
@@ -704,13 +707,16 @@ export function ProspectEngine() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "create_autonomous_review_package", prospectId: selected.id }),
       });
-      const payload = (await response.json()) as { queueItem?: unknown; error?: string };
+      const payload = (await response.json()) as { queueItem?: unknown; message?: string; error?: string };
       if (!response.ok) throw new Error(payload.error || "Unable to create review package.");
       await loadProspects();
       setSyncState("saved");
+      return { ok: true, message: payload.message || "Autonomous review package created or refreshed. Nothing was sent." };
     } catch (error) {
-      setSyncError(error instanceof Error ? error.message : "Unable to create review package.");
+      const message = error instanceof Error ? error.message : "Unable to create review package.";
+      setSyncError(message);
       setSyncState("error");
+      return { ok: false, message };
     }
   }
 
