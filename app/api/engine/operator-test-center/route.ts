@@ -2,17 +2,19 @@ import { NextResponse } from "next/server";
 import {
   getOperatorTestCenterPayload,
   generateOneTestOutreachPackage,
-  regenerateOperatorUnsentOutreachCopy,
   runEmailSafetyGatesCheck,
   runFullAutonomousReadinessTest,
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
-  runSafeReadinessRepair,
   sendOperatorTestNotification,
   sendOperatorTestSms,
   simulateNext24Hours,
 } from "@/lib/operator-test-center";
+import {
+  regenerateOperatorUnsentOutreachCopyWithRecovery,
+  runSafeReadinessRepairWithRecovery,
+} from "@/lib/operator-readiness-recovery";
 import {
   disableAllProspectEmailSending,
   enableControlledEmailPilot,
@@ -38,7 +40,7 @@ export async function POST(request: Request) {
       return NextResponse.json(generateOneTestOutreachPackage());
     }
     if (payload.action === "regenerate_unsent_outreach_copy") {
-      return NextResponse.json(await regenerateOperatorUnsentOutreachCopy());
+      return NextResponse.json(await regenerateOperatorUnsentOutreachCopyWithRecovery());
     }
     if (payload.action === "run_smart_backfill_test") {
       return NextResponse.json(await runOperatorSmartBackfillTest());
@@ -59,7 +61,7 @@ export async function POST(request: Request) {
       if (payload.confirmed !== true) {
         return NextResponse.json({ error: "Confirm the safe readiness repair before changing records." }, { status: 409 });
       }
-      return NextResponse.json(await runSafeReadinessRepair({ confirmed: true }));
+      return NextResponse.json(await runSafeReadinessRepairWithRecovery({ confirmed: true }));
     }
     if (payload.action === "send_internal_notification") {
       return NextResponse.json(await sendOperatorTestNotification("notification"));
