@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import {
   currentOutreachCopyVersion,
   loomTalkingPoints,
@@ -74,18 +75,27 @@ function stripApprovalMarker(value: string) {
 }
 
 async function clearApprovalInTransaction(
-  transaction: Parameters<Parameters<ReturnType<typeof getProspectDatabase>["$transaction"]>[0]>[0],
+  transaction: Prisma.TransactionClient,
   item: OutreachQueueItem,
   now: Date,
+  packageDisposition: "review" | "closed",
 ) {
   if (item.topProspectResultId) {
     await transaction.topProspectResult.updateMany({
       where: { id: item.topProspectResultId, packageSentAt: null, NOT: { packageStatus: "SENT" } },
-      data: {
-        packageStatus: "READY_FOR_REVIEW",
-        packageReviewedAt: now,
-        packageApprovedAt: null,
-      },
+      data: packageDisposition === "closed"
+        ? {
+            packageStatus: "SKIPPED",
+            packageReviewedAt: now,
+            packageApprovedAt: null,
+            packageSkippedAt: now,
+          }
+        : {
+            packageStatus: "READY_FOR_REVIEW",
+            packageReviewedAt: now,
+            packageApprovedAt: null,
+            packageSkippedAt: null,
+          },
     });
   }
   if (item.prospectId) {
@@ -121,7 +131,7 @@ async function reconcileTerminalProspect(item: OutreachQueueItem, prospect: Pros
       },
     });
     if (updated.count !== 1) return false;
-    await clearApprovalInTransaction(transaction, item, now);
+    await clearApprovalInTransaction(transaction, item, now, "closed");
     return true;
   }, { isolationLevel: "Serializable" });
 
@@ -159,7 +169,7 @@ function currentQueueCopy(item: OutreachQueueItem, prospect: Prospect, now: Date
       status: "Needs Review",
       queuedDate: null,
       blockedReason: null,
-    } as const,
+    },
   };
 }
 
@@ -182,7 +192,7 @@ async function regenerateQueueItem(item: OutreachQueueItem, prospect: Prospect) 
     });
     if (updated.count !== 1) return false;
 
-    await clearApprovalInTransaction(transaction, item, now);
+    await clearApprovalInTransaction(transaction, item, now, "review");
     await transaction.outreachDraft.create({
       data: {
         prospectId: prospect.id,
@@ -262,17 +272,24 @@ async function recoverOutdatedRecords(): Promise<RecoverySummary> {
   return summary;
 }
 
+function mergeReasonCounts(left: Record<string, number>, right: Record<string, number>) {
+  const merged = { ...left };
+  for (const [reason, count] of Object.entries(right)) merged[reason] = (merged[reason] ?? 0) + count;
+  return merged;
+}
+
 function combineRegenerationSummary(
   recovery: RecoverySummary,
   fallback: OutreachCopyRegenerationSummary | undefined,
 ): OutreachCopyRegenerationSummary {
   const fallbackUpdated = fallback?.updated ?? 0;
   const fallbackItems = fallback?.updatedItems ?? [];
-  const skippedReasons = { ...recovery.skippedReasons, ...(fallback?.skippedReasons ?? {}) };
+  const skippedReasons = mergeReasonCounts(recovery.skippedReasons, fallback?.skippedReasons ?? {});
   const updatedItems = [...new Set([...recovery.updatedItems, ...fallbackItems])];
   const skipped = Object.values(skippedReasons).reduce((sum, count) => sum + count, 0);
+  const updated = recovery.regenerated + fallbackUpdated;
   const details = [
-    `${recovery.regenerated + fallbackUpdated} unsent package${recovery.regenerated + fallbackUpdated === 1 ? "" : "s"} updated to ${currentOutreachCopyVersion}`,
+    `${updated} unsent package${updated === 1 ? "" : "s"} updated to ${currentOutreachCopyVersion}`,
     recovery.terminallyReconciled
       ? `${recovery.terminallyReconciled} closed prospect queue record${recovery.terminallyReconciled === 1 ? "" : "s"} moved out of email eligibility`
       : "",
@@ -282,7 +299,7 @@ function combineRegenerationSummary(
   ].filter(Boolean);
   return {
     copyVersion: currentOutreachCopyVersion,
-    updated: recovery.regenerated + fallbackUpdated,
+    updated,
     skipped,
     oldUnsentPackagesNeedingRegeneration: recovery.targeted,
     updatedItems,
