@@ -1019,6 +1019,18 @@ export type OutreachCopyRegenerationSummary = {
   message: string;
 };
 
+export type SafeReadinessQueueRepairAction =
+  | "regenerate_current_copy"
+  | "remove_from_email_eligibility"
+  | "mark_needs_manual_review";
+
+export type SafeReadinessQueueRepairResult = {
+  item: OutreachQueueItem | null;
+  changed: boolean;
+  action: SafeReadinessQueueRepairAction;
+  blockedReason: string;
+};
+
 function suppressionStatus(reason: EmailSuppressionReason): OutreachQueueStatus {
   if (reason === "bounce") return "Bounced";
   if (reason === "complaint") return "Complained";
@@ -2811,6 +2823,162 @@ function regeneratedQueueCopy(item: OutreachQueueItem, nowIso: string) {
     reviewSummary: `${item.businessName} outreach copy was regenerated to ${currentOutreachCopyVersion}. Nothing was sent.`,
     notes: [item.notes, `Outreach copy regenerated to ${currentOutreachCopyVersion}. Nothing was sent.`].filter(Boolean).join("\n"),
   };
+}
+
+const safeReadinessRepairStatuses = new Set<OutreachQueueStatus>([
+  "Draft",
+  "Eligible",
+  "Needs Review",
+  "Queued",
+  "Preview Needs Polish",
+]);
+
+function safeReadinessRepairBlockReason(item: OutreachQueueItem, prospectStatus = "") {
+  if (!safeReadinessRepairStatuses.has(item.status)) return `Status ${item.status} is protected from readiness repair.`;
+  if (item.sentDate) return "Sent records are protected from readiness repair.";
+  if (item.replyStatus) return "Reply, bounce, complaint, opt-out, or suppression history is protected.";
+  if (queueItemHasAmbiguousOutcome(item)) return "Ambiguous provider outcomes require manual reconciliation.";
+  if (prospectStatus && !["New", "Reviewed"].includes(prospectStatus)) return `Prospect status ${prospectStatus} is already contacted or closed.`;
+  if (/\b(?:sent|contacted|suppressed|opted out|bounced|complained|unsubscribe|never contact|do not contact|not interested|bad fit|lost)\b/i.test(
+    `${item.status}\n${item.replyStatus}\n${item.blockedReason}\n${item.notes}`,
+  )) return "Contact, suppression, or terminal history is protected.";
+  return "";
+}
+
+function readinessRepairData(
+  item: OutreachQueueItem,
+  action: SafeReadinessQueueRepairAction,
+  reason: string,
+  nowIso: string,
+) {
+  const notesWithoutApproval = stripApprovalMarker(item.notes);
+  const auditNote = `Safe readiness repair: ${reason}. Approval removed when present. Nothing was sent.`;
+  const base = {
+    status: "Needs Review" as const,
+    queuedDate: null,
+    notes: [notesWithoutApproval, auditNote].filter(Boolean).join("\n") || null,
+    recommendedNextAction: "Needs Human Review",
+  };
+  if (action === "regenerate_current_copy") {
+    return {
+      ...regeneratedQueueCopy({ ...item, notes: notesWithoutApproval }, nowIso),
+      ...base,
+      blockedReason: null,
+    };
+  }
+  if (action === "remove_from_email_eligibility") {
+    return {
+      ...base,
+      contactSource: "Needs manual verification",
+      eligibilityReason: "Removed from email eligibility by safe readiness repair. The stored address was preserved for manual verification.",
+      blockedReason: reason,
+    };
+  }
+  return {
+    ...base,
+    blockedReason: [item.blockedReason, reason].filter(Boolean).join(" "),
+  };
+}
+
+async function clearMemoryReadinessApproval(item: OutreachQueueItem) {
+  memoryApprovedAutoEmailQueueIds().delete(item.id);
+  if (!item.prospectId) return;
+  const prospect = await getProspect(item.prospectId);
+  if (!prospect?.outreach?.approved) return;
+  await saveProspect({
+    ...prospect,
+    outreach: { ...prospect.outreach, approved: false },
+  });
+}
+
+export async function repairOutreachQueueItemForReadiness(input: {
+  id: string;
+  action: SafeReadinessQueueRepairAction;
+  reason: string;
+}): Promise<SafeReadinessQueueRepairResult> {
+  const reason = input.reason.trim() || "Operator review is required.";
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  if (!hasDatabase) {
+    const current = memoryQueue().find((item) => item.id === input.id) ?? null;
+    if (!current) return { item: null, changed: false, action: input.action, blockedReason: "Queue item was not found." };
+    const prospect = current.prospectId ? await getProspect(current.prospectId) : null;
+    const blockedReason = safeReadinessRepairBlockReason(current, prospect?.status ?? "");
+    if (blockedReason) return { item: structuredClone(current), changed: false, action: input.action, blockedReason };
+    const data = readinessRepairData(current, input.action, reason, nowIso);
+    Object.assign(current, {
+      ...data,
+      queuedDate: "",
+      outreachCopyGeneratedAt: "outreachCopyGeneratedAt" in data && data.outreachCopyGeneratedAt
+        ? data.outreachCopyGeneratedAt.toISOString()
+        : current.outreachCopyGeneratedAt,
+      lastRegeneratedAt: "lastRegeneratedAt" in data && data.lastRegeneratedAt
+        ? data.lastRegeneratedAt.toISOString()
+        : current.lastRegeneratedAt,
+      notes: data.notes ?? "",
+      blockedReason: data.blockedReason ?? "",
+      updatedAt: nowIso,
+    });
+    await clearMemoryReadinessApproval(current);
+    await recordRunReview(memorySettings(), memoryQueue());
+    return { item: structuredClone(current), changed: true, action: input.action, blockedReason: "" };
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  const result = await database.$transaction(async (transaction) => {
+    const row = await transaction.outreachQueueItem.findUnique({ where: { id: input.id } });
+    if (!row) return { row: null, changed: false, blockedReason: "Queue item was not found." };
+    const item = queueToDomain(row);
+    const prospect = item.prospectId
+      ? await transaction.prospect.findUnique({ where: { id: item.prospectId }, select: { status: true } })
+      : null;
+    const prospectStatus = prospect
+      ? prospect.status === "NEW" ? "New" : prospect.status === "REVIEWED" ? "Reviewed" : prospect.status
+      : "";
+    const blockedReason = safeReadinessRepairBlockReason(item, prospectStatus);
+    if (blockedReason) return { row, changed: false, blockedReason };
+    const data = readinessRepairData(item, input.action, reason, nowIso);
+    const updated = await transaction.outreachQueueItem.updateMany({
+      where: {
+        id: item.id,
+        status: row.status,
+        updatedAt: row.updatedAt,
+        sentDate: null,
+        NOT: [
+          { status: { in: [...protectedQueueStatuses] } },
+          { notes: { contains: ambiguousOutcomeMarker } },
+        ],
+      },
+      data,
+    });
+    if (updated.count !== 1) {
+      return {
+        row: await transaction.outreachQueueItem.findUnique({ where: { id: item.id } }),
+        changed: false,
+        blockedReason: "The record changed before the safe repair completed.",
+      };
+    }
+    await clearPersistedApproval(transaction, item, now);
+    return {
+      row: await transaction.outreachQueueItem.findUnique({ where: { id: item.id } }),
+      changed: true,
+      blockedReason: "",
+    };
+  }, { isolationLevel: "Serializable" });
+
+  const item = result.row ? queueToDomain(result.row) : null;
+  if (result.changed && item) {
+    await safeRecordAudit({
+      action: "safe_readiness_record_repair",
+      outcome: "success",
+      subject: item.businessName,
+      metadata: { queueItemId: item.id, repairAction: input.action },
+    });
+    await recordRunReview(await getAutonomousGrowthSettings(), await listOutreachQueueItems());
+  }
+  return { item, changed: result.changed, action: input.action, blockedReason: result.blockedReason };
 }
 
 export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegenerationSummary> {

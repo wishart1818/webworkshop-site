@@ -28,7 +28,7 @@ import {
   latestOperatorSafeTestResults,
   recordOperatorSafeTestResult,
 } from "../lib/operator-test-history";
-import { resetOperationalMemoryForTests } from "../lib/operational-controls";
+import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
 import {
   generateOneTestOutreachPackage,
   getOperatorTestCenterPayload,
@@ -36,6 +36,7 @@ import {
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
+  runSafeReadinessRepair,
   simulateNext24Hours,
 } from "../lib/operator-test-center";
 import { OperatorTestCenterWorkspace } from "../components/engine/OperatorTestCenterWorkspace";
@@ -667,6 +668,126 @@ test("Full Readiness blocks queued eligible old-copy records but not stale persi
   }
 });
 
+test("safe readiness repair fixes deterministic copy, excludes suspicious email, and preserves ambiguous records for review", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("No provider or outreach call is allowed during safe readiness repair.");
+    };
+    const oldQueued = readinessQueueItem({
+      id: "repair-old-copy",
+      prospectId: "repair-prospect-old",
+      topProspectResultId: "repair-result-old",
+      outreachCopyVersion: "old_audit_copy_v0",
+      emailBody: "Old audit copy with One missed opportunity.",
+      notes: "[auto-email-approved]",
+    });
+    const suspicious = readinessQueueItem({
+      id: "repair-suspicious-email",
+      prospectId: "repair-prospect-suspicious",
+      topProspectResultId: "repair-result-suspicious",
+      businessName: "Suspicious Email Co",
+      website: "https://suspicious-email-co.example",
+      email: "admin@totalwptheme.com",
+      status: "Eligible",
+      queuedDate: "",
+    });
+    const ambiguous = readinessQueueItem({
+      id: "repair-ambiguous",
+      prospectId: "repair-prospect-ambiguous",
+      topProspectResultId: "repair-result-ambiguous",
+      businessName: "Ambiguous Preview Co",
+      previewLink: "",
+      status: "Eligible",
+      queuedDate: "",
+    });
+    const sent = readinessQueueItem({
+      id: "repair-sent",
+      prospectId: "repair-prospect-sent",
+      topProspectResultId: "repair-result-sent",
+      status: "Sent",
+      sentDate: new Date().toISOString(),
+      outreachCopyVersion: "old_audit_copy_v0",
+      emailBody: "Sent historical copy.",
+    });
+    const suppressed = readinessQueueItem({
+      id: "repair-suppressed",
+      prospectId: "repair-prospect-suppressed",
+      topProspectResultId: "repair-result-suppressed",
+      status: "Suppressed",
+      blockedReason: "Manual suppression recorded.",
+      outreachCopyVersion: "old_audit_copy_v0",
+    });
+    setOutreachQueueMemoryForTests([oldQueued, suspicious, ambiguous, sent, suppressed]);
+    const protectedBefore = outreachQueueMemoryForTests().filter((item) => ["repair-sent", "repair-suppressed"].includes(item.id));
+
+    const result = await runSafeReadinessRepair({
+      confirmed: true,
+      environment: readinessEnv({
+        OUTREACH_EMAIL_DISABLED: "true",
+        OUTREACH_AUTO_SEND_ENABLED: "false",
+        OUTREACH_FULL_AUTO_SEND_ENABLED: "false",
+      }),
+    });
+    const queue = outreachQueueMemoryForTests();
+    const repairedCopy = queue.find((item) => item.id === "repair-old-copy");
+    const excludedEmail = queue.find((item) => item.id === "repair-suspicious-email");
+    const manualReview = queue.find((item) => item.id === "repair-ambiguous");
+
+    assert.equal(result.repair?.recordsInspected.length, 3);
+    assert.equal(result.repair?.recordsAutoFixed.length, 1);
+    assert.equal(result.repair?.recordsRemovedFromEligibility.length, 1);
+    assert.equal(result.repair?.recordsRequiringManualReview.length, 1);
+    assert.equal(repairedCopy?.outreachCopyVersion, currentOutreachCopyVersion);
+    assert.equal(repairedCopy?.status, "Needs Review");
+    assert.doesNotMatch(repairedCopy?.notes ?? "", /\[auto-email-approved\]/);
+    assert.doesNotMatch(repairedCopy?.emailBody ?? "", /https:\/\/webworkshop\.dev\/p\/|One missed opportunity/i);
+    assert.match(repairedCopy?.emailBody ?? "", /^Hi Ready Pressure Washing team,/);
+    assert.match(repairedCopy?.emailBody ?? "", /Want me to send it over\?/i);
+    assert.match(repairedCopy?.emailBody ?? "", /If you'd rather not hear from me again/i);
+    assert.equal(excludedEmail?.contactSource, "Needs manual verification");
+    assert.equal(excludedEmail?.email, "admin@totalwptheme.com");
+    assert.equal(manualReview?.status, "Needs Review");
+    assert.equal(manualReview?.previewLink, "");
+    assert.deepEqual(
+      queue.filter((item) => ["repair-sent", "repair-suppressed"].includes(item.id)),
+      protectedBefore,
+    );
+    assert.equal(result.emailSafety?.status, "Passed");
+    assert.deepEqual(result.repair?.outreachSent, { emails: 0, dms: 0, forms: 0, calls: 0, looms: 0 });
+    assert.equal(result.repair?.settingsChanged, false);
+    assert.equal(result.repair?.suppressionAndContactHistoryPreserved, true);
+    const receiptEvent = memoryAuditEventsForTests().find((event) => event.action === "safe_readiness_repair_receipt");
+    assert.equal(receiptEvent?.outcome, "success");
+    assert.equal((receiptEvent?.metadata as { outreachSent?: { emails?: number } } | undefined)?.outreachSent?.emails, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("safe readiness repair requires confirmation and changes nothing before confirmation", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  const oldQueued = readinessQueueItem({
+    id: "repair-confirmation",
+    outreachCopyVersion: "old_audit_copy_v0",
+    emailBody: "Old copy.",
+    notes: "[auto-email-approved]",
+  });
+  setOutreachQueueMemoryForTests([oldQueued]);
+  const before = outreachQueueMemoryForTests();
+
+  const result = await runSafeReadinessRepair({ confirmed: false, environment: readinessEnv() });
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /Confirmation is required/i);
+  assert.deepEqual(outreachQueueMemoryForTests(), before);
+  resetAutonomousGrowthMemoryForTests();
+});
+
 test("operator notification body is short, phone-friendly, and secret-safe", () => {
   const body = internalNotificationBody({
     kind: "provider_issue",
@@ -708,8 +829,15 @@ test("Test Center renders a protected loading shell without real provider keys",
 
 test("Operator Test Center markup includes Smart Growth safe action buttons", async () => {
   const source = readFileSync("components/engine/OperatorTestCenterWorkspace.tsx", "utf8");
+  const routeSource = readFileSync("app/api/engine/operator-test-center/route.ts", "utf8");
 
   assert.match(source, /Run Full Autonomous Readiness Test/);
+  assert.match(source, /Repair Readiness Issues Safely/);
+  assert.match(source, /Confirm Safe Repair/);
+  assert.match(source, /No outreach will be sent/);
+  assert.match(source, /Suppression and contact history will be preserved/);
+  assert.match(routeSource, /run_safe_readiness_repair/);
+  assert.match(routeSource, /payload\.confirmed !== true/);
   assert.match(source, /Copy Full Autonomous Readiness Summary/);
   assert.match(source, /Copy Failed Checks Only/);
   assert.match(source, /Copy Next Fix Summary/);

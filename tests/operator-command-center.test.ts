@@ -115,6 +115,22 @@ test("Full Readiness command reuses the existing safe Test Center action", async
   assert.ok(["completed", "partially_completed"].includes(result.receipt.status));
 });
 
+test("safe readiness repair command is supported and requires confirmation", async () => {
+  resetOperationalMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+
+  const structured = parseOperatorCommand("COMMAND: RUN_SAFE_READINESS_REPAIR\nACTION: EXECUTE", "command");
+  assert.equal(structured.commandType, "RUN_SAFE_READINESS_REPAIR");
+  assert.equal(structured.confirmationLevel, 2);
+  assert.equal(structured.confirmationRequired, true);
+  assert.equal(structured.outreachCouldOccur, false);
+
+  const previewOnly = await executeOperatorCommand("Repair readiness issues safely.", { mode: "command" });
+  assert.equal(previewOnly.receipt.status, "awaiting_confirmation");
+  assert.equal(previewOnly.receipt.outreachSent.emails, 0);
+  assert.match(previewOnly.receipt.whatDidNotChange.join(" "), /Awaiting operator confirmation/i);
+});
+
 test("preview commands are recognized explicitly and do not become email safety checks", () => {
   const regenerate = parseOperatorCommand("Regenerate the preview for Pinnacle Pressure Washing of Toledo");
   assert.equal(regenerate.commandType, "REGENERATE_PROSPECT_PREVIEW");

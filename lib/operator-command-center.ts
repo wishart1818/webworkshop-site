@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { runFullAutonomousReadinessTest, runOperatorMarketScoutDryRun, runOperatorSmartAutonomousDryRun, runOperatorSmartBackfillTest, generateOneTestOutreachPackage, sendOperatorTestNotification } from "@/lib/operator-test-center";
+import { runFullAutonomousReadinessTest, runOperatorMarketScoutDryRun, runOperatorSmartAutonomousDryRun, runOperatorSmartBackfillTest, runSafeReadinessRepair, generateOneTestOutreachPackage, sendOperatorTestNotification } from "@/lib/operator-test-center";
 import { buildProviderSmokeTestRecord, recordOperatorSafeTestResult, safeOperatorText } from "@/lib/operator-test-history";
 import { listAuditEvents, safeRecordAudit, type AuditEventView } from "@/lib/operational-controls";
 import { discoverContractorsWithDiagnostics } from "@/lib/lead-discovery";
@@ -26,6 +26,7 @@ export const operatorCommandTypes = [
   "OPEN_TEST_CENTER",
   "RUN_PROVIDER_SMOKE_TEST",
   "RUN_FULL_READINESS_TEST",
+  "RUN_SAFE_READINESS_REPAIR",
   "RUN_EMAIL_SAFETY_CHECK",
   "RUN_SMART_BACKFILL_DRY_RUN",
   "RUN_MARKET_SCOUT_DRY_RUN",
@@ -374,7 +375,7 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
 }
 
 function commandLevel(type: OperatorCommandType): OperatorCommandLevel {
-  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL", "REGENERATE_PROSPECT_PREVIEW", "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS"].includes(type)) return 2;
+  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL", "REGENERATE_PROSPECT_PREVIEW", "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS", "RUN_SAFE_READINESS_REPAIR"].includes(type)) return 2;
   return 1;
 }
 
@@ -462,6 +463,11 @@ export function parseOperatorCommand(commandText: string, forcedMode?: "search" 
   if (/open autonomous/.test(lower)) return exact("OPEN_AUTONOMOUS_GROWTH", ["Open Autonomous Growth."], { tab: "Autonomous Growth" });
   if (/open test center/.test(lower)) return exact("OPEN_TEST_CENTER", ["Open Operator Test Center."], { tab: "Operator Test Center" });
   if (/provider smoke/.test(lower)) return exact("RUN_PROVIDER_SMOKE_TEST", ["Run the existing Provider Smoke Test.", "Persist a secret-safe receipt."]);
+  if (/repair readiness|safe readiness repair/.test(lower)) return exact("RUN_SAFE_READINESS_REPAIR", [
+    "Run Full Autonomous Readiness Test and inspect only eligible failed records.",
+    "Repair deterministic unsent record issues or route ambiguous records to manual review.",
+    "Rerun readiness and Email Safety Gates, persist a zero-outreach receipt.",
+  ], { tab: "Operator Test Center" });
   if (/full readiness|readiness test/.test(lower)) return exact("RUN_FULL_READINESS_TEST", ["Run the existing Full Autonomous Readiness Test.", "Persist a command receipt."]);
   if (/smart backfill/.test(lower)) return exact("RUN_SMART_BACKFILL_DRY_RUN", ["Run Smart Backfill dry run."]);
   if (/market scout/.test(lower)) return exact("RUN_MARKET_SCOUT_DRY_RUN", ["Run Market Scout dry run."]);
@@ -763,6 +769,33 @@ export async function executeOperatorCommand(commandText: string, options: { mod
         relatedPage: "Operator Test Center",
         relatedTestResultId: test.completedAt,
         safeErrorMessage: test.safeErrorMessage,
+      });
+    } else if (preview.commandType === "RUN_SAFE_READINESS_REPAIR") {
+      const result = await runSafeReadinessRepair({ confirmed: true });
+      const repair = result.repair;
+      receipt = makeReceipt({
+        commandText: preview.commandText,
+        commandType: preview.commandType,
+        status: result.ok && repair?.recordsRequiringManualReview.length === 0 ? "completed" : "partially_completed",
+        plannedActions: preview.plannedActions,
+        whatChanged: repair
+          ? [
+              `${repair.recordsAutoFixed.length} record(s) repaired with current permission-first copy.`,
+              `${repair.recordsRemovedFromEligibility.length} record(s) safely removed from email eligibility.`,
+              `${repair.recordsRequiringManualReview.length} record(s) left for manual review.`,
+            ]
+          : [],
+        whatDidNotChange: [
+          "No outreach was sent.",
+          "No settings, caps, environment variables, suppression history, or contact history changed.",
+          "No prospect was approved.",
+        ],
+        recordsAffected: repair?.recordsInspected.filter((record) => record.changed).length ?? 0,
+        testsTriggered: ["Full Autonomous Readiness Test", "Email Safety Gates"],
+        nextRecommendedAction: result.readiness?.nextSafestAction ?? "Review records requiring manual attention.",
+        relatedPage: "Operator Test Center",
+        relatedTestResultId: result.readiness?.generatedAt,
+        relatedProspectIds: repair?.recordsInspected.map((record) => record.prospectId).filter(Boolean),
       });
     } else if (preview.commandType === "RUN_FULL_READINESS_TEST") {
       const result = await runFullAutonomousReadinessTest();
