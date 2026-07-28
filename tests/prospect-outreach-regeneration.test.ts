@@ -11,6 +11,11 @@ function testProspect(): Prospect {
   return {
     ...structuredClone(seedProspects[0]),
     id: "prospect-conflict-recovery",
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    email: "nick@pinnacle419.com",
+    website: "https://pinnacle419.com",
+    recommendedContactMethod: "send_email",
+    bestManualContactMethod: "email",
     status: "Reviewed",
     outreach: undefined,
   };
@@ -21,11 +26,11 @@ function testQueueItem(prospectId: string): OutreachQueueItem {
     id: "queue-conflict-recovery",
     prospectId,
     topProspectResultId: "legacy-package-conflict-recovery",
-    businessName: "Pinnacle Pressure Washing of Toledo",
+    businessName: "Stale Pinnacle Name",
     trade: "Pressure Washing",
     city: "Toledo, OH",
-    website: "https://example.com",
-    email: "nick@example.com",
+    website: "https://old.example.com",
+    email: "old-recipient@example.com",
     contactSource: "Public email",
     contactConfidence: 90,
     previewLink: "",
@@ -60,11 +65,13 @@ function testQueueItem(prospectId: string): OutreachQueueItem {
   };
 }
 
-test("outreach regeneration recovers from a linked-package conflict without sending anything", async () => {
+test("outreach regeneration recovers from a linked-package conflict and refreshes the queue from the latest prospect", async () => {
   const prospect = testProspect();
   const queueItem = testQueueItem(prospect.id);
   let repairAttempts = 0;
+  let refreshAttempts = 0;
   let savedProspect: Prospect | null = null;
+  let refreshedFromProspect: Prospect | null = null;
 
   const dependencies: ProspectOutreachRegenerationDependencies = {
     regenerate: async () => {
@@ -90,11 +97,24 @@ test("outreach regeneration recovers from a linked-package conflict without send
         item: {
           ...structuredClone(queueItem),
           outreachCopyVersion: OUTREACH_COPY_VERSION,
-          emailBody: "Current permission-first body",
+          emailBody: "Current permission-first body generated from the stale queue snapshot",
         },
         changed: true,
         action: "regenerate_current_copy" as const,
         blockedReason: "",
+      };
+    },
+    refreshQueueItem: async (latestProspect) => {
+      refreshAttempts += 1;
+      refreshedFromProspect = structuredClone(latestProspect);
+      return {
+        ...structuredClone(queueItem),
+        businessName: latestProspect.businessName,
+        email: latestProspect.email,
+        website: latestProspect.website,
+        subjectLine: latestProspect.outreach?.subjects[0] ?? "",
+        emailBody: latestProspect.outreach?.concise ?? "",
+        outreachCopyVersion: latestProspect.outreach?.outreachCopyVersion ?? "",
       };
     },
   };
@@ -102,16 +122,23 @@ test("outreach regeneration recovers from a linked-package conflict without send
   const result = await regenerateProspectOutreachWithConflictRecovery(prospect.id, {}, dependencies);
 
   assert.equal(repairAttempts, 2);
+  assert.equal(refreshAttempts, 1);
   assert.equal(result?.queueItem?.outreachCopyVersion, OUTREACH_COPY_VERSION);
+  assert.equal(result?.queueItem?.businessName, prospect.businessName);
+  assert.equal(result?.queueItem?.email, prospect.email);
+  assert.equal(result?.queueItem?.website, prospect.website);
   assert.equal(result?.updatedProspect.outreach?.outreachCopyVersion, OUTREACH_COPY_VERSION);
   assert.equal(result?.updatedProspect.outreach?.approved, false);
   assert.match(result?.updatedProspect.activities[0]?.label ?? "", /Nothing was sent/);
   assert.equal(savedProspect?.outreach?.outreachCopyVersion, OUTREACH_COPY_VERSION);
+  assert.equal(refreshedFromProspect?.email, prospect.email);
+  assert.equal(result?.queueItem?.emailBody, refreshedFromProspect?.outreach?.concise);
 });
 
 test("protected prospect regeneration errors are not bypassed by conflict recovery", async () => {
   const prospect = testProspect();
   let repairCalled = false;
+  let refreshCalled = false;
 
   const dependencies: ProspectOutreachRegenerationDependencies = {
     regenerate: async () => {
@@ -129,6 +156,10 @@ test("protected prospect regeneration errors are not bypassed by conflict recove
         blockedReason: "Protected",
       };
     },
+    refreshQueueItem: async () => {
+      refreshCalled = true;
+      return null;
+    },
   };
 
   await assert.rejects(
@@ -136,11 +167,13 @@ test("protected prospect regeneration errors are not bypassed by conflict recove
     /cannot be regenerated after approval/i,
   );
   assert.equal(repairCalled, false);
+  assert.equal(refreshCalled, false);
 });
 
 test("preview-only regeneration never mutates records through conflict recovery", async () => {
   const prospect = testProspect();
   let saved = false;
+  let refreshCalled = false;
 
   const dependencies: ProspectOutreachRegenerationDependencies = {
     regenerate: async () => {
@@ -158,6 +191,10 @@ test("preview-only regeneration never mutates records through conflict recovery"
       action: "regenerate_current_copy" as const,
       blockedReason: "",
     }),
+    refreshQueueItem: async () => {
+      refreshCalled = true;
+      return null;
+    },
   };
 
   await assert.rejects(
@@ -165,4 +202,5 @@ test("preview-only regeneration never mutates records through conflict recovery"
     /Preview failed/,
   );
   assert.equal(saved, false);
+  assert.equal(refreshCalled, false);
 });
