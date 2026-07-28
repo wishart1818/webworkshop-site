@@ -13,12 +13,13 @@ test("contact discovery extracts visible and mailto emails while ignoring fake a
     },
   ]);
 
-  assert.equal(result.email, "service@localservice.example");
+  assert.equal(result.email, "office@localservice.example");
+  assert.equal(result.contactEvidence.find((item) => item.value === result.email)?.extractionMethod, "mailto");
   assert.equal(result.contactConfidence, "high");
   assert.equal(result.bestManualContactMethod, "email");
 });
 
-test("contact discovery downgrades suspicious unrelated theme/admin emails", () => {
+test("contact discovery excludes suspicious unrelated theme/admin emails", () => {
   const suspiciousOnly = extractContactDiscoveryFromPages("https://tampapressurepros.com", [
     {
       url: "https://tampapressurepros.com/contact",
@@ -26,9 +27,10 @@ test("contact discovery downgrades suspicious unrelated theme/admin emails", () 
     },
   ], { businessName: "Tampa Pressure Pros", website: "https://tampapressurepros.com" });
 
-  assert.equal(suspiciousOnly.email, "admin@totalwptheme.com");
+  assert.equal(suspiciousOnly.email, "");
   assert.equal(suspiciousOnly.contactConfidence, "low");
   assert.equal(suspiciousOnly.bestManualContactMethod, "unknown");
+  assert.equal(suspiciousOnly.contactEvidence.some((item) => item.value === "admin@totalwptheme.com"), false);
 
   const betterEmail = extractContactDiscoveryFromPages("https://tampapressurepros.com", [
     {
@@ -98,4 +100,22 @@ test("contact discovery extracts public social profile links only", () => {
   assert.equal(result.youtubeUrl, "https://youtube.com/@crewservice");
   assert.equal(result.bestManualContactMethod, "facebook");
   assert.equal(result.contactConfidence, "medium");
+});
+
+test("contact discovery accepts explicit public contact metadata and ignores unrelated metadata", () => {
+  const result = extractContactDiscoveryFromPages("https://localservice.example", [
+    {
+      url: "https://localservice.example/service-area",
+      html: `
+        <meta name="email" content="info@localservice.example" />
+        <meta property="business:contact_data:phone_number" content="+14195550123" />
+        <meta name="author" content="vendor@unrelated-agency.com" />
+      `,
+    },
+  ]);
+
+  assert.equal(result.email, "info@localservice.example");
+  assert.equal(result.phone, "+14195550123");
+  assert.equal(result.contactEvidence.find((item) => item.value === result.email)?.extractionMethod, "metadata");
+  assert.equal(result.contactEvidence.some((item) => item.value === "vendor@unrelated-agency.com"), false);
 });

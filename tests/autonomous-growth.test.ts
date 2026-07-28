@@ -67,7 +67,12 @@ import {
 } from "../lib/autopilot-campaign";
 import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, prepareTopProspectOutreachArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
 import { reconcileProspectContactRouting, seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
-import { resetProspectMemoryForTests, setProspectMemoryForTests } from "../lib/prospect-repository";
+import {
+  getProspect,
+  resetProspectMemoryForTests,
+  saveProspect,
+  setProspectMemoryForTests,
+} from "../lib/prospect-repository";
 import { prospectCurrentBucket } from "../lib/prospect-funnel";
 
 process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
@@ -155,6 +160,7 @@ function env(overrides: Record<string, string | undefined> = {}): NodeJS.Process
 }
 
 function eligibleProspect() {
+  const checkedAt = "2026-07-28T12:00:00.000Z";
   const prospect = withAnalysis({
     ...structuredClone(seedProspects[0]),
     id: "auto-email-eligible-prospect",
@@ -162,6 +168,29 @@ function eligibleProspect() {
     publicEmail: undefined,
     contactFormUrl: "",
     recommendedContactMethod: "send_email",
+    bestManualContactMethod: "email",
+    contactConfidence: "high",
+    websiteStatus: "usable",
+    websiteVerification: {
+      version: "website-verification-v1",
+      status: "usable",
+      confidence: "high",
+      canonicalUrl: "https://example.com/summit-roofing",
+      attempts: [],
+      usableSignals: ["meaningful page title", "business name", "navigation", "service content", "public email"],
+      explanation: "A meaningful public business website was verified.",
+      checkedAt,
+    },
+    fitDisposition: "weak_redesign_opportunity",
+    contactEvidence: [{
+      kind: "email",
+      value: "owner@example.com",
+      sourceUrl: "https://example.com/contact",
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+    }],
     classification: "website_redesign",
   } as Prospect);
   return prepareTopProspectArtifacts(prospect, publicLink).prospect;
@@ -173,6 +202,7 @@ function eligibleProspectFor(input: {
   id: string;
   website: string;
 }) {
+  const checkedAt = "2026-07-28T12:00:00.000Z";
   return prepareTopProspectArtifacts(withAnalysis({
     ...structuredClone(seedProspects[0]),
     ...input,
@@ -181,6 +211,27 @@ function eligibleProspectFor(input: {
     recommendedContactMethod: "send_email",
     bestManualContactMethod: "email",
     classification: "website_redesign",
+    websiteStatus: "usable",
+    websiteVerification: {
+      version: "website-verification-v1",
+      status: "usable",
+      confidence: "high",
+      canonicalUrl: input.website,
+      attempts: [],
+      usableSignals: ["meaningful page title", "business name", "navigation", "service content", "public email"],
+      explanation: "A meaningful public business website was verified.",
+      checkedAt,
+    },
+    fitDisposition: "weak_redesign_opportunity",
+    contactEvidence: [{
+      kind: "email",
+      value: input.email,
+      sourceUrl: new URL("/contact", input.website).href,
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+    }],
   } as Prospect), publicLink).prospect;
 }
 
@@ -511,11 +562,6 @@ test("Resend receives the exact recipient snapshot that was approved and queued"
     assert.equal(approval.queued, true);
     assert.equal(approval.item?.email, "approved@clearflowplumbing.com");
 
-    setProspectMemoryForTests([{
-      ...prospect,
-      email: "later@clearflowplumbing.com",
-      publicEmail: "later@clearflowplumbing.com",
-    }]);
     const result = await sendQueuedEmailQueueItem(eligible.id);
 
     assert.equal(result.sent, true, result.blockedReasons.join("; "));
@@ -618,17 +664,12 @@ test("processing existing qualified prospects runs the guarded Auto Email Pilot 
       return new Response(JSON.stringify({ id: "pilot-existing-inventory-1" }), { status: 200 });
     };
     await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
-    const prospect = prepareTopProspectArtifacts(withAnalysis({
-      ...structuredClone(seedProspects[0]),
+    const prospect = eligibleProspectFor({
       id: "pilot-existing-inventory-prospect",
       businessName: "Summit Roofing Care",
       website: "https://summitroofingcare.com",
       email: "hello@summitroofingcare.com",
-      contactFormUrl: "",
-      classification: "website_redesign",
-      recommendedContactMethod: "send_email",
-      bestManualContactMethod: "email",
-    } as Prospect), publicLink).prospect;
+    });
     setProspectMemoryForTests([prospect]);
     const eligible = await upsertAutonomousQueueItemFromPackage({
       outreachPreference: "written_only",
@@ -1079,7 +1120,6 @@ test("Queued reconciliation preserves the approved recipient snapshot", async ()
     setProspectMemoryForTests([{
       ...originalProspect,
       email: "changed@clearflowplumbing.com",
-      publicEmail: "changed@clearflowplumbing.com",
     }]);
     await processExistingQualifiedProspects({ dryRun: false });
 
@@ -1128,7 +1168,6 @@ test("Sending reconciliation preserves the claimed recipient snapshot", async ()
     setProspectMemoryForTests([{
       ...originalProspect,
       email: "changed@clearflowplumbing.com",
-      publicEmail: "changed@clearflowplumbing.com",
     }]);
 
     await processExistingQualifiedProspects({ dryRun: false });
@@ -1182,7 +1221,15 @@ test("recipient changes before queueing revoke approval and require fresh approv
     setProspectMemoryForTests([{
       ...originalProspect,
       email: "second@clearflowplumbing.com",
-      publicEmail: "second@clearflowplumbing.com",
+      contactEvidence: [{
+        kind: "email",
+        value: "second@clearflowplumbing.com",
+        sourceUrl: "https://clearflowplumbing.com/contact",
+        extractionMethod: "mailto",
+        confidence: "high",
+        domainMatchesBusiness: true,
+        discoveredAt: new Date().toISOString(),
+      }],
     }]);
 
     await processExistingQualifiedProspects({ dryRun: false });
@@ -1428,6 +1475,55 @@ test("suppression taking the claim before provider dispatch prevents outreach", 
     assert.equal(providerCalls, 0);
     assert.equal(result.item?.status, "Bounced");
     assert.match(result.blockedReasons.join(" "), /claim was cancelled|protected state/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("a prospect eligibility change after claim is rechecked before provider dispatch", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env());
+  let providerCalls = 0;
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "must-not-send" }), { status: 200 });
+    };
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+    const prospect = eligibleProspect();
+    setProspectMemoryForTests([prospect]);
+    const eligible = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect,
+      topProspectResultId: "prospect-state-race-result",
+    });
+    const approval = await approveAndQueueEmail(eligible.id);
+    assert.equal(approval.queued, true, approval.blockedReasons.join("; "));
+
+    const result = await sendQueuedEmailQueueItem(eligible.id, {
+      beforeProviderDispatch: async () => {
+        const current = await getProspect(prospect.id);
+        assert.ok(current);
+        await saveProspect({
+          ...current,
+          fitDisposition: "confirmed_usable_not_fit",
+        });
+      },
+    });
+
+    assert.equal(result.sent, false);
+    assert.equal(providerCalls, 0);
+    assert.equal(result.item?.status, "Needs Review", result.blockedReasons.join("; "));
+    assert.match(result.blockedReasons.join(" "), /not a fit/i);
   } finally {
     globalThis.fetch = originalFetch;
     process.env = originalEnv;
@@ -1747,7 +1843,12 @@ test("unknown suppression events create durable blockers for future queued email
     const queued = await upsertAutonomousQueueItemFromPackage({
       outreachPreference: "written_only",
       previewLink: publicLink,
-      prospect: { ...eligibleProspect(), website: "https://suppression-test.com", email: "future@suppression-test.com" },
+      prospect: eligibleProspectFor({
+        id: "future-suppressed-prospect",
+        businessName: "Suppression Test Services",
+        website: "https://suppression-test.com",
+        email: "future@suppression-test.com",
+      }),
       topProspectResultId: "future-suppressed-result",
     });
     assert.notEqual(queued.status, "Queued");

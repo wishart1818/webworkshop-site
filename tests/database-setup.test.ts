@@ -16,6 +16,7 @@ import {
   setupTokenConfigured,
   setupTokenMatches,
 } from "../lib/production-database-setup";
+import { TOP_PROSPECT_MIGRATION_ID } from "../lib/top-prospect-schema";
 
 const setupToken = "production-setup-token-that-is-long-enough";
 
@@ -301,7 +302,8 @@ test("database initializer safely upgrades the complete legacy engine schema", a
   assert.ok(!upgrade.statements.some((statement) => statement.includes('CREATE TABLE "Prospect"')));
   assert.equal(
     upgrade.statements.filter((statement) => statement.startsWith('INSERT INTO "_prisma_migrations"')).length,
-    10,
+    productionSetupManifest.migrations.length
+      - productionSetupManifest.migrations.findIndex(({ id }) => id === TOP_PROSPECT_MIGRATION_ID),
   );
 });
 

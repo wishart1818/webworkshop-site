@@ -46,6 +46,7 @@ import {
   seedProspects,
   titleCaseLocation,
   withAnalysis,
+  type Prospect,
 } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { createPublicPreviewToken } from "../lib/public-preview-token";
@@ -70,6 +71,23 @@ function manualAssessment(opportunityScore: number): OpportunityAssessment {
     whyMayBuy: "",
     pitchAngle: "",
   };
+}
+
+function markWebsiteVerified<T extends Prospect>(prospect: T): T {
+  if (!prospect.website) throw new Error("A usable website fixture requires a website URL.");
+  prospect.websiteStatus = "usable";
+  prospect.websiteVerification = {
+    version: "website-verification-v1",
+    status: "usable",
+    confidence: "high",
+    canonicalUrl: prospect.website,
+    attempts: [],
+    usableSignals: ["business name", "meaningful page title", "navigation", "service content"],
+    explanation: "Fixture website identity and content were verified.",
+    checkedAt: "2026-07-28T12:00:00.000Z",
+  };
+  prospect.fitDisposition = "weak_redesign_opportunity";
+  return prospect;
 }
 
 test("Top Prospects input applies bounded production-safe limits", () => {
@@ -227,7 +245,7 @@ test("real bad-run landscaping leads are blocked or kept out of send-ready revie
   assert.equal(isThirdPartyDirectoryUrl(directoryOnly.profileUrl), true);
   assert.equal(thirdPartyListingOnly(directoryOnly), true);
   assert.equal(topProspectRejectionReason(mismatch, manualAssessment(80)), "Website/business mismatch");
-  assert.equal(topProspectRejectionReason(directoryOnly, manualAssessment(80)), "Third-party listing only");
+  assert.equal(topProspectRejectionReason(directoryOnly, manualAssessment(80)), "Website verification required");
 });
 
 test("display normalization keeps HVAC, Toledo, OH, and Pressure Washing labels consistent", () => {
@@ -359,6 +377,7 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
   husky.analysis!.scores.contactAccessibility = 42;
   husky.analysis!.scores.trustSignals = 44;
   husky.analysis!.scores.conversionReadiness = 42;
+  markWebsiteVerified(husky);
   const huskyAssessment = assessOpportunity(husky);
 
   const strong = withAnalysis(structuredClone(seedProspects[0]));
@@ -366,6 +385,7 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
   strong.website = "https://shingle-and-metal.example";
   strong.email = "hello@shingle-and-metal.example";
   strong.analysis!.overallScore = 97;
+  markWebsiteVerified(strong);
   const strongAssessment = assessOpportunity(strong);
 
   const national = withAnalysis(structuredClone(seedProspects[0]));
@@ -383,6 +403,7 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
 
 test("Top Prospects recommendation gate explains every sales-fit rejection", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  markWebsiteVerified(prospect);
   prospect.analysis!.overallScore = 80;
   assert.equal(
     topProspectRejectionReason(prospect, manualAssessment(70)),
@@ -422,7 +443,7 @@ test("written outreach readiness blocks phone-only leads from send-ready approva
   };
   const prepared = prepareTopProspectArtifacts(prospect, publicLink);
 
-  assert.equal(topProspectRejectionReason(prepared.prospect, prepared.assessment), "Phone-only / written outreach blocked");
+  assert.equal(topProspectRejectionReason(prepared.prospect, prepared.assessment), "Website verification required");
   assert.equal(prepared.emailQuality.ready, false);
   assert.equal(prepared.emailQuality.readinessLabel, "Phone-only / written outreach blocked");
   assert.throws(() => assertOutreachEmailReady(prepared.prospect, publicLink), /Phone-only \/ written outreach blocked/);
@@ -437,6 +458,7 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
   formProspect.contactFormDetected = true;
   formProspect.bestManualContactMethod = "contact_form";
   formProspect.recommendedContactMethod = "submit_contact_form";
+  markWebsiteVerified(formProspect);
   const formPackage = prepareTopProspectArtifacts(formProspect, publicLink);
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
@@ -452,6 +474,7 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
   socialProspect.facebookUrl = "https://facebook.com/evergreenoutdoor";
   socialProspect.bestManualContactMethod = "facebook";
   socialProspect.recommendedContactMethod = "message_on_facebook";
+  markWebsiteVerified(socialProspect);
   const socialPackage = prepareTopProspectArtifacts(socialProspect, publicLink);
 
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
@@ -469,6 +492,7 @@ test("Prospect Modes preserve strict behavior and expand local qualification del
   prospect.analysis!.overallScore = 84;
   prospect.analysis!.scores.ctaStrength = 62;
   prospect.analysis!.scores.conversionReadiness = 58;
+  markWebsiteVerified(prospect);
   const assessment = assessOpportunity(prospect);
 
   assert.equal(topProspectRejectionReason(prospect, assessment, "strict"), "Low redesign opportunity");
@@ -495,6 +519,7 @@ test("Prospect Modes preserve strict behavior and expand local qualification del
 test("Top Prospects final cutoff never leaks extra qualified leads into ranked results", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.analysis!.overallScore = 62;
+  markWebsiteVerified(prospect);
   const assessment = assessOpportunity(prospect);
 
   assert.deepEqual(topProspectResultDisposition(true, prospect, assessment), {
@@ -815,6 +840,16 @@ test("No Website / Social Only prospects receive separate scoring and permission
   prospect.businessName = "Local Social Roofing";
   prospect.website = "";
   prospect.websiteStatus = "no_owned_website";
+  prospect.websiteVerification = {
+    version: "website-verification-v1",
+    status: "no_owned_website",
+    confidence: "high",
+    canonicalUrl: "",
+    attempts: [],
+    usableSignals: [],
+    explanation: "Verified public research found no owned business website.",
+    checkedAt: "2026-07-28T12:00:00.000Z",
+  };
   prospect.profileUrl = "https://www.facebook.com/local-social-roofing";
   prospect.prospectType = "no_website_social_only";
   prospect.email = "";

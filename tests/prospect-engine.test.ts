@@ -526,22 +526,26 @@ test("prospect funnel explanations are human-readable and do not change ranking 
   assert.match(explanation.nextStep, /Review/);
 });
 
-test("website analysis failures classify into persistent presence-gap states", () => {
+test("website analysis failures remain conservative until independent evidence confirms a presence gap", () => {
   assert.deepEqual(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 404.")), {
-    status: "http_404",
-    detail: "Website returned HTTP 404.",
+    status: "inconclusive",
+    detail: "One inactive response was recorded; confirmation is required.",
   });
-  assert.equal(classifyWebsiteAnalysisFailure(new TypeError("fetch failed"))?.status, "unreachable_website");
-  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website robots.txt does not allow analysis of this page.")), null);
-  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 403.")), null);
-  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 429.")), null);
+  assert.equal(classifyWebsiteAnalysisFailure(new TypeError("fetch failed"))?.status, "temporarily_unavailable");
+  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website robots.txt does not allow analysis of this page."))?.status, "crawler_blocked");
+  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 403."))?.status, "crawler_blocked");
+  assert.equal(classifyWebsiteAnalysisFailure(new Error("Website returned HTTP 429."))?.status, "crawler_blocked");
 
-  const broken = withPresenceGapReview(structuredClone(seedProspects[3]), "http_404", "Website returned HTTP 404.");
+  const broken = withPresenceGapReview(
+    structuredClone(seedProspects[3]),
+    "confirmed_inactive",
+    "Independent safe URL variants consistently returned HTTP 404.",
+  );
   assert.equal(broken.prospectType, "no_website_social_only");
   assert.equal(broken.analysis, undefined);
-  assert.equal(broken.websiteStatus, "http_404");
+  assert.equal(broken.websiteStatus, "confirmed_inactive");
   assert.ok(broken.websiteAnalysisAttemptedAt);
-  assert.deepEqual(prospectPresenceLabels(broken), ["Broken website", "Phone only", "Phone-only / written outreach blocked", "Needs manual contact research"]);
+  assert.deepEqual(prospectPresenceLabels(broken), ["Website confirmed inactive", "Phone only", "Phone-only / written outreach blocked", "Needs manual contact research"]);
 });
 
 test("verified no-website prospects receive careful dedicated-website wording", () => {

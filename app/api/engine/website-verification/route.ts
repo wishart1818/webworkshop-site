@@ -1,0 +1,70 @@
+import { NextResponse } from "next/server";
+import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
+import {
+  auditExistingWebsiteRecords,
+  confirmUsableWebsiteNotFit,
+  recheckProspectWebsite,
+} from "@/lib/website-verification-operations";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+const supportedActions = [
+  "recheck_website",
+  "confirm_usable_not_fit",
+  "audit_existing_records",
+  "apply_existing_record_repair",
+] as const;
+type WebsiteVerificationAction = (typeof supportedActions)[number];
+
+function safeText(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+export async function POST(request: Request) {
+  let action = "";
+  try {
+    const input = await request.json() as Record<string, unknown>;
+    action = safeText(input.action, 80);
+    if (!supportedActions.includes(action as WebsiteVerificationAction)) {
+      return NextResponse.json({ error: "Select a supported website-verification action." }, { status: 400 });
+    }
+    if (action === "recheck_website") {
+      const prospectId = safeText(input.prospectId, 100);
+      if (!prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });
+      await enforceRateLimit({ action: "website_contact_recheck", subject: prospectId, limit: 4, windowMs: 60 * 60 * 1000 });
+      return NextResponse.json(await recheckProspectWebsite(prospectId));
+    }
+    if (action === "confirm_usable_not_fit") {
+      const prospectId = safeText(input.prospectId, 100);
+      if (!prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });
+      return NextResponse.json(await confirmUsableWebsiteNotFit(prospectId, input.confirmed === true));
+    }
+    if (action === "audit_existing_records") {
+      await enforceRateLimit({ action: "website_record_audit", subject: "operator", limit: 3, windowMs: 60 * 60 * 1000 });
+      return NextResponse.json(await auditExistingWebsiteRecords({ apply: false }));
+    }
+    await enforceRateLimit({ action: "website_record_repair", subject: "operator", limit: 1, windowMs: 60 * 60 * 1000 });
+    return NextResponse.json(await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: safeText(input.confirmation, 80),
+      reviewToken: safeText(input.reviewToken, 2_000),
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Website verification failed safely.";
+    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|review|snapshot|evidence changed|signing is not configured/i.test(message);
+    if (!expected) console.error("[website-verification] Safe operation failed.", {
+      action,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    await safeRecordAudit({
+      action: action || "website_verification_request",
+      outcome: expected ? "rejected" : "failure",
+      metadata: { safeMessage: expected ? message : "Website verification failed safely.", sent: 0 },
+    });
+    return NextResponse.json(
+      { error: expected ? message : "Website verification failed safely. No records were changed and nothing was sent." },
+      { status: expected ? 422 : 500 },
+    );
+  }
+}

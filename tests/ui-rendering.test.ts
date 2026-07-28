@@ -10,7 +10,7 @@ import { SystemWorkspace } from "../components/engine/SystemWorkspace";
 import { RecommendedMarketPresetCard } from "../components/engine/TopProspectsWorkspace";
 import type { DiscoveryDiagnostics } from "../lib/lead-discovery";
 import { ProspectDetail, buildFullPreviewReviewPrompt, isSafePublicPreviewPath, previewStripViewport, publicPreviewUrlForProspect, sanitizePreviewStripFilename, type DetailTab } from "../components/engine/ProspectDetail";
-import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPresenceGapReview, withPreview, type Prospect } from "../lib/prospect-engine";
+import { coreServiceTrades, generateOutreach, seedProspects, withAnalysis, withOutreach, withPreview, type Prospect } from "../lib/prospect-engine";
 import { isPublicPreviewImageRelevant, resolvePreviewImages, validatePreviewImages } from "../lib/preview-image-resolver";
 import { extractPreviewBusinessResearch } from "../lib/preview-business-research";
 import { normalizePreviewForRender } from "../lib/preview-compatibility";
@@ -190,29 +190,116 @@ test("no-website prospect detail shows presence-gap guidance without a website a
   assert.doesNotMatch(html, /Analyze website/);
 });
 
-test("404 website shows broken status and never falls back to not analyzed", () => {
-  const prospect = withPresenceGapReview(
-    structuredClone(seedProspects[3]),
-    "http_404",
-    "Website returned HTTP 404.",
-  );
+test("legacy single-result 404 stays in verification review instead of becoming a presence gap", () => {
+  const prospect = {
+    ...structuredClone(seedProspects[3]),
+    prospectType: "redesign" as const,
+    classification: "website_redesign" as const,
+    websiteStatus: "http_404" as const,
+    websiteStatusDetail: "Website returned HTTP 404.",
+    analysis: undefined,
+    outreach: undefined,
+    preview: undefined,
+    recommendedContactMethod: "needs_manual_contact_research" as const,
+  };
   const html = renderDetail(prospect, "Analysis");
 
-  assert.match(html, /Website returned 404/);
+  assert.match(html, /Legacy 404 result needs re-check/);
   assert.match(html, /Website returned HTTP 404/);
-  assert.match(html, /Broken website/);
-  assert.match(html, /Presence Gap Score/);
-  assert.match(html, /Best outreach channel/);
-  assert.match(html, /Re-check website/);
+  assert.match(html, /Website verification required/);
+  assert.match(html, /Re-check website and contact paths/);
+  assert.doesNotMatch(html, /Presence Gap Score|permanent online home/);
   assert.doesNotMatch(html, /Website not analyzed yet/);
 });
 
-test("untouched redesign prospect offers both website and no-website analysis paths", () => {
+test("untouched redesign prospect requires website verification before any presence-gap path", () => {
   const html = renderDetail(structuredClone(seedProspects[0]), "Analysis");
 
   assert.match(html, /Website not analyzed yet/);
-  assert.match(html, /Analyze website/);
-  assert.match(html, /Run No Website \/ Social-Only analysis/);
+  assert.match(html, /Re-check website and contact paths/);
+  assert.match(html, /Website verification required/);
+  assert.doesNotMatch(html, /Run No Website \/ Social-Only analysis/);
+});
+
+test("prospect detail renders structured website and contact evidence with safe operator controls", () => {
+  const checkedAt = "2026-07-28T12:00:00.000Z";
+  const prospect = {
+    ...structuredClone(seedProspects[0]),
+    email: "info@summitridgeroofing.com",
+    website: "https://summitridgeroofing.com/",
+    websiteStatus: "usable" as const,
+    websiteStatusDetail: "A meaningful public business website was verified.",
+    websiteVerification: {
+      version: "website-verification-v1" as const,
+      status: "usable" as const,
+      confidence: "high" as const,
+      canonicalUrl: "https://summitridgeroofing.com/",
+      attempts: [{
+        requestedUrl: "https://summitridgeroofing.com/",
+        normalizedUrl: "https://summitridgeroofing.com/",
+        finalUrl: "https://summitridgeroofing.com/",
+        httpStatus: 200,
+        redirectChain: [],
+        contentType: "text/html",
+        durationMs: 120,
+        failureCategory: "none" as const,
+        robotsAllowed: true,
+        botBlocked: false,
+        browserCompatibleHeaders: false,
+        timestamp: checkedAt,
+      }],
+      usableSignals: ["business name", "service content", "public email"],
+      explanation: "A meaningful public business website was verified.",
+      checkedAt,
+    },
+    fitDisposition: "manual_review_required" as const,
+    contactPageUrl: "https://summitridgeroofing.com/contact",
+    contactFormDetected: true,
+    quoteFormDetected: true,
+    contactEvidence: [{
+      kind: "email" as const,
+      value: "info@summitridgeroofing.com",
+      sourceUrl: "https://summitridgeroofing.com/contact",
+      extractionMethod: "mailto" as const,
+      confidence: "high" as const,
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+    }],
+  } satisfies Prospect;
+  const html = renderDetail(prospect, "Analysis");
+
+  assert.match(html, /Website and contact verification/);
+  assert.match(html, /high confidence/);
+  assert.match(html, /https:\/\/summitridgeroofing\.com\/contact/);
+  assert.match(html, /mailto/);
+  assert.match(html, /Detected, never submitted/);
+  assert.match(html, /Verification evidence \(1 bounded attempt\)/);
+  assert.match(html, /Re-check website and contact paths/);
+  assert.match(html, /Confirmed usable website \/ not a fit/);
+});
+
+test("website re-check and controlled-pilot controls retain guarded progress and confirmation wiring", () => {
+  const detailSource = readFileSync(new URL("../components/engine/ProspectDetail.tsx", import.meta.url), "utf8");
+  const engineSource = readFileSync(new URL("../components/ProspectEngine.tsx", import.meta.url), "utf8");
+  const testCenterSource = readFileSync(new URL("../components/engine/OperatorTestCenterWorkspace.tsx", import.meta.url), "utf8");
+  const verificationRoute = readFileSync(new URL("../app/api/engine/website-verification/route.ts", import.meta.url), "utf8");
+  const controlledLaunchSource = readFileSync(new URL("../lib/controlled-outreach-launch.ts", import.meta.url), "utf8");
+
+  assert.match(detailSource, /websiteRecheckGuardRef/);
+  assert.match(detailSource, /prospectDetailActionIsCurrent\(owner/);
+  assert.match(detailSource, /aria-busy=\{websiteRechecking\}/);
+  assert.match(detailSource, /Re-checking website…/);
+  assert.match(engineSource, /const prospectId = selected\.id[\s\S]*action: "recheck_website", prospectId/);
+  assert.match(verificationRoute, /confirm_usable_not_fit/);
+  assert.match(verificationRoute, /apply_existing_record_repair/);
+  assert.match(testCenterSource, /Controlled Outreach Launch Readiness/);
+  assert.match(testCenterSource, /Enable Controlled Email Pilot/);
+  assert.match(testCenterSource, /lastAction\.controlledReadiness\.activationConfirmation/);
+  assert.match(controlledLaunchSource, /ENABLE CONTROLLED PILOT/);
+  assert.match(testCenterSource, /Disable All Prospect Email Sending/);
+  assert.match(testCenterSource, /REPAIR VERIFIED WEBSITE RECORDS/);
+  assert.match(testCenterSource, /reviewToken: lastAction\?\.websiteRepair\?\.reviewToken/);
+  assert.match(testCenterSource, /Activation sends nothing/);
 });
 
 test("unapproved outreach renders compliance review and disabled copy controls", () => {

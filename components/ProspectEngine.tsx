@@ -35,7 +35,6 @@ import {
   titleCaseLocation,
   tradeCategories,
   withOutreach,
-  withPresenceGapReview,
   withPreview,
   type Prospect,
   type ProspectSort,
@@ -617,13 +616,12 @@ export function ProspectEngine() {
   }
 
   function runPresenceGapSelected() {
-    updateSelected((prospect) => withPresenceGapReview(
-      prospect,
-      prospect.websiteStatus === "unknown"
-        ? prospect.website ? "broken_website" : "no_owned_website"
-        : prospect.websiteStatus === "usable" ? "broken_website" : prospect.websiteStatus,
-      prospect.websiteStatusDetail || (prospect.website ? "Website marked as having no usable owned site during manual review." : "No owned website detected."),
-    ));
+    if (selected?.website) {
+      setSyncError("A website URL is present. Use Re-check website and contact paths; one operator click cannot convert a crawler result into a no-website opportunity.");
+      setSyncState("error");
+      return;
+    }
+    void recheckSelectedWebsite();
     setDetailTab("Analysis");
   }
 
@@ -647,6 +645,48 @@ export function ProspectEngine() {
       setSyncError(message);
       setSyncState("error");
       return { ok: false, message };
+    }
+  }
+
+  async function recheckSelectedWebsite() {
+    if (!selected) return { ok: false, message: "Select a prospect before re-checking the website." };
+    const prospectId = selected.id;
+    try {
+      const response = await fetch("/api/engine/website-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recheck_website", prospectId }),
+      });
+      const payload = (await response.json()) as { prospect?: Prospect; error?: string; approvalsRevoked?: number; nothingSent?: boolean };
+      if (!response.ok || !payload.prospect) throw new Error(payload.error || "Unable to re-check the website and contact paths.");
+      setProspects((current) => current.map((prospect) => prospect.id === prospectId ? payload.prospect! : prospect));
+      return {
+        ok: true,
+        message: `Website and contact paths re-checked.${payload.approvalsRevoked ? ` ${payload.approvalsRevoked} stale approval${payload.approvalsRevoked === 1 ? "" : "s"} removed.` : ""} Nothing was sent.`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : "Unable to re-check the website and contact paths.",
+      };
+    }
+  }
+
+  async function confirmSelectedUsableWebsiteNotFit() {
+    if (!selected) return { ok: false, message: "Select a prospect before changing its fit disposition." };
+    const prospectId = selected.id;
+    try {
+      const response = await fetch("/api/engine/website-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "confirm_usable_not_fit", prospectId, confirmed: true }),
+      });
+      const payload = (await response.json()) as { prospect?: Prospect; error?: string };
+      if (!response.ok || !payload.prospect) throw new Error(payload.error || "Unable to update the fit disposition.");
+      setProspects((current) => current.map((prospect) => prospect.id === prospectId ? payload.prospect! : prospect));
+      return { ok: true, message: "Confirmed usable website / not a fit. Contact history was preserved and nothing was sent." };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "Unable to update the fit disposition." };
     }
   }
 
@@ -918,7 +958,7 @@ export function ProspectEngine() {
                 />
                 {filtered.length === 0 && <EmptyState title="No prospects match these filters" body="Clear a filter or add a prospect to continue building the queue." action={() => { setTrade("All"); setStatus("All"); setContactFilter("all"); setQuery(""); }} />}
               </section>
-              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} previewRegenerating={previewRegeneratingId === selected.id} previewImprovementSignal={previewFeedbackRequest?.prospectId === selected.id ? previewFeedbackRequest.nonce : 0} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
+              {selected ? <ProspectDetail prospect={selected} detailTab={detailTab} setDetailTab={setDetailTab} onAnalyze={analyzeSelected} onPresenceGap={runPresenceGapSelected} onRecheckWebsite={recheckSelectedWebsite} onConfirmUsableNotFit={confirmSelectedUsableWebsiteNotFit} onOutreach={() => updateSelected(withOutreach)} onRegenerateOutreach={regenerateSelectedOutreach} onRegeneratePreview={regenerateSelectedPreview} onCreateReviewPackage={createSelectedReviewPackage} onPreview={() => updateSelected(withPreview)} onStatus={changeStatus} previewRegenerating={previewRegeneratingId === selected.id} previewImprovementSignal={previewFeedbackRequest?.prospectId === selected.id ? previewFeedbackRequest.nonce : 0} note={note} setNote={setNote} addNote={addNote} updateSelected={updateSelected} onClose={() => setSelectedId("")} /> : <EmptyState title={filtered.length ? "Select a prospect" : "No selected prospect"} body={filtered.length ? "Choose a lead to review its analysis and outreach work." : "No record is open because the current filters have no matching prospects."} />}
             </div>
           </div>
         )}

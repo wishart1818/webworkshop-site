@@ -4,6 +4,8 @@ import {
   normalizeTradeCategory,
   outreachComplianceFooter,
   prospectEmailNeedsManualVerification,
+  prospectVerifiedEmailEvidence,
+  prospectWebsiteVerificationBlockReason,
   prospectWebsiteAbsenceNeedsManualReview,
   prospectWrittenContactMethodIsUsable,
   type PreviewConcept,
@@ -1313,7 +1315,7 @@ function senderPostalAddressForDrafts(environment: NodeJS.ProcessEnv = process.e
   ].filter(Boolean);
 }
 
-function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
+export function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
   const combined = `${item.subjectLine}\n${item.emailBody}`;
   const postalAddresses = senderPostalAddressForDrafts(environment);
   return [
@@ -1354,10 +1356,15 @@ export function evaluateQueuedEmailSendReadiness({
   const domain = businessEmailDomain(email);
   const matchingItems = queue.filter((other) => other.id !== item.id && normalizeEmailAddress(other.email) === email);
   const matchingDomains = domain ? queue.filter((other) => other.id !== item.id && businessEmailDomain(other.email) === domain) : [];
+  const matchingProspects = item.prospectId
+    ? queue.filter((other) => other.id !== item.id && other.prospectId === item.prospectId)
+    : [];
   const suppressedStatuses = new Set<OutreachQueueStatus>(["Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact", "Not Interested", "Bad Fit", "Blocked", "Lost"]);
   const previouslySent = matchingItems.find((other) => other.sentDate || other.status === "Sent");
   const previouslySentDomain = matchingDomains.find((other) => other.sentDate || other.status === "Sent");
-  const suppressed = [...matchingItems, ...matchingDomains].find((other) => suppressedStatuses.has(other.status));
+  const previouslySentProspect = matchingProspects.find((other) => other.sentDate || other.status === "Sent");
+  const suppressed = [...matchingItems, ...matchingDomains, ...matchingProspects].find((other) => suppressedStatuses.has(other.status));
+  const activeProspectDuplicate = matchingProspects.find((other) => ["Queued", "Sending"].includes(other.status));
   const cooldownMs = Math.max(1, settings.emailCooldownMinutes) * 60_000;
   const cooldownHit = matchingItems.find((other) => {
     if (!other.sentDate) return false;
@@ -1375,6 +1382,8 @@ export function evaluateQueuedEmailSendReadiness({
     item.sentDate ? "This queue item already has a sent date." : "",
     previouslySent ? "This email address was already contacted." : "",
     previouslySentDomain ? "This business email domain was already contacted." : "",
+    previouslySentProspect ? "This prospect was already contacted through another queued recipient." : "",
+    activeProspectDuplicate ? "Another active email send exists for this prospect." : "",
     suppressed ? "This email address or domain is suppressed." : "",
     cooldownHit ? "Email cooldown is still active for this address." : "",
     ...prospectFacingEmailBodySafe(item, environment),
@@ -1422,6 +1431,8 @@ export function evaluateAutoSendEligibility({
     !providerConfigured(environment) ? "Email provider, sender, reply-to, or postal address is missing." : "",
     emailsSentToday >= Math.min(settings.maxEmailsSentPerDay, env.dailyCap) ? "Daily email cap has been reached." : "",
     !prospect.email ? "Public email is missing." : "",
+    prospectWebsiteVerificationBlockReason(prospect, { requireStructuredEvidence: true }),
+    prospect.email && !prospectVerifiedEmailEvidence(prospect) ? "Public email lacks stored source URL and extraction evidence." : "",
     prospectWebsiteAbsenceNeedsManualReview(prospect) ? "Website absence needs manual verification before approval." : "",
     !emailQuality.ready ? `Email quality check is not send-ready: ${emailQuality.readinessLabel}.` : "",
     !prospectWrittenContactMethodIsUsable(prospect) ? "Written contact method is not usable." : "",

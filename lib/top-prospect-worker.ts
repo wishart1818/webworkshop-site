@@ -17,16 +17,14 @@ import {
 import {
   activity,
   allCoreServiceTradesOption,
-  calculatePriority,
   coreServiceTrades,
   createProspect,
-  withPresenceGapReview,
   type Prospect,
   type ProspectSearchType,
   type TradeCategory,
 } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
-import { analyzePublicWebsite, classifyWebsiteAnalysisFailure, discoverWebsiteContactPaths } from "@/lib/site-analysis";
+import { verifyProspectWebsite } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
   likelySupplierOrDistributor,
@@ -774,31 +772,22 @@ async function processLead(
   }
 
   let prospect = createProspect({ ...lead, sizeIndicator: "Growing", status: "New" });
-  if (prospect.prospectType === "redesign") {
-    try {
-      const analysis = await analyzePublicWebsite(prospect);
-      prospect = await discoverWebsiteContactPaths(prospect);
-      prospect = {
-        ...prospect,
-        analysis,
-        priorityScore: calculatePriority(analysis, prospect.sizeIndicator, prospect.serviceArea),
-        status: "Reviewed",
-        activities: [activity("analysis", `Automated Top Prospects analysis completed with a score of ${analysis.overallScore}.`), ...prospect.activities],
-      };
-    } catch (error) {
-      const websiteFailure = classifyWebsiteAnalysisFailure(error);
-      if (!websiteFailure) {
-        addSkip(summary, "broken_or_inactive_website");
-        return false;
-      }
-      prospect = withPresenceGapReview(prospect, websiteFailure.status, websiteFailure.detail);
-    }
-  } else {
-    prospect = {
-      ...prospect,
-      status: "Reviewed",
-      activities: [activity("analysis", "Automated online presence gap review completed."), ...prospect.activities],
-    };
+  try {
+    const verified = await verifyProspectWebsite(prospect);
+    prospect = verified.prospect;
+  } catch {
+    addSkip(summary, "website_verification_failed");
+    return false;
+  }
+  if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "invalid_website"].includes(prospect.websiteStatus)) {
+    await saveProspect(prospect);
+    addSkip(summary, `website_${prospect.websiteStatus}`);
+    return false;
+  }
+  if (prospect.fitDisposition === "confirmed_usable_not_fit") {
+    await saveProspect(prospect);
+    addSkip(summary, "confirmed_usable_website_not_fit");
+    return false;
   }
 
   prospect = {
