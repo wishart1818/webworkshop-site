@@ -70,6 +70,8 @@ const contactMethodLabels: Record<RecommendedContactMethod, string> = {
 export type DetailTab = "Analysis" | "Outreach" | "Preview" | "Activity" | "Details";
 type PreviewRegenerationResult = { ok: boolean; message: string };
 export type ProspectDetailActionResult = { ok: boolean; message: string };
+export type ProspectDetailActionGuard = { current: symbol | null };
+export type ProspectDetailActionOwner = { prospectId: string; selectionVersion: number };
 type PreviewStripMode = "desktop" | "mobile";
 type PreviewStripStage = "idle" | "preflight" | "loading" | "fonts" | "images" | "measuring" | "capturing" | "validating" | "ready" | "error";
 type PreviewStripCapture = {
@@ -105,19 +107,30 @@ type ProspectDetailProps = {
 };
 
 export async function runProspectDetailActionOnce<T>(
-  guard: { current: boolean },
+  guard: ProspectDetailActionGuard,
   onPendingChange: (pending: boolean) => void,
   action: () => Promise<T>,
 ): Promise<{ started: boolean; value?: T }> {
   if (guard.current) return { started: false };
-  guard.current = true;
+  const actionToken = Symbol("prospect-detail-action");
+  guard.current = actionToken;
   onPendingChange(true);
   try {
     return { started: true, value: await action() };
   } finally {
-    guard.current = false;
-    onPendingChange(false);
+    if (guard.current === actionToken) {
+      guard.current = null;
+      onPendingChange(false);
+    }
   }
+}
+
+export function prospectDetailActionIsCurrent(
+  owner: ProspectDetailActionOwner,
+  currentProspectId: string,
+  currentSelectionVersion: number,
+) {
+  return owner.prospectId === currentProspectId && owner.selectionVersion === currentSelectionVersion;
 }
 
 function formatDate(value: string) {
@@ -828,14 +841,24 @@ export function ProspectDetail({
   const [previewOpenMessage, setPreviewOpenMessage] = useState("");
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
   const [localPreviewImprovementSignal, setLocalPreviewImprovementSignal] = useState(0);
-  const [outreachRegenerating, setOutreachRegenerating] = useState(false);
-  const [reviewPackageRefreshing, setReviewPackageRefreshing] = useState(false);
-  const [outreachActionFeedback, setOutreachActionFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const [outreachRegenerationProspectId, setOutreachRegenerationProspectId] = useState("");
+  const [reviewPackageRefreshProspectId, setReviewPackageRefreshProspectId] = useState("");
+  const [outreachActionFeedback, setOutreachActionFeedback] = useState<{ prospectId: string; tone: "success" | "error"; message: string } | null>(null);
   const detailBodyRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
-  const outreachRegenerationGuardRef = useRef(false);
-  const reviewPackageRefreshGuardRef = useRef(false);
+  const outreachRegenerationGuardRef = useRef<symbol | null>(null);
+  const reviewPackageRefreshGuardRef = useRef<symbol | null>(null);
   const outreachFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeProspectRef = useRef({ prospectId: prospect.id, selectionVersion: 0 });
+  if (activeProspectRef.current.prospectId !== prospect.id) {
+    activeProspectRef.current = {
+      prospectId: prospect.id,
+      selectionVersion: activeProspectRef.current.selectionVersion + 1,
+    };
+  }
+  const outreachRegenerating = outreachRegenerationProspectId === prospect.id;
+  const reviewPackageRefreshing = reviewPackageRefreshProspectId === prospect.id;
+  const visibleOutreachActionFeedback = outreachActionFeedback?.prospectId === prospect.id ? outreachActionFeedback : null;
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const presenceLabels = prospectPresenceLabels(prospect);
   const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
@@ -863,57 +886,71 @@ export function ProspectDetail({
     setPreviewOpenMessage("No public preview link is available yet. Create or refresh the Autonomous Review Package to generate the prospect-safe /p/ preview.");
   }
 
-  function showOutreachActionFeedback(tone: "success" | "error", message: string) {
+  function showOutreachActionFeedback(prospectId: string, tone: "success" | "error", message: string) {
     if (outreachFeedbackTimerRef.current) clearTimeout(outreachFeedbackTimerRef.current);
-    setOutreachActionFeedback({ tone, message });
+    setOutreachActionFeedback({ prospectId, tone, message });
     if (tone === "success") {
       outreachFeedbackTimerRef.current = setTimeout(() => {
-        setOutreachActionFeedback(null);
+        setOutreachActionFeedback((current) => current?.prospectId === prospectId ? null : current);
         outreachFeedbackTimerRef.current = null;
       }, 4000);
     }
   }
 
   async function regenerateOutreachWithFeedback() {
+    const owner = { ...activeProspectRef.current };
     try {
       const result = await runProspectDetailActionOnce(
         outreachRegenerationGuardRef,
-        setOutreachRegenerating,
+        (pending) => setOutreachRegenerationProspectId((current) => pending ? owner.prospectId : current === owner.prospectId ? "" : current),
         onRegenerateOutreach,
       );
-      if (!result.started) return;
+      if (!result.started || !prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
       if (result.value && !result.value.ok) {
-        showOutreachActionFeedback("error", result.value.message);
+        showOutreachActionFeedback(owner.prospectId, "error", result.value.message);
         return;
       }
-      showOutreachActionFeedback("success", "Outreach regenerated with the current script.");
+      showOutreachActionFeedback(owner.prospectId, "success", "Outreach regenerated with the current script.");
     } catch (error) {
-      showOutreachActionFeedback("error", error instanceof Error ? error.message : "Unable to regenerate outreach.");
+      if (!prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
+      showOutreachActionFeedback(owner.prospectId, "error", error instanceof Error ? error.message : "Unable to regenerate outreach.");
     }
   }
 
   async function refreshReviewPackageWithFeedback() {
+    const owner = { ...activeProspectRef.current };
     try {
       const result = await runProspectDetailActionOnce(
         reviewPackageRefreshGuardRef,
-        setReviewPackageRefreshing,
+        (pending) => setReviewPackageRefreshProspectId((current) => pending ? owner.prospectId : current === owner.prospectId ? "" : current),
         onCreateReviewPackage,
       );
-      if (!result.started) return;
+      if (!result.started || !prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
       if (result.value && !result.value.ok) {
-        showOutreachActionFeedback("error", result.value.message);
+        showOutreachActionFeedback(owner.prospectId, "error", result.value.message);
         return;
       }
-      showOutreachActionFeedback("success", result.value?.message || "Autonomous review package created or refreshed. Nothing was sent.");
+      showOutreachActionFeedback(owner.prospectId, "success", result.value?.message || "Autonomous review package created or refreshed. Nothing was sent.");
     } catch (error) {
-      showOutreachActionFeedback("error", error instanceof Error ? error.message : "Unable to create or refresh the review package.");
+      if (!prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
+      showOutreachActionFeedback(owner.prospectId, "error", error instanceof Error ? error.message : "Unable to create or refresh the review package.");
     }
+  }
+
+  function runMobileOutreachAction(action: () => Promise<void>) {
+    setMobileActionMenuOpen(false);
+    setDetailTab("Outreach");
+    void action();
   }
 
   useEffect(() => {
     setMobileActionMenuOpen(false);
     setPreviewOpenMessage("");
     setOutreachActionFeedback(null);
+    setOutreachRegenerationProspectId("");
+    setReviewPackageRefreshProspectId("");
+    outreachRegenerationGuardRef.current = null;
+    reviewPackageRefreshGuardRef.current = null;
     if (outreachFeedbackTimerRef.current) {
       clearTimeout(outreachFeedbackTimerRef.current);
       outreachFeedbackTimerRef.current = null;
@@ -987,7 +1024,7 @@ export function ProspectDetail({
           : <UnanalyzedWebsiteView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} />)}
         {detailTab === "Outreach" && (prospect.outreach
           ? <OutreachView
-              actionFeedback={outreachActionFeedback}
+              actionFeedback={visibleOutreachActionFeedback}
               onCreateReviewPackage={refreshReviewPackageWithFeedback}
               onRegenerateOutreach={regenerateOutreachWithFeedback}
               outreachRegenerating={outreachRegenerating}
@@ -1022,8 +1059,8 @@ export function ProspectDetail({
             <button onClick={() => { setMobileActionMenuOpen(false); openPublicPreview(); }} type="button">Open preview</button>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); }} type="button">View internal Preview tab</button>
             <button onClick={() => { setMobileActionMenuOpen(false); setDetailTab("Preview"); setLocalPreviewImprovementSignal(Date.now()); }} type="button">Improve preview</button>
-            <button disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => { setMobileActionMenuOpen(false); void regenerateOutreachWithFeedback(); }} type="button">Rewrite outreach</button>
-            <button disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => { setMobileActionMenuOpen(false); void refreshReviewPackageWithFeedback(); }} type="button">Create review package</button>
+            <button disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => runMobileOutreachAction(regenerateOutreachWithFeedback)} type="button">Rewrite outreach</button>
+            <button disabled={outreachRegenerating || reviewPackageRefreshing} onClick={() => runMobileOutreachAction(refreshReviewPackageWithFeedback)} type="button">Create review package</button>
             <button onClick={() => { setMobileActionMenuOpen(false); onStatus("Reviewed"); }} type="button">Mark reviewed</button>
           </div>
         </details>
