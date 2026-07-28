@@ -17,10 +17,11 @@ import {
   regenerateUnsentOutreachCopy,
   runMarketScoutDryRunForDashboard,
   runSmartAutonomousDryRun,
+  safeReadinessRepairProtectionReason,
   type OutreachCopyRegenerationSummary,
   type SmartGrowthActionResult,
 } from "@/lib/autonomous-growth-repository";
-import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendReadiness, outreachCopyRegenerationEligibility, outreachEnvironment, providerConfigured } from "@/lib/autonomous-growth";
+import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendReadiness, outreachCopyRegenerationEligibility, outreachEnvironment, outreachHistoryTextIndicatesProtectedContact, providerConfigured } from "@/lib/autonomous-growth";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
@@ -156,6 +157,8 @@ export type SafeReadinessRepairReceipt = {
   finalEmailSafetySummary: string;
   settingsChanged: false;
   suppressionAndContactHistoryPreserved: true;
+  previewsBuilt: 0;
+  approvalsGranted: 0;
   outreachSent: {
     emails: 0;
     dms: 0;
@@ -346,8 +349,11 @@ function readinessExcludedReason(item: Awaited<ReturnType<typeof getAutonomousGr
   if (item.replyStatus) return "Reply, bounce, complaint, opt-out, or suppression history is recorded.";
   if (readinessHistoricalStatuses.has(item.status)) return `${item.status} records are historical/non-actionable for pilot sending.`;
   if (item.contactSource !== "Public email") return `${item.contactSource || "Non-public"} contact path is manual-only, not part of the reviewed public-email pilot workflow.`;
-  if (/\b(opted out|do not contact|never contact|not interested|bad fit|suppressed|bounced|complained|phone-only)\b/i.test(`${item.blockedReason}\n${item.notes}`)) {
-    return "Blocked, suppressed, phone-only, or do-not-contact history is recorded.";
+  if (outreachHistoryTextIndicatesProtectedContact(`${item.blockedReason}\n${item.notes}`)) {
+    return "Contact, suppression, or terminal history is recorded.";
+  }
+  if (/\bphone-only\b/i.test(`${item.blockedReason}\n${item.notes}`)) {
+    return "Phone-only history is recorded.";
   }
   return "";
 }
@@ -1323,14 +1329,7 @@ export async function runSafeReadinessRepair(input: {
     }
     const categories = new Set(records.map((record) => record.category));
     const reasons = records.map((record) => `${record.category}: ${record.reason}`).join(" ");
-    const hasProtectedContext = Boolean(
-      item.sentDate
-      || item.replyStatus
-      || /\b(?:sent|contacted|suppressed|opted out|bounced|complained|never contact|do not contact|not interested|bad fit|lost)\b/i.test(
-        `${item.status}\n${item.blockedReason}\n${item.notes}`,
-      ),
-    );
-    if (hasProtectedContext) {
+    if (safeReadinessRepairProtectionReason(item)) {
       inspected.push(readinessRepairRecord(records, "manual_review_required", "Protected contact or suppression history was detected. No record changed.", false));
       continue;
     }
@@ -1411,6 +1410,8 @@ export async function runSafeReadinessRepair(input: {
     finalEmailSafetySummary: emailSafety.summary,
     settingsChanged: false,
     suppressionAndContactHistoryPreserved: true,
+    previewsBuilt: 0,
+    approvalsGranted: 0,
     outreachSent: { emails: 0, dms: 0, forms: 0, calls: 0, looms: 0 },
   };
   await safeRecordAudit({

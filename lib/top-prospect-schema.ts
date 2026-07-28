@@ -102,7 +102,7 @@ export const OUTREACH_COPY_VERSIONING_MIGRATION_STATEMENTS = [
 ] as const;
 
 const TOP_PROSPECT_SCHEMA_LOCK = 928641311;
-const TOP_PROSPECT_SCHEMA_LOCK_ATTEMPTS = 5;
+const TOP_PROSPECT_SCHEMA_LOCK_ATTEMPTS = 20;
 const TOP_PROSPECT_SCHEMA_LOCK_RETRY_MS = 250;
 const globalSchema = globalThis as typeof globalThis & { topProspectSchemaReady?: Promise<void> };
 

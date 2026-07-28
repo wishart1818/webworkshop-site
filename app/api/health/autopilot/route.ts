@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAutonomousGrowthDashboard } from "@/lib/autonomous-growth-repository";
+import { listProspectsWithDiagnostics } from "@/lib/prospect-repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,33 +26,28 @@ export async function GET() {
     process.env.OUTREACH_EMAIL_DISABLED === "true" &&
     process.env.OUTREACH_DAILY_CAP === "1";
 
-  try {
-    const dashboard = await getAutonomousGrowthDashboard();
-    const queueReadable = Array.isArray(dashboard.queue);
+  const [dashboardResult, prospectListResult] = await Promise.allSettled([
+    getAutonomousGrowthDashboard(),
+    listProspectsWithDiagnostics(),
+  ]);
+  const queueReadable = dashboardResult.status === "fulfilled" && Array.isArray(dashboardResult.value.queue);
+  const prospectsReadable = prospectListResult.status === "fulfilled" && Array.isArray(prospectListResult.value.prospects);
+  const databaseConnected = queueReadable || prospectsReadable;
+  const malformedProspectRecordsOmitted = prospectListResult.status === "fulfilled"
+    ? prospectListResult.value.diagnostics.malformedRecordsOmitted
+    : 0;
+  const healthy = requiredEnvironmentReady && failClosed && queueReadable && prospectsReadable;
 
-    return NextResponse.json(
-      {
-        ok: requiredEnvironmentReady && failClosed && queueReadable,
-        requiredEnvironmentReady,
-        failClosed,
-        databaseConnected: true,
-        queueReadable,
-      },
-      {
-        status: requiredEnvironmentReady && failClosed && queueReadable ? 200 : 503,
-        headers: { "Cache-Control": "no-store" },
-      },
-    );
-  } catch {
-    return NextResponse.json(
-      {
-        ok: false,
-        requiredEnvironmentReady,
-        failClosed,
-        databaseConnected: false,
-        queueReadable: false,
-      },
-      { status: 503, headers: { "Cache-Control": "no-store" } },
-    );
-  }
+  return NextResponse.json(
+    {
+      ok: healthy,
+      requiredEnvironmentReady,
+      failClosed,
+      databaseConnected,
+      queueReadable,
+      prospectsReadable,
+      malformedProspectRecordsOmitted,
+    },
+    { status: healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } },
+  );
 }

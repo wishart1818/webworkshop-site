@@ -42,6 +42,7 @@ import {
   type ProspectStatus,
   type TradeCategory,
 } from "@/lib/prospect-engine";
+import { requestProspectList } from "@/lib/prospect-list-client";
 
 type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Calls" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System" | "Command Activity";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
@@ -137,6 +138,7 @@ export function ProspectEngine() {
   const [note, setNote] = useState("");
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [syncError, setSyncError] = useState("");
+  const [syncWarning, setSyncWarning] = useState("");
   const [previewRegeneratingId, setPreviewRegeneratingId] = useState("");
   const [previewActionMessage, setPreviewActionMessage] = useState<PreviewActionMessage | null>(null);
   const [persistenceMode, setPersistenceMode] = useState<"memory" | "postgresql">("memory");
@@ -153,17 +155,15 @@ export function ProspectEngine() {
   const loadProspects = useCallback(async () => {
     setSyncState("loading");
     setSyncError("");
+    setSyncWarning("");
     try {
-      const response = await fetch("/api/engine/prospects", { cache: "no-store" });
-      const payload = (await response.json()) as {
-        prospects?: Prospect[];
-        persistence?: "memory" | "postgresql";
-        error?: string;
-      };
-      if (!response.ok || !payload.prospects) throw new Error(payload.error || "Unable to load prospects.");
-      setProspects(payload.prospects);
-      setSelectedId((current) => payload.prospects?.some((prospect) => prospect.id === current) ? current : payload.prospects?.[0]?.id ?? "");
-      setPersistenceMode(payload.persistence ?? "memory");
+      const result = await requestProspectList();
+      setProspects(result.prospects);
+      setSelectedId((current) => result.prospects.some((prospect) => prospect.id === current) ? current : result.prospects[0]?.id ?? "");
+      setPersistenceMode(result.persistence);
+      if (result.malformedRecordsOmitted > 0) {
+        setSyncWarning(`${result.malformedRecordsOmitted} malformed saved prospect record${result.malformedRecordsOmitted === 1 ? " was" : "s were"} omitted. Valid prospects remain available; review server diagnostics before repairing data.`);
+      }
       setSyncState("saved");
     } catch (error) {
       setProspects([]);
@@ -797,6 +797,12 @@ export function ProspectEngine() {
           <div className="engine-error-banner" role="alert">
             <div><b>Prospect data is not synced</b><p>{syncError}</p></div>
             <button className="engine-button" onClick={() => void loadProspects()} type="button">{prospects.length ? "Reload from server" : "Retry loading"}</button>
+          </div>
+        )}
+        {syncState === "saved" && syncWarning && (
+          <div className="engine-error-banner" role="status">
+            <div><b>Some prospect data needs attention</b><p>{syncWarning}</p></div>
+            <button className="engine-button" onClick={() => void loadProspects()} type="button">Retry loading</button>
           </div>
         )}
 

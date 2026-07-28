@@ -2791,6 +2791,29 @@ test("Smart Growth skips contacted, suppressed, bad-fit, and phone-only inventor
   assert.doesNotMatch(snapshot.copySummaries.debug, /DATABASE_URL|RESEND_API_KEY|TWILIO_AUTH_TOKEN|GOOGLE_PLACES_API_KEY|secret-/i);
 });
 
+test("queue items removed from email eligibility require manual research even when the stored address is preserved", () => {
+  const item = queueItem({
+    id: "manual-email-verification",
+    email: "admin@totalwptheme.com",
+    contactSource: "Needs manual verification",
+    status: "Needs Review",
+  });
+
+  assert.equal(smartQueueKeyForItem(item), "needsManualResearch");
+});
+
+test("routine no-send audit notes do not move an eligible email record into contacted inventory", () => {
+  const item = queueItem({
+    id: "routine-no-send-audit",
+    email: "hello@readybusiness.com",
+    contactSource: "Public email",
+    status: "Needs Review",
+    notes: "Provider test completed; no outreach was sent. Emails sent: 0.",
+  });
+
+  assert.equal(smartQueueKeyForItem(item), "readyForEmailReview");
+});
+
 test("Market Scout dry run stays bounded and recommends a market without provider calls or sends", () => {
   const scout = buildMarketScoutDryRun({
     marketsToTest: ["Tampa, FL", "Orlando, FL", "Dallas, TX"],

@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { POST as analyze } from "../app/api/engine/analyze/route";
 import { POST as discover } from "../app/api/engine/discover/route";
-import { GET as list, POST as create, PUT as update } from "../app/api/engine/prospects/route";
+import {
+  GET as list,
+  POST as create,
+  PUT as update,
+} from "../app/api/engine/prospects/route";
 import { GET as systemStatus } from "../app/api/engine/system/route";
 import { GET as latestSelfCheck, POST as runSelfCheck } from "../app/api/engine/system/self-check/route";
 import { POST as providerSmokeTest } from "../app/api/engine/system/provider-smoke-test/route";
@@ -16,7 +20,13 @@ import {
   safeListAuditEvents,
 } from "../lib/operational-controls";
 import { seedProspects } from "../lib/prospect-engine";
-import { resetProspectMemoryForTests } from "../lib/prospect-repository";
+import {
+  decodeProspectRows,
+  resetProspectMemoryForTests,
+} from "../lib/prospect-repository";
+import { requestProspectList } from "../lib/prospect-list-client";
+import { handleProspectList } from "../lib/prospect-list-route";
+import { TopProspectSchemaLockUnavailableError } from "../lib/top-prospect-schema";
 import { resetDiscoveryThrottleForTests } from "../lib/lead-discovery";
 import { defaultAutonomousGrowthSettings } from "../lib/autonomous-growth";
 import {
@@ -29,6 +39,93 @@ test.beforeEach(() => {
   resetProspectMemoryForTests();
   resetOperationalMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
+});
+
+test("prospect list retries a transient schema lock and returns valid records", async () => {
+  let calls = 0;
+  const result = await requestProspectList({
+    attempts: 3,
+    pause: async () => undefined,
+    fetcher: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify({
+          error: "Prospect data is temporarily busy. Retry in a moment.",
+          code: "PROSPECT_SCHEMA_BUSY",
+          retryable: true,
+          requestId: "11111111-1111-4111-8111-111111111111",
+        }), { status: 503, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        prospects: [seedProspects[0]],
+        persistence: "postgresql",
+        diagnostics: { malformedRecordsOmitted: 0 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(result.prospects[0]?.id, seedProspects[0].id);
+  assert.equal(result.persistence, "postgresql");
+});
+
+test("prospect list route returns a retryable secret-safe schema-lock response", async () => {
+  const previousError = console.error;
+  const logged: unknown[][] = [];
+  try {
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    const response = await handleProspectList(async () => {
+      throw new TopProspectSchemaLockUnavailableError();
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.code, "PROSPECT_SCHEMA_BUSY");
+    assert.equal(payload.retryable, true);
+    assert.match(payload.requestId, /^[0-9a-f-]{36}$/i);
+    assert.doesNotMatch(JSON.stringify({ payload, logged }), /DATABASE_URL|postgresql:\/\/|secret/i);
+  } finally {
+    console.error = previousError;
+  }
+});
+
+test("one malformed stored prospect does not prevent valid prospects from loading", () => {
+  const previousError = console.error;
+  const logged: unknown[][] = [];
+  try {
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    const result = decodeProspectRows(
+      [{ id: "valid" }, { id: "malformed" }],
+      (row) => {
+        if (row.id === "malformed") throw new TypeError("private malformed payload");
+        return { ...structuredClone(seedProspects[0]), id: row.id };
+      },
+    );
+
+    assert.deepEqual(result.prospects.map((prospect) => prospect.id), ["valid"]);
+    assert.equal(result.diagnostics.malformedRecordsOmitted, 1);
+    assert.match(JSON.stringify(logged), /malformed/);
+    assert.doesNotMatch(JSON.stringify(logged), /private malformed payload/);
+  } finally {
+    console.error = previousError;
+  }
+});
+
+test("prospect client reports an expired Basic Auth session without parsing HTML as JSON", async () => {
+  await assert.rejects(
+    requestProspectList({
+      attempts: 1,
+      fetcher: async () => new Response("Unauthorized", {
+        status: 401,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    }),
+    /authorization is required/i,
+  );
 });
 
 test("system API reports development health and recent audit activity", async () => {

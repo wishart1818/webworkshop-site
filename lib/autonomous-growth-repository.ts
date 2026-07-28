@@ -20,6 +20,7 @@ import {
   normalizeAutonomousGrowthSettings,
   currentOutreachCopyVersion,
   outreachCopyRegenerationEligibility,
+  outreachHistoryTextIndicatesProtectedContact,
   outreachQueueStatuses,
   outreachEnvironment,
   queueStatusAfterManualAction,
@@ -2966,15 +2967,15 @@ const safeReadinessRepairStatuses = new Set<OutreachQueueStatus>([
   "Preview Needs Polish",
 ]);
 
-function safeReadinessRepairBlockReason(item: OutreachQueueItem, prospectStatus = "") {
+export function safeReadinessRepairProtectionReason(item: OutreachQueueItem, prospectStatus = "") {
   if (!safeReadinessRepairStatuses.has(item.status)) return `Status ${item.status} is protected from readiness repair.`;
   if (item.sentDate) return "Sent records are protected from readiness repair.";
   if (item.replyStatus) return "Reply, bounce, complaint, opt-out, or suppression history is protected.";
   if (queueItemHasAmbiguousOutcome(item)) return "Ambiguous provider outcomes require manual reconciliation.";
   if (prospectStatus && !["New", "Reviewed"].includes(prospectStatus)) return `Prospect status ${prospectStatus} is already contacted or closed.`;
-  if (/\b(?:sent|contacted|suppressed|opted out|bounced|complained|unsubscribe|never contact|do not contact|not interested|bad fit|lost)\b/i.test(
-    `${item.status}\n${item.replyStatus}\n${item.blockedReason}\n${item.notes}`,
-  )) return "Contact, suppression, or terminal history is protected.";
+  if (outreachHistoryTextIndicatesProtectedContact(`${item.blockedReason}\n${item.notes}`)) {
+    return "Contact, suppression, or terminal history is protected.";
+  }
   return "";
 }
 
@@ -3037,7 +3038,7 @@ export async function repairOutreachQueueItemForReadiness(input: {
     const current = memoryQueue().find((item) => item.id === input.id) ?? null;
     if (!current) return { item: null, changed: false, action: input.action, blockedReason: "Queue item was not found." };
     const prospect = current.prospectId ? await getProspect(current.prospectId) : null;
-    const blockedReason = safeReadinessRepairBlockReason(current, prospect?.status ?? "");
+    const blockedReason = safeReadinessRepairProtectionReason(current, prospect?.status ?? "");
     if (blockedReason) return { item: structuredClone(current), changed: false, action: input.action, blockedReason };
     const data = readinessRepairData(current, input.action, reason, nowIso);
     Object.assign(current, {
@@ -3070,7 +3071,7 @@ export async function repairOutreachQueueItemForReadiness(input: {
     const prospectStatus = prospect
       ? prospect.status === "NEW" ? "New" : prospect.status === "REVIEWED" ? "Reviewed" : prospect.status
       : "";
-    const blockedReason = safeReadinessRepairBlockReason(item, prospectStatus);
+    const blockedReason = safeReadinessRepairProtectionReason(item, prospectStatus);
     if (blockedReason) return { row, changed: false, blockedReason };
     const data = readinessRepairData(item, input.action, reason, nowIso);
     const updated = await transaction.outreachQueueItem.updateMany({

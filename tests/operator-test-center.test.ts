@@ -11,6 +11,7 @@ import {
 import {
   outreachQueueMemoryForTests,
   resetAutonomousGrowthMemoryForTests,
+  safeReadinessRepairProtectionReason,
   setOutreachQueueMemoryForTests,
   updateAutonomousGrowthSettings,
 } from "../lib/autonomous-growth-repository";
@@ -592,7 +593,16 @@ test("Full Readiness excludes blocked old-copy records from pilot-blocking failu
       outreachCopyVersion: "old_audit_copy_v0",
       emailBody: "Old audit copy with One missed opportunity.",
     });
-    setOutreachQueueMemoryForTests([queuedReady, blockedOldCopy]);
+    const affirmativelyContacted = readinessQueueItem({
+      id: "affirmatively-contacted",
+      prospectId: "prospect-contacted-note",
+      topProspectResultId: "result-contacted-note",
+      status: "Needs Review",
+      queuedDate: "",
+      notes: "Initial email sent manually by the operator.",
+      outreachCopyVersion: "old_audit_copy_v0",
+    });
+    setOutreachQueueMemoryForTests([queuedReady, blockedOldCopy, affirmativelyContacted]);
     const before = JSON.stringify(outreachQueueMemoryForTests());
 
     const result = await runFullAutonomousReadinessTest(readinessEnv());
@@ -602,6 +612,7 @@ test("Full Readiness excludes blocked old-copy records from pilot-blocking failu
     assert.equal(result.readiness?.autoEmailPilot.status, "Ready");
     assert.equal(result.readiness?.failedRecords.some((record) => record.packageId === "blocked-old-copy"), false);
     assert.ok(result.readiness?.excludedRecords.some((record) => record.packageId === "blocked-old-copy" && /Blocked records are historical/i.test(record.excludedReason)));
+    assert.ok(result.readiness?.excludedRecords.some((record) => record.packageId === "affirmatively-contacted" && /Contact.*history/i.test(record.excludedReason)));
     assert.doesNotMatch(result.readiness?.autoEmailPilot.reasons.join(" "), /blocked-old-copy|copy\/safety fixes/i);
     assert.match(result.readiness?.summaries.failedOnly ?? "", /Excluded historical\/non-actionable records/);
   } finally {
@@ -682,7 +693,13 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
       topProspectResultId: "repair-result-old",
       outreachCopyVersion: "old_audit_copy_v0",
       emailBody: "Old audit copy with One missed opportunity.",
-      notes: "[auto-email-approved]",
+      notes: [
+        "[auto-email-approved]",
+        "Nothing was sent.",
+        "No outreach was sent.",
+        "Emails sent: 0",
+        "Provider test completed; no outreach was sent.",
+      ].join("\n"),
     });
     const suspicious = readinessQueueItem({
       id: "repair-suspicious-email",
@@ -700,7 +717,7 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
       topProspectResultId: "repair-result-ambiguous",
       businessName: "Ambiguous Preview Co",
       previewLink: "",
-      status: "Eligible",
+      status: "Preview Build Needed",
       queuedDate: "",
     });
     const sent = readinessQueueItem({
@@ -745,12 +762,13 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     assert.doesNotMatch(repairedCopy?.notes ?? "", /\[auto-email-approved\]/);
     assert.doesNotMatch(repairedCopy?.emailBody ?? "", /https:\/\/webworkshop\.dev\/p\/|One missed opportunity/i);
     assert.match(repairedCopy?.emailBody ?? "", /^Hi Ready Pressure Washing team,/);
-    assert.match(repairedCopy?.emailBody ?? "", /Want me to send it over\?/i);
+    assert.match(repairedCopy?.emailBody ?? "", /Would you like me to put together a quick preview\?/i);
     assert.match(repairedCopy?.emailBody ?? "", /If you'd rather not hear from me again/i);
     assert.equal(excludedEmail?.contactSource, "Needs manual verification");
     assert.equal(excludedEmail?.email, "admin@totalwptheme.com");
-    assert.equal(manualReview?.status, "Needs Review");
+    assert.equal(manualReview?.status, "Preview Build Needed");
     assert.equal(manualReview?.previewLink, "");
+    assert.equal(result.repair?.recordsRequiringManualReview[0]?.changed, false);
     assert.deepEqual(
       queue.filter((item) => ["repair-sent", "repair-suppressed"].includes(item.id)),
       protectedBefore,
@@ -758,6 +776,8 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     assert.equal(result.emailSafety?.status, "Passed");
     assert.deepEqual(result.repair?.outreachSent, { emails: 0, dms: 0, forms: 0, calls: 0, looms: 0 });
     assert.equal(result.repair?.settingsChanged, false);
+    assert.equal(result.repair?.previewsBuilt, 0);
+    assert.equal(result.repair?.approvalsGranted, 0);
     assert.equal(result.repair?.suppressionAndContactHistoryPreserved, true);
     const receiptEvent = memoryAuditEventsForTests().find((event) => event.action === "safe_readiness_repair_receipt");
     assert.equal(receiptEvent?.outcome, "success");
@@ -767,6 +787,55 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
   }
+});
+
+test("safe readiness repair distinguishes routine no-send audit text from protected contact history", () => {
+  for (const notes of [
+    "Nothing was sent.",
+    "No outreach was sent.",
+    "No email was sent.",
+    "Emails sent: 0",
+    "Outreach sent: 0",
+    "Provider test completed; no outreach was sent.",
+    "No email, DM, form, call, or Loom was sent.",
+    "No contact forms were submitted. No phone calls were placed. No Looms were recorded or sent.",
+  ]) {
+    assert.equal(
+      safeReadinessRepairProtectionReason(readinessQueueItem({ notes })),
+      "",
+      notes,
+    );
+  }
+
+  for (const notes of [
+    "Initial email sent by the operator.",
+    "Business contacted through its public email.",
+    "First DM sent manually.",
+    "No email was sent, but the prospect was contacted by phone.",
+    "No email was sent, but the first DM was sent manually.",
+  ]) {
+    assert.match(
+      safeReadinessRepairProtectionReason(readinessQueueItem({ notes })),
+      /protected/i,
+      notes,
+    );
+  }
+
+  for (const status of ["Sending", "Sent", "Suppressed", "Opted Out", "Bounced", "Complained", "Not Interested"] as const) {
+    assert.match(
+      safeReadinessRepairProtectionReason(readinessQueueItem({ status })),
+      /protected/i,
+      status,
+    );
+  }
+  assert.match(
+    safeReadinessRepairProtectionReason(readinessQueueItem({ notes: "[auto-email-ambiguous] Provider outcome needs reconciliation." })),
+    /ambiguous/i,
+  );
+  assert.match(
+    safeReadinessRepairProtectionReason(readinessQueueItem({ replyStatus: "contacted by phone" })),
+    /history/i,
+  );
 });
 
 test("safe readiness repair requires confirmation and changes nothing before confirmation", async () => {
