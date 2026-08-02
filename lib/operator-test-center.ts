@@ -879,7 +879,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const softerDm = fakeScripts.find((script) => script.label === "Softer DM script")?.body ?? "";
   const yesReply = fakeScripts.find((script) => script.label === "Yes-reply / manual-build confirmation")?.body ?? "";
   const fakeCopyBlob = `${firstEmail}\n${firstDm}\n${softerDm}\n${yesReply}`;
-  const firstEmailHasApprovedReason = /I came across your business\.[\s\S]+(?:couldn't find a dedicated website|had an idea for a simpler website direction)[\s\S]+Would you like me to put together a quick preview\?/i.test(firstEmail);
+  const firstEmailHasApprovedReason = /I came across (?:your [^.]+ business(?: while looking at companies around [^.]+)?|your business(?: while looking at companies around [^.]+)?)\.[\s\S]+(?:couldn't find a dedicated website|had an idea for a simpler website direction)[\s\S]+Would you like me to put together a quick preview\?/i.test(firstEmail);
   const configuredPostalAddress = environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
   const smartBackfill = await processExistingQualifiedProspects({ dryRun: true }).catch((error) => ({
     ok: false,

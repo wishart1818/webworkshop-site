@@ -1004,7 +1004,7 @@ test("unsupported outreach claim is explainable and safely repairable", () => {
     outreach: {
       ...prepared.prospect.outreach!,
       concise: prepared.prospect.outreach!.concise.replace(
-        /I came across your business\./,
+        /I came across[^.]+\./,
         "I reviewed your website while looking at hvac businesses serving Perrysburg.",
       ),
     },

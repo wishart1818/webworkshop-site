@@ -1598,11 +1598,16 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
 export function rewriteOutreachWithFixes(emailBody: string) {
   const optOut = emailBody.match(/Thanks,[\s\S]*?(?:If you would rather not receive another note, just reply and I will close the loop\.|If you'd rather not hear from me again, just let me know\.)/i)?.[0]
     ?? outreachComplianceFooter();
-  const greeting = emailBody.split("\n").find((line) => /^Hi\b/i.test(line.trim()))?.trim() ?? "Hi there,";
+  const lines = emailBody.split("\n").map((line) => line.trim()).filter(Boolean);
+  const greeting = lines.find((line) => /^Hi\b/i.test(line)) ?? "Hi there,";
+  const contextualOpening = lines.find((line) => /^I came across\b/i.test(line))
+    ?? "I came across your business.";
   return [
     greeting,
     "",
-    "I came across your business and had a simple website idea that could make it easier for people to see what you do and call or request a quote.",
+    contextualOpening,
+    "",
+    "I had a simple website idea that could make it easier for people to see what you do and call or request a quote.",
     "",
     "Would you like me to put together a quick preview?",
     "",

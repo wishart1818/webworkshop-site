@@ -351,7 +351,7 @@ test("queued email send readiness enforces suppression, truthful first touch, co
   const safeBody = [
     "Hi Ready Pressure Washing team,",
     "",
-    "I came across your business.",
+    "I came across your pressure washing business while looking at companies around Tampa, FL.",
     "",
     "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
     "",
@@ -2702,6 +2702,8 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
   const rewritten = rewriteOutreachWithFixes([
     "Hi Rick,",
     "",
+    "I came across your roofing business while looking at companies around Toledo.",
+    "",
     "This free audit could transform your seamless web presence.",
     "",
     "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF",
@@ -2713,6 +2715,7 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
 
   assert.match(rewritten, /rather not hear from me again/);
   assert.match(rewritten, /make it easier for people to see what you do and call or request a quote/i);
+  assert.match(rewritten, /roofing business while looking at companies around Toledo/i);
   assert.match(rewritten, /Would you like me to put together a quick preview\?/);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
