@@ -3,7 +3,6 @@ import {
   currentOutreachCopyVersion,
   loomTalkingPoints,
   manualDmScript,
-  outreachCopyRegenerationEligibility,
   outreachHistoryTextIndicatesProtectedContact,
   type OutreachQueueItem,
 } from "@/lib/autonomous-growth";
@@ -53,6 +52,13 @@ export function readinessRecoveryProtectionReason(
     return "Contact, suppression, or terminal history is protected.";
   }
   return "";
+}
+
+export function readinessRecoveryCandidateReason(
+  item: Pick<OutreachQueueItem, "status" | "sentDate" | "replyStatus" | "notes" | "blockedReason" | "outreachCopyVersion">,
+) {
+  if (item.outreachCopyVersion === currentOutreachCopyVersion) return "already current";
+  return readinessRecoveryProtectionReason(item);
 }
 
 type RecoverySummary = {
@@ -215,9 +221,9 @@ async function regenerateQueueItem(item: OutreachQueueItem, prospect: Prospect) 
     const blockedReason = safeReadinessRepairProtectionReason(currentItem, prospect.status);
     if (blockedReason) return { changed: false, reason: blockedReason };
 
-    const eligibility = outreachCopyRegenerationEligibility(currentItem);
-    if (!eligibility.eligible) {
-      return { changed: false, reason: eligibility.reason || "The package is no longer eligible for regeneration." };
+    const candidateReason = readinessRecoveryCandidateReason(currentItem);
+    if (candidateReason) {
+      return { changed: false, reason: candidateReason };
     }
 
     const { outreach, queueData } = currentQueueCopy(currentItem, prospect, now);
@@ -279,7 +285,7 @@ async function recoverOutdatedRecords(): Promise<RecoverySummary> {
 
   for (let pass = 0; pass < 3; pass += 1) {
     const dashboard = await getAutonomousGrowthDashboard();
-    const candidates = dashboard.queue.filter((item) => outreachCopyRegenerationEligibility(item).eligible);
+    const candidates = dashboard.queue.filter((item) => !readinessRecoveryCandidateReason(item));
     if (pass === 0) summary.targeted = candidates.length;
     if (!candidates.length) break;
 
