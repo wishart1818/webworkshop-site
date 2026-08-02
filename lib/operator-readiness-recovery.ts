@@ -149,7 +149,6 @@ async function reconcileTerminalProspect(item: OutreachQueueItem, prospect: Pros
       where: {
         id: currentItem.id,
         status: currentItem.status,
-        updatedAt: row.updatedAt,
         sentDate: null,
       },
       data: {
@@ -226,7 +225,6 @@ async function regenerateQueueItem(item: OutreachQueueItem, prospect: Prospect) 
       where: {
         id: currentItem.id,
         status: currentItem.status,
-        updatedAt: row.updatedAt,
         sentDate: null,
       },
       data: queueData,

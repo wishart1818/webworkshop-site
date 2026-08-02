@@ -45,13 +45,15 @@ test("Operator Test Center routes copy regeneration and safe repair through boun
   assert.match(route, /payload\.action === "run_safe_readiness_repair"[\s\S]+runSafeReadinessRepairWithRecovery/);
 });
 
-test("recovery re-reads and revalidates the live row before a versioned update", () => {
+test("recovery re-reads and revalidates the live row before a serializable guarded update", () => {
   const source = readFileSync("lib/operator-readiness-recovery.ts", "utf8");
   assert.match(source, /outreachQueueItem\.findUnique\(\{ where: \{ id: item\.id \} \}\)/);
   assert.match(source, /const currentItem = currentRecoveryItem\(item, row\)/);
   assert.match(source, /safeReadinessRepairProtectionReason\(currentItem, prospect\.status\)/);
   assert.match(source, /outreachCopyRegenerationEligibility\(currentItem\)/);
-  assert.match(source, /updatedAt: row\.updatedAt/);
+  assert.match(source, /outreachQueueItem\.updateMany\(\{[\s\S]{0,240}id: currentItem\.id,[\s\S]{0,120}status: currentItem\.status,[\s\S]{0,120}sentDate: null/);
+  assert.doesNotMatch(source, /outreachQueueItem\.updateMany\(\{[\s\S]{0,260}updatedAt:\s*row\.updatedAt/);
+  assert.match(source, /isolationLevel:\s*"Serializable"/);
   assert.doesNotMatch(source, /updatedAt: new Date\(item\.updatedAt\)/);
   assert.doesNotMatch(source, /notes:\s*\{\s*contains:\s*ambiguousOutcomeMarker/);
   assert.match(source, /Approval removed when present\. Nothing was sent\./);
