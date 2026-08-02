@@ -45,9 +45,14 @@ test("Operator Test Center routes copy regeneration and safe repair through boun
   assert.match(route, /payload\.action === "run_safe_readiness_repair"[\s\S]+runSafeReadinessRepairWithRecovery/);
 });
 
-test("recovery uses versioned updates without the nullable-notes SQL guard that caused false conflicts", () => {
+test("recovery re-reads and revalidates the live row before a versioned update", () => {
   const source = readFileSync("lib/operator-readiness-recovery.ts", "utf8");
-  assert.match(source, /updatedAt: new Date\(item\.updatedAt\)/);
+  assert.match(source, /outreachQueueItem\.findUnique\(\{ where: \{ id: item\.id \} \}\)/);
+  assert.match(source, /const currentItem = currentRecoveryItem\(item, row\)/);
+  assert.match(source, /safeReadinessRepairProtectionReason\(currentItem, prospect\.status\)/);
+  assert.match(source, /outreachCopyRegenerationEligibility\(currentItem\)/);
+  assert.match(source, /updatedAt: row\.updatedAt/);
+  assert.doesNotMatch(source, /updatedAt: new Date\(item\.updatedAt\)/);
   assert.doesNotMatch(source, /notes:\s*\{\s*contains:\s*ambiguousOutcomeMarker/);
   assert.match(source, /Approval removed when present\. Nothing was sent\./);
 });
