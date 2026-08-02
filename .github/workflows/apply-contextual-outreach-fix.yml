@@ -63,7 +63,7 @@ jobs:
               optOut,
             ].join("\\n");
           }'''
-          autonomous, rewrite_count = rewrite_pattern.subn(rewrite_replacement, autonomous, count=1)
+          autonomous, rewrite_count = rewrite_pattern.subn(lambda _match: rewrite_replacement, autonomous, count=1)
           if rewrite_count != 1:
               raise SystemExit(f"Expected one rewriteOutreachWithFixes function, found {rewrite_count}")
           write(autonomous_path, autonomous)
@@ -78,7 +78,7 @@ jobs:
           )
           operator, readiness_count = re.subn(
               r'^  const firstEmailHasApprovedReason = .*?;$',
-              readiness_line,
+              lambda _match: readiness_line,
               operator,
               count=1,
               flags=re.MULTILINE,
@@ -119,8 +119,8 @@ jobs:
 
           top_test_path = "tests/top-prospects.test.ts"
           top_test = read(top_test_path)
-          old_replacement = r'/I came across your business\\\./,'
-          new_replacement = r'/I came across[^.]+\\\./,'
+          old_replacement = '/I came across your business\\./,'
+          new_replacement = '/I came across[^.]+\\./,'
           if old_replacement in top_test:
               top_test = top_test.replace(old_replacement, new_replacement, 1)
           elif new_replacement not in top_test:
