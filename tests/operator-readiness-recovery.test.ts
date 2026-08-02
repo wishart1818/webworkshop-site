@@ -2,12 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  readinessRecoveryCandidateReason,
   readinessRecoveryProtectionReason,
   terminalQueueStatusForProspect,
 } from "../lib/operator-readiness-recovery";
-import type { OutreachQueueItem } from "../lib/autonomous-growth";
+import {
+  currentOutreachCopyVersion,
+  type OutreachQueueItem,
+} from "../lib/autonomous-growth";
 
-type RecoveryInput = Pick<OutreachQueueItem, "status" | "sentDate" | "replyStatus" | "notes" | "blockedReason">;
+type RecoveryInput = Pick<
+  OutreachQueueItem,
+  "status" | "sentDate" | "replyStatus" | "notes" | "blockedReason" | "outreachCopyVersion"
+>;
 
 function recoveryInput(overrides: Partial<RecoveryInput> = {}): RecoveryInput {
   return {
@@ -16,6 +23,7 @@ function recoveryInput(overrides: Partial<RecoveryInput> = {}): RecoveryInput {
     replyStatus: "",
     notes: "",
     blockedReason: "",
+    outreachCopyVersion: "standardized_permission_first_v2",
     ...overrides,
   };
 }
@@ -28,6 +36,18 @@ test("closed prospect statuses reconcile to historical queue statuses", () => {
 
 test("bounded readiness recovery allows an unsent queued draft with empty notes", () => {
   assert.equal(readinessRecoveryProtectionReason(recoveryInput()), "");
+});
+
+test("queued outdated copy is a bounded recovery candidate even when approval must be cleared", () => {
+  assert.equal(readinessRecoveryCandidateReason(recoveryInput({ notes: "[auto-email-approved]" })), "");
+  assert.equal(
+    readinessRecoveryCandidateReason(recoveryInput({ outreachCopyVersion: currentOutreachCopyVersion })),
+    "already current",
+  );
+  assert.match(
+    readinessRecoveryCandidateReason(recoveryInput({ status: "DM Draft" })),
+    /Status DM Draft is protected/i,
+  );
 });
 
 test("bounded readiness recovery preserves sent, ambiguous, and historical records", () => {
@@ -50,7 +70,9 @@ test("recovery re-reads and revalidates the live row before a serializable guard
   assert.match(source, /outreachQueueItem\.findUnique\(\{ where: \{ id: item\.id \} \}\)/);
   assert.match(source, /const currentItem = currentRecoveryItem\(item, row\)/);
   assert.match(source, /safeReadinessRepairProtectionReason\(currentItem, prospect\.status\)/);
-  assert.match(source, /outreachCopyRegenerationEligibility\(currentItem\)/);
+  assert.match(source, /readinessRecoveryCandidateReason\(currentItem\)/);
+  assert.match(source, /dashboard\.queue\.filter\(\(item\) => !readinessRecoveryCandidateReason\(item\)\)/);
+  assert.doesNotMatch(source, /outreachCopyRegenerationEligibility/);
   assert.match(source, /outreachQueueItem\.updateMany\(\{[\s\S]{0,240}id: currentItem\.id,[\s\S]{0,120}status: currentItem\.status,[\s\S]{0,120}sentDate: null/);
   assert.doesNotMatch(source, /outreachQueueItem\.updateMany\(\{[\s\S]{0,260}updatedAt:\s*row\.updatedAt/);
   assert.match(source, /isolationLevel:\s*"Serializable"/);
