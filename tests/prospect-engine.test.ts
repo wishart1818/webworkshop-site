@@ -84,7 +84,7 @@ test("Outreach Package uses truthful permission-first copy before a manual build
   const allDrafts = [outreach.concise, outreach.detailed, ...outreach.followUps].join("\n");
 
   assert.equal(outreach.subjects[0], "Quick website idea for MC Pressure Washing FL");
-  assert.match(outreach.concise, /I came across your business/i);
+  assert.match(outreach.concise, /I came across your pressure washing business while looking at companies around Tampa/i);
   assert.match(outreach.concise, /had an idea for a simpler website direction/i);
   assert.match(outreach.concise, /Would you like me to put together a quick preview\?/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
@@ -110,7 +110,7 @@ test("first-touch email wording matches the manual Lovable permission-first temp
   assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
     "Hi Styles Power Wash team,",
     "",
-    "I came across your business.",
+    "I came across your pressure washing business while looking at companies around St Augustine.",
     "",
     "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
     "",
@@ -123,7 +123,7 @@ test("first-touch email wording matches the manual Lovable permission-first temp
   assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
     "Hi ClearFlow Plumbing team,",
     "",
-    "I came across your business.",
+    "I came across your plumbing business while looking at companies around Toledo.",
     "",
     "I couldn't find a dedicated website for your business. I had an idea for what one could look like and how it could make it easier for people to call or request a quote.",
     "",
@@ -141,7 +141,7 @@ test("permission-first outreach avoids repeating the business name and stays lin
   const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
   const outreach = generateOutreach(prospect, previewLink, { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI came across your business\./);
+  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI came across your pressure washing business while looking at companies around St Augustine\./);
   assert.doesNotMatch(outreach.concise, /Hi Styles Power Wash team,\n\n[^.]+Styles Power Wash/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
