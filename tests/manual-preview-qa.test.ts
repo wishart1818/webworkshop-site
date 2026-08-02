@@ -41,7 +41,7 @@ function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueIte
     followUpDate: "",
     replyStatus: "prospect_said_yes",
     notes: "",
-    outreachCopyVersion: "manual_lovable_permission_first_v3",
+    outreachCopyVersion: "manual_lovable_permission_first_v4",
     outreachCopyGeneratedAt: new Date(0).toISOString(),
     previewVersion: "",
     lastRegeneratedAt: "",

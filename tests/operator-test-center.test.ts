@@ -101,7 +101,7 @@ function readinessQueueItem(overrides: Partial<OutreachQueueItem> = {}): Outreac
     emailBody: [
       "Hi Ready Pressure Washing team,",
       "",
-      "I came across your business.",
+      "I came across your pressure washing business while looking at companies around Tampa, FL.",
       "",
       "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
       "",

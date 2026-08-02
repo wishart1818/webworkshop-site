@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v3";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v4";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [
@@ -20,6 +20,7 @@ export const webworkshopOutreachStyleGuide = {
     "Ask whether the prospect wants Brendan to create a preview; never imply that one is already built.",
     "Do not invent weaknesses, praise, review themes, services, or unsupported claims.",
     "Do not force personalization. A clean factual fallback is better than an irrelevant detail.",
+    "Use the saved trade and market as the safe contextual fallback when both are available.",
     "Use could make it easier for people to call or request a quote, never guaranteed-results language.",
     "Use the business-team greeting unless a person's name was independently verified.",
     "Keep the greeting, CTA, closing, and opt-out structure stable.",
@@ -57,9 +58,21 @@ export function webworkshopYesReply(_previewLink = "") {
   ].join("\n");
 }
 
-export function webworkshopFirstTouchOpening(_trade: string, _city: string) {
-  void _trade;
-  void _city;
+function webworkshopTradeLabel(trade: string) {
+  const value = trade.trim();
+  if (!value) return "";
+  if (/^hvac$/i.test(value)) return "HVAC";
+  return value.toLowerCase();
+}
+
+export function webworkshopFirstTouchOpening(trade: string, city: string) {
+  const tradeLabel = webworkshopTradeLabel(trade);
+  const cityLabel = city.trim();
+  if (tradeLabel && cityLabel) {
+    return `I came across your ${tradeLabel} business while looking at companies around ${cityLabel}.`;
+  }
+  if (tradeLabel) return `I came across your ${tradeLabel} business.`;
+  if (cityLabel) return `I came across your business while looking at companies around ${cityLabel}.`;
   return "I came across your business.";
 }
 
