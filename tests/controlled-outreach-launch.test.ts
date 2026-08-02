@@ -185,7 +185,7 @@ function dependencies(input: {
   const prospect = input.prospect ?? eligibleProspect();
   const item = input.item ?? queueItemFor(prospect);
   const currentSettings = input.currentSettings ?? settings();
-  const completedAt = now.toISOString();
+  const completedAt = new Date().toISOString();
   return {
     getDashboard: async () => testDashboard(currentSettings, input.queue ?? [item]),
     getSettings: async () => currentSettings,

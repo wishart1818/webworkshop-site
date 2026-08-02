@@ -34,6 +34,8 @@ const mutableRecoveryStatuses = new Set<OutreachQueueItem["status"]>([
 const ambiguousOutcomeMarker = "[auto-email-ambiguous]";
 const approvalMarker = "[auto-email-approved]";
 
+type RecoveryQueueRow = Prisma.OutreachQueueItemGetPayload<Record<string, never>>;
+
 export function terminalQueueStatusForProspect(status: Prospect["status"]): "Lost" | "Won" | "" {
   if (status === "Closed Lost") return "Lost";
   if (status === "Closed Won") return "Won";
@@ -61,6 +63,11 @@ type RecoverySummary = {
   skippedReasons: Record<string, number>;
 };
 
+type RecoveryMutationResult = {
+  changed: boolean;
+  reason: string;
+};
+
 function incrementReason(summary: RecoverySummary, reason: string) {
   const key = reason || "manual review required";
   summary.skippedReasons[key] = (summary.skippedReasons[key] ?? 0) + 1;
@@ -72,6 +79,23 @@ function stripApprovalMarker(value: string) {
     .filter((line) => line !== approvalMarker)
     .join("\n")
     .trim();
+}
+
+function currentRecoveryItem(item: OutreachQueueItem, row: RecoveryQueueRow): OutreachQueueItem {
+  return {
+    ...item,
+    prospectId: row.prospectId ?? "",
+    topProspectResultId: row.topProspectResultId ?? "",
+    previewLink: row.previewLink,
+    status: row.status as OutreachQueueItem["status"],
+    queuedDate: row.queuedDate?.toISOString() ?? "",
+    sentDate: row.sentDate?.toISOString() ?? "",
+    replyStatus: row.replyStatus ?? "",
+    notes: row.notes ?? "",
+    blockedReason: row.blockedReason ?? "",
+    outreachCopyVersion: row.outreachCopyVersion ?? "",
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 async function clearApprovalInTransaction(
@@ -109,33 +133,41 @@ async function clearApprovalInTransaction(
 async function reconcileTerminalProspect(item: OutreachQueueItem, prospect: Prospect) {
   const terminalStatus = terminalQueueStatusForProspect(prospect.status);
   if (!terminalStatus) return { changed: false, reason: "Prospect is not terminal." };
-  const blockedReason = readinessRecoveryProtectionReason(item);
-  if (blockedReason) return { changed: false, reason: blockedReason };
 
   const database = getProspectDatabase();
   const now = new Date();
-  const note = `Readiness reconciliation: linked prospect is ${prospect.status}; queue moved to ${terminalStatus}. Approval removed when present. Nothing was sent.`;
-  const changed = await database.$transaction(async (transaction) => {
+  const result = await database.$transaction(async (transaction): Promise<RecoveryMutationResult> => {
+    const row = await transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+    if (!row) return { changed: false, reason: "The queue record no longer exists." };
+
+    const currentItem = currentRecoveryItem(item, row);
+    const blockedReason = readinessRecoveryProtectionReason(currentItem);
+    if (blockedReason) return { changed: false, reason: blockedReason };
+
+    const note = `Readiness reconciliation: linked prospect is ${prospect.status}; queue moved to ${terminalStatus}. Approval removed when present. Nothing was sent.`;
     const updated = await transaction.outreachQueueItem.updateMany({
       where: {
-        id: item.id,
-        status: item.status,
-        updatedAt: new Date(item.updatedAt),
+        id: currentItem.id,
+        status: currentItem.status,
+        updatedAt: row.updatedAt,
         sentDate: null,
       },
       data: {
         status: terminalStatus,
         queuedDate: null,
-        notes: [stripApprovalMarker(item.notes), note].filter(Boolean).join("\n") || null,
+        notes: [stripApprovalMarker(currentItem.notes), note].filter(Boolean).join("\n") || null,
         recommendedNextAction: terminalStatus === "Lost" ? "Bad Fit" : "Keep",
       },
     });
-    if (updated.count !== 1) return false;
-    await clearApprovalInTransaction(transaction, item, now, "closed");
-    return true;
+    if (updated.count !== 1) {
+      return { changed: false, reason: "The record changed during terminal reconciliation." };
+    }
+
+    await clearApprovalInTransaction(transaction, currentItem, now, "closed");
+    return { changed: true, reason: "" };
   }, { isolationLevel: "Serializable" });
 
-  if (changed) {
+  if (result.changed) {
     await safeRecordAudit({
       action: "readiness_terminal_queue_reconciliation",
       outcome: "success",
@@ -143,7 +175,7 @@ async function reconcileTerminalProspect(item: OutreachQueueItem, prospect: Pros
       metadata: { queueItemId: item.id, prospectStatus: prospect.status, queueStatus: terminalStatus },
     });
   }
-  return { changed, reason: changed ? "" : "The record changed before terminal reconciliation completed." };
+  return result;
 }
 
 function currentQueueCopy(item: OutreachQueueItem, prospect: Prospect, now: Date) {
@@ -174,25 +206,36 @@ function currentQueueCopy(item: OutreachQueueItem, prospect: Prospect, now: Date
 }
 
 async function regenerateQueueItem(item: OutreachQueueItem, prospect: Prospect) {
-  const blockedReason = safeReadinessRepairProtectionReason(item, prospect.status);
-  if (blockedReason) return { changed: false, reason: blockedReason };
-
   const database = getProspectDatabase();
   const now = new Date();
-  const { outreach, queueData } = currentQueueCopy(item, prospect, now);
-  const changed = await database.$transaction(async (transaction) => {
+  const result = await database.$transaction(async (transaction): Promise<RecoveryMutationResult> => {
+    const row = await transaction.outreachQueueItem.findUnique({ where: { id: item.id } });
+    if (!row) return { changed: false, reason: "The queue record no longer exists." };
+
+    const currentItem = currentRecoveryItem(item, row);
+    const blockedReason = safeReadinessRepairProtectionReason(currentItem, prospect.status);
+    if (blockedReason) return { changed: false, reason: blockedReason };
+
+    const eligibility = outreachCopyRegenerationEligibility(currentItem);
+    if (!eligibility.eligible) {
+      return { changed: false, reason: eligibility.reason || "The package is no longer eligible for regeneration." };
+    }
+
+    const { outreach, queueData } = currentQueueCopy(currentItem, prospect, now);
     const updated = await transaction.outreachQueueItem.updateMany({
       where: {
-        id: item.id,
-        status: item.status,
-        updatedAt: new Date(item.updatedAt),
+        id: currentItem.id,
+        status: currentItem.status,
+        updatedAt: row.updatedAt,
         sentDate: null,
       },
       data: queueData,
     });
-    if (updated.count !== 1) return false;
+    if (updated.count !== 1) {
+      return { changed: false, reason: "The record changed during regeneration." };
+    }
 
-    await clearApprovalInTransaction(transaction, item, now, "review");
+    await clearApprovalInTransaction(transaction, currentItem, now, "review");
     await transaction.outreachDraft.create({
       data: {
         prospectId: prospect.id,
@@ -212,10 +255,10 @@ async function regenerateQueueItem(item: OutreachQueueItem, prospect: Prospect) 
         createdAt: now,
       },
     });
-    return true;
+    return { changed: true, reason: "" };
   }, { isolationLevel: "Serializable" });
 
-  if (changed) {
+  if (result.changed) {
     await safeRecordAudit({
       action: "readiness_outreach_copy_recovery",
       outcome: "success",
@@ -223,7 +266,7 @@ async function regenerateQueueItem(item: OutreachQueueItem, prospect: Prospect) 
       metadata: { queueItemId: item.id, copyVersion: currentOutreachCopyVersion },
     });
   }
-  return { changed, reason: changed ? "" : "The record changed before copy recovery completed." };
+  return result;
 }
 
 async function recoverOutdatedRecords(): Promise<RecoverySummary> {
