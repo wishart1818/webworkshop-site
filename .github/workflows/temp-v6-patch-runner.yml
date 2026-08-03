@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.pull_request.head.ref == 'tmp/verified-first-name-trigger-main'
+    if: github.event.pull_request.head.ref == 'tmp/verified-first-name-trigger-main-2'
     runs-on: ubuntu-latest
     steps:
       - name: Check out patch branch
