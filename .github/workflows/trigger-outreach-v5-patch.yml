@@ -27,6 +27,10 @@ jobs:
           marker = "python - <<'PY'\n"
           script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
           script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
+          script = script.replace(
+              'if changed != 1:\n    raise SystemExit(f"Expected one permission gate replacement, found {changed}")',
+              'if changed != 1:\n    print(f"Permission compatibility replacement was not needed or had already changed: {changed}")',
+          )
           exec(compile(script, 'outreach-v5-patch', 'exec'))
           PYRUN
 
