@@ -1,0 +1,229 @@
+name: Apply outreach v5 fixes
+
+on:
+  push:
+    branches:
+      - fix/outreach-v5-clear-offer
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/outreach-v5-clear-offer
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Patch production gates and current-copy tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_exact(path: str, old: str, new: str, expected: int | None = None) -> int:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if expected is not None and count != expected:
+                  raise SystemExit(f"{path}: expected {expected} matches for {old!r}, found {count}")
+              if count:
+                  file.write_text(text.replace(old, new))
+              return count
+
+          # The send/readiness safety gate must recognize the new truthful v5 offer.
+          path = Path("lib/autonomous-growth.ts")
+          text = path.read_text()
+          pattern = re.compile(r'(?m)^(\s*)const hasTruthfulReason = (/.+?/i\.test\(body\));$')
+          match = pattern.search(text)
+          if not match:
+              raise SystemExit("Could not find hasTruthfulReason")
+          indent, legacy = match.groups()
+          replacement = (
+              f"{indent}const hasTruthfulReason = {legacy}\n"
+              f"{indent}  || /I can build you a refreshed, more modern website designed to help bring in more calls and quote requests|"
+              f"It looks like you don't currently have a full website up\\. I can build you a modern one designed to help bring in more calls and quote requests/i.test(body);"
+          )
+          text = pattern.sub(replacement, text, count=1)
+          path.write_text(text)
+
+          # Do not inject the old generated analysis sentence into the new two-path first touch.
+          prospect_engine = Path("lib/prospect-engine.ts")
+          text = prospect_engine.read_text()
+          old = "    factualMiddleLine: firstTouchMiddleLine(prospect),\n"
+          if text.count(old) != 1:
+              raise SystemExit(f"Expected one automatic factualMiddleLine handoff, found {text.count(old)}")
+          prospect_engine.write_text(text.replace(old, ""))
+
+          # Make readiness validation explicit instead of depending on one brittle giant regex.
+          operator = Path("lib/operator-test-center.ts")
+          text = operator.read_text()
+          pattern = re.compile(r'(?m)^  const firstEmailHasApprovedReason = .*;$')
+          if len(pattern.findall(text)) != 1:
+              raise SystemExit(f"Expected one firstEmailHasApprovedReason line, found {len(pattern.findall(text))}")
+          replacement = '''  const firstEmailHasApprovedReason =
+            /I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\\./i.test(firstEmail)
+            && /I came across [\\s\\S]+(?: while looking at [\\s\\S]+ businesses(?: around [^.]+)?)?\\./i.test(firstEmail)
+            && /(?:I can build you a refreshed, more modern website designed to help bring in more calls and quote requests|It looks like you don't currently have a full website up\\. I can build you a modern one designed to help bring in more calls and quote requests)\\./i.test(firstEmail)
+            && /Would you be interested in seeing what that could look like\\?/i.test(firstEmail);'''
+          operator.write_text(pattern.sub(replacement, text, count=1))
+
+          # Update current-copy assertions. Legacy fixtures that deliberately model old copy remain unchanged.
+          current_assertion_replacements = {
+              r'/Would you like me to put together a quick preview\?/': r'/Would you be interested in seeing what that could look like\?/',
+              r'/Would you like me to put together a quick preview\?/i': r'/Would you be interested in seeing what that could look like\?/i',
+              r'/make it easier for people to see what you do and call or request a quote/i': r'/refreshed, more modern website designed to help bring in more calls and quote requests/i',
+              r'/This isn\'t live or anything/': r'/This is not live yet/',
+              r'/I\'ll put together a quick preview/i': r'/I\'ll put together a website concept and send you a quick video walkthrough/i',
+          }
+          for file in Path("tests").glob("*.test.ts"):
+              text = file.read_text()
+              changed = False
+              for old, new in current_assertion_replacements.items():
+                  if old in text:
+                      text = text.replace(old, new)
+                      changed = True
+              if changed:
+                  file.write_text(text)
+
+          replace_exact(
+              "tests/autonomous-growth.test.ts",
+              r'/couldn\'t find a dedicated website/i',
+              r'/don\'t currently have a full website up/i',
+          )
+          replace_exact(
+              "tests/autonomous-growth.test.ts",
+              r'/This isn\'t live or anything/',
+              r'/This is not live yet/',
+          )
+          replace_exact(
+              "tests/legacy-outreach-backfill.test.ts",
+              r'/I\'ll put together a quick preview/i',
+              r'/I\'ll put together a website concept and send you a quick video walkthrough/i',
+          )
+          replace_exact(
+              "tests/final-manual-workflow-audit.test.ts",
+              "permission-first V3",
+              "permission-first V5",
+          )
+
+          # Exact first-touch expectations now reflect the two approved paths and regional location rule.
+          path = "tests/prospect-engine.test.ts"
+          old_block = '''  assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
+            "Hi Styles Power Wash team,",
+            "",
+            "I came across your pressure washing business while looking at companies around St Augustine.",
+            "",
+            "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.",
+            "",
+            "Would you like me to put together a quick preview?",
+            "",
+            testFooter,
+          ].join("\\n"));
+
+          const noWebsite = withPresenceGapReview({ ...structuredClone(seedProspects[0]), businessName: "ClearFlow Plumbing", trade: "Plumbing", city: "Toledo", website: "" }, "no_owned_website");
+          assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
+            "Hi ClearFlow Plumbing team,",
+            "",
+            "I came across your plumbing business while looking at companies around Toledo.",
+            "",
+            "I couldn't find a dedicated website for your business. I had an idea for what one could look like and how it could make it easier for people to call or request a quote.",
+            "",
+            "Would you like me to put together a quick preview?",
+            "",
+            testFooter,
+          ].join("\\n"));'''
+          new_block = '''  assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
+            "Hi there,",
+            "",
+            "I'm Brendan, and I build websites for local service businesses. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine.",
+            "",
+            "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.",
+            "",
+            "Would you be interested in seeing what that could look like?",
+            "",
+            testFooter,
+          ].join("\\n"));
+
+          const noWebsite = withPresenceGapReview({ ...structuredClone(seedProspects[0]), businessName: "ClearFlow Plumbing", trade: "Plumbing", city: "Toledo", website: "" }, "no_owned_website");
+          assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
+            "Hi there,",
+            "",
+            "I'm Brendan, based in Findlay, and I build websites for local service businesses. I came across ClearFlow Plumbing while looking at plumbing businesses around Toledo.",
+            "",
+            "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests.",
+            "",
+            "Would you be interested in seeing what that could look like?",
+            "",
+            testFooter,
+          ].join("\\n"));'''
+          replace_exact(path, old_block, new_block, expected=1)
+
+          replacements = [
+              (
+                  r'/I came across your pressure washing business while looking at companies around Tampa/i',
+                  r'/I came across MC Pressure Washing FL while looking at pressure-washing businesses around Tampa/i',
+              ),
+              (
+                  r'/had an idea for a simpler website direction/i',
+                  r'/refreshed, more modern website designed to help bring in more calls and quote requests/i',
+              ),
+              (
+                  r'/Hi Styles Power Wash team,\\n\\nI came across your pressure washing business while looking at companies around St Augustine\\./',
+                  r'/Hi there,\\n\\nI\'m Brendan, and I build websites for local service businesses\\. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine\\./',
+              ),
+              (
+                  r'/Hi Styles Power Wash team,\\n\\n[^.]+Styles Power Wash/i',
+                  r'/Hi there,\\n\\n[^.]+Styles Power Wash[^.]+Styles Power Wash/i',
+              ),
+              (
+                  r'/couldn\'t find a dedicated website/i',
+                  r'/don\'t currently have a full website up/i',
+              ),
+              (
+                  r'/idea for what one could look like/i',
+                  r'/modern one designed to help bring in more calls and quote requests/i',
+              ),
+          ]
+          for old, new in replacements:
+              replace_exact(path, old, new)
+
+          # The actual yes-reply now promises a manual concept plus Loom, not a prebuilt preview.
+          replace_exact(
+              path,
+              r'/I\'ll put together a quick preview and send it over once it\'s ready/i',
+              r'/I\'ll put together a website concept and send you a quick video walkthrough when it\'s ready/i',
+          )
+
+          # Current no-website assertions in Top Prospects use the verified no-full-site wording.
+          replace_exact(
+              "tests/top-prospects.test.ts",
+              r'/couldn\'t find a dedicated website/i',
+              r'/don\'t currently have a full website up/i',
+          )
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Remove helper and commit
+        shell: bash
+        run: |
+          rm .github/workflows/apply-outreach-v5-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib tests .github/workflows/apply-outreach-v5-fixes.yml
+          git commit -m "Finish outreach v5 safety and test migration"
+          git push origin HEAD:fix/outreach-v5-clear-offer
