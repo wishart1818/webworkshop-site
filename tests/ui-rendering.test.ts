@@ -1779,9 +1779,11 @@ test("Prospect review UI exposes tappable cards, visible filters, and direct-ope
   assert.match(topProspectsSource, /openResultCard/);
   assert.match(testCenterSource, /Open package/);
   assert.match(testCenterSource, /Open prospect preview/);
-  assert.match(testCenterSource, /Records needing attention/);
+  assert.match(testCenterSource, /Blocking records needing attention/);
+  assert.match(testCenterSource, /Informational outdated drafts/);
   assert.match(css, /engine-top-result-card:focus-visible/);
   assert.match(css, /engine-readiness-failed-records/);
+  assert.match(css, /engine-readiness-info-records/);
   assert.match(css, /engine-operator-summary-actions/);
 });
 

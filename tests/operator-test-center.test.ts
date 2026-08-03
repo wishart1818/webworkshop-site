@@ -10,6 +10,7 @@ import {
 } from "../lib/autonomous-growth";
 import {
   outreachQueueMemoryForTests,
+  getAutonomousGrowthSettings,
   resetAutonomousGrowthMemoryForTests,
   safeReadinessRepairProtectionReason,
   setOutreachQueueMemoryForTests,
@@ -313,7 +314,7 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.match(payload.summaries.emailSafety, /Full auto: blocked/i);
     assert.match(payload.summaries.fullStatus, /Provider coverage/i);
     assert.match(payload.summaries.regenerationSummary, /Latest outreach copy version/i);
-    assert.match(payload.summaries.regenerationSummary, /Old unsent packages needing regeneration/i);
+    assert.match(payload.summaries.regenerationSummary, /Informational outdated unsent packages/i);
     assert.match(payload.summaries.smsNotifications, /optional and hidden from primary readiness guidance/i);
     assert.match(payload.summaries.smartRecommendation, /Will not do|No outreach|Market Scout|existing qualified/i);
     assert.match(payload.nextRecommendedTest, /Internal alerts|Internal email notifications|Internal notifications|Provider coverage|Top Prospects|First-touch|Resend/i);
@@ -322,9 +323,78 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
     assert.ok(payload.statusCards.some((card) => card.label === "Internal notifications"));
     assert.equal(payload.statusCards.some((card) => /SMS|Twilio|Operator phone/i.test(card.label)), false);
     assert.ok(payload.statusCards.some((card) => card.label === "Latest Outreach Copy Version"));
-    assert.ok(payload.statusCards.some((card) => card.label === "Old unsent packages needing regeneration"));
+    assert.ok(payload.statusCards.some((card) => card.label === "Informational outdated unsent packages"));
   } finally {
     process.env = originalEnv;
+  }
+});
+
+test("outdated unsent packages are named in readiness output instead of appearing only as a count", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const outdated = readinessQueueItem({
+    id: "queue-outdated-social",
+    prospectId: "prospect-outdated-social",
+    topProspectResultId: "result-outdated-social",
+    businessName: "Named Outdated Package",
+    contactSource: "Social profile",
+    email: "",
+    status: "DM Draft",
+    queuedDate: "",
+    outreachCopyVersion: "standardized_permission_first_v2",
+  });
+  const current = readinessQueueItem({
+    id: "queue-current-social",
+    prospectId: "prospect-current-social",
+    topProspectResultId: "result-current-social",
+    businessName: "Current Package",
+    contactSource: "Social profile",
+    email: "",
+    status: "DM Draft",
+    queuedDate: "",
+  });
+  setOutreachQueueMemoryForTests([current]);
+  const baselineReadiness = await runFullAutonomousReadinessTest(readinessEnv({
+    OUTREACH_EMAIL_DISABLED: "true",
+    OUTREACH_AUTO_SEND_ENABLED: "false",
+  }));
+  setOutreachQueueMemoryForTests([outdated, current]);
+  const before = outreachQueueMemoryForTests();
+  const settingsBefore = await getAutonomousGrowthSettings();
+  const auditBefore = memoryAuditEventsForTests();
+
+  try {
+    const payload = await getOperatorTestCenterPayload();
+    const readiness = await runFullAutonomousReadinessTest(readinessEnv({
+      OUTREACH_EMAIL_DISABLED: "true",
+      OUTREACH_AUTO_SEND_ENABLED: "false",
+    }));
+
+    assert.match(payload.summaries.regenerationSummary, /Informational outdated unsent packages: 1/);
+    assert.match(payload.summaries.regenerationSummary, /Named Outdated Package/);
+    assert.match(payload.summaries.regenerationSummary, /prospect prospect-outdated-social/);
+    assert.match(payload.summaries.regenerationSummary, /package queue-outdated-social/);
+    assert.doesNotMatch(payload.summaries.regenerationSummary, /Current Package \[prospect/);
+    assert.equal(payload.statusCards.find((card) => card.label === "Informational outdated unsent packages")?.status, "ready");
+    assert.equal(readiness.readiness?.outdatedCopyRecords.length, 1);
+    assert.equal(readiness.readiness?.outdatedCopyRecords[0]?.businessName, "Named Outdated Package");
+    assert.equal(readiness.readiness?.outdatedCopyRecords[0]?.prospectId, "prospect-outdated-social");
+    assert.equal(readiness.readiness?.outdatedCopyRecords[0]?.packageId, "queue-outdated-social");
+    assert.equal(readiness.readiness?.failed.length, baselineReadiness.readiness?.failed.length);
+    assert.equal(readiness.readiness?.failedRecords.length, baselineReadiness.readiness?.failedRecords.length);
+    assert.equal(readiness.readiness?.failedRecords.length, 0);
+    assert.match(readiness.readiness?.summaries.full ?? "", /Eligible records needing attention: 0/);
+    assert.match(readiness.readiness?.summaries.full ?? "", /Informational outdated packages: 1/);
+    assert.match(readiness.readiness?.summaries.failedOnly ?? "", /Named Outdated Package/);
+    assert.match(readiness.readiness?.summaries.failedOnly ?? "", /standardized_permission_first_v2/);
+    assert.deepEqual(outreachQueueMemoryForTests(), before);
+    assert.deepEqual(await getAutonomousGrowthSettings(), settingsBefore);
+    const nonReadinessHistoryAfter = memoryAuditEventsForTests().filter((event) => event.action !== "operator_test_center_result");
+    const nonReadinessHistoryBefore = auditBefore.filter((event) => event.action !== "operator_test_center_result");
+    assert.deepEqual(nonReadinessHistoryAfter, nonReadinessHistoryBefore);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
   }
 });
 
@@ -908,7 +978,11 @@ test("Operator Test Center markup includes Smart Growth safe action buttons", as
   assert.match(routeSource, /run_safe_readiness_repair/);
   assert.match(routeSource, /payload\.confirmed !== true/);
   assert.match(source, /Copy Full Autonomous Readiness Summary/);
-  assert.match(source, /Copy Failed Checks Only/);
+  assert.match(source, /Copy Readiness Records Summary/);
+  assert.match(source, /Blocking records needing attention/);
+  assert.match(source, /Informational outdated drafts/);
+  assert.match(source, /Manual draft, not a readiness failure/);
+  assert.doesNotMatch(source, /failedRecords\.length \+ lastAction\.readiness\.outdatedCopyRecords\.length/);
   assert.match(source, /Copy Next Fix Summary/);
   assert.match(source, /Copy Safe-To-Test Summary/);
   assert.match(source, /Copy Debug Summary/);
