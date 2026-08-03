@@ -463,7 +463,7 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /had an idea for a simpler website direction/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);
   assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.doesNotMatch(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
@@ -1020,7 +1020,7 @@ test("unsupported outreach claim is explainable and safely repairable", () => {
 
   const repaired = {
     ...unsafe,
-    outreach: repairUnsupportedOutreachClaims(unsafe.outreach),
+    outreach: repairUnsupportedOutreachClaims(unsafe.outreach, unsafe.businessName),
   };
   const repairedQuality = evaluateOutreachEmailQuality(repaired, publicLink);
   assert.equal(repairedQuality.ready, true);

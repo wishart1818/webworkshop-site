@@ -616,19 +616,25 @@ function findUnsupportedClaim(value: string) {
   return null;
 }
 
-function replaceUnsupportedClaims(value: string) {
-  return unsupportedClaimPatterns.reduce(
+function replaceUnsupportedClaims(value: string, businessName = "") {
+  const repaired = unsupportedClaimPatterns.reduce(
     (draft, item) => draft.replace(item.pattern, item.suggestion),
     value,
   );
+  const verifiedBusinessName = businessName.trim();
+  if (!verifiedBusinessName) return repaired;
+  return repaired.replace(
+    "I came across your business while looking at local service companies.",
+    `I came across ${verifiedBusinessName} while looking at local service businesses.`,
+  );
 }
 
-export function repairUnsupportedOutreachClaims(outreach: OutreachDraft): OutreachDraft {
+export function repairUnsupportedOutreachClaims(outreach: OutreachDraft, businessName = ""): OutreachDraft {
   return {
     ...outreach,
-    concise: replaceUnsupportedClaims(outreach.concise),
-    detailed: replaceUnsupportedClaims(outreach.detailed),
-    followUps: outreach.followUps.map(replaceUnsupportedClaims),
+    concise: replaceUnsupportedClaims(outreach.concise, businessName),
+    detailed: replaceUnsupportedClaims(outreach.detailed, businessName),
+    followUps: outreach.followUps.map((followUp) => replaceUnsupportedClaims(followUp, businessName)),
   };
 }
 
@@ -1156,7 +1162,7 @@ export function prepareTopProspectArtifactsFromPreview(
   };
   let emailQuality = evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference);
   if (emailQuality.readinessLabel === "Unsupported claim") {
-    outreach = repairUnsupportedOutreachClaims(outreach);
+    outreach = repairUnsupportedOutreachClaims(outreach, prospect.businessName);
     withArtifacts = { ...withArtifacts, outreach };
     emailQuality = evaluateOutreachEmailQuality(withArtifacts, previewLink, outreachPreference);
   }
@@ -1185,7 +1191,7 @@ export function prepareTopProspectOutreachArtifacts(
   let withArtifacts: Prospect = { ...prospect, outreach };
   let emailQuality = evaluateOutreachEmailQuality(withArtifacts, "", outreachPreference);
   if (emailQuality.readinessLabel === "Unsupported claim") {
-    outreach = repairUnsupportedOutreachClaims(outreach);
+    outreach = repairUnsupportedOutreachClaims(outreach, prospect.businessName);
     withArtifacts = { ...withArtifacts, outreach };
     emailQuality = evaluateOutreachEmailQuality(withArtifacts, "", outreachPreference);
   }

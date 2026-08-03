@@ -2163,7 +2163,7 @@ export function outreachDraftLooksCurrent(outreach: Pick<OutreachDraft, "concise
   const firstTouch = outreach.concise ?? "";
   const combined = [firstTouch, outreach.detailed, ...(outreach.followUps ?? [])].join("\n");
   const address = webworkshopPostalAddress(environment);
-  const permissionFirstCta = /would you like me to (?:put together|create|make|build)(?: you)? (?:a )?(?:quick )?(?:website )?preview\?/i.test(firstTouch);
+  const permissionFirstCta = /would you be interested in seeing what that could look like\?/i.test(firstTouch);
   const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   return outreach.outreachCopyVersion === OUTREACH_COPY_VERSION
     && !/https?:\/\/|\/p\/|\/engine(?:\/|$)/i.test(firstTouch)
