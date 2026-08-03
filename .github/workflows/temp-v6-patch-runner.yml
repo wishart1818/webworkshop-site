@@ -13,76 +13,33 @@ jobs:
     if: github.event.pull_request.head.ref == 'tmp/verified-first-name-trigger-main-2'
     runs-on: ubuntu-latest
     steps:
+      - name: Check out control files
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: control
+          fetch-depth: 0
       - name: Check out patch branch
         uses: actions/checkout@v4
         with:
           ref: fix/verified-first-name-greetings-v6
+          path: repo
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Execute embedded patch
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          workflow = Path('.github/workflows/fix-verified-first-name-greetings.yml').read_text()
-          marker = "          python - <<'PY'\n"
-          start = workflow.index(marker) + len(marker)
-          end = workflow.index("\n          PY", start)
-          raw = workflow[start:end]
-          script = "\n".join(line[10:] if line.startswith("          ") else line for line in raw.splitlines())
-          exec(compile(script, 'verified-first-name-patch', 'exec'))
-
-          test_path = Path('tests/autonomous-growth.test.ts')
-          test_text = test_path.read_text()
-          test_marker = '\ntest("bulk copy regeneration preserves the saved contact first name from the live prospect", async () => {'
-          test_start = test_text.index(test_marker)
-          corrected_test = r'''
-
-test("bulk copy regeneration preserves the saved contact first name from the live prospect", async () => {
-  resetAutonomousGrowthMemoryForTests();
-  resetProspectMemoryForTests();
-  const prospect = eligibleProspect();
-  Object.assign(prospect, {
-    id: "named-regeneration-prospect",
-    businessName: "Pinnacle Pressure Washing of Toledo",
-    city: "Toledo",
-    state: "OH",
-    email: "nick@pinnacle419.com",
-    contactPersonName: "Nick Smith",
-  });
-  setProspectMemoryForTests([prospect]);
-  setOutreachQueueMemoryForTests([queueItem({
-    id: "named-regeneration-package",
-    prospectId: prospect.id,
-    businessName: prospect.businessName,
-    trade: prospect.trade,
-    city: "Toledo, OH",
-    email: prospect.email,
-    contactSource: "Public email",
-    status: "Needs Review",
-    outreachCopyVersion: "old_copy_v0",
-    emailBody: "Old audit-style copy with One missed opportunity.",
-    sentDate: "",
-    replyStatus: "",
-    notes: "",
-  })]);
-
-  const summary = await regenerateUnsentOutreachCopy();
-  const refreshed = outreachQueueMemoryForTests()[0];
-  assert.equal(summary.updated, 1);
-  assert.equal(refreshed.outreachCopyVersion, currentOutreachCopyVersion);
-  assert.match(refreshed.emailBody, /^Hi Nick,/);
-});
-'''
-          test_path.write_text(test_text[:test_start] + corrected_test + '\n')
-          PY
+          cache-dependency-path: repo/package-lock.json
+      - name: Apply verified-name patch
+        run: python control/.github/scripts/apply-v6-name-patch.py repo
       - name: Install dependencies
+        working-directory: repo
         run: npm ci
       - name: Run focused tests
+        working-directory: repo
         run: npx tsx --test tests/outreach-style-guide.test.ts tests/prospect-engine.test.ts tests/autonomous-growth.test.ts tests/final-manual-workflow-audit.test.ts
       - name: Commit patch branch
+        working-directory: repo
         run: |
           rm .github/workflows/fix-verified-first-name-greetings.yml
           rm .github/workflows/run-verified-first-name-patch.yml
@@ -91,11 +48,12 @@ test("bulk copy regeneration preserves the saved contact first name from the liv
           git add lib/outreach-style-guide.ts lib/prospect-engine.ts lib/autonomous-growth-repository.ts tests/outreach-style-guide.test.ts tests/prospect-engine.test.ts tests/autonomous-growth.test.ts tests/final-manual-workflow-audit.test.ts .github/workflows/fix-verified-first-name-greetings.yml .github/workflows/run-verified-first-name-patch.yml
           git commit -m "Use saved contact first names in outreach greetings"
           git push origin HEAD:fix/verified-first-name-greetings-v6
-      - name: Remove temporary runner from main
+      - name: Remove temporary control files
+        working-directory: control
         run: |
-          git fetch origin main
-          git checkout main
           git pull --ff-only origin main
-          git rm .github/workflows/temp-v6-patch-runner.yml .github/v6-run-marker.txt
-          git commit -m "[skip ci] Remove temporary v6 patch runner"
+          git rm .github/workflows/temp-v6-patch-runner.yml .github/scripts/apply-v6-name-patch.py .github/v6-run-marker.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "[skip ci] Remove temporary v6 patch controls"
           git push origin main
