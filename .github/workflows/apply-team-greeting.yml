@@ -1,7 +1,7 @@
 name: Apply team greeting simplification
 
 on:
-  push:
+  pull_request:
     branches:
       - fix/team-greeting-simplification
 
@@ -10,11 +10,10 @@ permissions:
 
 jobs:
   apply-and-verify:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Check out branch
+      - name: Check out implementation branch
         uses: actions/checkout@v4
         with:
           ref: fix/team-greeting-simplification
