@@ -328,6 +328,58 @@ test("Operator Test Center summaries expose gate statuses without secrets", asyn
   }
 });
 
+test("outdated unsent packages are named in readiness output instead of appearing only as a count", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const outdated = readinessQueueItem({
+    id: "queue-outdated-social",
+    prospectId: "prospect-outdated-social",
+    topProspectResultId: "result-outdated-social",
+    businessName: "Named Outdated Package",
+    contactSource: "Social profile",
+    email: "",
+    status: "DM Draft",
+    queuedDate: "",
+    outreachCopyVersion: "standardized_permission_first_v2",
+  });
+  const current = readinessQueueItem({
+    id: "queue-current-social",
+    prospectId: "prospect-current-social",
+    topProspectResultId: "result-current-social",
+    businessName: "Current Package",
+    contactSource: "Social profile",
+    email: "",
+    status: "DM Draft",
+    queuedDate: "",
+  });
+  setOutreachQueueMemoryForTests([outdated, current]);
+  const before = outreachQueueMemoryForTests();
+
+  try {
+    const payload = await getOperatorTestCenterPayload();
+    const readiness = await runFullAutonomousReadinessTest(readinessEnv({
+      OUTREACH_EMAIL_DISABLED: "true",
+      OUTREACH_AUTO_SEND_ENABLED: "false",
+    }));
+
+    assert.match(payload.summaries.regenerationSummary, /Old unsent packages needing regeneration: 1/);
+    assert.match(payload.summaries.regenerationSummary, /Named Outdated Package/);
+    assert.match(payload.summaries.regenerationSummary, /prospect prospect-outdated-social/);
+    assert.match(payload.summaries.regenerationSummary, /package queue-outdated-social/);
+    assert.doesNotMatch(payload.summaries.regenerationSummary, /Current Package \[prospect/);
+    assert.equal(readiness.readiness?.outdatedCopyRecords.length, 1);
+    assert.equal(readiness.readiness?.outdatedCopyRecords[0]?.businessName, "Named Outdated Package");
+    assert.equal(readiness.readiness?.outdatedCopyRecords[0]?.prospectId, "prospect-outdated-social");
+    assert.equal(readiness.readiness?.outdatedCopyRecords[0]?.packageId, "queue-outdated-social");
+    assert.match(readiness.readiness?.summaries.failedOnly ?? "", /Named Outdated Package/);
+    assert.match(readiness.readiness?.summaries.failedOnly ?? "", /standardized_permission_first_v2/);
+    assert.deepEqual(outreachQueueMemoryForTests(), before);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 test("Provider Smoke Test history persists successful Google Places results and refresh uses them", async () => {
   resetOperationalMemoryForTests();
   const originalEnv = { ...process.env };

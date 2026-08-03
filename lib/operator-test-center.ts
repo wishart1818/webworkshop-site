@@ -229,6 +229,18 @@ export type FullAutonomousReadinessExcludedRecord = FullAutonomousReadinessFaile
   excludedReason: string;
 };
 
+export type FullAutonomousReadinessOutdatedCopyRecord = {
+  id: string;
+  prospectId: string;
+  packageId: string;
+  businessName: string;
+  currentCopyVersion: string;
+  currentStatus: string;
+  contactSource: string;
+  proposedChange: string;
+  openAction: "prospect_outreach" | "queue_review";
+};
+
 export type FullAutonomousReadinessResult = {
   overallStatus: "Ready for safe dry runs" | "Ready for reviewed manual email test" | "Ready for Auto Email Pilot" | "Not ready for full-auto email" | "Needs setup";
   finalReadinessStatus: "READY FOR SAFE DRY RUNS" | "READY FOR ONE MANUAL EMAIL TEST" | "READY FOR AUTO EMAIL PILOT" | "BLOCKED - RECORDS NEED ATTENTION" | "NEEDS SETUP";
@@ -252,6 +264,7 @@ export type FullAutonomousReadinessResult = {
   passed: FullAutonomousReadinessCheck[];
   failed: FullAutonomousReadinessCheck[];
   failedRecords: FullAutonomousReadinessFailedRecord[];
+  outdatedCopyRecords: FullAutonomousReadinessOutdatedCopyRecord[];
   excludedRecords: FullAutonomousReadinessExcludedRecord[];
   optional: FullAutonomousReadinessCheck[];
   notDone: string[];
@@ -319,16 +332,28 @@ function summarizeLatestOutreachPackage(queue: Awaited<ReturnType<typeof getAuto
 
 function summarizeRegenerationReadiness(queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"]) {
   const reasons = new Map<string, number>();
-  let oldUnsentPackagesNeedingRegeneration = 0;
+  const outdatedPackages: Array<{ businessName: string; prospectId: string; packageId: string; version: string; status: string }> = [];
   for (const item of queue) {
     const eligibility = outreachCopyRegenerationEligibility(item);
-    if (eligibility.eligible) oldUnsentPackagesNeedingRegeneration += 1;
+    if (eligibility.eligible) {
+      outdatedPackages.push({
+        businessName: item.businessName,
+        prospectId: item.prospectId,
+        packageId: item.id,
+        version: item.outreachCopyVersion || "not recorded",
+        status: item.status,
+      });
+    }
     else reasons.set(eligibility.reason, (reasons.get(eligibility.reason) ?? 0) + 1);
   }
   const skipped = [...reasons.entries()].map(([reason, count]) => `${count} skipped because ${reason}`).join("\n");
+  const outdatedDetails = outdatedPackages.map((item) =>
+    `- ${item.businessName} [prospect ${item.prospectId || "not linked"}; package ${item.packageId}]: ${item.version}; status ${item.status}.`,
+  ).join("\n");
   return [
     `Latest outreach copy version: ${currentOutreachCopyVersion}`,
-    `Old unsent packages needing regeneration: ${oldUnsentPackagesNeedingRegeneration}`,
+    `Old unsent packages needing regeneration: ${outdatedPackages.length}`,
+    outdatedDetails ? `Exact outdated unsent packages:\n${outdatedDetails}` : "Exact outdated unsent packages: none",
     skipped,
     "Regeneration only rewrites unsent draft copy. It sends nothing and does not change sent logs or suppression records.",
   ].filter(Boolean).join("\n");
@@ -867,6 +892,19 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const jobs = await listTopProspectJobs().catch(() => []);
   const queue = dashboard?.queue ?? [];
   const { failedRecords, excludedRecords } = readinessRecordsForQueue(queue, env);
+  const outdatedCopyRecords: FullAutonomousReadinessOutdatedCopyRecord[] = queue
+    .filter((item) => outreachCopyRegenerationEligibility(item).eligible)
+    .map((item) => ({
+      id: `outdated-copy:${item.id}`,
+      prospectId: item.prospectId,
+      packageId: item.id,
+      businessName: item.businessName,
+      currentCopyVersion: item.outreachCopyVersion || "not recorded",
+      currentStatus: item.status,
+      contactSource: item.contactSource,
+      proposedChange: `Regenerate this unsent draft with ${currentOutreachCopyVersion}, preserve contact and suppression history, and send nothing.`,
+      openAction: item.prospectId ? "prospect_outreach" : "queue_review",
+    }));
   const smartSnapshot = dashboard?.smartGrowth ?? null;
   const fakeEnvironment = {
     ...environment,
@@ -1161,15 +1199,20 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
     `Eligible records needing attention: ${failedRecords.length}`,
+    `Outdated unsent packages: ${outdatedCopyRecords.length}`,
     `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Optional/info: ${optional.length}`,
     `Not done: ${notDone.join(" ")}`,
   ]);
   const failedRecordSummary = failedRecords.map((record) => `- ${record.businessName}: ${record.category}. ${record.reason} Next: ${record.correction}`);
+  const outdatedCopySummary = outdatedCopyRecords.map((record) =>
+    `- ${record.businessName} [prospect ${record.prospectId || "not linked"}; package ${record.packageId}]: ${record.currentCopyVersion}; status ${record.currentStatus}; contact ${record.contactSource}. Next: ${record.proposedChange}`,
+  );
   const excludedRecordSummary = excludedRecords.map((record) => `- ${record.businessName}: ${record.excludedReason}`);
   const failedOnly = safeTextLines([
     formatChecks("Failed checks only", failed),
     failedRecordSummary.length ? `Eligible records needing attention:\n${failedRecordSummary.join("\n")}` : "Eligible records needing attention: none",
+    outdatedCopySummary.length ? `Outdated unsent packages (informational):\n${outdatedCopySummary.join("\n")}` : "Outdated unsent packages (informational): none",
     excludedRecordSummary.length ? `Excluded historical/non-actionable records:\n${excludedRecordSummary.join("\n")}` : "Excluded historical/non-actionable records: none",
   ]);
   const nextFix = safeTextLines([`Next safest action: ${nextSafestAction}`, failed[0] ? `${failed[0].label}: ${failed[0].detail}` : "No failed checks."]);
@@ -1192,6 +1235,8 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     `Queued public-email leads passing readiness: ${queuedReadyCount}`,
     `Existing qualified unsent: ${existing?.total ?? 0}`,
     `Eligible failed records: ${failedRecords.length}`,
+    `Outdated unsent packages: ${outdatedCopyRecords.length}`,
+    ...outdatedCopySummary,
     `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Smart backfill: ${smartBackfill.message}`,
     `Market scout: ${marketScout.message}`,
@@ -1207,6 +1252,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     passed,
     failed,
     failedRecords,
+    outdatedCopyRecords,
     excludedRecords,
     optional,
     notDone,
