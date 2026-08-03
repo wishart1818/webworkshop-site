@@ -1,0 +1,144 @@
+name: Run outreach v5 fixes
+
+on:
+  push:
+    branches:
+      - fix/outreach-v5-clear-offer
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/outreach-v5-clear-offer
+          fetch-depth: 0
+
+      - name: Apply patches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count:
+                  p.write_text(text.replace(old, new))
+              print(path, count, old[:60])
+              return count
+
+          # Prospect-facing truthfulness gate.
+          p = Path("lib/autonomous-growth.ts")
+          text = p.read_text()
+          pattern = re.compile(r'(?m)^(\s*)const hasTruthfulReason = (/.+?/i\.test\(body\));$')
+          match = pattern.search(text)
+          if not match:
+              raise SystemExit("hasTruthfulReason not found")
+          indent, legacy = match.groups()
+          new_gate = (
+              f"{indent}const hasTruthfulReason = {legacy}\n"
+              f"{indent}  || /I can build you a refreshed, more modern website designed to help bring in more calls and quote requests|"
+              f"It looks like you don't currently have a full website up\\. I can build you a modern one designed to help bring in more calls and quote requests/i.test(body);"
+          )
+          p.write_text(pattern.sub(lambda _: new_gate, text, count=1))
+
+          # Do not auto-insert the legacy analysis sentence.
+          replace("lib/prospect-engine.ts", "    factualMiddleLine: firstTouchMiddleLine(prospect),\n", "")
+
+          # Readiness gate.
+          p = Path("lib/operator-test-center.ts")
+          text = p.read_text()
+          pattern = re.compile(r'(?m)^  const firstEmailHasApprovedReason = .*;$')
+          new_check = '''  const firstEmailHasApprovedReason =
+            /I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\\./i.test(firstEmail)
+            && /I came across [\\s\\S]+(?: while looking at [\\s\\S]+ businesses(?: around [^.]+)?)?\\./i.test(firstEmail)
+            && /(?:I can build you a refreshed, more modern website designed to help bring in more calls and quote requests|It looks like you don't currently have a full website up\\. I can build you a modern one designed to help bring in more calls and quote requests)\\./i.test(firstEmail)
+            && /Would you be interested in seeing what that could look like\\?/i.test(firstEmail);'''
+          text, count = pattern.subn(lambda _: new_check, text, count=1)
+          if count != 1:
+              raise SystemExit(f"firstEmailHasApprovedReason matches: {count}")
+          p.write_text(text)
+
+          # Common current-copy assertions.
+          swaps = [
+              ("/Would you like me to put together a quick preview\\?/i", "/Would you be interested in seeing what that could look like\\?/i"),
+              ("/Would you like me to put together a quick preview\\?/", "/Would you be interested in seeing what that could look like\\?/"),
+              ("/make it easier for people to see what you do and call or request a quote/i", "/refreshed, more modern website designed to help bring in more calls and quote requests/i"),
+              ("/This isn't live or anything/", "/This is not live yet/"),
+              ("/I'll put together a quick preview/i", "/I'll put together a website concept and send you a quick video walkthrough/i"),
+          ]
+          for p in Path("tests").glob("*.test.ts"):
+              text = p.read_text()
+              before = text
+              for old, new in swaps:
+                  text = text.replace(old, new)
+              if text != before:
+                  p.write_text(text)
+
+          replace("tests/final-manual-workflow-audit.test.ts", "permission-first V3", "permission-first V5")
+          for path in ["tests/autonomous-growth.test.ts", "tests/prospect-engine.test.ts", "tests/top-prospects.test.ts"]:
+              replace(path, "/couldn't find a dedicated website/i", "/don't currently have a full website up/i")
+
+          # Exact first-touch expectations.
+          p = Path("tests/prospect-engine.test.ts")
+          text = p.read_text()
+          start = text.index('  assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [')
+          marker = '  ].join("\\n"));\n});\n\ntest("permission-first outreach avoids repeating the business name and stays link-free"'
+          end = text.index(marker, start)
+          block = '''  assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
+            "Hi there,",
+            "",
+            "I'm Brendan, and I build websites for local service businesses. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine.",
+            "",
+            "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.",
+            "",
+            "Would you be interested in seeing what that could look like?",
+            "",
+            testFooter,
+          ].join("\\n"));
+
+          const noWebsite = withPresenceGapReview({ ...structuredClone(seedProspects[0]), businessName: "ClearFlow Plumbing", trade: "Plumbing", city: "Toledo", website: "" }, "no_owned_website");
+          assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
+            "Hi there,",
+            "",
+            "I'm Brendan, based in Findlay, and I build websites for local service businesses. I came across ClearFlow Plumbing while looking at plumbing businesses around Toledo.",
+            "",
+            "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests.",
+            "",
+            "Would you be interested in seeing what that could look like?",
+            "",
+            testFooter,
+          ].join("\\n"));
+});
+
+test("permission-first outreach avoids repeating the business name and stays link-free"'''
+          p.write_text(text[:start] + block + text[end + len(marker):])
+
+          replacements = [
+              ("/I came across your pressure washing business while looking at companies around Tampa/i", "/I came across MC Pressure Washing FL while looking at pressure-washing businesses around Tampa/i"),
+              ("/had an idea for a simpler website direction/i", "/refreshed, more modern website designed to help bring in more calls and quote requests/i"),
+              ("/Hi Styles Power Wash team,\\n\\nI came across your pressure washing business while looking at companies around St Augustine\\./", "/Hi there,\\n\\nI'm Brendan, and I build websites for local service businesses\\. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine\\./"),
+              ("/Hi Styles Power Wash team,\\n\\n[^.]+Styles Power Wash/i", "/Hi there,\\n\\n[^.]+Styles Power Wash[^.]+Styles Power Wash/i"),
+              ("/idea for what one could look like/i", "/modern one designed to help bring in more calls and quote requests/i"),
+              ("/I'll put together a quick preview and send it over once it's ready/i", "/I'll put together a website concept and send you a quick video walkthrough when it's ready/i"),
+          ]
+          for old, new in replacements:
+              replace("tests/prospect-engine.test.ts", old, new)
+          PY
+
+      - name: Commit patches and remove helper workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/run-outreach-v5-fixes.yml
+          rm -f .github/workflows/apply-outreach-v5-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib tests .github/workflows
+          git commit -m "Finish outreach v5 safety and test migration"
+          git push origin HEAD:fix/outreach-v5-clear-offer
