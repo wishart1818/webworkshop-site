@@ -1,0 +1,58 @@
+name: Apply team greeting simplification
+
+on:
+  push:
+    branches:
+      - fix/team-greeting-simplification
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/team-greeting-simplification
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply one-time migration
+        run: python .github/apply-team-greeting.py
+
+      - name: Verify repository
+        env:
+          DATABASE_URL: ""
+          OUTREACH_EMAIL_DISABLED: "true"
+          OUTREACH_AUTO_SEND_ENABLED: "false"
+          OUTREACH_FULL_AUTO_ENABLED: "false"
+          OUTREACH_DAILY_CAP: "1"
+          WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840"
+        run: npm run verify
+
+      - name: Remove one-time migration files
+        run: |
+          rm -f .github/apply-team-greeting.py
+          rm -f .github/workflows/apply-team-greeting.yml
+          rm -f .github/team-greeting-simplification-task.md
+
+      - name: Commit verified implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Simplify first-touch greetings to business teams"
+          git push origin HEAD:fix/team-greeting-simplification
