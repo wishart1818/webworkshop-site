@@ -29,7 +29,9 @@ jobs:
         run: npm ci
 
       - name: Apply one-time migration
-        run: python .github/apply-team-greeting.py
+        run: |
+          sed -i 's/re.subn(pattern, replacement, text/re.subn(pattern, lambda _match: replacement, text/' .github/apply-team-greeting.py
+          python .github/apply-team-greeting.py
 
       - name: Verify repository
         env:
