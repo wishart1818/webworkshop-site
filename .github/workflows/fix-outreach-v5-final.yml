@@ -1,0 +1,114 @@
+name: Fix outreach v5 final
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.base.ref == 'fix/outreach-v5-clear-offer'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/outreach-v5-clear-offer
+          fetch-depth: 0
+
+      - name: Apply final v5 patches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_exact(path: str, old: str, new: str, expected: int):
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} match(es), found {count}: {old[:100]!r}")
+              file.write_text(text.replace(old, new))
+
+          replace_exact(
+              "lib/prospect-engine.ts",
+              "  const permissionFirstCta = /would you like me to (?:put together|create|make|build)(?: you)? (?:a )?(?:quick )?(?:website )?preview\\?/i.test(firstTouch);",
+              "  const permissionFirstCta = /would you be interested in seeing what that could look like\\?/i.test(firstTouch);",
+              1,
+          )
+
+          top = Path("lib/top-prospects.ts")
+          text = top.read_text()
+          old_block = '''function replaceUnsupportedClaims(value: string) {
+            return unsupportedClaimPatterns.reduce(
+              (draft, item) => draft.replace(item.pattern, item.suggestion),
+              value,
+            );
+          }
+
+          export function repairUnsupportedOutreachClaims(outreach: OutreachDraft): OutreachDraft {
+            return {
+              ...outreach,
+              concise: replaceUnsupportedClaims(outreach.concise),
+              detailed: replaceUnsupportedClaims(outreach.detailed),
+              followUps: outreach.followUps.map(replaceUnsupportedClaims),
+            };
+          }'''
+          new_block = '''function replaceUnsupportedClaims(value: string, businessName = "") {
+            const repaired = unsupportedClaimPatterns.reduce(
+              (draft, item) => draft.replace(item.pattern, item.suggestion),
+              value,
+            );
+            const verifiedBusinessName = businessName.trim();
+            if (!verifiedBusinessName) return repaired;
+            return repaired.replace(
+              "I came across your business while looking at local service companies.",
+              `I came across ${verifiedBusinessName} while looking at local service businesses.`,
+            );
+          }
+
+          export function repairUnsupportedOutreachClaims(outreach: OutreachDraft, businessName = ""): OutreachDraft {
+            return {
+              ...outreach,
+              concise: replaceUnsupportedClaims(outreach.concise, businessName),
+              detailed: replaceUnsupportedClaims(outreach.detailed, businessName),
+              followUps: outreach.followUps.map((followUp) => replaceUnsupportedClaims(followUp, businessName)),
+            };
+          }'''
+          if text.count(old_block) != 1:
+              raise SystemExit(f"lib/top-prospects.ts: repair block matches {text.count(old_block)}")
+          text = text.replace(old_block, new_block)
+          call_count = text.count("outreach = repairUnsupportedOutreachClaims(outreach);")
+          if call_count != 2:
+              raise SystemExit(f"lib/top-prospects.ts: expected 2 repair calls, found {call_count}")
+          text = text.replace(
+              "outreach = repairUnsupportedOutreachClaims(outreach);",
+              "outreach = repairUnsupportedOutreachClaims(outreach, prospect.businessName);",
+          )
+          top.write_text(text)
+
+          replace_exact(
+              "tests/top-prospects.test.ts",
+              '  assert.match(formPackage.prospect.outreach?.concise ?? "", /had an idea for a simpler website direction/i);',
+              '  assert.match(formPackage.prospect.outreach?.concise ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);',
+              1,
+          )
+          replace_exact(
+              "tests/top-prospects.test.ts",
+              "outreach: repairUnsupportedOutreachClaims(unsafe.outreach),",
+              "outreach: repairUnsupportedOutreachClaims(unsafe.outreach, unsafe.businessName),",
+              1,
+          )
+          PY
+
+      - name: Commit and remove helper
+        shell: bash
+        run: |
+          rm .github/workflows/fix-outreach-v5-final.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib tests .github/workflows/fix-outreach-v5-final.yml
+          git commit -m "Finish outreach v5 current-copy and repair gates"
+          git push origin HEAD:fix/outreach-v5-clear-offer
