@@ -1,16 +1,18 @@
 name: Temporary v6 patch runner
 
 on:
-  pull_request_target:
+  push:
     branches:
       - main
+    paths:
+      - .github/v6-run-marker.txt
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.event.pull_request.head.ref == 'tmp/verified-first-name-trigger-main-2'
+    if: github.event.head_commit.message == 'Trigger verified first-name patch'
     runs-on: ubuntu-latest
     steps:
       - name: Check out patch branch
@@ -96,6 +98,6 @@ test("bulk copy regeneration preserves the saved contact first name from the liv
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
-          git rm .github/workflows/temp-v6-patch-runner.yml
+          git rm .github/workflows/temp-v6-patch-runner.yml .github/v6-run-marker.txt
           git commit -m "[skip ci] Remove temporary v6 patch runner"
           git push origin main
