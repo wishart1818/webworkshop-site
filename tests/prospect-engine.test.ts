@@ -133,6 +133,21 @@ assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
 ].join("\n"));
 });
 
+
+test("first-touch email uses the saved contact first name and never infers one from the email address", () => {
+  const prospect = withAnalysis({
+    ...structuredClone(seedProspects[0]),
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    trade: "Pressure Washing",
+    city: "Toledo",
+    email: "nick@pinnacle419.com",
+    contactPersonName: "Nick Smith",
+  });
+
+  assert.match(firstTouchEmailDraft(prospect, testFooter), /^Hi Nick,/);
+  assert.match(firstTouchEmailDraft({ ...prospect, contactPersonName: "" }, testFooter), /^Hi there,/);
+});
+
 test("permission-first outreach avoids repeating the business name and stays link-free", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   prospect.businessName = "Styles Power Wash";

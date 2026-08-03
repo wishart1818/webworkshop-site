@@ -12,7 +12,7 @@ import {
 
 const environment = { WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840" } as NodeJS.ProcessEnv;
 
-test("permission-first V5 copy is current while the old already-built CTA is stale", () => {
+test("permission-first V6 copy is current while the old already-built CTA is stale", () => {
   const prospect = structuredClone(seedProspects[0]);
   const current = generateOutreach(prospect, "", environment);
   assert.equal(current.outreachCopyVersion, OUTREACH_COPY_VERSION);

@@ -845,7 +845,7 @@ function cityStateFromQueueCity(value: string) {
   };
 }
 
-function prospectForQueueCopyRegeneration(item: OutreachQueueItem): Prospect {
+function prospectForQueueCopyRegeneration(item: OutreachQueueItem, contactPersonName = ""): Prospect {
   const location = cityStateFromQueueCity(item.city);
   const contactSource = item.contactSource.toLowerCase();
   const manualContact: Prospect["bestManualContactMethod"] =
@@ -866,6 +866,7 @@ function prospectForQueueCopyRegeneration(item: OutreachQueueItem): Prospect {
     website: item.website,
     phone: "",
     email: item.email,
+    contactPersonName,
     city: location.city,
     state: location.state,
     trade: normalizeTradeCategory(item.trade) ?? "Pressure Washing",
@@ -3018,8 +3019,8 @@ function summarizeRegeneration(summary: OutreachCopyRegenerationSummary) {
   ].filter(Boolean).join(". ");
 }
 
-function regeneratedQueueCopy(item: OutreachQueueItem, nowIso: string) {
-  const prospect = prospectForQueueCopyRegeneration(item);
+function regeneratedQueueCopy(item: OutreachQueueItem, nowIso: string, contactPersonName = "") {
+  const prospect = prospectForQueueCopyRegeneration(item, contactPersonName);
   const previewLink = item.previewLink && /\/p\//i.test(item.previewLink) ? item.previewLink : "";
   const outreach = generateOutreach(prospect, previewLink);
   return {
@@ -3063,6 +3064,7 @@ function readinessRepairData(
   action: SafeReadinessQueueRepairAction,
   reason: string,
   nowIso: string,
+  contactPersonName = "",
 ) {
   const notesWithoutApproval = stripApprovalMarker(item.notes);
   const auditNote = `Safe readiness repair: ${reason}. Approval removed when present. Nothing was sent.`;
@@ -3074,7 +3076,7 @@ function readinessRepairData(
   };
   if (action === "regenerate_current_copy") {
     return {
-      ...regeneratedQueueCopy({ ...item, notes: notesWithoutApproval }, nowIso),
+      ...regeneratedQueueCopy({ ...item, notes: notesWithoutApproval }, nowIso, contactPersonName),
       ...base,
       blockedReason: null,
     };
@@ -3119,7 +3121,7 @@ export async function repairOutreachQueueItemForReadiness(input: {
     const prospect = current.prospectId ? await getProspect(current.prospectId) : null;
     const blockedReason = safeReadinessRepairProtectionReason(current, prospect?.status ?? "");
     if (blockedReason) return { item: structuredClone(current), changed: false, action: input.action, blockedReason };
-    const data = readinessRepairData(current, input.action, reason, nowIso);
+    const data = readinessRepairData(current, input.action, reason, nowIso, prospect?.contactPersonName ?? "");
     Object.assign(current, {
       ...data,
       queuedDate: "",
@@ -3145,14 +3147,14 @@ export async function repairOutreachQueueItemForReadiness(input: {
     if (!row) return { row: null, changed: false, blockedReason: "Queue item was not found." };
     const item = queueToDomain(row);
     const prospect = item.prospectId
-      ? await transaction.prospect.findUnique({ where: { id: item.prospectId }, select: { status: true } })
+      ? await transaction.prospect.findUnique({ where: { id: item.prospectId }, select: { status: true, contactPersonName: true } })
       : null;
     const prospectStatus = prospect
       ? prospect.status === "NEW" ? "New" : prospect.status === "REVIEWED" ? "Reviewed" : prospect.status
       : "";
     const blockedReason = safeReadinessRepairProtectionReason(item, prospectStatus);
     if (blockedReason) return { row, changed: false, blockedReason };
-    const data = readinessRepairData(item, input.action, reason, nowIso);
+    const data = readinessRepairData(item, input.action, reason, nowIso, prospect?.contactPersonName ?? "");
     const updated = await transaction.outreachQueueItem.updateMany({
       where: {
         id: item.id,
@@ -3219,8 +3221,9 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
         incrementReason(summary, eligibility.reason);
         continue;
       }
+      const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
       Object.assign(item, {
-        ...regeneratedQueueCopy(item, nowIso),
+        ...regeneratedQueueCopy(item, nowIso, prospect?.contactPersonName ?? ""),
         outreachCopyGeneratedAt: nowIso,
         lastRegeneratedAt: nowIso,
         updatedAt: nowIso,
@@ -3241,7 +3244,8 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
       incrementReason(summary, outreachCopyRegenerationEligibility(item).reason);
       continue;
     }
-    const regenerated = regeneratedQueueCopy(item, nowIso);
+    const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+    const regenerated = regeneratedQueueCopy(item, nowIso, prospect?.contactPersonName ?? "");
     const updated = await database.outreachQueueItem.updateMany({
       where: {
         id: item.id,

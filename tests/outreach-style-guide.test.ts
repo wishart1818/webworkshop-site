@@ -5,6 +5,7 @@ import {
   webworkshopFirstEmail,
   webworkshopFirstTouchOpening,
   webworkshopPreviewValueLine,
+  webworkshopRecipientFirstName,
   webworkshopShouldMentionFindlay,
 } from "../lib/outreach-style-guide";
 
@@ -30,7 +31,7 @@ test("contextual first-touch opening falls back safely when context is incomplet
     "I came across Smith Services while looking at local service businesses around Findlay.",
   );
   assert.equal(webworkshopFirstTouchOpening("", "", "Smith Services"), "I came across Smith Services.");
-  assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "manual_lovable_permission_first_v5");
+  assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "manual_lovable_permission_first_v6");
 });
 
 test("Findlay is mentioned for nearby prospects and omitted for distant markets", () => {
@@ -38,6 +39,15 @@ test("Findlay is mentioned for nearby prospects and omitted for distant markets"
   assert.equal(webworkshopShouldMentionFindlay("Findlay, OH"), true);
   assert.equal(webworkshopShouldMentionFindlay("Tampa"), false);
   assert.equal(webworkshopShouldMentionFindlay("St. Augustine"), false);
+});
+
+
+test("recipient greeting uses only a safe recorded first name", () => {
+  assert.equal(webworkshopRecipientFirstName("Nick Smith"), "Nick");
+  assert.equal(webworkshopRecipientFirstName("Dr. Ana-María Lopez"), "Ana-María");
+  assert.equal(webworkshopRecipientFirstName("NICK"), "Nick");
+  assert.equal(webworkshopRecipientFirstName("Owner"), "");
+  assert.equal(webworkshopRecipientFirstName("nick@pinnacle419.com"), "");
 });
 
 test("existing-site email clearly offers a refreshed website and asks permission to show it", () => {
