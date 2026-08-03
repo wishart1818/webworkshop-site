@@ -36,11 +36,47 @@ jobs:
 
           test_path = Path('tests/autonomous-growth.test.ts')
           test_text = test_path.read_text()
-          old = '    emailBody: packageItem.emailBody.replace(/^Hi Nick,/, "Hi there,"),\n'
-          new = '    emailBody: packageItem.emailBody.replace(/^Hi Nick,/, "Hi there,").replace("Would you be interested in seeing what that could look like?", "Would you like me to put together a quick preview?"),\n'
-          if test_text.count(old) != 1:
-              raise SystemExit(f"stale fixture: expected 1 match, found {test_text.count(old)}")
-          test_path.write_text(test_text.replace(old, new, 1))
+          test_marker = '\ntest("bulk copy regeneration preserves the saved contact first name from the live prospect", async () => {'
+          test_start = test_text.index(test_marker)
+          corrected_test = r'''
+
+test("bulk copy regeneration preserves the saved contact first name from the live prospect", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetProspectMemoryForTests();
+  const prospect = eligibleProspect();
+  Object.assign(prospect, {
+    id: "named-regeneration-prospect",
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    city: "Toledo",
+    state: "OH",
+    email: "nick@pinnacle419.com",
+    contactPersonName: "Nick Smith",
+  });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem({
+    id: "named-regeneration-package",
+    prospectId: prospect.id,
+    businessName: prospect.businessName,
+    trade: prospect.trade,
+    city: "Toledo, OH",
+    email: prospect.email,
+    contactSource: "Public email",
+    status: "Needs Review",
+    outreachCopyVersion: "old_copy_v0",
+    emailBody: "Old audit-style copy with One missed opportunity.",
+    sentDate: "",
+    replyStatus: "",
+    notes: "",
+  })]);
+
+  const summary = await regenerateUnsentOutreachCopy();
+  const refreshed = outreachQueueMemoryForTests()[0];
+  assert.equal(summary.updated, 1);
+  assert.equal(refreshed.outreachCopyVersion, currentOutreachCopyVersion);
+  assert.match(refreshed.emailBody, /^Hi Nick,/);
+});
+'''
+          test_path.write_text(test_text[:test_start] + corrected_test + '\n')
           PY
       - name: Install dependencies
         run: npm ci
