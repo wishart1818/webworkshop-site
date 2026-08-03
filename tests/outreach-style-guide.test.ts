@@ -8,6 +8,7 @@ import {
   webworkshopShouldMentionFindlay,
 } from "../lib/outreach-style-guide";
 
+// These tests lock the two approved first-touch paths and the regional location rule.
 test("contextual first-touch opening names the business, trade, and market without inventing details", () => {
   assert.equal(
     webworkshopFirstTouchOpening("Pressure Washing", "Toledo", "Pinnacle Pressure Washing"),
