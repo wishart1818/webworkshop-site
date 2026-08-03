@@ -482,10 +482,10 @@ test("Operator Test Center fake package models the manual Lovable workflow witho
   assert.equal(result.packagePreview?.firstDmLinkFree, true);
   assert.equal(result.packagePreview?.yesReplyLinkFree, true);
   assert.match(result.packagePreview?.publicPreviewLink ?? "", /^https:\/\/webworkshop\.dev\/p\//);
-  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you like me to put together a quick preview\?/i.test(script.body)));
-  assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Would you like me to put together a quick preview\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you be interested in seeing what that could look like\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Would you be interested in seeing what that could look like\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "Softer DM script"));
-  assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / manual-build confirmation" && /I'll put together a quick preview/i.test(script.body) && !/https?:\/\/|\/p\//i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / manual-build confirmation" && /I'll put together a website concept and send you a quick video walkthrough/i.test(script.body) && !/https?:\/\/|\/p\//i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "Pricing reply"));
   assert.ok(fake?.scripts.some((script) => script.label === "Follow-up"));
   assert.ok(fake?.scripts.some((script) => script.label === "Not interested reply"));
@@ -762,7 +762,7 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     assert.doesNotMatch(repairedCopy?.notes ?? "", /\[auto-email-approved\]/);
     assert.doesNotMatch(repairedCopy?.emailBody ?? "", /https:\/\/webworkshop\.dev\/p\/|One missed opportunity/i);
     assert.match(repairedCopy?.emailBody ?? "", /^Hi Ready Pressure Washing team,/);
-    assert.match(repairedCopy?.emailBody ?? "", /Would you like me to put together a quick preview\?/i);
+    assert.match(repairedCopy?.emailBody ?? "", /Would you be interested in seeing what that could look like\?/i);
     assert.match(repairedCopy?.emailBody ?? "", /If you'd rather not hear from me again/i);
     assert.equal(excludedEmail?.contactSource, "Needs manual verification");
     assert.equal(excludedEmail?.email, "admin@totalwptheme.com");

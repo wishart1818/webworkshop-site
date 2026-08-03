@@ -139,7 +139,7 @@ test("confirmed legacy backfill syncs Prospect and queue copy from the current g
   assert.equal(queue.outreachCopyVersion, currentOutreachCopyVersion);
   assert.equal(queue.emailBody, prospect.outreach?.concise);
   assert.doesNotMatch(queue.emailBody, /https:\/\/webworkshop\.dev\/p\/|10-minute call|\[Add your business postal address/i);
-  assert.match(prospect.outreach?.detailed ?? "", /I'll put together a quick preview/i);
+  assert.match(prospect.outreach?.detailed ?? "", /I'll put together a website concept and send you a quick video walkthrough/i);
   assert.doesNotMatch(prospect.outreach?.detailed ?? "", /https?:\/\/|\/p\//i);
   assert.equal(applied.safety.dmsSent, 0);
 });

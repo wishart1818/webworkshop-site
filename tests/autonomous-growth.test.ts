@@ -2714,9 +2714,9 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
   ].join("\n"));
 
   assert.match(rewritten, /rather not hear from me again/);
-  assert.match(rewritten, /make it easier for people to see what you do and call or request a quote/i);
+  assert.match(rewritten, /refreshed, more modern website designed to help bring in more calls and quote requests/i);
   assert.match(rewritten, /roofing business while looking at companies around Toledo/i);
-  assert.match(rewritten, /Would you like me to put together a quick preview\?/);
+  assert.match(rewritten, /Would you be interested in seeing what that could look like\?/);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
 });
@@ -2797,7 +2797,7 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     assert.equal(summary.updated, 2);
     assert.equal(summary.oldUnsentPackagesNeedingRegeneration, 2);
     assert.equal(regenerated?.outreachCopyVersion, currentOutreachCopyVersion);
-    assert.match(regenerated?.emailBody ?? "", /make it easier for people to see what you do and call or request a quote/i);
+    assert.match(regenerated?.emailBody ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);
     assert.doesNotMatch(regenerated?.emailBody ?? "", /One missed opportunity|https:\/\/webworkshop\.dev\/p\//i);
     assert.equal(regeneratedMissingPreview?.outreachCopyVersion, currentOutreachCopyVersion);
     assert.match(regeneratedMissingPreview?.loomTalkingPoints ?? "", /Preview missing - generate\/review preview before sending yes-reply/);
@@ -3015,11 +3015,11 @@ test("casual DM playbook asks permission before the manual Lovable build", () =>
   } as Prospect;
   const playbook = casualDmPlaybook(prospect, publicLink);
 
-  assert.match(playbook.firstDm, /couldn't find a dedicated website/i);
-  assert.match(playbook.firstDm, /Would you like me to put together a quick preview\?/i);
+  assert.match(playbook.firstDm, /don't currently have a full website up/i);
+  assert.match(playbook.firstDm, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(playbook.firstDm, /https?:\/\/|\/p\//);
   assert.doesNotMatch(playbook.firstDm, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,50}\bpreview\b/i);
-  assert.match(playbook.yesReply, /I'll put together a quick preview/i);
+  assert.match(playbook.yesReply, /I'll put together a website concept and send you a quick video walkthrough/i);
   assert.doesNotMatch(playbook.yesReply, /https?:\/\/|\/p\//);
   assert.match(playbook.sendAfterLoom, /Loom walkthrough/);
   assert.match(playbook.sendAfterLoom, /Preview:/);
@@ -3051,7 +3051,7 @@ test("Loom Needed task exposes checklist, fix notes, scripts, and no auto-send p
   assert.ok(task.fixNotes.includes("make layout more believable"));
   assert.equal(task.recommendation.recommended, false);
   assert.match(task.recommendation.whyRecommended, /Wait until/);
-  assert.match(task.scripts.loomScript, /This isn't live or anything/);
+  assert.match(task.scripts.loomScript, /This is not live yet/);
   assert.match(task.scripts.sendAfterLoom, /Preview:/);
 });
 
@@ -3126,7 +3126,7 @@ test("pre-interest Top Prospect artifacts create outreach without a preview", ()
   assert.equal(prepared.previewLink, "");
   assert.equal(prepared.buildPrompt, "");
   assert.equal(prepared.prospect.preview, undefined);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
 });
 
 test("approval snapshot rejects a changed reviewed draft", async () => {

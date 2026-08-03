@@ -2411,7 +2411,6 @@ export function firstTouchEmailDraft(prospect: Prospect, footer: string) {
     city,
     kind: noOwnedWebsiteProspect(prospect) ? "no_website" : "has_website",
     footer,
-    factualMiddleLine: firstTouchMiddleLine(prospect),
   });
 }
 

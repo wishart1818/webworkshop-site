@@ -879,7 +879,11 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const softerDm = fakeScripts.find((script) => script.label === "Softer DM script")?.body ?? "";
   const yesReply = fakeScripts.find((script) => script.label === "Yes-reply / manual-build confirmation")?.body ?? "";
   const fakeCopyBlob = `${firstEmail}\n${firstDm}\n${softerDm}\n${yesReply}`;
-  const firstEmailHasApprovedReason = /I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\.[\s\S]+I came across [^.]+(?: while looking at [^.]+ businesses(?: around [^.]+)?)?\.[\s\S]+(?:I can build you a refreshed, more modern website|It looks like you don't currently have a full website up\. I can build you a modern one)[\s\S]+Would you be interested in seeing what that could look like\?/i.test(firstEmail);
+  const firstEmailHasApprovedReason =
+  /I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\./i.test(firstEmail)
+  && /I came across [\s\S]+(?: while looking at [\s\S]+ businesses(?: around [^.]+)?)?\./i.test(firstEmail)
+  && /(?:I can build you a refreshed, more modern website designed to help bring in more calls and quote requests|It looks like you don't currently have a full website up\. I can build you a modern one designed to help bring in more calls and quote requests)\./i.test(firstEmail)
+  && /Would you be interested in seeing what that could look like\?/i.test(firstEmail);
   const configuredPostalAddress = environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
   const smartBackfill = await processExistingQualifiedProspects({ dryRun: true }).catch((error) => ({
     ok: false,
