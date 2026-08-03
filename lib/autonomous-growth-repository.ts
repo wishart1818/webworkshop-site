@@ -2930,23 +2930,7 @@ export async function saveVerifiedContactFirstNameAndRegenerate(
     ],
   });
 
-  let regenerated: Awaited<ReturnType<typeof regenerateProspectOutreachWithCurrentScript>> = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      regenerated = await regenerateProspectOutreachWithCurrentScript(prospect.id);
-      break;
-    } catch (error) {
-      const changedDuringRefresh = error instanceof Error
-        && error.message === "The review package changed before refresh completed. Refresh and try again.";
-      if (!changedDuringRefresh || attempt === 1) throw error;
-      const latestQueueItem = (await listOutreachQueueItems()).find((entry) => entry.id === id) ?? null;
-      if (
-        !latestQueueItem
-        || latestQueueItem.prospectId !== prospect.id
-        || queueItemDraftMutationIsProtected(latestQueueItem)
-      ) throw error;
-    }
-  }
+  const regenerated = await regenerateProspectOutreachWithCurrentScript(prospect.id);
   if (!regenerated?.queueItem) {
     throw new Error("The verified name was saved, but the linked draft could not be refreshed. Refresh and try again.");
   }
