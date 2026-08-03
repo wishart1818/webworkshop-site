@@ -673,11 +673,12 @@ export function evaluateOutreachEmailQuality(
   const optOutReady = socialFirstDm
     ? drafts.length >= 4 && drafts.slice(1).every((draft) => optOutPattern.test(draft))
     : drafts.length >= 4 && drafts.every((draft) => optOutPattern.test(draft));
-  const permissionCtaReady = /would you like me to (?:put together|create|make|build)(?: you)? (?:a )?(?:quick )?(?:website )?preview\?/i.test(firstTouch);
+  const permissionCtaReady = /would you be interested in seeing what that could look like\?/i.test(firstTouch);
   const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   const firstTouchLinkFree = !/https?:\/\/|\/p\//i.test(firstTouch);
   const businessContextReady = Boolean(prospect.businessName) && firstTouch.toLowerCase().includes(prospect.businessName.toLowerCase());
-  const relevantReasonReady = /couldn't find a dedicated website|website direction|website idea|easier for people to (?:see|call|request)|call or request a quote/i.test(firstTouch);
+  const relevantReasonReady = /I can build you a refreshed, more modern website designed to help bring in more calls and quote requests\./i.test(firstTouch)
+    || /It looks like you don't currently have a full website up\. I can build you a modern one designed to help bring in more calls and quote requests\./i.test(firstTouch);
   const uncertainWebsiteAbsence = prospectWebsiteAbsenceNeedsManualReview(prospect);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [

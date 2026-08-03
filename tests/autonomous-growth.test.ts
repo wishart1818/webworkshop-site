@@ -3021,10 +3021,10 @@ test("casual DM playbook asks permission before the manual Lovable build", () =>
   assert.doesNotMatch(playbook.firstDm, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,50}\bpreview\b/i);
   assert.match(playbook.yesReply, /I'll put together a website concept and send you a quick video walkthrough/i);
   assert.doesNotMatch(playbook.yesReply, /https?:\/\/|\/p\//);
-  assert.match(playbook.sendAfterLoom, /Loom walkthrough/);
-  assert.match(playbook.sendAfterLoom, /Preview:/);
+  assert.match(playbook.sendAfterLoom, /Video walkthrough:/);
+  assert.match(playbook.sendAfterLoom, /Website:/);
   assert.match(playbook.sendAfterLoom, /\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
-  assert.match(playbook.pricingReply, /\$1,000 total/);
+  assert.match(playbook.pricingReply, /one-time price is \$1,000/);
   assert.match(playbook.pricingReply, /\$49\/month/);
   assert.match(playbook.higherSupportReply, /\$79\/month/);
   assert.match(playbook.starterPageReply, /\$500/);
@@ -3052,7 +3052,7 @@ test("Loom Needed task exposes checklist, fix notes, scripts, and no auto-send p
   assert.equal(task.recommendation.recommended, false);
   assert.match(task.recommendation.whyRecommended, /Wait until/);
   assert.match(task.scripts.loomScript, /This is not live yet/);
-  assert.match(task.scripts.sendAfterLoom, /Preview:/);
+  assert.match(task.scripts.sendAfterLoom, /Website:/);
 });
 
 test("strong Loom preview can be marked ready only after public preview and quality checks pass", () => {
