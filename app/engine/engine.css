@@ -4772,6 +4772,24 @@ body:has(.engine-shell) {
   line-height: 1.45;
 }
 
+.engine-readiness-info-records {
+  border-color: var(--engine-line);
+  background: #f4f9f8;
+}
+
+.engine-readiness-info-records > header span,
+.engine-readiness-info-records article span {
+  color: var(--engine-accent-dark);
+}
+
+.engine-readiness-info-records > header b {
+  background: var(--engine-accent-dark);
+}
+
+.engine-readiness-info-records article {
+  border-color: var(--engine-line);
+}
+
 .engine-autonomous-readiness__copies article:first-child {
   grid-column: 1 / -1;
 }

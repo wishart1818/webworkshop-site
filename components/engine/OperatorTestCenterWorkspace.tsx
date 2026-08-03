@@ -542,8 +542,8 @@ export function OperatorTestCenterWorkspace() {
           <dl className="engine-operator-check-grid">
             <div><dt>Passed</dt><dd>{lastAction.readiness.passed.length}</dd></div>
             <div><dt>Failed</dt><dd>{lastAction.readiness.failed.length}</dd></div>
-            <div><dt>Failed records</dt><dd>{lastAction.readiness.failedRecords.length}</dd></div>
-            <div><dt>Outdated copy</dt><dd>{lastAction.readiness.outdatedCopyRecords.length}</dd></div>
+            <div><dt>Blocking records</dt><dd>{lastAction.readiness.failedRecords.length}</dd></div>
+            <div><dt>Informational outdated drafts</dt><dd>{lastAction.readiness.outdatedCopyRecords.length}</dd></div>
             <div><dt>Excluded records</dt><dd>{lastAction.readiness.excludedRecords.length}</dd></div>
             <div><dt>Optional / info</dt><dd>{lastAction.readiness.optional.length}</dd></div>
             <div><dt>Generated</dt><dd>{new Date(lastAction.readiness.generatedAt).toLocaleString()}</dd></div>
@@ -578,14 +578,14 @@ export function OperatorTestCenterWorkspace() {
               <p><b>Safety:</b> No emails, DMs, forms, calls, or Looms were sent. Settings were unchanged, and suppression/contact history was preserved.</p>
             </section>
           ) : null}
-          {lastAction.readiness.failedRecords.length || lastAction.readiness.outdatedCopyRecords.length ? (
-            <section className="engine-readiness-failed-records" aria-label="Failed records needing attention">
+          {lastAction.readiness.failedRecords.length ? (
+            <section className="engine-readiness-failed-records" aria-label="Blocking records needing attention">
               <header>
                 <div>
-                  <span>Exact readiness records</span>
-                  <h3>Records needing attention</h3>
+                  <span>Blocking failures</span>
+                  <h3>Blocking records needing attention</h3>
                 </div>
-                <b>{lastAction.readiness.failedRecords.length + lastAction.readiness.outdatedCopyRecords.length}</b>
+                <b>{lastAction.readiness.failedRecords.length}</b>
               </header>
               <div>
                 {lastAction.readiness.failedRecords.map((record) => (
@@ -597,9 +597,22 @@ export function OperatorTestCenterWorkspace() {
                     <button className="engine-button" onClick={() => openEngineRecord(failedRecordOpenDetail(record))} type="button">Open record</button>
                   </article>
                 ))}
+              </div>
+            </section>
+          ) : null}
+          {lastAction.readiness.outdatedCopyRecords.length ? (
+            <section className="engine-readiness-failed-records engine-readiness-info-records" aria-label="Informational outdated drafts">
+              <header>
+                <div>
+                  <span>Non-blocking information</span>
+                  <h3>Informational outdated drafts</h3>
+                </div>
+                <b>{lastAction.readiness.outdatedCopyRecords.length}</b>
+              </header>
+              <div>
                 {lastAction.readiness.outdatedCopyRecords.map((record) => (
                   <article key={record.id}>
-                    <span>Outdated copy (informational)</span>
+                    <span>Manual draft, not a readiness failure</span>
                     <h4>{record.businessName}</h4>
                     <p><b>Prospect:</b> {record.prospectId || "Not linked"}</p>
                     <p><b>Package:</b> {record.packageId}</p>
@@ -629,7 +642,7 @@ export function OperatorTestCenterWorkspace() {
           <div className="engine-operator-summary-grid engine-autonomous-readiness__copies">
             {([
               ["Copy Full Autonomous Readiness Summary", lastAction.readiness.summaries.full],
-              ["Copy Failed Checks Only", lastAction.readiness.summaries.failedOnly],
+              ["Copy Readiness Records Summary", lastAction.readiness.summaries.failedOnly],
               ["Copy Next Fix Summary", lastAction.readiness.summaries.nextFix],
               ["Copy Safe-To-Test Summary", lastAction.readiness.summaries.safeToTest],
               ["Copy Debug Summary", lastAction.readiness.summaries.debug],

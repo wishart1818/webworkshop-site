@@ -352,7 +352,7 @@ function summarizeRegenerationReadiness(queue: Awaited<ReturnType<typeof getAuto
   ).join("\n");
   return [
     `Latest outreach copy version: ${currentOutreachCopyVersion}`,
-    `Old unsent packages needing regeneration: ${outdatedPackages.length}`,
+    `Informational outdated unsent packages: ${outdatedPackages.length}`,
     outdatedDetails ? `Exact outdated unsent packages:\n${outdatedDetails}` : "Exact outdated unsent packages: none",
     skipped,
     "Regeneration only rewrites unsent draft copy. It sends nothing and does not change sent logs or suppression records.",
@@ -511,7 +511,7 @@ function buildCards(input: {
     { label: "Latest Top Prospects run", status: input.latestJob ? "ready" : "missing", value: input.latestJob?.status ?? "not recorded", detail: input.latestJob ? `${input.latestJob.input.trade} near ${input.latestJob.input.city}` : "Run a small Top Prospects test." },
     { label: "Latest outreach package", status: input.latestPackage.startsWith("No outreach") ? "missing" : "ready", value: input.latestPackage.split("\n")[0] ?? "not recorded", detail: "Latest queue item summary." },
     { label: "Latest Outreach Copy Version", status: "ready", value: currentOutreachCopyVersion, detail: "Saved packages can be compared against this version." },
-    { label: "Old unsent packages needing regeneration", status: /Old unsent packages needing regeneration: 0\b/.test(input.regenerationReadiness) ? "ready" : "warning", value: input.regenerationReadiness.match(/Old unsent packages needing regeneration: (\d+)/)?.[1] ?? "0", detail: "Only unsent, uncontacted, written-contact packages are eligible." },
+    { label: "Informational outdated unsent packages", status: "ready", value: input.regenerationReadiness.match(/Informational outdated unsent packages: (\d+)/)?.[1] ?? "0", detail: "Non-blocking manual inventory. Only a deliberate copy refresh can change these drafts." },
     {
       label: "Latest internal notification test",
       status: input.latestSafeTests.internal_notification?.outcome === "success" ? "ready" : "warning",
@@ -1199,7 +1199,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
     `Eligible records needing attention: ${failedRecords.length}`,
-    `Outdated unsent packages: ${outdatedCopyRecords.length}`,
+    `Informational outdated packages: ${outdatedCopyRecords.length}`,
     `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Optional/info: ${optional.length}`,
     `Not done: ${notDone.join(" ")}`,
@@ -1212,7 +1212,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const failedOnly = safeTextLines([
     formatChecks("Failed checks only", failed),
     failedRecordSummary.length ? `Eligible records needing attention:\n${failedRecordSummary.join("\n")}` : "Eligible records needing attention: none",
-    outdatedCopySummary.length ? `Outdated unsent packages (informational):\n${outdatedCopySummary.join("\n")}` : "Outdated unsent packages (informational): none",
+    outdatedCopySummary.length ? `Informational outdated drafts:\n${outdatedCopySummary.join("\n")}` : "Informational outdated drafts: none",
     excludedRecordSummary.length ? `Excluded historical/non-actionable records:\n${excludedRecordSummary.join("\n")}` : "Excluded historical/non-actionable records: none",
   ]);
   const nextFix = safeTextLines([`Next safest action: ${nextSafestAction}`, failed[0] ? `${failed[0].label}: ${failed[0].detail}` : "No failed checks."]);
@@ -1235,7 +1235,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     `Queued public-email leads passing readiness: ${queuedReadyCount}`,
     `Existing qualified unsent: ${existing?.total ?? 0}`,
     `Eligible failed records: ${failedRecords.length}`,
-    `Outdated unsent packages: ${outdatedCopyRecords.length}`,
+    `Informational outdated packages: ${outdatedCopyRecords.length}`,
     ...outdatedCopySummary,
     `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Smart backfill: ${smartBackfill.message}`,
