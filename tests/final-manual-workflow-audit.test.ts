@@ -45,6 +45,8 @@ test("final safety audit removes truncated queue reads and false reply counting"
   assert.doesNotMatch(repository, /\|\| item\.replyStatus\)\.length/);
   assert.match(repository, /const reconciliationChanged = recipientChanged/);
   assert.match(repository, /if \(!reconciliationChanged\) return item/);
+  assert.match(repository, /const regenerated = await regenerateProspectOutreachWithCurrentScript\(prospect\.id\)/);
+  assert.doesNotMatch(repository, /for \(let attempt = 0; attempt < 2/);
 });
 
 test("suppression webhook bypasses only engine Basic auth and retains its token guard", () => {
