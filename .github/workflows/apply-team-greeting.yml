@@ -32,6 +32,7 @@ jobs:
         run: |
           sed -i 's/re.subn(pattern, replacement, text/re.subn(pattern, lambda _match: replacement, text/' .github/apply-team-greeting.py
           python .github/apply-team-greeting.py
+          python .github/fix-team-greeting-tests.py
 
       - name: Verify repository
         env:
@@ -45,6 +46,7 @@ jobs:
       - name: Remove one-time migration files
         run: |
           rm -f .github/apply-team-greeting.py
+          rm -f .github/fix-team-greeting-tests.py
           rm -f .github/workflows/apply-team-greeting.yml
           rm -f .github/team-greeting-simplification-task.md
 
