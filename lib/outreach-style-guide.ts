@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v5";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v6";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [
@@ -111,6 +111,41 @@ export function webworkshopFirstTouchOpening(trade: string, city: string, busine
   return `I came across ${name}.`;
 }
 
+
+const unsafeRecipientFirstNames = new Set([
+  "admin",
+  "billing",
+  "booking",
+  "contact",
+  "customer",
+  "hello",
+  "info",
+  "manager",
+  "none",
+  "office",
+  "owner",
+  "quotes",
+  "sales",
+  "service",
+  "staff",
+  "support",
+  "team",
+  "unknown",
+]);
+
+export function webworkshopRecipientFirstName(value?: string) {
+  const normalized = value?.trim().replace(/\s+/g, " ") ?? "";
+  if (!normalized || /@|https?:\/\//i.test(normalized)) return "";
+  const withoutTitle = normalized.replace(/^(?:(?:mr|mrs|ms|miss|dr)\.?\s+)+/i, "");
+  const candidate = withoutTitle.split(/[\s,(/&]+/)[0]?.replace(/[^\p{L}'’\-]/gu, "") ?? "";
+  if (candidate.length < 2 || candidate.length > 40) return "";
+  if (unsafeRecipientFirstNames.has(candidate.toLowerCase())) return "";
+  if (candidate === candidate.toUpperCase()) {
+    return candidate.charAt(0).toUpperCase() + candidate.slice(1).toLowerCase();
+  }
+  return candidate.charAt(0).toUpperCase() + candidate.slice(1);
+}
+
 export function webworkshopFirstEmail({
   businessName,
   trade,
@@ -128,8 +163,8 @@ export function webworkshopFirstEmail({
   factualMiddleLine?: string;
   recipientName?: string;
 }) {
-  const verifiedRecipientName = recipientName?.trim() ?? "";
-  const greeting = verifiedRecipientName ? `Hi ${verifiedRecipientName},` : "Hi there,";
+  const verifiedRecipientFirstName = webworkshopRecipientFirstName(recipientName);
+  const greeting = verifiedRecipientFirstName ? `Hi ${verifiedRecipientFirstName},` : "Hi there,";
   const introduction = webworkshopShouldMentionFindlay(city)
     ? "I'm Brendan, based in Findlay, and I build websites for local service businesses."
     : "I'm Brendan, and I build websites for local service businesses.";

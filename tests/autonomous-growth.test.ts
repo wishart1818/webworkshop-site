@@ -3206,3 +3206,40 @@ test("real approval UI submits the exact draft snapshot instead of clicking a re
   assert.match(helper, /expectedApprovalSnapshot:[\s\S]*emailBody: selectedItem\.emailBody[\s\S]*updatedAt: selectedItem\.updatedAt/);
   assert.doesNotMatch(helper, /approveButton\.click\(\)/);
 });
+
+test("bulk copy regeneration preserves the saved contact first name from the live prospect", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetProspectMemoryForTests();
+  const prospect = eligibleProspect();
+  Object.assign(prospect, {
+    id: "named-regeneration-prospect",
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    city: "Toledo",
+    state: "OH",
+    email: "nick@pinnacle419.com",
+    contactPersonName: "Nick Smith",
+  });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem({
+    id: "named-regeneration-package",
+    prospectId: prospect.id,
+    businessName: prospect.businessName,
+    trade: prospect.trade,
+    city: "Toledo, OH",
+    email: prospect.email,
+    contactSource: "Public email",
+    status: "Needs Review",
+    outreachCopyVersion: "old_copy_v0",
+    emailBody: "Old audit-style copy with One missed opportunity.",
+    sentDate: "",
+    replyStatus: "",
+    notes: "",
+  })]);
+
+  const summary = await regenerateUnsentOutreachCopy();
+  const refreshed = outreachQueueMemoryForTests()[0];
+  assert.equal(summary.updated, 1);
+  assert.equal(refreshed.outreachCopyVersion, currentOutreachCopyVersion);
+  assert.match(refreshed.emailBody, /^Hi Nick,/);
+});
+
