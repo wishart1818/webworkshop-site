@@ -18,6 +18,7 @@ import {
   runFullAutoEmailBatch,
   runMarketScoutDryRunForDashboard,
   runSmartAutonomousDryRun,
+  saveVerifiedContactFirstNameAndRegenerate,
   sendQueuedEmailQueueItem,
   setManualPreviewLink,
   startAutopilotCampaign,
@@ -143,6 +144,8 @@ export async function POST(request: Request) {
       suppressionReason?: "bounce" | "complaint" | "unsubscribe" | "manual_suppression";
       note?: string;
       previewLink?: string;
+      contactFirstName?: string;
+      expectedUpdatedAt?: string;
       expectedApprovalSnapshot?: {
         businessName?: string;
         email?: string;
@@ -200,6 +203,29 @@ export async function POST(request: Request) {
       const item = await setManualPreviewLink(payload.queueItemId, payload.previewLink ?? "");
       if (!item) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
       return NextResponse.json({ item });
+    }
+    if (payload.action === "save_verified_contact_first_name") {
+      if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
+      if (typeof payload.contactFirstName !== "string" || !payload.contactFirstName.trim()) {
+        return NextResponse.json({ error: "Enter a verified contact first name." }, { status: 400 });
+      }
+      if (typeof payload.expectedUpdatedAt !== "string" || !payload.expectedUpdatedAt) {
+        return NextResponse.json({ error: "Refresh and reopen the exact current draft before saving a contact name." }, { status: 400 });
+      }
+      try {
+        const result = await saveVerifiedContactFirstNameAndRegenerate(
+          payload.queueItemId,
+          payload.contactFirstName,
+          payload.expectedUpdatedAt,
+        );
+        if (!result) return NextResponse.json({ error: "Queue item was not found." }, { status: 404 });
+        return NextResponse.json(result);
+      } catch (error) {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : "The verified contact name could not be saved." },
+          { status: 409 },
+        );
+      }
     }
     if (payload.action === "record_feedback") {
       if (!payload.queueItemId) return NextResponse.json({ error: "Queue item is required." }, { status: 400 });
