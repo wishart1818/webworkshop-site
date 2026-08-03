@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -35,7 +35,6 @@ jobs:
 
       - name: Verify repository
         env:
-          DATABASE_URL: ""
           OUTREACH_EMAIL_DISABLED: "true"
           OUTREACH_AUTO_SEND_ENABLED: "false"
           OUTREACH_FULL_AUTO_ENABLED: "false"
