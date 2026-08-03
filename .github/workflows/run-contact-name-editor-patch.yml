@@ -23,7 +23,9 @@ jobs:
           node-version: 22
           cache: npm
       - name: Apply patch
-        run: python .github/contact-name-editor-patch.py
+        run: |
+          python .github/contact-name-editor-patch-fix.py
+          python .github/contact-name-editor-patch.py
       - name: Install dependencies
         run: npm ci
       - name: Verify application
@@ -31,9 +33,10 @@ jobs:
       - name: Commit verified patch
         run: |
           rm .github/contact-name-editor-patch.py
+          rm .github/contact-name-editor-patch-fix.py
           rm .github/workflows/run-contact-name-editor-patch.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/api/engine/autonomous-growth/route.ts lib/autonomous-growth-repository.ts components/engine/EmailDraftReviewHelper.tsx tests/autonomous-growth.test.ts tests/final-manual-workflow-audit.test.ts .github/contact-name-editor-patch.py .github/workflows/run-contact-name-editor-patch.yml
+          git add app/api/engine/autonomous-growth/route.ts lib/autonomous-growth-repository.ts components/engine/EmailDraftReviewHelper.tsx tests/autonomous-growth.test.ts tests/final-manual-workflow-audit.test.ts .github/contact-name-editor-patch.py .github/contact-name-editor-patch-fix.py .github/workflows/run-contact-name-editor-patch.yml
           git commit -m "Add verified contact name editor"
           git push origin HEAD:fix/verified-contact-name-editor
