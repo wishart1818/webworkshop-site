@@ -9,7 +9,7 @@ process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "147 George St, Findlay, OH 45840";
 test("first touch asks permission to create a preview and never claims one already exists", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
   const email = firstTouchEmailDraft(prospect, outreachComplianceFooter());
-  assert.match(email, /Would you like me to put together a quick preview\?/i);
+  assert.match(email, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(email, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,80}\b(?:preview|website|site)\b/i);
   assert.doesNotMatch(email, /https?:\/\/|\/p\//i);
 });

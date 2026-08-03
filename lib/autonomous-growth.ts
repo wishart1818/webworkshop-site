@@ -1588,7 +1588,7 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
     plan.add("make it more human");
     plan.add("remove hype and agency-sounding phrases");
   }
-  if (!/would you be open|would you want|would you like|want to see it|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
+  if (!/would you be open|would you want|would you like|would you be interested|interested in seeing|want to see it|quick 10-minute call|worth a short call/i.test(outreachText)) plan.add("add one clear CTA");
   if (!webworkshopOptOutPattern().test(outreachText)) plan.add("preserve opt-out language");
   if (/\bfree audit\b/i.test(outreachText)) plan.add("remove free audit language");
   if (/One thing that already works well:|One missed opportunity:/i.test(outreachText)) plan.add("rewrite audit-style phrases into plain language");
@@ -1600,16 +1600,25 @@ export function rewriteOutreachWithFixes(emailBody: string) {
     ?? outreachComplianceFooter();
   const lines = emailBody.split("\n").map((line) => line.trim()).filter(Boolean);
   const greeting = lines.find((line) => /^Hi\b/i.test(line)) ?? "Hi there,";
+  const combinedIntroduction = lines.find((line) => /^I'm Brendan\b/i.test(line)) ?? "";
+  const introduction = combinedIntroduction
+    ? combinedIntroduction.replace(/\s+I came across[\s\S]*$/i, "").trim()
+    : "I'm Brendan, and I build websites for local service businesses.";
   const contextualOpening = lines.find((line) => /^I came across\b/i.test(line))
+    ?? combinedIntroduction.match(/\bI came across[\s\S]*$/i)?.[0]
     ?? "I came across your business.";
+  const noWebsite = /don't currently have a full website up|couldn't find a dedicated website|did not have a dedicated website/i.test(emailBody);
+  const offer = noWebsite
+    ? "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests."
+    : "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.";
   return [
     greeting,
     "",
-    contextualOpening,
+    `${introduction} ${contextualOpening}`,
     "",
-    "I had a simple website idea that could make it easier for people to see what you do and call or request a quote.",
+    offer,
     "",
-    "Would you like me to put together a quick preview?",
+    "Would you be interested in seeing what that could look like?",
     "",
     optOut,
   ].join("\n");
@@ -1687,8 +1696,8 @@ export function casualDmPlaybook(prospect: CasualDmProspect, previewLink: string
     yesReply: webworkshopYesReply(previewReference),
     loomScript: webworkshopLoomScript(context),
     sendAfterLoom: webworkshopLoomSendMessage(previewReference),
-    websiteExplanation: "It's a simple website concept focused on making the page cleaner and helping people call or request a quote.",
-    nextStepsReply: "Yeah, if you like the direction, I can finish it out and get it ready to go live for you.",
+    websiteExplanation: "It's a custom website concept showing a more modern direction designed to help bring in more calls and quote requests.",
+    nextStepsReply: "Yeah, if you like the direction, I can finish the full website and get it ready to go live for you.",
     pricingReply: webworkshopPricingReply(),
     higherSupportReply: webworkshopHigherSupportReply(),
     starterPageReply: webworkshopStarterPageReply(),

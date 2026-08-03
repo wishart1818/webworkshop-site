@@ -463,8 +463,8 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /had an idea for a simpler website direction/i);
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.doesNotMatch(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 
@@ -479,7 +479,7 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
 
   assert.equal(topProspectRejectionReason(socialPackage.prospect, socialPackage.assessment, "growth"), null);
   assert.equal(socialPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.match(socialPackage.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(socialPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.doesNotMatch(socialPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 });
@@ -876,8 +876,8 @@ test("No Website / Social Only prospects receive separate scoring and permission
   assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /couldn't find a dedicated website/i);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /don't currently have a full website up/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.match(prepared.buildPrompt, /first owned/i);
   assert.match(prepared.assessment.pitchAngle, /beyond Facebook or Google/i);
@@ -910,8 +910,8 @@ test("Top Prospect artifacts remain unapproved and keep the preview out of first
   assert.ok(prepared.prospect.preview);
   assert.match(prepared.previewLink, /^https:\/\/webworkshop\.dev\/p\//);
   assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https?:\/\/|\/p\//i);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you like me to put together a quick preview\?/i);
-  assert.match(prepared.prospect.outreach?.detailed ?? "", /I'll put together a quick preview/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
+  assert.match(prepared.prospect.outreach?.detailed ?? "", /I'll put together a website concept and send you a quick video walkthrough/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.equal(prepared.emailQuality.ready, true);
   assert.ok(prepared.assessment.salesScores.weightedSalesScore > 0);
@@ -1020,7 +1020,7 @@ test("unsupported outreach claim is explainable and safely repairable", () => {
 
   const repaired = {
     ...unsafe,
-    outreach: repairUnsupportedOutreachClaims(unsafe.outreach),
+    outreach: repairUnsupportedOutreachClaims(unsafe.outreach, unsafe.businessName),
   };
   const repairedQuality = evaluateOutreachEmailQuality(repaired, publicLink);
   assert.equal(repairedQuality.ready, true);
