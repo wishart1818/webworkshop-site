@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v4";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v5";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [
@@ -14,19 +14,23 @@ export const webworkshopOutreachStyleGuide = {
     "one simple CTA",
     "written like Brendan personally reaching out to a local business owner",
   ],
-  structureRule: "Keep the first touch consistent. Mention a prospect detail only when it is verified, specific, naturally relevant to why a website could help, and supported by saved evidence.",
+  structureRule: "Keep the first touch consistent. State what Brendan builds, use only verified website status, explain the practical goal, and ask permission to show what the new site could look like.",
   firstTouchRules: [
     "Never include a preview link in first-touch email, contact-form draft, Facebook DM, or Instagram DM.",
-    "Ask whether the prospect wants Brendan to create a preview; never imply that one is already built.",
+    "Ask whether the prospect is interested in seeing what a new or refreshed website could look like; never imply that one is already built.",
     "Do not invent weaknesses, praise, review themes, services, or unsupported claims.",
-    "Do not force personalization. A clean factual fallback is better than an irrelevant detail.",
-    "Use the saved trade and market as the safe contextual fallback when both are available.",
-    "Use could make it easier for people to call or request a quote, never guaranteed-results language.",
-    "Use the business-team greeting unless a person's name was independently verified.",
-    "Keep the greeting, CTA, closing, and opt-out structure stable.",
+    "Use the no-website version only when the absence of a full dedicated website is sufficiently verified.",
+    "Route uncertain website status to manual review instead of claiming that the business has no website.",
+    "Use the refreshed-site version only for a qualified website-refresh opportunity.",
+    "Use saved trade and market as the safe contextual fallback when both are available.",
+    "Say designed to help bring in more calls and quote requests; never guarantee results.",
+    "Mention that Brendan is based in Findlay only for Findlay-area or Northwest Ohio prospects.",
+    "Use a verified first name when available. Otherwise use a safe neutral greeting rather than a long legal business name plus team.",
+    "Keep the CTA, closing, and opt-out structure stable.",
   ],
   allowedReasons: [
-    "a dedicated website could not be found with sufficient evidence",
+    "a full dedicated website could not be found with sufficient evidence",
+    "a qualified existing website refresh opportunity",
     "a clearly verified website problem",
     "a verified weak quote-request flow",
     "a verified weak portfolio or recent-work presentation",
@@ -44,17 +48,17 @@ export function webworkshopOptOutPattern() {
 
 export function webworkshopPreviewValueLine(kind: "no_website" | "has_website") {
   if (kind === "no_website") {
-    return "I couldn't find a dedicated website for your business. I had an idea for what one could look like and how it could make it easier for people to call or request a quote.";
+    return "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests.";
   }
-  return "I had an idea for a simpler website direction that could make it easier for people to see what you do and call or request a quote.";
+  return "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.";
 }
 
 export function webworkshopYesReply(_previewLink = "") {
   void _previewLink;
   return [
-    "Absolutely - I'll put together a quick preview and send it over once it's ready.",
+    "Sounds good - I'll put together a website concept and send you a quick video walkthrough when it's ready.",
     "",
-    "I'll keep it focused on your actual services and make sure it works well on both desktop and mobile.",
+    "I'll base it on your actual services and contact information and make sure it works well on both desktop and mobile.",
   ].join("\n");
 }
 
@@ -62,18 +66,49 @@ function webworkshopTradeLabel(trade: string) {
   const value = trade.trim();
   if (!value) return "";
   if (/^hvac$/i.test(value)) return "HVAC";
+  if (/^pressure washing$/i.test(value)) return "pressure-washing";
   return value.toLowerCase();
 }
 
-export function webworkshopFirstTouchOpening(trade: string, city: string) {
+const findlayAreaCities = new Set([
+  "findlay",
+  "toledo",
+  "sylvania",
+  "perrysburg",
+  "maumee",
+  "bowling green",
+  "lima",
+  "tiffin",
+  "fostoria",
+  "fremont",
+  "defiance",
+  "napoleon",
+  "oregon",
+  "waterville",
+  "rossford",
+  "northwood",
+  "monroe",
+  "adrian",
+]);
+
+function normalizedCityName(city: string) {
+  return city.trim().toLowerCase().split(",")[0]?.trim() ?? "";
+}
+
+export function webworkshopShouldMentionFindlay(city: string) {
+  return findlayAreaCities.has(normalizedCityName(city));
+}
+
+export function webworkshopFirstTouchOpening(trade: string, city: string, businessName = "your business") {
   const tradeLabel = webworkshopTradeLabel(trade);
   const cityLabel = city.trim();
+  const name = businessName.trim() || "your business";
   if (tradeLabel && cityLabel) {
-    return `I came across your ${tradeLabel} business while looking at companies around ${cityLabel}.`;
+    return `I came across ${name} while looking at ${tradeLabel} businesses around ${cityLabel}.`;
   }
-  if (tradeLabel) return `I came across your ${tradeLabel} business.`;
-  if (cityLabel) return `I came across your business while looking at companies around ${cityLabel}.`;
-  return "I came across your business.";
+  if (tradeLabel) return `I came across ${name} while looking at ${tradeLabel} businesses.`;
+  if (cityLabel) return `I came across ${name} while looking at local service businesses around ${cityLabel}.`;
+  return `I came across ${name}.`;
 }
 
 export function webworkshopFirstEmail({
@@ -83,6 +118,7 @@ export function webworkshopFirstEmail({
   kind,
   footer,
   factualMiddleLine,
+  recipientName,
 }: {
   businessName: string;
   trade: string;
@@ -90,72 +126,90 @@ export function webworkshopFirstEmail({
   kind: "no_website" | "has_website";
   footer: string;
   factualMiddleLine?: string;
+  recipientName?: string;
 }) {
+  const verifiedRecipientName = recipientName?.trim() ?? "";
+  const greeting = verifiedRecipientName ? `Hi ${verifiedRecipientName},` : "Hi there,";
+  const introduction = webworkshopShouldMentionFindlay(city)
+    ? "I'm Brendan, based in Findlay, and I build websites for local service businesses."
+    : "I'm Brendan, and I build websites for local service businesses.";
+  const valueLine = webworkshopPreviewValueLine(kind);
+  const optionalFact = factualMiddleLine?.trim() && factualMiddleLine.trim() !== valueLine
+    ? factualMiddleLine.trim()
+    : "";
+
   return [
-    `Hi ${businessName} team,`,
+    greeting,
     "",
-    webworkshopFirstTouchOpening(trade, city),
+    `${introduction} ${webworkshopFirstTouchOpening(trade, city, businessName)}`,
     "",
-    factualMiddleLine || webworkshopPreviewValueLine(kind),
+    optionalFact,
+    optionalFact ? "" : "",
+    valueLine,
     "",
-    "Would you like me to put together a quick preview?",
+    "Would you be interested in seeing what that could look like?",
     "",
     footer,
-  ].join("\n");
+  ].filter((line, index, lines) => line !== "" || index === 1 || lines[index - 1] !== "").join("\n");
 }
 
 export function webworkshopFirstDm(businessName: string, kind: "no_website" | "has_website") {
-  const reason = kind === "no_website"
-    ? "I couldn't find a dedicated website for the business and had an idea for what one could look like."
-    : "I had a simple website idea that could make it easier for people to see what you do and request a quote.";
-  return `Hey, how's it going? I came across ${businessName}. ${reason} Would you like me to put together a quick preview?`;
+  const offer = webworkshopPreviewValueLine(kind);
+  return `Hey, how's it going? I came across ${businessName}. ${offer} Would you be interested in seeing what that could look like?`;
 }
 
 export function webworkshopSofterFirstDm(businessName: string, kind: "no_website" | "has_website") {
-  const reason = kind === "no_website"
-    ? "I couldn't find a dedicated website and had an idea for what one could look like."
-    : "I had a quick website idea for the business.";
-  return `Hey, how's it going? I came across ${businessName}. ${reason} Would you like me to put together a preview?`;
+  const offer = kind === "no_website"
+    ? "It looks like you don't currently have a full website up. I can build you a modern one."
+    : "I can build you a refreshed, more modern website.";
+  return `Hey, how's it going? I came across ${businessName}. ${offer} Would you be interested in seeing what that could look like?`;
 }
 
 export function webworkshopLoomScript(context: string) {
   return [
-    "Hey, I just wanted to walk you through this quick.",
+    "Start on camera: Hey, Brendan here. Thanks for letting me put this together.",
     "",
-    `${context} and built this preview around the business's verified services and contact details.`,
+    `${context} and built this website concept around the business's verified services and contact details.`,
     "",
-    "The main idea is making the page cleaner and making it easier for people to call or request a quote.",
+    "Walk through the main page, services, mobile view, call button, and quote-request path.",
     "",
-    "This isn't live or anything, just a concept. If you like the direction, I can send over the next steps and pricing.",
+    "The main goal is to give the business a more modern website and make it easier for customers to call or request a quote.",
+    "",
+    "This is not live yet. If you like the direction, we can talk about finishing it and getting it set up for the business.",
   ].join("\n");
 }
 
 export function webworkshopLoomSendMessage(previewLink: string) {
   return [
-    "Sounds good - here's the Loom and preview:",
+    "Hi there,",
     "",
-    "Loom walkthrough:",
+    "Thanks again for getting back to me. I put together the website concept and recorded a quick walkthrough of it.",
+    "",
+    "Video walkthrough:",
     "[LOOM LINK]",
     "",
-    "Preview:",
+    "Website:",
     previewLink || "[PUBLIC PREVIEW LINK]",
     "",
-    "It's a quick concept built around the business's verified services and making it easier for people to call or request a quote.",
+    "Take a look when you get a chance and let me know what you think. If you like the direction, we can talk about getting it finished and set up for your business.",
+    "",
+    "Thanks,",
+    "Brendan",
   ].join("\n");
 }
 
 export function webworkshopPricingReply() {
   return [
-    "If you like the direction, pricing for this type of site is $1,000 total.",
+    "If you'd like to use the website, the one-time price is $1,000.",
     "",
     "$500 to start, then $500 once it's finished and ready to go live.",
     "",
-    "After that, hosting and small updates are $49/month.",
+    "If you'd like ongoing edits and maintenance after launch, I also offer an optional $49/month plan.",
   ].join("\n");
 }
 
 export function webworkshopHigherSupportReply() {
-  return "For a little more ongoing help with changes and support, I can also do $79/month.";
+  return "For more ongoing help with changes and support, I can also do an optional $79/month plan.";
 }
 
 export function webworkshopStarterPageReply() {
@@ -164,9 +218,9 @@ export function webworkshopStarterPageReply() {
 
 export function webworkshopFollowUpAfterLoom() {
   return [
-    "Hey, just wanted to follow up on that preview I sent over.",
+    "Hey, just wanted to follow up on the website and video I sent over.",
     "",
-    "No worries either way. Just figured I'd check.",
+    "No worries either way. Just figured I'd check what you thought.",
   ].join("\n");
 }
 
