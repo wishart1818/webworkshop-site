@@ -1397,6 +1397,14 @@ async function reconcileQueueItem(item: OutreachQueueItem) {
     recommendedNextAction: nextStatus === "Eligible" || nextStatus === "Queued" ? "Keep" : "Needs Human Review",
     updatedAt: nowIso,
   };
+  const reconciliationChanged = recipientChanged
+    || item.contactConfidence !== reconciled.contactConfidence
+    || item.status !== reconciled.status
+    || item.queuedDate !== reconciled.queuedDate
+    || item.blockedReason !== reconciled.blockedReason
+    || item.eligibilityReason !== reconciled.eligibilityReason
+    || item.recommendedNextAction !== reconciled.recommendedNextAction;
+  if (!reconciliationChanged) return item;
   if (recipientChanged) return await persistRecipientChangedQueueSnapshot(reconciled, item) ?? reconciled;
   return await persistQueueSnapshot(reconciled, item) ?? reconciled;
 }
@@ -2922,7 +2930,23 @@ export async function saveVerifiedContactFirstNameAndRegenerate(
     ],
   });
 
-  const regenerated = await regenerateProspectOutreachWithCurrentScript(prospect.id);
+  let regenerated: Awaited<ReturnType<typeof regenerateProspectOutreachWithCurrentScript>> = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      regenerated = await regenerateProspectOutreachWithCurrentScript(prospect.id);
+      break;
+    } catch (error) {
+      const changedDuringRefresh = error instanceof Error
+        && error.message === "The review package changed before refresh completed. Refresh and try again.";
+      if (!changedDuringRefresh || attempt === 1) throw error;
+      const latestQueueItem = (await listOutreachQueueItems()).find((entry) => entry.id === id) ?? null;
+      if (
+        !latestQueueItem
+        || latestQueueItem.prospectId !== prospect.id
+        || queueItemDraftMutationIsProtected(latestQueueItem)
+      ) throw error;
+    }
+  }
   if (!regenerated?.queueItem) {
     throw new Error("The verified name was saved, but the linked draft could not be refreshed. Refresh and try again.");
   }
