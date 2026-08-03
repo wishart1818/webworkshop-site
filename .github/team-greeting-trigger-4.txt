@@ -1,1 +1,1 @@
-trigger aligned team greeting verification
+trigger aligned team greeting verification diagnostics
