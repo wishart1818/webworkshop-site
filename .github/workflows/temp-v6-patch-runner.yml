@@ -33,6 +33,14 @@ jobs:
           raw = workflow[start:end]
           script = "\n".join(line[10:] if line.startswith("          ") else line for line in raw.splitlines())
           exec(compile(script, 'verified-first-name-patch', 'exec'))
+
+          test_path = Path('tests/autonomous-growth.test.ts')
+          test_text = test_path.read_text()
+          old = '    emailBody: packageItem.emailBody.replace(/^Hi Nick,/, "Hi there,"),\n'
+          new = '    emailBody: packageItem.emailBody.replace(/^Hi Nick,/, "Hi there,").replace("Would you be interested in seeing what that could look like?", "Would you like me to put together a quick preview?"),\n'
+          if test_text.count(old) != 1:
+              raise SystemExit(f"stale fixture: expected 1 match, found {test_text.count(old)}")
+          test_path.write_text(test_text.replace(old, new, 1))
           PY
       - name: Install dependencies
         run: npm ci
