@@ -34,14 +34,26 @@ jobs:
           python .github/apply-team-greeting.py
           python .github/fix-team-greeting-tests.py
 
-      - name: Verify repository
+      - name: Verify repository and capture failure
         env:
           OUTREACH_EMAIL_DISABLED: "true"
           OUTREACH_AUTO_SEND_ENABLED: "false"
           OUTREACH_FULL_AUTO_ENABLED: "false"
           OUTREACH_DAILY_CAP: "1"
           WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840"
-        run: npm run verify
+        run: |
+          set +e
+          npm run verify 2>&1 | tee /tmp/team-greeting-verify.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 500 /tmp/team-greeting-verify.log > .github/team-greeting-verify-failure.log
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/team-greeting-verify-failure.log
+            git commit -m "Capture team greeting verification failure" || true
+            git push origin HEAD:fix/team-greeting-simplification
+            exit "$status"
+          fi
 
       - name: Remove one-time migration files
         run: |
@@ -49,6 +61,7 @@ jobs:
           rm -f .github/fix-team-greeting-tests.py
           rm -f .github/workflows/apply-team-greeting.yml
           rm -f .github/team-greeting-simplification-task.md
+          rm -f .github/team-greeting-verify-failure.log
 
       - name: Commit verified implementation
         run: |
