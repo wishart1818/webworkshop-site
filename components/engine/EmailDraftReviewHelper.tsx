@@ -22,6 +22,12 @@ type DashboardPayload = {
   error?: string;
 };
 
+function greetingFirstName(item: EmailQueueItem) {
+  const match = item.emailBody.match(/^Hi ([^,\n]+),/);
+  const value = match?.[1]?.trim() ?? "";
+  return value && value.toLowerCase() !== "there" ? value : "";
+}
+
 const injectedButtonAttribute = "data-email-draft-review-button";
 
 function normalizedButtonText(button: HTMLButtonElement) {
@@ -50,6 +56,9 @@ export function EmailDraftReviewHelper() {
   const [approvalError, setApprovalError] = useState("");
   const [approving, setApproving] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [contactFirstName, setContactFirstName] = useState("");
+  const [savingContactName, setSavingContactName] = useState(false);
+  const [contactNameMessage, setContactNameMessage] = useState("");
 
   const loadQueue = useCallback(async () => {
     if (pathname !== "/engine") return;
@@ -72,6 +81,8 @@ export function EmailDraftReviewHelper() {
     setSelectedItem(null);
     setApprovalError("");
     setCopyState("idle");
+    setContactFirstName("");
+    setContactNameMessage("");
   }, [approving]);
 
   useEffect(() => {
@@ -105,6 +116,8 @@ export function EmailDraftReviewHelper() {
           setSelectedItem(structuredClone(item));
           setApprovalError("");
           setCopyState("idle");
+          setContactFirstName(greetingFirstName(item));
+          setContactNameMessage("");
         });
 
         const approveButton = findRowButton(row, "Approve & Queue Email");
@@ -148,7 +161,8 @@ export function EmailDraftReviewHelper() {
       && selectedItem?.updatedAt
       && selectedItem?.outreachCopyVersion
       && ["Eligible", "Needs Review"].includes(selectedItem.status)
-      && !approving,
+      && !approving
+      && !savingContactName,
   );
 
   async function copyDraft() {
@@ -165,6 +179,49 @@ export function EmailDraftReviewHelper() {
       setCopyState("copied");
     } catch {
       setCopyState("failed");
+    }
+  }
+
+
+  async function saveVerifiedContactFirstName() {
+    if (!selectedItem || savingContactName) return;
+    const value = contactFirstName.trim();
+    if (!value) {
+      setApprovalError("Enter a verified person's first name.");
+      return;
+    }
+
+    setSavingContactName(true);
+    setApprovalError("");
+    setContactNameMessage("");
+    try {
+      const response = await fetch("/api/engine/autonomous-growth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_verified_contact_first_name",
+          queueItemId: selectedItem.id,
+          contactFirstName: value,
+          expectedUpdatedAt: selectedItem.updatedAt,
+        }),
+      });
+      const payload = await response.json() as {
+        item?: EmailQueueItem;
+        contactFirstName?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.item || !payload.contactFirstName) {
+        throw new Error(payload.error || "Unable to save the verified contact name.");
+      }
+      const updatedItem = payload.item;
+      setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item));
+      setSelectedItem(updatedItem);
+      setContactFirstName(payload.contactFirstName);
+      setContactNameMessage(`Saved ${payload.contactFirstName} and regenerated this editable draft. Nothing was sent.`);
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : "Unable to save the verified contact name.");
+    } finally {
+      setSavingContactName(false);
     }
   }
 
@@ -254,6 +311,32 @@ export function EmailDraftReviewHelper() {
                 <span>Subject</span>
                 <strong>{selectedItem.subjectLine || "No subject saved"}</strong>
               </div>
+            </div>
+
+
+            <div className="email-draft-review-contact-name">
+              <label htmlFor="verified-contact-first-name">Verified contact first name</label>
+              <div>
+                <input
+                  autoComplete="off"
+                  id="verified-contact-first-name"
+                  maxLength={40}
+                  onChange={(event) => setContactFirstName(event.target.value)}
+                  placeholder="Nick"
+                  type="text"
+                  value={contactFirstName}
+                />
+                <button
+                  className="engine-button"
+                  disabled={savingContactName || !contactFirstName.trim()}
+                  onClick={() => void saveVerifiedContactFirstName()}
+                  type="button"
+                >
+                  {savingContactName ? "Saving..." : "Save & Regenerate Greeting"}
+                </button>
+              </div>
+              <p>Use only a name you verified from a public business source. The app will not infer a name from the email address.</p>
+              {contactNameMessage ? <strong>{contactNameMessage}</strong> : null}
             </div>
 
             <div className="email-draft-review-body">
@@ -397,6 +480,52 @@ export function EmailDraftReviewHelper() {
           grid-column: 1 / -1;
         }
 
+
+        .email-draft-review-contact-name {
+          margin: 18px 26px 0;
+          padding: 15px;
+          border: 1px solid #c8d9d2;
+          border-radius: 12px;
+          background: #f8fcfa;
+        }
+
+        .email-draft-review-contact-name label {
+          display: block;
+          margin-bottom: 8px;
+          color: #294c40;
+          font-size: 0.82rem;
+          font-weight: 800;
+        }
+
+        .email-draft-review-contact-name > div {
+          display: flex;
+          gap: 10px;
+        }
+
+        .email-draft-review-contact-name input {
+          min-width: 0;
+          flex: 1;
+          padding: 10px 12px;
+          border: 1px solid #a9c0b7;
+          border-radius: 9px;
+          background: #ffffff;
+          color: #14271f;
+          font: inherit;
+        }
+
+        .email-draft-review-contact-name p,
+        .email-draft-review-contact-name strong {
+          display: block;
+          margin: 8px 0 0;
+          color: #4b6259;
+          font-size: 0.82rem;
+          line-height: 1.45;
+        }
+
+        .email-draft-review-contact-name strong {
+          color: #17603f;
+        }
+
         .email-draft-review-body {
           padding: 18px 26px 0;
         }
@@ -459,6 +588,11 @@ export function EmailDraftReviewHelper() {
           .email-draft-review-dialog {
             max-height: calc(100vh - 20px);
             border-radius: 14px;
+          }
+
+          .email-draft-review-contact-name > div {
+            align-items: stretch;
+            flex-direction: column;
           }
 
           .email-draft-review-header,

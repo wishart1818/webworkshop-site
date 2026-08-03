@@ -36,6 +36,7 @@ import {
   resetAutonomousGrowthMemoryForTests,
   recordEmailSuppression,
   regenerateUnsentOutreachCopy,
+  saveVerifiedContactFirstNameAndRegenerate,
   outreachQueueMemoryForTests,
   runFullAutoEmailBatch,
   runAutoEmailPilotCycle,
@@ -66,7 +67,7 @@ import {
   transitionAutopilotCampaign,
 } from "../lib/autopilot-campaign";
 import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, prepareTopProspectOutreachArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
-import { reconcileProspectContactRouting, seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
+import { generateOutreach, reconcileProspectContactRouting, seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
 import {
   getProspect,
   resetProspectMemoryForTests,
@@ -3241,5 +3242,51 @@ test("bulk copy regeneration preserves the saved contact first name from the liv
   assert.equal(summary.updated, 1);
   assert.equal(refreshed.outreachCopyVersion, currentOutreachCopyVersion);
   assert.match(refreshed.emailBody, /^Hi Nick,/);
+});
+
+test("verified contact first name save updates the prospect and only the linked editable draft", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetProspectMemoryForTests();
+  resetOperationalMemoryForTests();
+  try {
+    const prospect = eligibleProspect();
+    Object.assign(prospect, {
+      id: "verified-name-editor-prospect",
+      businessName: "Pinnacle Pressure Washing of Toledo",
+      city: "Toledo",
+      state: "OH",
+      email: "nick@pinnacle419.com",
+      contactPersonName: "",
+    });
+    prospect.outreach = generateOutreach(prospect, publicLink);
+    await saveProspect(prospect);
+    const queued = await upsertAutonomousQueueItemFromPackage({
+      outreachPreference: "written_only",
+      previewLink: publicLink,
+      prospect,
+      topProspectResultId: "verified-name-editor-result",
+    });
+    assert.match(queued.emailBody, /^Hi there,/);
+
+    const result = await saveVerifiedContactFirstNameAndRegenerate(queued.id, "Nick Smith", queued.updatedAt);
+    assert.equal(result?.contactFirstName, "Nick");
+    assert.match(result?.item.emailBody ?? "", /^Hi Nick,/);
+    assert.equal((await getProspect(prospect.id))?.contactPersonName, "Nick");
+    assert.equal(result?.item.status, queued.status);
+    assert.equal(result?.item.sentDate, "");
+
+    await assert.rejects(
+      saveVerifiedContactFirstNameAndRegenerate(result!.item.id, "nick@pinnacle419.com", result!.item.updatedAt),
+      /verified person's first name/i,
+    );
+    await assert.rejects(
+      saveVerifiedContactFirstNameAndRegenerate(result!.item.id, "Owner", result!.item.updatedAt),
+      /verified person's first name/i,
+    );
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
 });
 

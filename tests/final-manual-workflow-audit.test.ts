@@ -58,3 +58,18 @@ test("post-interest preview polish remains protected from copy regeneration", ()
   const growth = readFileSync("lib/autonomous-growth.ts", "utf8");
   assert.match(growth, /contactedOrClosedStatuses[\s\S]*"Preview Build Needed",[\s\S]*"Preview Needs Polish",[\s\S]*"Loom Needed"/);
 });
+
+test("email draft review supports verified-name save and exact single-draft regeneration", () => {
+  const helper = readFileSync("components/engine/EmailDraftReviewHelper.tsx", "utf8");
+  const route = readFileSync("app/api/engine/autonomous-growth/route.ts", "utf8");
+  const repository = readFileSync("lib/autonomous-growth-repository.ts", "utf8");
+  assert.match(helper, /Verified contact first name/);
+  assert.match(helper, /save_verified_contact_first_name/);
+  assert.match(helper, /expectedUpdatedAt: selectedItem\.updatedAt/);
+  assert.match(helper, /will not infer a name from the email address/i);
+  assert.match(route, /saveVerifiedContactFirstNameAndRegenerate/);
+  assert.match(repository, /queueItemDraftMutationIsProtected\(queueItem\)/);
+  assert.match(repository, /webworkshopRecipientFirstName\(value\)/);
+  assert.match(repository, /regenerateProspectOutreachWithCurrentScript\(prospect\.id\)/);
+});
+

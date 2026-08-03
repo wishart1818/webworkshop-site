@@ -75,6 +75,7 @@ import {
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
+import { webworkshopRecipientFirstName } from "@/lib/outreach-style-guide";
 import { sendInternalOperatorNotification, sendInternalOperatorSms, type InternalNotificationInput } from "@/lib/internal-notifications";
 import type { TopProspectJob } from "@/lib/top-prospects";
 
@@ -2884,6 +2885,52 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
     sourceProvider: "Legacy Outreach Backfill",
     topProspectResultId: previewInfo.topProspectResultId,
   });
+}
+
+
+export async function saveVerifiedContactFirstNameAndRegenerate(
+  id: string,
+  value: string,
+  expectedUpdatedAt = "",
+) {
+  const verifiedFirstName = webworkshopRecipientFirstName(value);
+  if (!verifiedFirstName) {
+    throw new Error("Enter a verified person's first name. Generic labels and email addresses are not allowed.");
+  }
+
+  const queueItem = (await listOutreachQueueItems()).find((entry) => entry.id === id) ?? null;
+  if (!queueItem) return null;
+  if (expectedUpdatedAt && queueItem.updatedAt !== expectedUpdatedAt) {
+    throw new Error("The draft changed after it was opened. Refresh and review the current draft before saving the name.");
+  }
+  if (queueItemDraftMutationIsProtected(queueItem)) {
+    throw new Error("The contact name cannot change after approval, sending, contact, or suppression.");
+  }
+  if (!queueItem.prospectId) {
+    throw new Error("This outreach package is not linked to a saved prospect.");
+  }
+
+  const prospect = await getProspect(queueItem.prospectId);
+  if (!prospect) throw new Error("The linked prospect was not found.");
+
+  await saveProspect({
+    ...prospect,
+    contactPersonName: verifiedFirstName,
+    activities: [
+      activity("outreach", `Verified contact first name saved as ${verifiedFirstName}. The editable first-touch draft will be regenerated. Nothing was sent.`),
+      ...prospect.activities,
+    ],
+  });
+
+  const regenerated = await regenerateProspectOutreachWithCurrentScript(prospect.id);
+  if (!regenerated?.queueItem) {
+    throw new Error("The verified name was saved, but the linked draft could not be refreshed. Refresh and try again.");
+  }
+
+  return {
+    item: regenerated.queueItem,
+    contactFirstName: verifiedFirstName,
+  };
 }
 
 export async function recordAutonomousFeedback(id: string, feedbackLabel: AutonomousFeedbackLabel, note = "") {
