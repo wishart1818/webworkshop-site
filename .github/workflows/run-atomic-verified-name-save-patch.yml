@@ -23,7 +23,9 @@ jobs:
           node-version: 22
           cache: npm
       - name: Apply patch
-        run: python .github/atomic-verified-name-save-patch.py
+        run: |
+          python .github/atomic-verified-name-save-patch.py
+          python .github/remove-outreach-draft-upsert.py
       - name: Install dependencies
         run: npm ci
       - name: Verify application
@@ -31,9 +33,10 @@ jobs:
       - name: Commit verified patch
         run: |
           rm .github/atomic-verified-name-save-patch.py
+          rm .github/remove-outreach-draft-upsert.py
           rm .github/workflows/run-atomic-verified-name-save-patch.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add lib/autonomous-growth-repository.ts tests/autonomous-growth.test.ts .github/atomic-verified-name-save-patch.py .github/workflows/run-atomic-verified-name-save-patch.yml
+          git add lib/autonomous-growth-repository.ts tests/autonomous-growth.test.ts .github/atomic-verified-name-save-patch.py .github/remove-outreach-draft-upsert.py .github/workflows/run-atomic-verified-name-save-patch.yml
           git commit -m "Save verified names atomically"
           git push origin HEAD:fix/atomic-verified-name-save
