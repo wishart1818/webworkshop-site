@@ -234,14 +234,63 @@ test("bulk preview regeneration excludes unsafe or non-actionable records", asyn
     next.preview = { ...next.preview!, previewVersion: "v2" };
     return next;
   }
-  const eligible = oldPreview({
+  function verifiedWeakPreviewProspect(prospect: Prospect, website: string, email: string) {
+    const checkedAt = new Date().toISOString();
+    return {
+      ...prospect,
+      website,
+      email,
+      websiteStatus: "usable" as const,
+      fitDisposition: "clearly_weak_or_outdated_website" as const,
+      websiteVerification: {
+        version: "website-verification-v2" as const,
+        status: "usable" as const,
+        confidence: "high" as const,
+        canonicalUrl: website,
+        attempts: [],
+        usableSignals: ["business identity", "customer-facing content"],
+        explanation: "The owned business website was verified.",
+        checkedAt,
+        ownershipDecision: "owned" as const,
+        identityEvidence: ["The business name and owned domain match."],
+        fit: {
+          disposition: "clearly_weak_or_outdated_website" as const,
+          reason: "Rendered review found the quote request difficult to reach.",
+          supportingEvidence: ["The primary customer path did not expose a quote action."],
+          confidence: "high" as const,
+          analysisOrigin: "rendered_review" as const,
+          evaluatedAt: checkedAt,
+          observation: {
+            kind: "quote_path" as const,
+            statement: "I noticed the quote request is difficult to reach on the current website.",
+            rebuildSentence: "I can rebuild your current website with a more modern design that makes requesting a quote easier while presenting your services and contact information more clearly.",
+            evidence: ["Rendered review found no quote action in the primary customer path."],
+            demoChecklist: ["Show the improved quote action on desktop and mobile."],
+          },
+        },
+      },
+      contactEvidence: [{
+        kind: "email" as const,
+        value: email,
+        sourceUrl: `${website}/contact`,
+        extractionMethod: "mailto" as const,
+        confidence: "high" as const,
+        domainMatchesBusiness: true,
+        discoveredAt: checkedAt,
+        sourceType: "owned_website" as const,
+        firstParty: true,
+        decision: "autonomous_eligible" as const,
+        decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
+      }],
+    } as Prospect;
+  }
+  const eligible = verifiedWeakPreviewProspect(oldPreview({
     ...structuredClone(seedProspects[0]),
     id: "bulk-preview-eligible",
     businessName: "Eligible Pressure Washing",
-    email: "owner@eligiblewash.test",
     recommendedContactMethod: "send_email",
     status: "New",
-  });
+  }), "https://eligiblewash.test", "owner@eligiblewash.test");
   const magic = oldPreview({
     ...structuredClone(seedProspects[0]),
     id: "bulk-preview-magic",

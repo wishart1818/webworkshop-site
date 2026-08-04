@@ -161,7 +161,7 @@ function env(overrides: Record<string, string | undefined> = {}): NodeJS.Process
 }
 
 function eligibleProspect() {
-  const checkedAt = "2026-07-28T12:00:00.000Z";
+  const checkedAt = new Date().toISOString();
   const prospect = withAnalysis({
     ...structuredClone(seedProspects[0]),
     id: "auto-email-eligible-prospect",
@@ -173,7 +173,7 @@ function eligibleProspect() {
     contactConfidence: "high",
     websiteStatus: "usable",
     websiteVerification: {
-      version: "website-verification-v1",
+      version: "website-verification-v2",
       status: "usable",
       confidence: "high",
       canonicalUrl: "https://example.com/summit-roofing",
@@ -181,8 +181,25 @@ function eligibleProspect() {
       usableSignals: ["meaningful page title", "business name", "navigation", "service content", "public email"],
       explanation: "A meaningful public business website was verified.",
       checkedAt,
+      ownershipDecision: "owned",
+      identityEvidence: ["The business name and website host match."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website",
+        reason: "Rendered fixture review found that the quote request is difficult to reach.",
+        supportingEvidence: ["The primary customer path does not expose the quote action."],
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: checkedAt,
+        observation: {
+          kind: "quote_path",
+          statement: "I noticed the quote request is difficult to reach on the current website.",
+          rebuildSentence: "I can rebuild your current website with a more modern design that makes requesting a quote easier while presenting your verified services and contact information more clearly.",
+          evidence: ["Rendered fixture review found no quote action in the primary customer path."],
+          demoChecklist: ["Show the quote action on desktop", "Show the quote action on mobile"],
+        },
+      },
     },
-    fitDisposition: "weak_redesign_opportunity",
+    fitDisposition: "clearly_weak_or_outdated_website",
     contactEvidence: [{
       kind: "email",
       value: "owner@example.com",
@@ -191,6 +208,10 @@ function eligibleProspect() {
       confidence: "high",
       domainMatchesBusiness: true,
       discoveredAt: checkedAt,
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
     }],
     classification: "website_redesign",
   } as Prospect);
@@ -203,7 +224,7 @@ function eligibleProspectFor(input: {
   id: string;
   website: string;
 }) {
-  const checkedAt = "2026-07-28T12:00:00.000Z";
+  const checkedAt = new Date().toISOString();
   return prepareTopProspectArtifacts(withAnalysis({
     ...structuredClone(seedProspects[0]),
     ...input,
@@ -214,7 +235,7 @@ function eligibleProspectFor(input: {
     classification: "website_redesign",
     websiteStatus: "usable",
     websiteVerification: {
-      version: "website-verification-v1",
+      version: "website-verification-v2",
       status: "usable",
       confidence: "high",
       canonicalUrl: input.website,
@@ -222,8 +243,25 @@ function eligibleProspectFor(input: {
       usableSignals: ["meaningful page title", "business name", "navigation", "service content", "public email"],
       explanation: "A meaningful public business website was verified.",
       checkedAt,
+      ownershipDecision: "owned",
+      identityEvidence: ["The business name and website host match."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website",
+        reason: "Rendered fixture review found that the quote request is difficult to reach.",
+        supportingEvidence: ["The primary customer path does not expose the quote action."],
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: checkedAt,
+        observation: {
+          kind: "quote_path",
+          statement: "I noticed the quote request is difficult to reach on the current website.",
+          rebuildSentence: "I can rebuild your current website with a more modern design that makes requesting a quote easier while presenting your verified services and contact information more clearly.",
+          evidence: ["Rendered fixture review found no quote action in the primary customer path."],
+          demoChecklist: ["Show the quote action on desktop", "Show the quote action on mobile"],
+        },
+      },
     },
-    fitDisposition: "weak_redesign_opportunity",
+    fitDisposition: "clearly_weak_or_outdated_website",
     contactEvidence: [{
       kind: "email",
       value: input.email,
@@ -232,6 +270,10 @@ function eligibleProspectFor(input: {
       confidence: "high",
       domainMatchesBusiness: true,
       discoveredAt: checkedAt,
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
     }],
   } as Prospect), publicLink).prospect;
 }
@@ -480,12 +522,11 @@ test("human-approved queued email sends through Resend only after every gate pas
   const originalEnv = { ...process.env };
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
-  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
-  process.env.OUTREACH_SEND_PROVIDER = "resend";
-  process.env.RESEND_API_KEY = "test-resend-key";
-  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
-  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
-  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  Object.assign(process.env, env({
+    RESEND_API_KEY: "test-resend-key",
+    OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+    OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+  }));
   process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
   let providerCalls = 0;
   let providerHeaders = new Headers();
@@ -615,17 +656,12 @@ test("Auto Email Pilot ignores unapproved inventory, then sends one approved ite
     const approval = await approveAndQueueEmail(eligible.id);
     assert.equal(approval.queued, true);
     assert.equal(approval.item?.status, "Queued");
-    const secondProspect = prepareTopProspectArtifacts(withAnalysis({
-      ...structuredClone(seedProspects[0]),
+    const secondProspect = eligibleProspectFor({
       id: "pilot-second-prospect",
       businessName: "Summit Roofing Care",
       website: "https://summitroofingcare.com",
       email: "hello@summitroofingcare.com",
-      contactFormUrl: "",
-      classification: "website_redesign",
-      recommendedContactMethod: "send_email",
-      bestManualContactMethod: "email",
-    } as Prospect), publicLink).prospect;
+    });
     const secondEligible = await upsertAutonomousQueueItemFromPackage({
       outreachPreference: "written_only",
       previewLink: publicLink,
@@ -1026,14 +1062,44 @@ test("Auto Email Pilot cycle honors the auto-send gate and global kill switch", 
 });
 
 test("contact routing prefers a validated business email over stale form or social routing", () => {
+  const eligible = eligibleProspect();
   const stale = {
-    ...eligibleProspect(),
+    ...eligible,
     businessName: "Clear Flow Plumbing",
     website: "https://clearflowplumbing.com",
+    websiteVerification: {
+      ...eligible.websiteVerification!,
+      canonicalUrl: "https://clearflowplumbing.com",
+    },
     email: "admin@totalwptheme.com",
     contactFormUrl: "https://clearflowplumbing.com/contact",
     recommendedContactMethod: "submit_contact_form",
     bestManualContactMethod: "contact_form",
+    contactEvidence: [{
+      kind: "email",
+      value: "hello@clearflowplumbing.com",
+      sourceUrl: "https://clearflowplumbing.com/contact",
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: new Date().toISOString(),
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
+    }, {
+      kind: "email",
+      value: "clearflowplumbing@gmail.com",
+      sourceUrl: "https://clearflowplumbing.com/contact",
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: false,
+      discoveredAt: new Date().toISOString(),
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The free-domain address is explicitly published as a business contact on the verified owned website.",
+    }],
   } as Prospect;
   const reconciled = reconcileProspectContactRouting(stale, ["hello@clearflowplumbing.com"]);
   assert.equal(reconciled.email, "hello@clearflowplumbing.com");
@@ -1054,8 +1120,9 @@ test("existing qualified inventory refreshes stale queue contact snapshots witho
   const originalEnv = { ...process.env };
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
+  const eligible = eligibleProspect();
   const prospect = {
-    ...eligibleProspect(),
+    ...eligible,
     id: "reconcile-existing-prospect",
     businessName: "Clear Flow Plumbing",
     website: "https://clearflowplumbing.com",
@@ -1063,6 +1130,23 @@ test("existing qualified inventory refreshes stale queue contact snapshots witho
     contactFormUrl: "https://clearflowplumbing.com/contact",
     recommendedContactMethod: "submit_contact_form",
     bestManualContactMethod: "contact_form",
+    websiteVerification: {
+      ...eligible.websiteVerification!,
+      canonicalUrl: "https://clearflowplumbing.com/",
+    },
+    contactEvidence: [{
+      kind: "email",
+      value: "hello@clearflowplumbing.com",
+      sourceUrl: "https://clearflowplumbing.com/contact",
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: new Date().toISOString(),
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
+    }],
   } as Prospect;
   try {
     setProspectMemoryForTests([prospect]);
@@ -1230,6 +1314,10 @@ test("recipient changes before queueing revoke approval and require fresh approv
         confidence: "high",
         domainMatchesBusiness: true,
         discoveredAt: new Date().toISOString(),
+        sourceType: "owned_website",
+        firstParty: true,
+        decision: "autonomous_eligible",
+        decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
       }],
     }]);
 
@@ -1394,12 +1482,11 @@ test("email provider failures return secret-safe send errors and audit metadata"
   const originalEnv = { ...process.env };
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
-  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
-  process.env.OUTREACH_SEND_PROVIDER = "resend";
-  process.env.RESEND_API_KEY = "secret-resend-key";
-  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
-  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
-  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  Object.assign(process.env, env({
+    RESEND_API_KEY: "secret-resend-key",
+    OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+    OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+  }));
   process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
   let providerCalls = 0;
   try {
@@ -1741,13 +1828,12 @@ test("fully automatic email batch sends only queued public-email items through e
   const originalEnv = { ...process.env };
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
-  process.env.OUTREACH_AUTO_SEND_ENABLED = "true";
-  process.env.OUTREACH_FULL_AUTO_SEND_ENABLED = "true";
-  process.env.OUTREACH_SEND_PROVIDER = "resend";
-  process.env.RESEND_API_KEY = "test-resend-key";
-  process.env.OUTREACH_FROM_EMAIL = "Brendan <hello@webworkshop.dev>";
-  process.env.OUTREACH_REPLY_TO_EMAIL = "brendan@webworkshop.dev";
-  process.env.OUTREACH_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
+  Object.assign(process.env, env({
+    OUTREACH_FULL_AUTO_SEND_ENABLED: "true",
+    RESEND_API_KEY: "test-resend-key",
+    OUTREACH_FROM_EMAIL: "Brendan <hello@webworkshop.dev>",
+    OUTREACH_REPLY_TO_EMAIL: "brendan@webworkshop.dev",
+  }));
   process.env.WEBWORKSHOP_POSTAL_ADDRESS = "123 Main St, Toledo, OH";
   let providerCalls = 0;
   try {
@@ -2701,7 +2787,7 @@ test("feedback labels create preview and outreach self-fix suggestions", () => {
 
 test("rewrite outreach preserves opt-out language and removes hype posture", () => {
   const rewritten = rewriteOutreachWithFixes([
-    "Hi Rick,",
+    "Hi Admin,",
     "",
     "I came across your roofing business while looking at companies around Toledo.",
     "",
@@ -2712,10 +2798,12 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
     "WebWorkshop",
     "[Add your business postal address before sending]",
     "If you would rather not receive another note, reply and I will close the loop.",
-  ].join("\n"));
+  ].join("\n"), "Clear Flow Plumbing LLC");
 
+  assert.match(rewritten, /^Hi Clear Flow Plumbing team,/);
+  assert.doesNotMatch(rewritten, /^Hi Admin,/);
   assert.match(rewritten, /rather not hear from me again/);
-  assert.match(rewritten, /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+  assert.match(rewritten, /rebuild your current website with a more modern design/i);
   assert.match(rewritten, /roofing business while looking at companies around Toledo/i);
   assert.match(rewritten, /Would you be interested in seeing what that could look like\?/);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
@@ -2798,7 +2886,7 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     assert.equal(summary.updated, 2);
     assert.equal(summary.oldUnsentPackagesNeedingRegeneration, 2);
     assert.equal(regenerated?.outreachCopyVersion, currentOutreachCopyVersion);
-    assert.match(regenerated?.emailBody ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+    assert.match(regenerated?.emailBody ?? "", /rebuild your current website with a more modern design/i);
     assert.doesNotMatch(regenerated?.emailBody ?? "", /One missed opportunity|https:\/\/webworkshop\.dev\/p\//i);
     assert.equal(regeneratedMissingPreview?.outreachCopyVersion, currentOutreachCopyVersion);
     assert.match(regeneratedMissingPreview?.loomTalkingPoints ?? "", /Preview missing - generate\/review preview before sending yes-reply/);
@@ -3016,7 +3104,7 @@ test("casual DM playbook asks permission before the manual Lovable build", () =>
   } as Prospect;
   const playbook = casualDmPlaybook(prospect, publicLink);
 
-  assert.match(playbook.firstDm, /don't currently have a full website up/i);
+  assert.match(playbook.firstDm, /build you a modern website from the ground up/i);
   assert.match(playbook.firstDm, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(playbook.firstDm, /https?:\/\/|\/p\//);
   assert.doesNotMatch(playbook.firstDm, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,50}\bpreview\b/i);
@@ -3220,6 +3308,30 @@ test("bulk copy regeneration preserves the saved contact first name from the liv
     email: "nick@pinnacle419.com",
     contactPersonName: "Nick Smith",
   });
+  prospect.contactEvidence = [{
+    kind: "email",
+    value: prospect.email,
+    sourceUrl: `${prospect.website.replace(/\/$/, "")}/contact`,
+    extractionMethod: "mailto",
+    confidence: "high",
+    domainMatchesBusiness: true,
+    discoveredAt: new Date().toISOString(),
+    sourceType: "owned_website",
+    firstParty: true,
+    decision: "autonomous_eligible",
+    decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
+  }, {
+    kind: "contact_person",
+    value: "Nick Smith",
+    sourceUrl: `${prospect.website.replace(/\/$/, "")}/contact`,
+    extractionMethod: "visible_text",
+    confidence: "high",
+    domainMatchesBusiness: true,
+    discoveredAt: new Date().toISOString(),
+    sourceType: "owned_website",
+    firstParty: true,
+    decisionReason: "The operator verified this name against the first-party contact page.",
+  }];
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([queueItem({
     id: "named-regeneration-package",
@@ -3242,6 +3354,8 @@ test("bulk copy regeneration preserves the saved contact first name from the liv
   assert.equal(summary.updated, 1);
   assert.equal(refreshed.outreachCopyVersion, currentOutreachCopyVersion);
   assert.match(refreshed.emailBody, /^Hi Nick,/);
+  assert.match(refreshed.emailBody, /quote request is difficult to reach on the current website/i);
+  assert.match(refreshed.emailBody, /rebuild your current website with a more modern design that makes requesting a quote easier/i);
 });
 
 test("verified contact first name save updates the prospect and only the linked editable draft", async () => {
@@ -3266,12 +3380,14 @@ test("verified contact first name save updates the prospect and only the linked 
       prospect,
       topProspectResultId: "verified-name-editor-result",
     });
-    assert.match(queued.emailBody, /^Hi there,/);
+    assert.match(queued.emailBody, /^Hi Pinnacle Pressure Washing of Toledo team,/);
 
     const result = await saveVerifiedContactFirstNameAndRegenerate(queued.id, "Nick Smith", queued.updatedAt);
     assert.equal(result?.contactFirstName, "Nick");
     assert.match(result?.item.emailBody ?? "", /^Hi Nick,/);
-    assert.equal((await getProspect(prospect.id))?.contactPersonName, "Nick");
+    const savedProspect = await getProspect(prospect.id);
+    assert.equal(savedProspect?.contactPersonName, "Nick");
+    assert.equal(savedProspect?.contactEvidence.some((item) => item.kind === "contact_person" && item.value === "Nick" && item.firstParty), true);
     assert.equal(result?.item.status, queued.status);
     assert.equal(result?.item.sentDate, "");
 

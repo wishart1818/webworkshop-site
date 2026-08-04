@@ -75,18 +75,51 @@ function manualAssessment(opportunityScore: number): OpportunityAssessment {
 
 function markWebsiteVerified<T extends Prospect>(prospect: T): T {
   if (!prospect.website) throw new Error("A usable website fixture requires a website URL.");
+  const checkedAt = new Date().toISOString();
   prospect.websiteStatus = "usable";
   prospect.websiteVerification = {
-    version: "website-verification-v1",
+    version: "website-verification-v2",
     status: "usable",
     confidence: "high",
     canonicalUrl: prospect.website,
     attempts: [],
     usableSignals: ["business name", "meaningful page title", "navigation", "service content"],
     explanation: "Fixture website identity and content were verified.",
-    checkedAt: "2026-07-28T12:00:00.000Z",
+    checkedAt,
+    ownershipDecision: "owned",
+    identityEvidence: ["The business name and website host match."],
+    fit: {
+      disposition: "clearly_weak_or_outdated_website",
+      reason: "Rendered fixture review found that the quote request is difficult to reach.",
+      supportingEvidence: ["The quote action is not visible in the primary customer path."],
+      confidence: "high",
+      analysisOrigin: "rendered_review",
+      evaluatedAt: checkedAt,
+      observation: {
+        kind: "quote_path",
+        statement: "I noticed the quote request is difficult to reach on the current website.",
+        rebuildSentence: "I can rebuild your current website with a more modern design that makes requesting a quote easier while presenting your verified services and contact information more clearly.",
+        evidence: ["Rendered fixture review found no quote action in the primary customer path."],
+        demoChecklist: ["Show the quote action on desktop", "Show the quote action at a mobile viewport"],
+      },
+    },
   };
-  prospect.fitDisposition = "weak_redesign_opportunity";
+  prospect.fitDisposition = "clearly_weak_or_outdated_website";
+  if (prospect.email) {
+    prospect.contactEvidence = [{
+      kind: "email",
+      value: prospect.email,
+      sourceUrl: `${prospect.website.replace(/\/$/, "")}/contact`,
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
+    }];
+  }
   return prospect;
 }
 
@@ -386,6 +419,13 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
   strong.email = "hello@shingle-and-metal.example";
   strong.analysis!.overallScore = 97;
   markWebsiteVerified(strong);
+  strong.fitDisposition = "strong_existing_website";
+  strong.websiteVerification!.fit = {
+    ...strong.websiteVerification!.fit!,
+    disposition: "strong_existing_website",
+    reason: "Rendered review confirmed a strong, complete existing website.",
+    observation: undefined,
+  };
   const strongAssessment = assessOpportunity(strong);
 
   const national = withAnalysis(structuredClone(seedProspects[0]));
@@ -397,7 +437,7 @@ test("Toledo roofing ranking excludes strong websites and national brands", () =
 
   assert.ok(huskyAssessment.opportunityScore >= 60);
   assert.equal(topProspectRejectionReason(husky, huskyAssessment), null);
-  assert.equal(topProspectRejectionReason(strong, strongAssessment), "Already strong website");
+  assert.equal(topProspectRejectionReason(strong, strongAssessment), "Confirmed usable website / not a fit");
   assert.equal(topProspectRejectionReason(national, nationalAssessment), "National/large brand");
 });
 
@@ -463,7 +503,7 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /rebuild your current website with a more modern design/i);
   assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.doesNotMatch(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
@@ -513,7 +553,7 @@ test("Prospect Modes preserve strict behavior and expand local qualification del
   for (const key of Object.keys(prospect.analysis!.scores) as Array<keyof typeof prospect.analysis.scores>) {
     prospect.analysis!.scores[key] = 95;
   }
-  assert.equal(topProspectRejectionReason(prospect, assessOpportunity(prospect), "volume"), "Low redesign opportunity");
+  assert.equal(topProspectRejectionReason(prospect, assessOpportunity(prospect), "volume"), null);
 });
 
 test("Top Prospects final cutoff never leaks extra qualified leads into ranked results", () => {
@@ -841,15 +881,26 @@ test("No Website / Social Only prospects receive separate scoring and permission
   prospect.website = "";
   prospect.websiteStatus = "no_owned_website";
   prospect.websiteVerification = {
-    version: "website-verification-v1",
+    version: "website-verification-v2",
     status: "no_owned_website",
     confidence: "high",
     canonicalUrl: "",
     attempts: [],
     usableSignals: [],
     explanation: "Verified public research found no owned business website.",
-    checkedAt: "2026-07-28T12:00:00.000Z",
+    checkedAt: new Date().toISOString(),
+    ownershipDecision: "not_owned",
+    identityEvidence: ["Official social profile and independent provider records did not identify an owned website."],
+    fit: {
+      disposition: "no_owned_website",
+      reason: "Bounded independent sources did not identify an owned website.",
+      supportingEvidence: ["Official social and provider evidence agree."],
+      confidence: "high",
+      analysisOrigin: "not_applicable",
+      evaluatedAt: new Date().toISOString(),
+    },
   };
+  prospect.fitDisposition = "no_owned_website";
   prospect.profileUrl = "https://www.facebook.com/local-social-roofing";
   prospect.prospectType = "no_website_social_only";
   prospect.email = "";
@@ -876,7 +927,7 @@ test("No Website / Social Only prospects receive separate scoring and permission
   assert.equal(assessment.salesScores.weightedSalesScore, scores.finalSalesScore);
   assert.equal(assessment.salesScores.websiteQualityScore, 0);
   assert.equal(topProspectRejectionReason(prospect, assessment), null);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /don't currently have a full website up/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /couldn't find a dedicated website linked from the business's public profiles/i);
   assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.match(prepared.buildPrompt, /first owned/i);
@@ -901,6 +952,7 @@ test("presence classification and contact recommendations cover public lead shap
 
 test("Top Prospect artifacts remain unapproved and keep the preview out of first-touch drafts", () => {
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  markWebsiteVerified(prospect);
   const prepared = prepareTopProspectArtifacts(prospect, publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF"));
   const prompt = generateWebsiteBuildPrompt(prepared.prospect, prepared.assessment);
 
@@ -931,6 +983,7 @@ test("public preview tokens stay protected while first-touch readiness remains p
   const token = createPublicPreviewToken();
   const publicLink = publicProspectPreviewLink(token);
   const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  markWebsiteVerified(prospect);
   const publicPackage = prepareTopProspectArtifacts(prospect, publicLink);
   const internalLink = prospectPreviewLink(prospect.id);
   const scoreLeak = {
@@ -952,7 +1005,9 @@ test("public preview tokens stay protected while first-touch readiness remains p
 
 test("missing sender postal address blocks email readiness without leaking a preview link", () => {
   const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
-  const prepared = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0])), publicLink);
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  markWebsiteVerified(prospect);
+  const prepared = prepareTopProspectArtifacts(prospect, publicLink);
   const quality = evaluateOutreachEmailQuality(prepared.prospect, publicLink, "written_only", {});
   const allDrafts = [
     prepared.prospect.outreach!.concise,
@@ -998,7 +1053,9 @@ test("suspicious theme/admin emails require manual verification instead of send-
 
 test("unsupported outreach claim is explainable and safely repairable", () => {
   const publicLink = publicProspectPreviewLink(createPublicPreviewToken());
-  const prepared = prepareTopProspectArtifacts(withAnalysis(structuredClone(seedProspects[0])), publicLink);
+  const prospect = withAnalysis(structuredClone(seedProspects[0]));
+  markWebsiteVerified(prospect);
+  const prepared = prepareTopProspectArtifacts(prospect, publicLink);
   const unsafe = {
     ...prepared.prospect,
     outreach: {

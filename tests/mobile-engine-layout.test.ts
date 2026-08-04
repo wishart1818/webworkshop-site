@@ -384,7 +384,8 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /No Website \/ Social Only/);
   assert.match(topProspectsWorkspace, /All Prospect Types/);
   assert.match(prospectEngine, /No website found/);
-  assert.match(prospectEngine, /Public email available/);
+  assert.match(prospectEngine, /Verified public email available/);
+  assert.match(prospectEngine, /Email requires manual verification/);
   assert.match(prospectEngine, /Needs manual contact research/);
   assert.match(topProspectsWorkspace, /prospectPresenceLabels/);
   assert.match(topProspectsWorkspace, /Online presence gap/);

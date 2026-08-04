@@ -28,6 +28,7 @@ import {
 } from "@/lib/prospect-funnel";
 import {
   webworkshopFirstDm,
+  webworkshopCleanBusinessName,
   webworkshopFollowUpAfterLoom,
   webworkshopHigherSupportReply,
   webworkshopLoomScript,
@@ -35,10 +36,12 @@ import {
   webworkshopNotInterestedReply,
   webworkshopOptOutPattern,
   webworkshopPricingReply,
+  webworkshopPreviewValueLine,
   webworkshopSofterFirstDm,
   webworkshopStarterPageReply,
   webworkshopYesReply,
 } from "@/lib/outreach-style-guide";
+import { prospectQualificationBlockReasons } from "@/lib/prospect-qualification";
 
 export const autonomousGrowthModes = ["off", "dry_run", "manual_approval", "auto_email_pilot"] as const;
 export type AutonomousGrowthMode = (typeof autonomousGrowthModes)[number];
@@ -1433,6 +1436,7 @@ export function evaluateAutoSendEligibility({
     !prospect.email ? "Public email is missing." : "",
     prospectWebsiteVerificationBlockReason(prospect, { requireStructuredEvidence: true }),
     prospect.email && !prospectVerifiedEmailEvidence(prospect) ? "Public email lacks stored source URL and extraction evidence." : "",
+    ...prospectQualificationBlockReasons(prospect),
     prospectWebsiteAbsenceNeedsManualReview(prospect) ? "Website absence needs manual verification before approval." : "",
     !emailQuality.ready ? `Email quality check is not send-ready: ${emailQuality.readinessLabel}.` : "",
     !prospectWrittenContactMethodIsUsable(prospect) ? "Written contact method is not usable." : "",
@@ -1595,11 +1599,13 @@ export function outreachRewritePlan(outreachText: string, feedbackLabels: readon
   return [...plan];
 }
 
-export function rewriteOutreachWithFixes(emailBody: string) {
+export function rewriteOutreachWithFixes(emailBody: string, businessName = "") {
   const optOut = emailBody.match(/Thanks,[\s\S]*?(?:If you would rather not receive another note, just reply and I will close the loop\.|If you'd rather not hear from me again, just let me know\.)/i)?.[0]
     ?? outreachComplianceFooter();
   const lines = emailBody.split("\n").map((line) => line.trim()).filter(Boolean);
-  const greeting = lines.find((line) => /^Hi\b/i.test(line)) ?? "Hi there,";
+  const greeting = businessName.trim()
+    ? `Hi ${webworkshopCleanBusinessName(businessName)} team,`
+    : "Hi there,";
   const combinedIntroduction = lines.find((line) => /^I'm Brendan\b/i.test(line)) ?? "";
   const introduction = combinedIntroduction
     ? combinedIntroduction.replace(/\s+I came across[\s\S]*$/i, "").trim()
@@ -1609,8 +1615,8 @@ export function rewriteOutreachWithFixes(emailBody: string) {
     ?? "I came across your business.";
   const noWebsite = /don't currently have a full website up|couldn't find a dedicated website|did not have a dedicated website/i.test(emailBody);
   const offer = noWebsite
-    ? "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests."
-    : "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.";
+    ? `I couldn't find a dedicated website linked from the business's public profiles. ${webworkshopPreviewValueLine("no_website")}`
+    : webworkshopPreviewValueLine("has_website");
   return [
     greeting,
     "",

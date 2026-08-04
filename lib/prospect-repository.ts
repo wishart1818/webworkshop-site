@@ -116,6 +116,15 @@ function contactEvidenceArray(value: Prisma.JsonValue): ContactRouteEvidence[] {
       confidence: item.confidence as ContactRouteEvidence["confidence"],
       domainMatchesBusiness: item.domainMatchesBusiness,
       discoveredAt: item.discoveredAt,
+      lastVerifiedAt: typeof item.lastVerifiedAt === "string" ? item.lastVerifiedAt : undefined,
+      sourceType: ["owned_website", "official_social", "provider", "directory", "unknown"].includes(String(item.sourceType))
+        ? item.sourceType as ContactRouteEvidence["sourceType"]
+        : undefined,
+      firstParty: typeof item.firstParty === "boolean" ? item.firstParty : undefined,
+      decision: ["autonomous_eligible", "manual_review_required", "rejected"].includes(String(item.decision))
+        ? item.decision as ContactRouteEvidence["decision"]
+        : undefined,
+      decisionReason: typeof item.decisionReason === "string" ? item.decisionReason : undefined,
     }];
   });
 }

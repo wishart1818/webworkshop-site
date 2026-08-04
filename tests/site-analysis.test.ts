@@ -19,7 +19,7 @@ test("contact discovery extracts visible and mailto emails while ignoring fake a
   assert.equal(result.bestManualContactMethod, "email");
 });
 
-test("contact discovery excludes suspicious unrelated theme/admin emails", () => {
+test("contact discovery rejects suspicious unrelated theme/admin emails without selecting them", () => {
   const suspiciousOnly = extractContactDiscoveryFromPages("https://tampapressurepros.com", [
     {
       url: "https://tampapressurepros.com/contact",
@@ -30,7 +30,9 @@ test("contact discovery excludes suspicious unrelated theme/admin emails", () =>
   assert.equal(suspiciousOnly.email, "");
   assert.equal(suspiciousOnly.contactConfidence, "low");
   assert.equal(suspiciousOnly.bestManualContactMethod, "unknown");
-  assert.equal(suspiciousOnly.contactEvidence.some((item) => item.value === "admin@totalwptheme.com"), false);
+  const rejected = suspiciousOnly.contactEvidence.find((item) => item.value === "admin@totalwptheme.com");
+  assert.equal(rejected?.decision, "rejected");
+  assert.match(rejected?.decisionReason ?? "", /vendor|template|infrastructure/i);
 
   const betterEmail = extractContactDiscoveryFromPages("https://tampapressurepros.com", [
     {

@@ -5,7 +5,8 @@ import {
   safeReadinessRepairProtectionReason,
 } from "@/lib/autonomous-growth-repository";
 import { outreachHistoryTextIndicatesProtectedContact, type OutreachQueueItem } from "@/lib/autonomous-growth";
-import { activity, type Prospect, type WebsiteVerificationReport } from "@/lib/prospect-engine";
+import { activity, type Prospect, type WebsiteFitDisposition, type WebsiteVerificationReport } from "@/lib/prospect-engine";
+import { buildActiveProspectQualificationAudit } from "@/lib/prospect-qualification-audit";
 import { getProspect, listProspects, saveProspect } from "@/lib/prospect-repository";
 import { safeRecordAudit } from "@/lib/operational-controls";
 import { verifyProspectWebsite, type WebsiteVerificationDependencies } from "@/lib/site-analysis";
@@ -196,12 +197,23 @@ function withApprovalRevoked(prospect: Prospect, shouldRevoke: boolean) {
   };
 }
 
+async function ensureProspectWebsiteMutationIsSafe(prospect: Prospect) {
+  const queue = (await listOutreachQueueItemsForBackfill()).filter((item) => item.prospectId === prospect.id);
+  if (queue.some((item) => item.status === "Sending" || item.notes.includes("[auto-email-ambiguous]"))) {
+    throw new Error("Website/contact changes are blocked while an email provider attempt is in progress or awaiting reconciliation.");
+  }
+  if (prospectProtectionReason(prospect, queue)) {
+    throw new Error("Website/contact changes are blocked because protected outreach or contact history exists.");
+  }
+}
+
 export async function recheckProspectWebsite(
   prospectId: string,
   dependencies: WebsiteVerificationDependencies = {},
 ): Promise<WebsiteRecheckResult> {
   const prospect = await getProspect(prospectId);
   if (!prospect) throw new Error("Prospect was not found.");
+  await ensureProspectWebsiteMutationIsSafe(prospect);
   const verified = await verifyProspectWebsite(prospect, dependencies);
   const changes = changedProspectFields(prospect, verified.prospect);
   const recipientOrEligibilityChanged = changes.some((field) => [
@@ -240,26 +252,68 @@ export async function recheckProspectWebsite(
   return { prospect: saved, verification: verified.report, ...queueResult, nothingSent: true };
 }
 
-export async function confirmUsableWebsiteNotFit(prospectId: string, confirmed: boolean) {
-  if (!confirmed) throw new Error("Confirmation is required.");
+const operatorFitDispositions = new Set<WebsiteFitDisposition>([
+  "clearly_weak_or_outdated_website",
+  "adequate_existing_website",
+  "strong_existing_website",
+  "inconclusive_requires_review",
+]);
+
+export async function setProspectWebsiteFitDisposition(input: {
+  prospectId: string;
+  disposition: WebsiteFitDisposition;
+  reason: string;
+  confirmed: boolean;
+}) {
+  if (!input.confirmed) throw new Error("Confirmation is required.");
+  if (!operatorFitDispositions.has(input.disposition)) throw new Error("Select a supported website-fit disposition.");
+  const reason = input.reason.trim();
+  if (reason.length < 12) throw new Error("A concise factual reason is required for the website-fit decision.");
+  const prospectId = input.prospectId;
   const prospect = await getProspect(prospectId);
   if (!prospect) throw new Error("Prospect was not found.");
+  await ensureProspectWebsiteMutationIsSafe(prospect);
   if (prospect.websiteStatus !== "usable" || prospect.websiteVerification?.status !== "usable") {
     throw new Error("Only a currently verified usable website can receive this disposition.");
   }
-  if (protectedProspectStatuses.has(prospect.status)) {
-    throw new Error("Previously contacted or closed prospects cannot be changed by this fit action.");
+  if (prospect.websiteVerification.version !== "website-verification-v2" || prospect.websiteVerification.ownershipDecision !== "owned") {
+    throw new Error("Current evidence-backed website ownership is required before setting website fit.");
   }
   const queueResult = await revokeStaleQueueApproval(
     prospect,
-    "Operator confirmed a usable established website is not a fit for the current offer.",
+    `Operator changed website fit to ${input.disposition.replaceAll("_", " ")}.`,
   );
   ensureNoProtectedQueueMutation(queueResult);
+  const now = new Date().toISOString();
+  const websiteVerification: WebsiteVerificationReport = {
+    ...prospect.websiteVerification,
+    fit: {
+      disposition: input.disposition,
+      reason,
+      supportingEvidence: [`Operator rendered review: ${reason}`],
+      confidence: "high",
+      analysisOrigin: "manual",
+      evaluatedAt: now,
+      // A free-form operator reason is internal evidence, not automatically safe
+      // customer-facing copy. The next bounded verification must save a grounded
+      // observation before this record can become autonomously eligible.
+      observation: undefined,
+    },
+    freshness: prospect.websiteVerification.freshness ? {
+      ...prospect.websiteVerification.freshness,
+      websiteFitFresh: true,
+      approvalFresh: false,
+      lastMeaningfulChange: now,
+      staleReason: "Approval must be reviewed after the website-fit decision changed.",
+      humanReviewRequired: input.disposition === "inconclusive_requires_review",
+    } : undefined,
+  };
   const saved = await saveProspect(withApprovalRevoked({
     ...prospect,
-    fitDisposition: "confirmed_usable_not_fit",
+    fitDisposition: input.disposition,
+    websiteVerification,
     activities: [
-      activity("status", "Operator confirmed the usable website is not a fit for the current offer. No contact was recorded and nothing was sent."),
+      activity("status", `Operator set website fit to ${input.disposition.replaceAll("_", " ")}: ${reason} No contact was recorded and nothing was sent.`),
       ...prospect.activities,
     ],
   }, true));
@@ -269,13 +323,37 @@ export async function confirmUsableWebsiteNotFit(prospectId: string, confirmed: 
     subject: prospect.businessName,
     metadata: {
       prospectId,
-      disposition: "confirmed_usable_not_fit",
+      disposition: input.disposition,
+      reason,
       approvalsRevoked: queueResult.approvalsRevoked,
       contacted: false,
       sent: 0,
     },
   });
   return { prospect: saved, ...queueResult, nothingSent: true as const };
+}
+
+export async function confirmUsableWebsiteNotFit(prospectId: string, confirmed: boolean) {
+  if (!confirmed) throw new Error("Confirmation is required.");
+  const prospect = await getProspect(prospectId);
+  if (!prospect) throw new Error("Prospect was not found.");
+  if (prospect.websiteStatus !== "usable" || prospect.websiteVerification?.status !== "usable") {
+    throw new Error("Only a currently verified usable website can receive this disposition.");
+  }
+  return setProspectWebsiteFitDisposition({
+    prospectId,
+    disposition: "strong_existing_website",
+    reason: "Operator confirmed the current website is strong and is not a fit for the website-rebuild offer.",
+    confirmed,
+  });
+}
+
+export async function auditActiveProspectQualificationsReadOnly(now = new Date()) {
+  const [prospects, queue] = await Promise.all([
+    listProspects(),
+    listOutreachQueueItemsForBackfill(),
+  ]);
+  return buildActiveProspectQualificationAudit(prospects, queue, now);
 }
 
 function existingRecordNeedsWebsiteAudit(prospect: Prospect) {

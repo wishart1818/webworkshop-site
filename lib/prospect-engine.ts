@@ -3,7 +3,6 @@ import {
   webworkshopFirstDm,
   webworkshopFirstEmail,
   webworkshopOptOutLine,
-  webworkshopPreviewValueLine,
   webworkshopYesReply,
 } from "@/lib/outreach-style-guide";
 import { attachResolvedPreviewImages, buildPreviewVisualAssetQa, isPublicPreviewImageRelevant, type PreviewImageSet } from "@/lib/preview-image-resolver";
@@ -13,6 +12,13 @@ import {
   groundedPreviewCopy,
   serviceHierarchyWithImages,
 } from "@/lib/preview-fidelity";
+import {
+  normalizeWebsiteFitDisposition,
+  outreachObservationForProspect,
+  verifiedContactFirstNameForProspect,
+  verifiedEmailEvidenceForProspect,
+  websiteFitAllowsAutonomousOutreach,
+} from "@/lib/prospect-qualification";
 
 export const prospectStatuses = [
   "New",
@@ -136,8 +142,64 @@ export type WebsiteVerificationAttempt = {
   browserCompatibleHeaders: boolean;
   timestamp: string;
 };
+
+export const websiteFitDispositions = [
+  "no_owned_website",
+  "broken_or_inactive_website",
+  "clearly_weak_or_outdated_website",
+  "adequate_existing_website",
+  "strong_existing_website",
+  "inconclusive_requires_review",
+] as const;
+export type WebsiteFitDisposition = (typeof websiteFitDispositions)[number];
+
+export const websiteFitObservationKinds = [
+  "mobile_layout",
+  "quote_path",
+  "contact_visibility",
+  "service_clarity",
+  "trust_visibility",
+  "project_gallery",
+  "broken_or_inactive",
+  "no_owned_website",
+  "general_rebuild",
+] as const;
+export type WebsiteFitObservationKind = (typeof websiteFitObservationKinds)[number];
+
+export type WebsiteFitObservation = {
+  kind: WebsiteFitObservationKind;
+  statement: string;
+  rebuildSentence: string;
+  evidence: string[];
+  demoChecklist: string[];
+};
+
+export type WebsiteFitAssessment = {
+  disposition: WebsiteFitDisposition;
+  reason: string;
+  supportingEvidence: string[];
+  confidence: WebsiteVerificationConfidence;
+  analysisOrigin: "automated_html" | "rendered_review" | "manual" | "not_applicable";
+  evaluatedAt: string;
+  observation?: WebsiteFitObservation;
+};
+
+export type ProspectFreshness = {
+  lastVerifiedAt: string;
+  nextVerificationAt: string;
+  nextDeepAssessmentAt: string;
+  websiteVerificationFresh: boolean;
+  websiteFitFresh: boolean;
+  contactSourceFresh: boolean;
+  copyVersionFresh: boolean;
+  approvalFresh: boolean;
+  lastMeaningfulChange: string;
+  staleReason: string;
+  humanReviewRequired: boolean;
+};
+
 export type WebsiteVerificationReport = {
-  version: "website-verification-v1";
+  version: "website-verification-v1" | "website-verification-v2";
   status: WebsiteAvailabilityStatus;
   confidence: WebsiteVerificationConfidence;
   canonicalUrl: string;
@@ -145,9 +207,14 @@ export type WebsiteVerificationReport = {
   usableSignals: string[];
   explanation: string;
   checkedAt: string;
+  ownershipDecision?: "owned" | "not_owned" | "uncertain";
+  identityEvidence?: string[];
+  fit?: WebsiteFitAssessment;
+  freshness?: ProspectFreshness;
 };
 export const contactEvidenceKinds = [
   "email",
+  "contact_person",
   "phone",
   "contact_page",
   "contact_form",
@@ -178,13 +245,22 @@ export type ContactRouteEvidence = {
   confidence: ContactConfidence;
   domainMatchesBusiness: boolean;
   discoveredAt: string;
+  lastVerifiedAt?: string;
+  sourceType?: "owned_website" | "official_social" | "provider" | "directory" | "unknown";
+  firstParty?: boolean;
+  decision?: "autonomous_eligible" | "manual_review_required" | "rejected";
+  decisionReason?: string;
 };
-export const prospectFitDispositions = [
+export const legacyProspectFitDispositions = [
   "unreviewed",
   "genuine_redesign_opportunity",
   "weak_redesign_opportunity",
   "confirmed_usable_not_fit",
   "manual_review_required",
+] as const;
+export const prospectFitDispositions = [
+  ...websiteFitDispositions,
+  ...legacyProspectFitDispositions,
 ] as const;
 export type ProspectFitDisposition = (typeof prospectFitDispositions)[number];
 export const prospectSearchTypes = [...prospectTypes, "all"] as const;
@@ -2058,50 +2134,31 @@ function emailParts(value: string) {
   return { local, domain };
 }
 
-function identityTokensForContact(value: string) {
-  return value.toLowerCase()
-    .replace(/\b(llc|inc|company|co|corp|corporation|services?|service|the|and|of|for|a|an)\b/g, " ")
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length >= 4);
-}
-
-function rootDomain(value: string) {
-  if (!value) return "";
-  try {
-    const hostname = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`).hostname.replace(/^www\./, "").toLowerCase();
-    const parts = hostname.split(".");
-    return parts.length > 2 ? parts.slice(-2).join(".") : hostname;
-  } catch {
-    return value.replace(/^www\./, "").toLowerCase();
-  }
-}
-
 function prospectEmailHasHardBlock(value: string) {
   const { local, domain } = emailParts(value);
   return !local
     || !domain
     || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
-    || /^(?:no-?reply|noreply|do-?not-?reply|donotreply|wordpress|wp|example|test|privacy|filler)$/i.test(local)
+    || /^(?:admin|no-?reply|noreply|do-?not-?reply|donotreply|wordpress|wp|example|test|privacy|filler)$/i.test(local)
     || /(?:godaddy|totalwp|wp[-.]?theme|wordpress|themeforest|template|demo|staging|developer|webdesigner|webmaster|hosting|wpengine|directory|yellowpages|yelp)/i.test(domain);
 }
 
-export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospect, "businessName" | "website" | "email">>) {
+export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence">>) {
   if (!input.email) return false;
-  const { domain } = emailParts(input.email);
   if (prospectEmailHasHardBlock(input.email)) return true;
-  const websiteDomain = rootDomain(input.website ?? "");
-  if (websiteDomain && domain === websiteDomain) return false;
-  const businessTokens = identityTokensForContact(input.businessName ?? "");
-  const domainTokens = identityTokensForContact(domain.replace(/\.[a-z.]+$/i, ""));
-  if (!websiteDomain && businessTokens.length === 0) return false;
-  return !businessTokens.some((token) => domainTokens.some((domainToken) => domainToken === token || domainToken.includes(token)));
+  if (input.contactEvidence === undefined) return false;
+  return !verifiedEmailEvidenceForProspect({
+    email: input.email,
+    contactEvidence: input.contactEvidence ?? [],
+    website: input.website,
+  });
 }
 
-function hasUsableEmail(input: Partial<Pick<Prospect, "businessName" | "website" | "email">>) {
+function hasUsableEmail(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence">>) {
   return Boolean(input.email) && !prospectEmailNeedsManualVerification(input);
 }
 
-function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl">>) {
+function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl">>) {
   return Boolean(
     hasUsableEmail(input)
     || input.contactFormUrl
@@ -2113,7 +2170,7 @@ function hasAnyWrittenContactPath(input: Partial<Pick<Prospect, "businessName" |
   );
 }
 
-export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl" | "phone">>): ManualContactMethod {
+export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "profileUrl" | "phone">>): ManualContactMethod {
   if (hasUsableEmail(input)) return "email";
   if (input.quoteFormUrl) return "quote_form";
   if (input.contactFormUrl) return "contact_form";
@@ -2124,13 +2181,13 @@ export function prospectBestManualContactMethod(input: Partial<Pick<Prospect, "b
   return "unknown";
 }
 
-export function prospectContactConfidence(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "phone">>): ContactConfidence {
+export function prospectContactConfidence(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "phone">>): ContactConfidence {
   if (hasUsableEmail(input) || input.quoteFormUrl || input.contactFormUrl) return "high";
   if (input.facebookUrl || input.instagramUrl || input.linkedinUrl) return "medium";
   return input.phone ? "low" : "low";
 }
 
-export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): ProspectClassification {
+export function classifyProspectPresence(input: Pick<Prospect, "website" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "contactEvidence" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): ProspectClassification {
   if (input.website) return "website_redesign";
   if (isSocialProfile(input.profileUrl)) return "social_only";
   if (input.profileUrl) return "listing_only";
@@ -2193,6 +2250,7 @@ export function prospectWebsiteVerificationBlockReason(
   prospect: Pick<Prospect, "website" | "websiteStatus" | "websiteVerification" | "fitDisposition">,
   options: { requireStructuredEvidence?: boolean } = {},
 ) {
+  const fitDisposition = normalizeWebsiteFitDisposition(prospect);
   if (["crawler_blocked", "temporarily_unavailable", "inconclusive"].includes(prospect.websiteStatus)) {
     return websiteAvailabilityLabels[prospect.websiteStatus];
   }
@@ -2201,6 +2259,9 @@ export function prospectWebsiteVerificationBlockReason(
   }
   if (prospect.websiteStatus === "invalid_website") return "Website URL requires manual correction.";
   if (prospect.websiteStatus === "unknown") return "Website verification has not run.";
+  if (options.requireStructuredEvidence && prospect.websiteVerification?.version !== "website-verification-v2") {
+    return "Website fit requires a current evidence-backed verification.";
+  }
   if (
     options.requireStructuredEvidence
     && prospect.websiteStatus === "usable"
@@ -2218,27 +2279,38 @@ export function prospectWebsiteVerificationBlockReason(
   }
   if (
     options.requireStructuredEvidence
+    && prospect.websiteStatus === "usable"
+    && prospect.websiteVerification?.ownershipDecision !== "owned"
+  ) {
+    return "Website ownership is not confirmed.";
+  }
+  if (
+    options.requireStructuredEvidence
     && !prospect.website
     && prospect.websiteStatus === "no_owned_website"
     && prospect.websiteVerification?.status !== "no_owned_website"
   ) {
     return "No-owned-website status lacks current structured verification evidence.";
   }
-  if (prospect.fitDisposition === "confirmed_usable_not_fit") return "Confirmed usable website / not a fit.";
+  if (
+    options.requireStructuredEvidence
+    && prospect.websiteVerification?.fit?.disposition !== fitDisposition
+  ) {
+    return "Website-fit disposition lacks matching saved evidence.";
+  }
+  if (fitDisposition === "adequate_existing_website") return "Adequate existing website / not a fit.";
+  if (fitDisposition === "strong_existing_website") return "Strong existing website / not a fit.";
+  if (fitDisposition === "inconclusive_requires_review") return "Website fit is inconclusive and requires manual review.";
+  if (options.requireStructuredEvidence && !websiteFitAllowsAutonomousOutreach(prospect)) {
+    return "Website fit is not eligible for automated website outreach.";
+  }
   return "";
 }
 
 export function prospectVerifiedEmailEvidence(
-  prospect: Pick<Prospect, "email" | "contactEvidence">,
+  prospect: Pick<Prospect, "email" | "contactEvidence"> & Partial<Pick<Prospect, "website" | "websiteVerification">>,
 ) {
-  const email = prospect.email.trim().toLowerCase();
-  if (!email) return null;
-  return prospect.contactEvidence.find((item) => (
-    item.kind === "email"
-    && item.value.trim().toLowerCase() === email
-    && Boolean(item.sourceUrl)
-    && ["high", "medium"].includes(item.confidence)
-  )) ?? null;
+  return verifiedEmailEvidenceForProspect(prospect);
 }
 
 export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" | "classification" | "email" | "contactFormUrl" | "recommendedContactMethod"> & Partial<Pick<Prospect, "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "bestManualContactMethod">>) {
@@ -2254,7 +2326,11 @@ export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" 
   if (prospect.classification === "phone_only") labels.push("Phone only");
   if (prospect.classification === "phone_only" || prospect.recommendedContactMethod === "call_first") labels.push("Phone-only / written outreach blocked");
   if (prospect.recommendedContactMethod === "needs_manual_contact_research") labels.push("Needs manual contact research");
-  if (prospect.email) labels.push("Public email available");
+  if (prospect.email) {
+    labels.push(prospectEmailNeedsManualVerification(prospect)
+      ? "Email requires manual verification"
+      : "Verified public email available");
+  }
   if (prospect.contactFormUrl) labels.push("Contact form found");
   if (prospect.quoteFormUrl) labels.push("Quote form found");
   if (prospect.facebookUrl) labels.push("Facebook found");
@@ -2263,7 +2339,7 @@ export function prospectPresenceLabels(prospect: Pick<Prospect, "websiteStatus" 
   return [...new Set(labels)];
 }
 
-export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): RecommendedContactMethod {
+export function recommendProspectContactMethod(input: Pick<Prospect, "classification" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "inactive"> & Partial<Pick<Prospect, "businessName" | "website" | "contactEvidence" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>): RecommendedContactMethod {
   if (input.inactive || input.classification === "national_large_brand" || input.classification === "duplicate_bad_fit") return "do_not_contact";
   if (hasUsableEmail(input)) return "send_email";
   if (input.quoteFormUrl || input.contactFormUrl) return "submit_contact_form";
@@ -2278,9 +2354,6 @@ export function reconcileProspectContactRouting(
   prospect: Prospect,
   discoveredEmails: string[] = [],
 ): Prospect {
-  const validatedDiscoveredEmails = new Set(
-    discoveredEmails.map((email) => email.trim().toLowerCase()).filter(Boolean),
-  );
   const candidates = [...new Set(
     [...discoveredEmails, prospect.email]
       .map((email) => email.trim().toLowerCase())
@@ -2288,10 +2361,7 @@ export function reconcileProspectContactRouting(
   )];
   const legitimateEmail = candidates.find((email) => (
     !prospectEmailHasHardBlock(email)
-    && (
-      validatedDiscoveredEmails.has(email)
-      || !prospectEmailNeedsManualVerification({ ...prospect, email })
-    )
+    && Boolean(verifiedEmailEvidenceForProspect({ ...prospect, email }))
   ));
   const email = legitimateEmail ?? prospect.email.trim().toLowerCase();
   const contactInput = { ...prospect, email };
@@ -2304,7 +2374,7 @@ export function reconcileProspectContactRouting(
   };
 }
 
-export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
+export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "phone" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "contactEvidence" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
   if (input.recommendedContactMethod === "send_email") return hasUsableEmail(input);
   if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.quoteFormUrl || input.contactFormUrl);
   if (input.recommendedContactMethod === "message_on_facebook") return Boolean(input.facebookUrl || isFacebookProfile(input.profileUrl));
@@ -2313,7 +2383,7 @@ export function prospectContactMethodIsUsable(input: Pick<Prospect, "recommended
   return false;
 }
 
-export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
+export function prospectWrittenContactMethodIsUsable(input: Pick<Prospect, "recommendedContactMethod" | "profileUrl" | "email" | "contactFormUrl"> & Partial<Pick<Prospect, "businessName" | "website" | "contactEvidence" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl">>) {
   if (input.recommendedContactMethod === "send_email") return hasUsableEmail(input);
   if (input.recommendedContactMethod === "submit_contact_form") return Boolean(input.quoteFormUrl || input.contactFormUrl);
   if (input.recommendedContactMethod === "message_on_facebook") return Boolean(input.facebookUrl || isFacebookProfile(input.profileUrl));
@@ -2345,14 +2415,6 @@ function localTradePhrase(prospect: Prospect) {
   };
 }
 
-function simplePreviewIdea() {
-  return webworkshopPreviewValueLine("has_website");
-}
-
-function noWebsiteFirstTouchIdea() {
-  return webworkshopPreviewValueLine("no_website");
-}
-
 function askToCreatePreview() {
   return "Would you like me to put together a quick preview?";
 }
@@ -2373,49 +2435,51 @@ function noOwnedWebsiteProspect(prospect: Prospect) {
 export function prospectWebsiteAbsenceNeedsManualReview(prospect: Prospect) {
   if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus)) return true;
   if (!noOwnedWebsiteProspect(prospect)) return false;
-  if (prospect.websiteStatus === "no_owned_website" && prospect.websiteVerification?.status === "no_owned_website") return false;
-  const verifiedAbsence = prospect.previewResearchFacts?.some((fact) => (
-    fact.factType === "website"
-    && fact.verificationStatus === "verified"
-    && fact.confidence === "verified"
-    && /no (?:owned |dedicated )?website|website not found|not found|unavailable/i.test(`${fact.label} ${fact.value}`)
-  ));
-  return !verifiedAbsence;
-}
-
-function contactPathCouldBeClearer(prospect: Prospect) {
-  const scores = prospect.analysis?.scores;
-  if (!scores) return false;
-  return scores.ctaStrength <= 55 || scores.contactAccessibility <= 55 || scores.conversionReadiness <= 55;
+  return !(
+    prospect.websiteStatus === "no_owned_website"
+    && prospect.websiteVerification?.version === "website-verification-v2"
+    && prospect.websiteVerification.status === "no_owned_website"
+    && prospect.websiteVerification.ownershipDecision === "not_owned"
+    && prospect.websiteVerification.fit?.disposition === "no_owned_website"
+  );
 }
 
 function firstTouchEmailReason(prospect: Prospect) {
   return localTradePhrase(prospect);
 }
 
-function firstTouchMiddleLine(prospect: Prospect) {
-  if (noOwnedWebsiteProspect(prospect)) return noWebsiteFirstTouchIdea();
-  if (contactPathCouldBeClearer(prospect)) return simplePreviewIdea();
-  return simplePreviewIdea();
-}
-
 function firstTouchDmReason(prospect: Prospect) {
-  return webworkshopFirstDm(prospect.businessName, noOwnedWebsiteProspect(prospect) ? "no_website" : "has_website");
+  const observation = outreachObservationForProspect(prospect);
+  return webworkshopFirstDm(
+    prospect.businessName,
+    noOwnedWebsiteProspect(prospect) ? "no_website" : "has_website",
+    observation?.statement,
+    observation?.rebuildSentence,
+  );
 }
 
 export function firstTouchEmailDraft(prospect: Prospect, footer: string) {
   const { trade, city } = firstTouchEmailReason(prospect);
+  const observation = outreachObservationForProspect(prospect);
   return webworkshopFirstEmail({
     businessName: prospect.businessName,
     trade,
     city,
     kind: noOwnedWebsiteProspect(prospect) ? "no_website" : "has_website",
     footer,
-    recipientName: prospect.contactPersonName,
+    factualMiddleLine: observation?.statement,
+    rebuildSolutionLine: observation?.rebuildSentence,
+    recipientName: verifiedContactFirstNameForProspect(prospect),
   });
 }
 
 export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {
+  if (
+    prospect.websiteVerification?.version === "website-verification-v2"
+    && !websiteFitAllowsAutonomousOutreach(prospect)
+  ) {
+    throw new Error("The current evidence does not support website-rebuild outreach. Review and save an eligible website-fit decision before generating a draft.");
+  }
   const complianceFooter = outreachComplianceFooter(environment);
   const generatedAt = now();
   const manualMethod = prospect.bestManualContactMethod || prospectBestManualContactMethod(prospect);

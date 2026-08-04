@@ -4,6 +4,8 @@ import {
   websiteAvailabilityStatuses,
   websiteVerificationConfidenceLevels,
   websiteVerificationFailureCategories,
+  websiteFitDispositions,
+  websiteFitObservationKinds,
   contactEvidenceKinds,
   contactEvidenceMethods,
   prospectFitDispositions,
@@ -56,6 +58,9 @@ import {
   type ScoreKey,
   type WebsiteVerificationAttempt,
   type WebsiteVerificationReport,
+  type WebsiteFitAssessment,
+  type WebsiteFitObservation,
+  type ProspectFreshness,
 } from "@/lib/prospect-engine";
 import type { PreviewImageIntent, PreviewImageSet, PreviewImageSlot, PreviewImageSource, ResolvedPreviewImage } from "@/lib/preview-image-resolver";
 
@@ -793,6 +798,21 @@ function contactEvidenceValues(value: unknown): ContactRouteEvidence[] {
     if (!contactEvidenceMethods.includes(extractionMethod)) throw new Error("Contact evidence method is not supported.");
     if (!contactConfidenceLevels.includes(confidence)) throw new Error("Contact evidence confidence is not supported.");
     if (typeof candidate.domainMatchesBusiness !== "boolean") throw new Error("Contact evidence domain match must be true or false.");
+    const sourceType = candidate.sourceType === undefined
+      ? undefined
+      : text(candidate.sourceType, `Contact evidence ${index + 1} source type`, 40) as ContactRouteEvidence["sourceType"];
+    if (sourceType && !["owned_website", "official_social", "provider", "directory", "unknown"].includes(sourceType)) {
+      throw new Error("Contact evidence source type is not supported.");
+    }
+    const decision = candidate.decision === undefined
+      ? undefined
+      : text(candidate.decision, `Contact evidence ${index + 1} decision`, 40) as ContactRouteEvidence["decision"];
+    if (decision && !["autonomous_eligible", "manual_review_required", "rejected"].includes(decision)) {
+      throw new Error("Contact evidence decision is not supported.");
+    }
+    if (candidate.firstParty !== undefined && typeof candidate.firstParty !== "boolean") {
+      throw new Error("Contact evidence first-party flag must be true or false.");
+    }
     return {
       kind,
       value: text(candidate.value, `Contact evidence ${index + 1} value`, 2048),
@@ -801,14 +821,78 @@ function contactEvidenceValues(value: unknown): ContactRouteEvidence[] {
       confidence,
       domainMatchesBusiness: candidate.domainMatchesBusiness,
       discoveredAt: dateText(candidate.discoveredAt, `Contact evidence ${index + 1} discovered date`),
+      lastVerifiedAt: candidate.lastVerifiedAt === undefined
+        ? undefined
+        : dateText(candidate.lastVerifiedAt, `Contact evidence ${index + 1} last verified date`),
+      sourceType,
+      firstParty: candidate.firstParty as boolean | undefined,
+      decision,
+      decisionReason: candidate.decisionReason === undefined
+        ? undefined
+        : text(candidate.decisionReason, `Contact evidence ${index + 1} decision reason`, 1000),
     };
   });
+}
+
+function websiteFitObservationValue(value: unknown): WebsiteFitObservation | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Website-fit observation must be an object.");
+  const kind = text(value.kind, "Website-fit observation kind", 40) as WebsiteFitObservation["kind"];
+  if (!websiteFitObservationKinds.includes(kind)) throw new Error("Website-fit observation kind is not supported.");
+  return {
+    kind,
+    statement: text(value.statement, "Website-fit observation statement", 1000),
+    rebuildSentence: text(value.rebuildSentence, "Website-fit rebuild sentence", 1500),
+    evidence: stringArray(value.evidence, "Website-fit observation evidence", 12, 1000),
+    demoChecklist: stringArray(value.demoChecklist, "Website-fit demo checklist", 12, 500),
+  };
+}
+
+function websiteFitAssessmentValue(value: unknown): WebsiteFitAssessment {
+  if (!isRecord(value)) throw new Error("Website-fit assessment must be an object.");
+  const disposition = text(value.disposition, "Website-fit disposition", 60) as WebsiteFitAssessment["disposition"];
+  const confidence = text(value.confidence, "Website-fit confidence", 20) as WebsiteFitAssessment["confidence"];
+  const analysisOrigin = text(value.analysisOrigin, "Website-fit analysis origin", 40) as WebsiteFitAssessment["analysisOrigin"];
+  if (!websiteFitDispositions.includes(disposition)) throw new Error("Website-fit disposition is not supported.");
+  if (!websiteVerificationConfidenceLevels.includes(confidence)) throw new Error("Website-fit confidence is not supported.");
+  if (!["automated_html", "rendered_review", "manual", "not_applicable"].includes(analysisOrigin)) {
+    throw new Error("Website-fit analysis origin is not supported.");
+  }
+  return {
+    disposition,
+    reason: text(value.reason, "Website-fit reason", 2000),
+    supportingEvidence: stringArray(value.supportingEvidence, "Website-fit supporting evidence", 20, 1000),
+    confidence,
+    analysisOrigin,
+    evaluatedAt: dateText(value.evaluatedAt, "Website-fit evaluation date"),
+    observation: websiteFitObservationValue(value.observation),
+  };
+}
+
+function prospectFreshnessValue(value: unknown): ProspectFreshness {
+  if (!isRecord(value)) throw new Error("Prospect freshness must be an object.");
+  for (const flag of ["websiteVerificationFresh", "websiteFitFresh", "contactSourceFresh", "copyVersionFresh", "approvalFresh", "humanReviewRequired"] as const) {
+    if (typeof value[flag] !== "boolean") throw new Error(`Prospect freshness ${flag} must be true or false.`);
+  }
+  return {
+    lastVerifiedAt: dateText(value.lastVerifiedAt, "Prospect last verified date"),
+    nextVerificationAt: dateText(value.nextVerificationAt, "Prospect next verification date"),
+    nextDeepAssessmentAt: dateText(value.nextDeepAssessmentAt, "Prospect next deep-assessment date"),
+    websiteVerificationFresh: value.websiteVerificationFresh as boolean,
+    websiteFitFresh: value.websiteFitFresh as boolean,
+    contactSourceFresh: value.contactSourceFresh as boolean,
+    copyVersionFresh: value.copyVersionFresh as boolean,
+    approvalFresh: value.approvalFresh as boolean,
+    lastMeaningfulChange: dateText(value.lastMeaningfulChange, "Prospect last meaningful change"),
+    staleReason: text(value.staleReason ?? "", "Prospect stale reason", 2000, false),
+    humanReviewRequired: value.humanReviewRequired as boolean,
+  };
 }
 
 export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificationReport | undefined {
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) throw new Error("Website verification must be an object.");
-  if (value.version !== "website-verification-v1") throw new Error("Website verification version is not supported.");
+  if (!["website-verification-v1", "website-verification-v2"].includes(String(value.version))) throw new Error("Website verification version is not supported.");
   const status = text(value.status, "Website verification status", 40) as WebsiteAvailabilityStatus;
   const confidence = text(value.confidence, "Website verification confidence", 20) as WebsiteVerificationReport["confidence"];
   if (!websiteAvailabilityStatuses.includes(status)) throw new Error("Website verification status is not supported.");
@@ -842,8 +926,15 @@ export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificat
       timestamp: dateText(candidate.timestamp, `Website verification attempt ${index + 1} timestamp`),
     };
   });
+  const version = value.version as WebsiteVerificationReport["version"];
+  const ownershipDecision = value.ownershipDecision === undefined
+    ? undefined
+    : text(value.ownershipDecision, "Website ownership decision", 20) as WebsiteVerificationReport["ownershipDecision"];
+  if (ownershipDecision && !["owned", "not_owned", "uncertain"].includes(ownershipDecision)) {
+    throw new Error("Website ownership decision is not supported.");
+  }
   return {
-    version: "website-verification-v1",
+    version,
     status,
     confidence,
     canonicalUrl: text(value.canonicalUrl ?? "", "Website verification canonical URL", 2048, false),
@@ -851,6 +942,10 @@ export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificat
     usableSignals: stringArray(value.usableSignals, "Website verification usable signals", 20, 120),
     explanation: text(value.explanation, "Website verification explanation", 1000),
     checkedAt: dateText(value.checkedAt, "Website verification checked date"),
+    ownershipDecision,
+    identityEvidence: value.identityEvidence === undefined ? undefined : stringArray(value.identityEvidence, "Website identity evidence", 20, 1000),
+    fit: value.fit === undefined ? undefined : websiteFitAssessmentValue(value.fit),
+    freshness: value.freshness === undefined ? undefined : prospectFreshnessValue(value.freshness),
   };
 }
 

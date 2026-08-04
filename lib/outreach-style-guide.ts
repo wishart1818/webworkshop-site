@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "manual_lovable_permission_first_v6";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v7";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [
@@ -25,7 +25,7 @@ export const webworkshopOutreachStyleGuide = {
     "Use saved trade and market as the safe contextual fallback when both are available.",
     "Say designed to help bring in more calls and quote requests; never guarantee results.",
     "Mention that Brendan is based in Findlay only for Findlay-area or Northwest Ohio prospects.",
-    "Use a verified first name when available. Otherwise use a safe neutral greeting rather than a long legal business name plus team.",
+    "Use a verified first name when available. Otherwise use the clean verified business name plus team.",
     "Keep the CTA, closing, and opt-out structure stable.",
   ],
   allowedReasons: [
@@ -48,9 +48,9 @@ export function webworkshopOptOutPattern() {
 
 export function webworkshopPreviewValueLine(kind: "no_website" | "has_website") {
   if (kind === "no_website") {
-    return "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests.";
+    return "I can build you a modern website from the ground up that clearly presents your services and makes it easier for customers to call or request a quote.";
   }
-  return "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.";
+  return "I can rebuild your current website with a more modern design that better represents your business and makes your services, contact information, and quote request easier for customers to find.";
 }
 
 export function webworkshopYesReply(_previewLink = "") {
@@ -146,6 +146,14 @@ export function webworkshopRecipientFirstName(value?: string) {
   return candidate.charAt(0).toUpperCase() + candidate.slice(1);
 }
 
+export function webworkshopCleanBusinessName(value: string) {
+  const cleaned = value.trim()
+    .replace(/\s+/g, " ")
+    .replace(/(?:,?\s+)(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?)$/i, "")
+    .trim();
+  return cleaned || value.trim() || "there";
+}
+
 export function webworkshopFirstEmail({
   businessName,
   trade,
@@ -153,6 +161,7 @@ export function webworkshopFirstEmail({
   kind,
   footer,
   factualMiddleLine,
+  rebuildSolutionLine,
   recipientName,
 }: {
   businessName: string;
@@ -161,14 +170,17 @@ export function webworkshopFirstEmail({
   kind: "no_website" | "has_website";
   footer: string;
   factualMiddleLine?: string;
+  rebuildSolutionLine?: string;
   recipientName?: string;
 }) {
   const verifiedRecipientFirstName = webworkshopRecipientFirstName(recipientName);
-  const greeting = verifiedRecipientFirstName ? `Hi ${verifiedRecipientFirstName},` : "Hi there,";
+  const greeting = verifiedRecipientFirstName
+    ? `Hi ${verifiedRecipientFirstName},`
+    : `Hi ${webworkshopCleanBusinessName(businessName)} team,`;
   const introduction = webworkshopShouldMentionFindlay(city)
     ? "I'm Brendan, based in Findlay, and I build websites for local service businesses."
     : "I'm Brendan, and I build websites for local service businesses.";
-  const valueLine = webworkshopPreviewValueLine(kind);
+  const valueLine = rebuildSolutionLine?.trim() || webworkshopPreviewValueLine(kind);
   const optionalFact = factualMiddleLine?.trim() && factualMiddleLine.trim() !== valueLine
     ? factualMiddleLine.trim()
     : "";
@@ -188,16 +200,23 @@ export function webworkshopFirstEmail({
   ].filter((line, index, lines) => line !== "" || index === 1 || lines[index - 1] !== "").join("\n");
 }
 
-export function webworkshopFirstDm(businessName: string, kind: "no_website" | "has_website") {
-  const offer = webworkshopPreviewValueLine(kind);
-  return `Hey, how's it going? I came across ${businessName}. ${offer} Would you be interested in seeing what that could look like?`;
+export function webworkshopFirstDm(
+  businessName: string,
+  kind: "no_website" | "has_website",
+  observation = "",
+  rebuildSolution = "",
+) {
+  const offer = rebuildSolution.trim() || webworkshopPreviewValueLine(kind);
+  const businessReference = /[.!?]$/.test(businessName.trim()) ? businessName.trim() : `${businessName.trim()}.`;
+  return `Hey, how's it going? I came across ${businessReference} ${observation.trim() ? `${observation.trim()} ` : ""}${offer} Would you be interested in seeing what that could look like?`;
 }
 
 export function webworkshopSofterFirstDm(businessName: string, kind: "no_website" | "has_website") {
   const offer = kind === "no_website"
-    ? "It looks like you don't currently have a full website up. I can build you a modern one."
-    : "I can build you a refreshed, more modern website.";
-  return `Hey, how's it going? I came across ${businessName}. ${offer} Would you be interested in seeing what that could look like?`;
+    ? `I couldn't find a dedicated website linked from the business's public profiles. ${webworkshopPreviewValueLine("no_website")}`
+    : webworkshopPreviewValueLine("has_website");
+  const businessReference = /[.!?]$/.test(businessName.trim()) ? businessName.trim() : `${businessName.trim()}.`;
+  return `Hey, how's it going? I came across ${businessReference} ${offer} Would you be interested in seeing what that could look like?`;
 }
 
 export function webworkshopLoomScript(context: string) {

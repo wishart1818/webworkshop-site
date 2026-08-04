@@ -32,6 +32,12 @@ import {
   type OperatorActionResult,
 } from "@/lib/operator-test-center";
 import { latestOperatorSafeTestResults, type OperatorSafeTestRecord } from "@/lib/operator-test-history";
+import {
+  normalizeWebsiteFitDisposition,
+  prospectQualificationBlockReasons,
+  verifiedContactFirstNameForProspect,
+  websiteFitAllowsAutonomousOutreach,
+} from "@/lib/prospect-qualification";
 import { getProspectDatabase, listProspectsWithDiagnostics, type ProspectListResult } from "@/lib/prospect-repository";
 import {
   likelyFranchise,
@@ -293,17 +299,19 @@ function candidateIssues(
     outreachHistoryTextIndicatesProtectedContact(historyText) ? "Prospect activity or notes show protected prior contact or suppression." : "",
     websiteBlock,
     prospectWebsiteAbsenceNeedsManualReview(prospect) ? "Website absence or availability remains unverified." : "",
-    prospect.fitDisposition === "confirmed_usable_not_fit" ? "The verified usable website is marked not a fit." : "",
-    !["genuine_redesign_opportunity", "weak_redesign_opportunity"].includes(prospect.fitDisposition)
-      && prospect.websiteVerification?.status === "usable"
-      ? "A usable website is not a confirmed redesign opportunity or still requires manual fit review."
+    !websiteFitAllowsAutonomousOutreach(prospect)
+      ? ["adequate_existing_website", "strong_existing_website"].includes(normalizeWebsiteFitDisposition(prospect))
+        ? "The verified usable website is not a fit for rebuild outreach."
+        : "Website fit is inconclusive or lacks current eligible evidence."
       : "",
     likelyNationalOrLargeBrand(prospect) ? "National or large-brand prospects are blocked." : "",
     likelyFranchise(prospect) ? "Franchise-like prospects require manual review." : "",
     likelySupplierOrDistributor(prospect) ? "Supplier or distributor prospects are blocked." : "",
     websiteBusinessMismatch(prospect) ? "Website and business identity appear mismatched." : "",
     !prospect.businessName.trim() ? "Confirmed business identity is missing." : "",
-    prospect.contactPersonName.trim() ? "A person name is stored without dedicated verification provenance." : "",
+    prospect.contactPersonName.trim() && !verifiedContactFirstNameForProspect(prospect)
+      ? "A person name is stored without dedicated first-party verification provenance."
+      : "",
     !prospect.email.trim() ? "Public business email is missing." : "",
     prospectEmailNeedsManualVerification(prospect) ? "Public email is suspicious or needs manual verification." : "",
     !emailEvidence ? "Public email lacks exact source URL, extraction method, and confidence evidence." : "",
@@ -322,6 +330,7 @@ function candidateIssues(
     }, environment) ? "The exact first-touch draft does not match the current permission-first standard." : "",
     ...prospectFacingEmailBodySafe(item, environment),
     !item.eligibilityReason.trim() ? "A written business-fit reason is missing." : "",
+    ...prospectQualificationBlockReasons(prospect),
     ...sendReadiness.blockedReasons.filter((reason) => !/Only Queued email items/i.test(reason)),
   ].filter(Boolean);
 }

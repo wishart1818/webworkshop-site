@@ -19,10 +19,65 @@ process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
 
 const publicLink = publicProspectPreviewLink("abcdefghijklmnopqrstuvwxyzABCDEF");
 
+function withCurrentQualificationEvidence(prospect: Prospect): Prospect {
+  const checkedAt = new Date().toISOString();
+  const website = prospect.website || `https://${prospect.email.split("@")[1]}`;
+  const contactPageUrl = `${website.replace(/\/$/, "")}/contact`;
+  const observation = {
+    kind: "service_clarity" as const,
+    statement: "I noticed the current site makes the main services difficult to scan quickly.",
+    rebuildSentence: "I can rebuild the website with a clearer service layout and an easier path to call or request a quote.",
+    evidence: ["The verified services are present but not organized in a clear customer-facing list."],
+    demoChecklist: ["Show the verified services in a clear hierarchy", "Show the phone and quote-request actions"],
+  };
+  return {
+    ...prospect,
+    website,
+    websiteStatus: "usable",
+    websiteStatusDetail: "The owned business website was verified.",
+    fitDisposition: "clearly_weak_or_outdated_website",
+    contactPageUrl,
+    websiteVerification: {
+      version: "website-verification-v2",
+      status: "usable",
+      confidence: "high",
+      canonicalUrl: website,
+      attempts: [],
+      usableSignals: ["business identity", "service content", "public contact"],
+      explanation: "The owned business website was verified.",
+      checkedAt,
+      ownershipDecision: "owned",
+      identityEvidence: ["Business name and contact information match the provider record."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website",
+        reason: "The service presentation needs a clearer customer-facing hierarchy.",
+        supportingEvidence: observation.evidence,
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: checkedAt,
+        observation,
+      },
+    },
+    contactEvidence: [{
+      kind: "email",
+      value: prospect.email,
+      sourceUrl: contactPageUrl,
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain email is visibly published on the verified contact page.",
+    }],
+  };
+}
+
 function legacyProspect(overrides: Partial<Prospect> = {}): Prospect {
   const generatedAt = new Date(1).toISOString();
   const prospect = withPreview(withAnalysis(structuredClone(seedProspects[0])));
-  return {
+  return withCurrentQualificationEvidence({
     ...prospect,
     id: "legacy-prospect",
     businessName: "Legacy Pressure Washing",
@@ -42,7 +97,7 @@ function legacyProspect(overrides: Partial<Prospect> = {}): Prospect {
       outreachCopyGeneratedAt: generatedAt,
     },
     ...overrides,
-  };
+  });
 }
 
 function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueItem {
@@ -148,13 +203,13 @@ test("qualified Prospect missing queue item receives review-only package without
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
-  const prospect = {
+  const prospect = withCurrentQualificationEvidence({
     ...withOutreach(withPreview(withAnalysis(structuredClone(seedProspects[0])))),
     id: "missing-queue-prospect",
     website: "https://missingqueue.com",
     email: "owner@missingqueue.com",
     recommendedContactMethod: "send_email" as const,
-  };
+  });
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([]);
 
