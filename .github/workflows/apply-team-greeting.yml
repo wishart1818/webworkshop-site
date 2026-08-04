@@ -1,0 +1,73 @@
+name: Apply team greeting simplification
+
+on:
+  pull_request:
+    branches:
+      - fix/team-greeting-simplification
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/team-greeting-simplification
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply one-time migration
+        run: |
+          sed -i 's/re.subn(pattern, replacement, text/re.subn(pattern, lambda _match: replacement, text/' .github/apply-team-greeting.py
+          python .github/apply-team-greeting.py
+          python .github/fix-team-greeting-tests.py
+
+      - name: Verify repository and capture failure
+        env:
+          OUTREACH_EMAIL_DISABLED: "true"
+          OUTREACH_AUTO_SEND_ENABLED: "false"
+          OUTREACH_FULL_AUTO_ENABLED: "false"
+          OUTREACH_DAILY_CAP: "1"
+          WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840"
+        run: |
+          set +e
+          npm run verify 2>&1 | tee /tmp/team-greeting-verify.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 500 /tmp/team-greeting-verify.log > .github/team-greeting-verify-failure.log
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/team-greeting-verify-failure.log
+            git commit -m "Capture team greeting verification failure" || true
+            git push origin HEAD:fix/team-greeting-simplification
+            exit "$status"
+          fi
+
+      - name: Remove one-time migration files
+        run: |
+          rm -f .github/apply-team-greeting.py
+          rm -f .github/fix-team-greeting-tests.py
+          rm -f .github/workflows/apply-team-greeting.yml
+          rm -f .github/team-greeting-simplification-task.md
+          rm -f .github/team-greeting-verify-failure.log
+
+      - name: Commit verified implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Simplify first-touch greetings to business teams"
+          git push origin HEAD:fix/team-greeting-simplification
