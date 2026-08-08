@@ -568,6 +568,60 @@ test("just-in-time source removal returns the claimed draft to review before any
   }
 });
 
+test("provider dispatch rechecks prospect-level blockers added after queue approval", async () => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  const blockedCases: Array<{ label: string; change: Partial<Prospect>; expected: RegExp }> = [
+    { label: "do not contact", change: { recommendedContactMethod: "do_not_contact" }, expected: /do_not_contact|not eligible for automatic email/i },
+    { label: "inactive", change: { inactive: true }, expected: /inactive prospects/i },
+    { label: "bad fit", change: { classification: "duplicate_bad_fit" }, expected: /duplicate|bad-fit/i },
+    { label: "manual channel", change: { recommendedContactMethod: "submit_contact_form" }, expected: /submit_contact_form|not eligible for automatic email/i },
+    { label: "no solicitation", change: { activitySignals: ["no solicitation"] }, expected: /no-solicitation/i },
+  ];
+  try {
+    Object.assign(process.env, postalEnvironment);
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "must-not-send" }), { status: 200 });
+    };
+
+    for (const blockedCase of blockedCases) {
+      resetProspectMemoryForTests();
+      resetAutonomousGrowthMemoryForTests();
+      const prospect = verifiedWeakProspect({ id: `post-approval-${blockedCase.label.replaceAll(" ", "-")}` });
+      setProspectMemoryForTests([prospect]);
+      setOutreachQueueMemoryForTests([]);
+      await updateAutonomousGrowthSettings({
+        ...defaultAutonomousGrowthSettings,
+        mode: "auto_email_pilot",
+        killSwitch: false,
+        maxEmailsSentPerDay: 1,
+      });
+      const item = await upsertAutonomousQueueItemFromPackage({
+        prospect,
+        previewLink: "",
+        outreachPreference: "written_only",
+        topProspectResultId: `result-${prospect.id}`,
+      });
+      const approved = await approveAndQueueEmail(item.id);
+      assert.equal(approved.queued, true, `${blockedCase.label}: ${approved.blockedReasons.join("; ")}`);
+
+      setProspectMemoryForTests([{ ...prospect, ...blockedCase.change }]);
+      const result = await sendQueuedEmailQueueItem(item.id);
+      assert.equal(result.sent, false, blockedCase.label);
+      assert.match(result.blockedReasons.join(" "), blockedCase.expected, blockedCase.label);
+    }
+
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
 test("just-in-time revalidation dispatches only after the approved website, fit, and email source remain unchanged", async () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;

@@ -2029,6 +2029,21 @@ function providerDispatchProspectBlockReasons(
     !["New", "Reviewed"].includes(prospect.status)
       ? `Prospect status ${prospect.status} is already contacted or closed.`
       : "",
+    prospect.inactive
+      ? "Inactive prospects cannot reach provider dispatch."
+      : "",
+    ["national_large_brand", "duplicate_bad_fit"].includes(prospect.classification)
+      ? "National, duplicate, or bad-fit prospects cannot reach provider dispatch."
+      : "",
+    ["call_first", "message_on_facebook", "message_on_social", "submit_contact_form", "do_not_contact"].includes(prospect.recommendedContactMethod)
+      ? `Prospect contact method ${prospect.recommendedContactMethod} is not eligible for automatic email.`
+      : "",
+    !prospectWrittenContactMethodIsUsable(prospect)
+      ? "The prospect no longer has a usable verified email contact path."
+      : "",
+    prospect.activitySignals.some((signal) => /\b(no[- ]?solicitation|do not solicit|no sales calls|no marketing emails|opt(?:ed)? out)\b/i.test(signal))
+      ? "No-solicitation or opt-out evidence blocks provider dispatch."
+      : "",
     outreachHistoryTextIndicatesProtectedContact(history)
       ? "Prospect activity or notes show protected prior contact or suppression."
       : "",
