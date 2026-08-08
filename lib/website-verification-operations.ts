@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
+  applySelectedWebsiteRepairsAtomically,
   listOutreachQueueItemsForBackfill,
   repairOutreachQueueItemForReadiness,
   safeReadinessRepairProtectionReason,
@@ -960,26 +961,25 @@ export async function auditExistingWebsiteRecords(input: {
   let changed = 0;
   const skippedProtected = inspected.filter((candidate) => Boolean(candidate.record.protectedReason)).length;
   if (input.apply) {
-    for (const candidate of selectedCandidates) {
-      if (!candidate.verified) continue;
-      const queueResult = await revokeStaleQueueApproval(
-        candidate.prospect,
-        candidate.record.proposedOutcome === "exclude_from_rebuild_outreach"
+    const atomicResult = await applySelectedWebsiteRepairsAtomically({
+      mutations: selectedCandidates.map((candidate) => ({
+        expectedProspect: candidate.prospect,
+        proposedProspect: withApprovalRevoked(candidate.verified!.prospect, true),
+        expectedQueueItems: queueByProspect.get(candidate.prospect.id) ?? [],
+        queueReason: candidate.record.proposedOutcome === "exclude_from_rebuild_outreach"
           ? "Current verified website fit excludes this prospect from website-rebuild outreach. Any stale approval was removed and the record remains non-sendable."
           : "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.",
-      );
-      if (queueResult.activeQueueItems || queueResult.protectedQueueItems) {
-        throw new Error(queueResult.activeQueueItems
-          ? "A selected record became protected by an email provider attempt or ambiguous outcome. Run a fresh dry run."
-          : "A selected record gained protected outreach or contact history. Run a fresh dry run.");
-      }
-      const saved = await saveProspect(withApprovalRevoked(candidate.verified.prospect, true));
+      })),
+      now,
+    });
+    changed = atomicResult.changedProspectIds.length;
+    for (const candidate of selectedCandidates) {
       await safeRecordAudit({
         action: "existing_website_record_repair",
         outcome: "success",
-        subject: saved.businessName,
+        subject: candidate.record.businessName,
         metadata: {
-          prospectId: saved.id,
+          prospectId: candidate.prospect.id,
           oldStatus: candidate.record.oldStatus,
           newStatus: candidate.record.proposedStatus,
           changedFields: candidate.record.changedFields,
@@ -987,7 +987,6 @@ export async function auditExistingWebsiteRecords(input: {
           sent: 0,
         },
       });
-      changed += 1;
     }
   }
   if (input.apply) {

@@ -4,6 +4,7 @@ import {
   outreachQueueItemHasPersistedApproval,
   outreachQueueMemoryForTests,
   resetAutonomousGrowthMemoryForTests,
+  setAtomicWebsiteRepairFailureProspectIdForTests,
   setOutreachQueueMemoryForTests,
 } from "../lib/autonomous-growth-repository";
 import {
@@ -629,6 +630,97 @@ test("selective repair changes only the explicitly selected signed-snapshot reco
     assert.equal(result.nothingSent, true);
     assert.equal(memoryAuditEventsForTests().some((event) => /send/i.test(event.action)), false);
   } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("multi-record selective apply fails before mutation when a later record becomes protected", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const first = legacyProspect({ id: "atomic-preflight-1" });
+  const later = legacyProspect({ id: "atomic-preflight-2" });
+  const firstQueue = queueItem(first);
+  const laterQueue = queueItem(later);
+  const prospectsBefore = structuredClone([first, later]);
+  setProspectMemoryForTests([first, later]);
+  setOutreachQueueMemoryForTests([firstQueue, laterQueue]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 2,
+    });
+    const protectedQueue = {
+      ...laterQueue,
+      status: "Sending" as const,
+      notes: "[auto-email-ambiguous] Provider outcome pending.",
+      updatedAt: "2026-07-28T15:01:00.000Z",
+    };
+    setOutreachQueueMemoryForTests([firstQueue, protectedQueue]);
+    const queueBeforeApply = structuredClone(outreachQueueMemoryForTests());
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [first.id, later.id],
+        snapshotSecret,
+        limit: 2,
+      }),
+      /evidence changed since the reviewed dry run|protected|provider/i,
+    );
+    assert.deepEqual(await Promise.all([getProspect(first.id), getProspect(later.id)]), prospectsBefore);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBeforeApply);
+    assert.equal(memoryAuditEventsForTests().some((event) => event.outcome === "success"), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("atomic selected repair rolls back earlier writes when a later persistence write fails", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const first = legacyProspect({ id: "atomic-rollback-1" });
+  const later = legacyProspect({ id: "atomic-rollback-2" });
+  const prospectsBefore = structuredClone([first, later]);
+  const queueBefore = [queueItem(first), queueItem(later)];
+  setProspectMemoryForTests([first, later]);
+  setOutreachQueueMemoryForTests(queueBefore);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 2,
+    });
+    setAtomicWebsiteRepairFailureProspectIdForTests(later.id);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [first.id, later.id],
+        snapshotSecret,
+        limit: 2,
+      }),
+      /simulated atomic website-repair write failure/i,
+    );
+    assert.deepEqual(await Promise.all([getProspect(first.id), getProspect(later.id)]), prospectsBefore);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
+    assert.equal(memoryAuditEventsForTests().some((event) => event.outcome === "success"), false);
+  } finally {
+    setAtomicWebsiteRepairFailureProspectIdForTests();
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();

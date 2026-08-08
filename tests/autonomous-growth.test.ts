@@ -1984,6 +1984,7 @@ test("database send and approval paths use conditional serializable claims", () 
   assert.match(operationalControls, /rateLimitBucket\.upsert[\s\S]*action_subject_windowStart[\s\S]*count:\s*\{\s*increment:\s*1\s*\}/);
   assert.match(repository, /approveAndQueueEmail[\s\S]*packageStatus\s*===\s*"SENT"[\s\S]*packageSentAt[\s\S]*throw new ApprovalBlockedError/);
   assert.match(repository, /approveAndQueueEmail[\s\S]*outreachDraft\.updateMany[\s\S]*outreachQueueItem\.updateMany[\s\S]*isolationLevel:\s*"Serializable"/);
+  assert.match(repository, /applySelectedWebsiteRepairsAtomically[\s\S]*\$transaction[\s\S]*assertAtomicRepairSnapshot[\s\S]*clearPersistedApproval\(transaction[\s\S]*persistProspectInTransaction\(transaction[\s\S]*isolationLevel:\s*"Serializable"/);
   assert.doesNotMatch(repository, /autoEmailPilotCyclePromise/);
 });
 
