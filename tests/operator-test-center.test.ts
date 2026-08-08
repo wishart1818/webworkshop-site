@@ -31,7 +31,14 @@ import {
   recordOperatorSafeTestResult,
 } from "../lib/operator-test-history";
 import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
+import { createProspect, type Prospect } from "../lib/prospect-engine";
 import {
+  getProspect,
+  resetProspectMemoryForTests,
+  setProspectMemoryForTests,
+} from "../lib/prospect-repository";
+import {
+  currentPermissionFirstWebsiteWordingPasses,
   generateOneTestOutreachPackage,
   getOperatorTestCenterPayload,
   runFullAutonomousReadinessTest,
@@ -144,6 +151,78 @@ function readinessQueueItem(overrides: Partial<OutreachQueueItem> = {}): Outreac
     updatedAt: now,
     ...overrides,
   };
+}
+
+function evidenceReadyProspectForQueue(
+  item: OutreachQueueItem,
+  overrides: Partial<Prospect> = {},
+) {
+  const checkedAt = new Date().toISOString();
+  const website = item.website || "https://readypressurewashing.example";
+  const legitimateEmail = overrides.email || (item.email.includes("totalwptheme.com")
+    ? "owner@suspicious-email-co.example"
+    : item.email);
+  const base = createProspect({
+    businessName: item.businessName,
+    website,
+    email: legitimateEmail,
+    city: item.city.split(",")[0] || "Tampa",
+    state: item.city.split(",")[1]?.trim() || "FL",
+    trade: item.trade || "Pressure Washing",
+    status: "Reviewed",
+  });
+  const host = new URL(website).hostname;
+  const observation = {
+    kind: "quote_path" as const,
+    statement: "I noticed the quote request is difficult to find from the main service page.",
+    rebuildSentence: "I can rebuild your current website with a more modern design that gives the quote request a clear place alongside your services, while also making your services, contact information, and quote request easier for customers to find.",
+    evidence: ["A rendered review found that the quote action is separated from the main service content."],
+    demoChecklist: ["Show the quote action beside the primary services"],
+  };
+  return {
+    ...base,
+    id: item.prospectId,
+    status: "Reviewed",
+    websiteStatus: "usable",
+    websiteStatusDetail: "A current owned website and one grounded rebuild issue were verified.",
+    fitDisposition: "clearly_weak_or_outdated_website",
+    contactEvidence: [{
+      kind: "email",
+      value: legitimateEmail,
+      sourceUrl: `https://${host}/contact`,
+      extractionMethod: "mailto",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+      lastVerifiedAt: checkedAt,
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The exact business mailbox is visibly published on the owned contact page.",
+    }],
+    websiteVerification: {
+      version: "website-verification-v2",
+      status: "usable",
+      confidence: "high",
+      canonicalUrl: `${website.replace(/\/$/, "")}/`,
+      attempts: [],
+      usableSignals: ["meaningful page title", "business name", "navigation", "service content", "mobile viewport"],
+      explanation: "A meaningful owned business website was verified.",
+      checkedAt,
+      ownershipDecision: "owned",
+      identityEvidence: ["The saved business identity and website host match."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website",
+        reason: "A rendered review verified one customer-facing quote-path issue.",
+        supportingEvidence: observation.evidence,
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: checkedAt,
+        observation,
+      },
+    },
+    ...overrides,
+  } satisfies Prospect;
 }
 
 test("internal notification test only sends to INTERNAL_NOTIFY_EMAIL", async () => {
@@ -383,7 +462,8 @@ test("outdated unsent packages are named in readiness output instead of appearin
     assert.equal(readiness.readiness?.failed.length, baselineReadiness.readiness?.failed.length);
     assert.equal(readiness.readiness?.failedRecords.length, baselineReadiness.readiness?.failedRecords.length);
     assert.equal(readiness.readiness?.failedRecords.length, 0);
-    assert.match(readiness.readiness?.summaries.full ?? "", /Eligible records needing attention: 0/);
+    assert.match(readiness.readiness?.summaries.full ?? "", /Blocking current-evidence records needing attention: 0/);
+    assert.doesNotMatch(readiness.readiness?.summaries.full ?? "", /Eligible records needing attention/i);
     assert.match(readiness.readiness?.summaries.full ?? "", /Informational outdated packages: 1/);
     assert.match(readiness.readiness?.summaries.failedOnly ?? "", /Named Outdated Package/);
     assert.match(readiness.readiness?.summaries.failedOnly ?? "", /standardized_permission_first_v2/);
@@ -395,6 +475,101 @@ test("outdated unsent packages are named in readiness output instead of appearin
   } finally {
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
+  }
+});
+
+test("readiness separates legacy and source-less email records from autonomous eligibility", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
+  const legacy = readinessQueueItem({
+    id: "legacy-evidence-package",
+    prospectId: "legacy-evidence-prospect",
+    businessName: "Legacy Evidence Co",
+    status: "Needs Review",
+    queuedDate: "",
+    outreachCopyVersion: "standardized_permission_first_v2",
+  });
+  const sourceLess = readinessQueueItem({
+    id: "source-less-package",
+    prospectId: "source-less-prospect",
+    businessName: "Source Less Email Co",
+    status: "Needs Review",
+    queuedDate: "",
+  });
+  const sourceLessProspect = {
+    ...evidenceReadyProspectForQueue(sourceLess),
+    contactEvidence: [],
+  } satisfies Prospect;
+  setOutreachQueueMemoryForTests([legacy, sourceLess]);
+  setProspectMemoryForTests([sourceLessProspect]);
+  const queueBefore = outreachQueueMemoryForTests();
+  const prospectBefore = JSON.stringify(await getProspect(sourceLessProspect.id));
+  try {
+    const result = await runFullAutonomousReadinessTest(readinessEnv({
+      OUTREACH_EMAIL_DISABLED: "true",
+      OUTREACH_AUTO_SEND_ENABLED: "false",
+    }));
+    assert.equal(result.readiness?.autonomouslyEligibleRecords, 0);
+    assert.ok(result.readiness?.evidenceReviewRecords.some((record) => record.packageId === legacy.id && record.evidenceState === "legacy_candidate"));
+    assert.ok(result.readiness?.evidenceReviewRecords.some((record) => record.packageId === sourceLess.id && record.evidenceState === "evidence_incomplete" && /source URL|provenance/i.test(record.reason)));
+    assert.equal(result.readiness?.failedRecords.some((record) => [legacy.id, sourceLess.id].includes(record.packageId)), false);
+    assert.match(result.readiness?.summaries.full ?? "", /Autonomously eligible queue records: 0/);
+    assert.doesNotMatch(result.readiness?.summaries.full ?? "", /Eligible records needing attention/i);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
+    assert.equal(JSON.stringify(await getProspect(sourceLessProspect.id)), prospectBefore);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+    resetProspectMemoryForTests();
+  }
+});
+
+test("Pinnacle-style strong website is excluded before any outdated copy regeneration recommendation", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
+  const item = readinessQueueItem({
+    id: "strong-site-old-copy",
+    prospectId: "strong-site-prospect",
+    businessName: "Pinnacle-style Strong Site",
+    status: "Needs Review",
+    queuedDate: "",
+    outreachCopyVersion: "standardized_permission_first_v2",
+  });
+  const evidenceReady = evidenceReadyProspectForQueue(item);
+  const strong = {
+    ...evidenceReady,
+    fitDisposition: "strong_existing_website" as const,
+    websiteVerification: {
+      ...evidenceReady.websiteVerification!,
+      fit: {
+        disposition: "strong_existing_website" as const,
+        reason: "Rendered review confirms a professional, complete existing website.",
+        supportingEvidence: ["Branding, mobile layout, services, and quote paths are complete."],
+        confidence: "high" as const,
+        analysisOrigin: "rendered_review" as const,
+        evaluatedAt: new Date().toISOString(),
+      },
+    },
+  } satisfies Prospect;
+  setOutreachQueueMemoryForTests([item]);
+  setProspectMemoryForTests([strong]);
+  const before = outreachQueueMemoryForTests();
+  try {
+    const result = await runFullAutonomousReadinessTest(readinessEnv({
+      OUTREACH_EMAIL_DISABLED: "true",
+      OUTREACH_AUTO_SEND_ENABLED: "false",
+    }));
+    assert.equal(result.readiness?.failedRecords.some((record) => record.packageId === item.id), false);
+    assert.ok(result.readiness?.excludedRecords.some((record) => record.packageId === item.id && /adequate or strong.*regardless of business score/i.test(record.excludedReason)));
+    assert.match(result.readiness?.outdatedCopyRecords.find((record) => record.packageId === item.id)?.proposedChange ?? "", /Keep this draft informational and do not regenerate/i);
+    assert.equal(result.readiness?.autonomouslyEligibleRecords, 0);
+    assert.deepEqual(outreachQueueMemoryForTests(), before);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+    resetProspectMemoryForTests();
   }
 });
 
@@ -551,6 +726,7 @@ test("Operator Test Center fake package models the manual Lovable workflow witho
   assert.equal(result.packagePreview?.firstEmailLinkFree, true);
   assert.equal(result.packagePreview?.firstDmLinkFree, true);
   assert.equal(result.packagePreview?.yesReplyLinkFree, true);
+  assert.equal(result.packagePreview?.currentWebsiteWording, true);
   assert.match(result.packagePreview?.publicPreviewLink ?? "", /^https:\/\/webworkshop\.dev\/p\//);
   assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you be interested in seeing what that could look like\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Would you be interested in seeing what that could look like\?/i.test(script.body)));
@@ -560,6 +736,13 @@ test("Operator Test Center fake package models the manual Lovable workflow witho
   assert.ok(fake?.scripts.some((script) => script.label === "Follow-up"));
   assert.ok(fake?.scripts.some((script) => script.label === "Not interested reply"));
   assert.match(fake?.fullSummary ?? "", /rebuild your current website with a more modern design/i);
+  const firstEmail = fake?.scripts.find((script) => script.label === "First email script")?.body ?? "";
+  const observation = "I noticed the current quote request is difficult to find from the main service page.";
+  const rebuildSentence = "I can rebuild your current website with a more modern design that gives the quote request a clear place alongside your core services, while also making your services, contact information, and quote request easier for customers to find.";
+  assert.match(firstEmail, /I noticed the current quote request is difficult to find/i);
+  assert.equal(currentPermissionFirstWebsiteWordingPasses({ firstEmail, observation, rebuildSentence }), true);
+  assert.ok(firstEmail.indexOf(observation) < firstEmail.indexOf(rebuildSentence));
+  assert.ok(firstEmail.indexOf(rebuildSentence) < firstEmail.indexOf("Would you be interested in seeing what that could look like?"));
   assert.match(fake?.fullSummary ?? "", /No email, DM, form, phone call, or Loom was sent/i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First email script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First Facebook\/Instagram DM script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
@@ -637,6 +820,7 @@ test("Full Autonomous Readiness Test checks manual-build copy, existing prospect
 test("Full Readiness excludes blocked old-copy records from pilot-blocking failures", async () => {
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
   const originalEnv = { ...process.env };
   try {
     process.env.GOOGLE_PLACES_API_KEY = "actual-google-key";
@@ -673,6 +857,7 @@ test("Full Readiness excludes blocked old-copy records from pilot-blocking failu
       outreachCopyVersion: "old_audit_copy_v0",
     });
     setOutreachQueueMemoryForTests([queuedReady, blockedOldCopy, affirmativelyContacted]);
+    setProspectMemoryForTests([evidenceReadyProspectForQueue(queuedReady)]);
     const before = JSON.stringify(outreachQueueMemoryForTests());
 
     const result = await runFullAutonomousReadinessTest(readinessEnv());
@@ -689,12 +874,14 @@ test("Full Readiness excludes blocked old-copy records from pilot-blocking failu
     process.env = originalEnv;
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
+    resetProspectMemoryForTests();
   }
 });
 
 test("Full Readiness blocks queued eligible old-copy records but not stale persisted readiness results", async () => {
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
   const originalEnv = { ...process.env };
   try {
     process.env.GOOGLE_PLACES_API_KEY = "actual-google-key";
@@ -729,6 +916,7 @@ test("Full Readiness blocks queued eligible old-copy records but not stale persi
       emailBody: "Old audit-style copy with One missed opportunity.",
     });
     setOutreachQueueMemoryForTests([oldQueued]);
+    setProspectMemoryForTests([evidenceReadyProspectForQueue(oldQueued)]);
     const before = JSON.stringify(outreachQueueMemoryForTests());
 
     const result = await runFullAutonomousReadinessTest(readinessEnv());
@@ -746,12 +934,14 @@ test("Full Readiness blocks queued eligible old-copy records but not stale persi
     process.env = originalEnv;
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
+    resetProspectMemoryForTests();
   }
 });
 
 test("safe readiness repair fixes deterministic copy, excludes suspicious email, and preserves ambiguous records for review", async () => {
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => {
@@ -808,6 +998,11 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
       outreachCopyVersion: "old_audit_copy_v0",
     });
     setOutreachQueueMemoryForTests([oldQueued, suspicious, ambiguous, sent, suppressed]);
+    setProspectMemoryForTests([
+      evidenceReadyProspectForQueue(oldQueued),
+      evidenceReadyProspectForQueue(suspicious),
+      evidenceReadyProspectForQueue(ambiguous),
+    ]);
     const protectedBefore = outreachQueueMemoryForTests().filter((item) => ["repair-sent", "repair-suppressed"].includes(item.id));
 
     const result = await runSafeReadinessRepair({
@@ -856,6 +1051,7 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     globalThis.fetch = originalFetch;
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
+    resetProspectMemoryForTests();
   }
 });
 

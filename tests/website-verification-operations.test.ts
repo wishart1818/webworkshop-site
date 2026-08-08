@@ -21,6 +21,8 @@ import {
   resetProspectMemoryForTests,
   setProspectMemoryForTests,
 } from "../lib/prospect-repository";
+import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
+import { verifyProspectWebsite } from "../lib/site-analysis";
 import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
@@ -184,9 +186,35 @@ function verificationDependencies(contactEmail = "info@truecleanprowash.com") {
   };
 }
 
+function inconclusiveWebsiteDependencies() {
+  const homepage = `
+    <!doctype html><html><head>
+      <title>True Clean Prowash | Columbus Exterior Cleaning</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <link rel="canonical" href="https://truecleanprowash.com/" />
+    </head><body>
+      <h1>True Clean Prowash</h1>
+      <p>Residential exterior cleaning and pressure washing in Columbus.</p>
+    </body></html>
+  `;
+  return {
+    fetch: (async (input: Parameters<typeof fetch>[0]) => {
+      const url = requestUrl(input);
+      if (new URL(url).pathname === "/") {
+        return new Response(homepage, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return new Response("Not found", { status: 404, headers: { "content-type": "text/html" } });
+    }) as typeof fetch,
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
+    now: () => new Date(now),
+  };
+}
+
 test("existing-record audit is dry-run only until exact confirmation is supplied", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
   const prospect = legacyProspect();
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([queueItem(prospect)]);
@@ -198,7 +226,15 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
     });
     assert.equal(dryRun.mode, "dry_run");
     assert.equal(dryRun.changed, 0);
+    assert.equal(dryRun.records[0]?.currentProspectStatus, "Reviewed");
+    assert.deepEqual(dryRun.records[0]?.currentQueueStatuses, ["Queued"]);
     assert.equal(dryRun.records[0]?.proposedStatus, "usable");
+    assert.equal(dryRun.records[0]?.proposedDisposition, "adequate_existing_website");
+    assert.equal(dryRun.records[0]?.websiteEvidenceSufficient, true);
+    assert.equal(dryRun.records[0]?.contactEvidenceSufficient, true);
+    assert.equal(dryRun.records[0]?.autonomouslyEligible, false);
+    assert.equal(dryRun.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.match(dryRun.records[0]?.exactReason ?? "", /regardless of business score/i);
     assert.match(dryRun.records[0]?.evidence ?? "", /Stored trigger: unreachable_website.*HTTP 508/i);
     assert.deepEqual(
       dryRun.records[0]?.fieldChanges.find((change) => change.field === "email"),
@@ -206,6 +242,8 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
     );
     assert.ok(dryRun.reviewToken.length > 40);
     assert.equal((await getProspect(prospect.id))?.websiteStatus, "unreachable_website");
+    assert.equal(outreachQueueMemoryForTests()[0]?.status, "Queued");
+    assert.equal(memoryAuditEventsForTests().length, 0);
     await assert.rejects(
       auditExistingWebsiteRecords({
         apply: true,
@@ -310,7 +348,7 @@ test("repair apply rejects changed website evidence instead of applying a differ
   }
 });
 
-test("legacy website audit uses a small bounded request batch", async () => {
+test("legacy website audit uses an explicit bounded request batch without hiding remaining candidates", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const prospects = Array.from({ length: 6 }, (_, index) => legacyProspect({
@@ -323,9 +361,12 @@ test("legacy website audit uses a small bounded request batch", async () => {
       apply: false,
       dependencies: verificationDependencies(),
       snapshotSecret,
+      limit: 3,
     });
-    assert.equal(result.inspected, 2);
-    assert.equal(result.records.length, 2);
+    assert.equal(result.candidates, 6);
+    assert.equal(result.inspected, 3);
+    assert.equal(result.remainingCandidates, 3);
+    assert.equal(result.records.length, 3);
     assert.equal(result.nothingSent, true);
   } finally {
     resetProspectMemoryForTests();
@@ -449,6 +490,122 @@ test("usable-not-fit disposition removes eligibility without recording contact o
   }
 });
 
+test("legacy Needs Review inventory is inspected even without a legacy error status", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({
+    id: "legacy-needs-review",
+    websiteStatus: "usable",
+    websiteStatusDetail: "Legacy usable status without v2 evidence.",
+    classification: "website_redesign",
+    recommendedContactMethod: "send_email",
+    websiteVerification: undefined,
+  });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect, "Needs Review")]);
+  try {
+    const result = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+    });
+    assert.equal(result.inspected, 1);
+    assert.equal(result.records[0]?.businessName, "True Clean Prowash");
+    assert.equal(result.records[0]?.legacyCandidate, true);
+    assert.equal(result.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.equal(result.nothingSent, true);
+    assert.equal((await getProspect(prospect.id))?.websiteVerification, undefined);
+    assert.equal(outreachQueueMemoryForTests()[0]?.status, "Needs Review");
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("inconclusive legacy website remains manual review and source-less email is not eligible", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({
+    id: "legacy-inconclusive",
+    phone: "",
+    email: "hello@truecleanprowash.com",
+  });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect, "Needs Review")]);
+  try {
+    const result = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: inconclusiveWebsiteDependencies(),
+      snapshotSecret,
+    });
+    const record = result.records[0]!;
+    assert.equal(record.proposedDisposition, "inconclusive_requires_review");
+    assert.equal(record.proposedOutcome, "manual_review");
+    assert.equal(record.manualReviewRequired, true);
+    assert.equal(record.autonomouslyEligible, false);
+    assert.equal(record.contactEvidenceSufficient, false);
+    assert.match(record.exactReason, /rendered human review/i);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("fresh rendered weak-site evidence becomes only a potential candidate when contact evidence also passes", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const dependencies = verificationDependencies();
+  const baseline = await verifyProspectWebsite(legacyProspect({ id: "legacy-rendered-weak" }), dependencies);
+  const observation = {
+    kind: "quote_path" as const,
+    statement: "I noticed the quote request is difficult to find from the service page.",
+    rebuildSentence: "I can rebuild your current website with a more modern design that places the quote request beside the core services, while also making your services, contact information, and quote request easier for customers to find.",
+    evidence: ["A rendered review verified the quote action is separated from the main service content."],
+    demoChecklist: ["Show the quote action beside the primary services"],
+  };
+  const prospect = {
+    ...baseline.prospect,
+    id: "legacy-rendered-weak",
+    status: "Reviewed" as const,
+    fitDisposition: "clearly_weak_or_outdated_website" as const,
+    websiteVerification: {
+      ...baseline.report,
+      fit: {
+        disposition: "clearly_weak_or_outdated_website" as const,
+        reason: "A rendered review verified one customer-facing quote-path issue.",
+        supportingEvidence: observation.evidence,
+        confidence: "high" as const,
+        analysisOrigin: "rendered_review" as const,
+        evaluatedAt: now,
+        observation,
+      },
+    },
+  } satisfies Prospect;
+  const needsReview = {
+    ...queueItem(prospect, "Needs Review"),
+    outreachCopyVersion: "legacy_unversioned",
+  };
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([needsReview]);
+  try {
+    const result = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+    });
+    const record = result.records[0]!;
+    assert.equal(record.proposedDisposition, "clearly_weak_or_outdated_website");
+    assert.equal(record.websiteEvidenceSufficient, true);
+    assert.equal(record.contactEvidenceSufficient, true);
+    assert.equal(record.proposedOutcome, "potential_candidate");
+    assert.equal(record.autonomouslyEligible, true);
+    assert.match(record.exactReason, /deliberate human approval/i);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
 test("website re-check cannot mutate protected contacted history", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
@@ -464,6 +621,7 @@ test("website re-check cannot mutate protected contacted history", async () => {
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
   }
 });
 
