@@ -66,6 +66,7 @@ export function OperatorTestCenterWorkspace() {
   const [websiteRepairConfirmationOpen, setWebsiteRepairConfirmationOpen] = useState(false);
   const [websiteRepairConfirmation, setWebsiteRepairConfirmation] = useState("");
   const [websiteAuditProspectId, setWebsiteAuditProspectId] = useState("");
+  const [selectedWebsiteRepairProspectIds, setSelectedWebsiteRepairProspectIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -227,6 +228,7 @@ export function OperatorTestCenterWorkspace() {
             reviewToken: reviewedBatch?.reviewToken ?? "",
             offset: reviewedBatch?.offset,
             limit: reviewedBatch?.batchSize,
+            selectedProspectIds: selectedWebsiteRepairProspectIds,
           } : {
             offset: options.offset ?? 0,
             ...(options.prospectId ? { prospectId: options.prospectId } : {}),
@@ -252,6 +254,7 @@ export function OperatorTestCenterWorkspace() {
           : `Website verification dry run inspected ${body.rangeStart}-${body.rangeEnd} of ${body.candidates} legacy candidate(s). Nothing was changed or sent.`);
       setWebsiteRepairConfirmationOpen(false);
       setWebsiteRepairConfirmation("");
+      setSelectedWebsiteRepairProspectIds([]);
       setActiveView("results");
       await load();
     } catch (auditError) {
@@ -336,6 +339,15 @@ export function OperatorTestCenterWorkspace() {
   if (loading) return <div className="engine-content"><LoadingState title="Loading Operator Test Center" body="Checking safe test actions, provider coverage, email gates, and the latest prospecting activity." /></div>;
   if (!payload) return <div className="engine-content"><EmptyState title="Operator Test Center unavailable" body={error || "Reload the engine and try again."} action={() => void load()} actionLabel="Retry" /></div>;
   const busy = actionState === "running";
+  const reviewedWebsiteRepair = lastAction?.websiteRepair;
+  const selectedWebsiteRepairRecords = reviewedWebsiteRepair?.records.filter((record) => (
+    selectedWebsiteRepairProspectIds.includes(record.prospectId)
+  )) ?? [];
+  const highConfidenceExclusionIds = reviewedWebsiteRepair?.scope === "batch"
+    ? reviewedWebsiteRepair.records
+      .filter((record) => record.selectionEligible && record.highConfidenceExclusionEligible)
+      .map((record) => record.prospectId)
+    : [];
   const regenerationSummaryText = lastAction?.regeneration ? [
     lastAction.regeneration.message,
     `Copy version: ${lastAction.regeneration.copyVersion}`,
@@ -425,14 +437,6 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button engine-button--danger" disabled={busy} onClick={() => setEmergencyStopConfirmationOpen(true)} type="button">Disable All Prospect Email Sending</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("validate_controlled_pilot_send")} type="button">Validate First Pilot Send</button>
           <button className="engine-button" disabled={busy} onClick={() => void runWebsiteRecordAudit()} type="button">Audit Legacy Website Records</button>
-          <button
-            className="engine-button"
-            disabled={busy || lastAction?.websiteRepair?.mode !== "dry_run" || lastAction?.websiteRepair?.scope !== "batch"}
-            onClick={() => setWebsiteRepairConfirmationOpen(true)}
-            type="button"
-          >
-            Apply Verified Website Repairs
-          </button>
           <button className="engine-button" disabled={busy} onClick={() => void runProviderSmokeTest()} type="button">Run Provider Smoke Test</button>
           <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void runSmallTopProspectsTest()} type="button">Run Small Top Prospects Test</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("generate_test_package")} type="button">Generate One Fake Test Outreach Package</button>
@@ -526,31 +530,6 @@ export function OperatorTestCenterWorkspace() {
                 {busy ? "Disabling prospect email..." : "Disable All Prospect Email Sending"}
               </button>
               <button className="engine-button" disabled={busy} onClick={() => setEmergencyStopConfirmationOpen(false)} type="button">Cancel</button>
-            </div>
-          </section>
-        ) : null}
-        {websiteRepairConfirmationOpen ? (
-          <section aria-labelledby="website-repair-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
-            <b id="website-repair-confirmation-title">Apply only the verified website-record repairs?</b>
-            <p>The confirmed repair preserves activities and notes, revokes stale approval, returns changed records to human review, and sends nothing.</p>
-            <label className="engine-field">
-              <span>Type REPAIR VERIFIED WEBSITE RECORDS</span>
-              <input
-                autoComplete="off"
-                onChange={(event) => setWebsiteRepairConfirmation(event.target.value)}
-                value={websiteRepairConfirmation}
-              />
-            </label>
-            <div className="engine-inline-actions">
-              <button
-                className="engine-button engine-button--primary"
-                disabled={busy || websiteRepairConfirmation !== "REPAIR VERIFIED WEBSITE RECORDS"}
-                onClick={() => void runWebsiteRecordAudit({ apply: true })}
-                type="button"
-              >
-                {busy ? "Applying verified repairs..." : "Apply Verified Repairs"}
-              </button>
-              <button className="engine-button" disabled={busy} onClick={() => setWebsiteRepairConfirmationOpen(false)} type="button">Cancel</button>
             </div>
           </section>
         ) : null}
@@ -898,29 +877,108 @@ export function OperatorTestCenterWorkspace() {
             <div><dt>Mode</dt><dd>{statusLabel(lastAction.websiteRepair.mode)}</dd></div>
           </dl>
           {lastAction.websiteRepair.scope === "batch" ? (
-            <div className="engine-inline-actions" aria-label="Legacy website audit batch navigation">
-              <button
-                className="engine-button"
-                disabled={busy || lastAction.websiteRepair.previousOffset === null}
-                onClick={() => void runWebsiteRecordAudit({ offset: lastAction.websiteRepair?.previousOffset ?? 0 })}
-                type="button"
-              >
-                Previous batch
-              </button>
-              <button
-                className="engine-button engine-button--primary"
-                disabled={busy || lastAction.websiteRepair.nextOffset === null}
-                onClick={() => void runWebsiteRecordAudit({ offset: lastAction.websiteRepair?.nextOffset ?? 0 })}
-                type="button"
-              >
-                Next batch
-              </button>
-            </div>
+            <>
+              <div className="engine-inline-actions" aria-label="Legacy website audit selection controls">
+                <button
+                  className="engine-button engine-button--primary"
+                  disabled={busy || lastAction.websiteRepair.mode !== "dry_run" || highConfidenceExclusionIds.length === 0}
+                  onClick={() => setSelectedWebsiteRepairProspectIds(highConfidenceExclusionIds)}
+                  type="button"
+                >
+                  Select high-confidence exclusions
+                </button>
+                <button
+                  className="engine-button"
+                  disabled={busy || selectedWebsiteRepairProspectIds.length === 0}
+                  onClick={() => setSelectedWebsiteRepairProspectIds([])}
+                  type="button"
+                >
+                  Clear selection
+                </button>
+                <button
+                  className="engine-button"
+                  disabled={busy || lastAction.websiteRepair.mode !== "dry_run" || selectedWebsiteRepairProspectIds.length === 0}
+                  onClick={() => setWebsiteRepairConfirmationOpen(true)}
+                  type="button"
+                >
+                  Review selected repairs
+                </button>
+                <span>{selectedWebsiteRepairProspectIds.length} selected</span>
+              </div>
+              <div className="engine-inline-actions" aria-label="Legacy website audit batch navigation">
+                <button
+                  className="engine-button"
+                  disabled={busy || lastAction.websiteRepair.previousOffset === null}
+                  onClick={() => void runWebsiteRecordAudit({ offset: lastAction.websiteRepair?.previousOffset ?? 0 })}
+                  type="button"
+                >
+                  Previous batch
+                </button>
+                <button
+                  className="engine-button engine-button--primary"
+                  disabled={busy || lastAction.websiteRepair.nextOffset === null}
+                  onClick={() => void runWebsiteRecordAudit({ offset: lastAction.websiteRepair?.nextOffset ?? 0 })}
+                  type="button"
+                >
+                  Next batch
+                </button>
+              </div>
+            </>
+          ) : null}
+          {websiteRepairConfirmationOpen && lastAction.websiteRepair.scope === "batch" ? (
+            <section aria-labelledby="website-repair-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
+              <b id="website-repair-confirmation-title">Apply {selectedWebsiteRepairRecords.length} selected website-record repair(s)?</b>
+              <p>Only the records listed below will be submitted against this exact signed snapshot. Activities and notes stay intact, stale approval is revoked, and nothing is sent.</p>
+              <ul>
+                {selectedWebsiteRepairRecords.map((record) => (
+                  <li key={record.prospectId}>
+                    <b>{record.businessName}</b> ({record.prospectId}): {statusLabel(record.proposedOutcome)} / {statusLabel(record.proposedDisposition)}
+                  </li>
+                ))}
+              </ul>
+              <label className="engine-field">
+                <span>Type REPAIR VERIFIED WEBSITE RECORDS</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setWebsiteRepairConfirmation(event.target.value)}
+                  value={websiteRepairConfirmation}
+                />
+              </label>
+              <div className="engine-inline-actions">
+                <button
+                  className="engine-button engine-button--primary"
+                  disabled={busy || selectedWebsiteRepairRecords.length === 0 || websiteRepairConfirmation !== "REPAIR VERIFIED WEBSITE RECORDS"}
+                  onClick={() => void runWebsiteRecordAudit({ apply: true })}
+                  type="button"
+                >
+                  {busy ? "Applying selected repairs..." : "Apply Selected Repairs"}
+                </button>
+                <button className="engine-button" disabled={busy} onClick={() => setWebsiteRepairConfirmationOpen(false)} type="button">Cancel</button>
+              </div>
+            </section>
           ) : null}
           <div className="engine-operator-summary-grid">
             {lastAction.websiteRepair.records.map((record) => (
               <article key={record.prospectId}>
-                <header><h3>{record.businessName}</h3></header>
+                <header>
+                  <h3>{record.businessName}</h3>
+                  {lastAction.websiteRepair?.scope === "batch" && lastAction.websiteRepair.mode === "dry_run" ? (
+                    <label className="engine-field">
+                      <span>{record.selectionEligible ? "Select record" : record.protectedReason ? "Protected" : "No mutable change"}</span>
+                      <input
+                        aria-label={`Select ${record.businessName} for website-record repair`}
+                        checked={selectedWebsiteRepairProspectIds.includes(record.prospectId)}
+                        disabled={busy || !record.selectionEligible}
+                        onChange={(event) => setSelectedWebsiteRepairProspectIds((current) => (
+                          event.target.checked
+                            ? [...current, record.prospectId]
+                            : current.filter((prospectId) => prospectId !== record.prospectId)
+                        ))}
+                        type="checkbox"
+                      />
+                    </label>
+                  ) : null}
+                </header>
                 <p><b>Prospect status:</b> {record.currentProspectStatus}</p>
                 <p><b>Queue status:</b> {record.currentQueueStatuses.join(", ") || "No queue package"}</p>
                 <p><b>Website fit:</b> {statusLabel(record.currentDisposition)} {"->"} {statusLabel(record.proposedDisposition)}</p>
@@ -930,6 +988,7 @@ export function OperatorTestCenterWorkspace() {
                 <p><b>Website evidence:</b> {record.websiteEvidenceSufficient ? "Sufficient" : "Incomplete"} ({record.websiteEvidenceConfidence} confidence)</p>
                 <p><b>Contact evidence sufficient:</b> {record.contactEvidenceSufficient ? "Yes" : "No"}</p>
                 <p><b>Proposed outcome:</b> {statusLabel(record.proposedOutcome)}</p>
+                {record.highConfidenceExclusionEligible ? <p><b>Shortcut eligibility:</b> High-confidence exclusion</p> : null}
                 <p><b>Reason:</b> {record.exactReason}</p>
                 <p><b>Production mutation later required:</b> {record.productionMutationRequired ? "Yes, only after separate confirmation" : "No"}</p>
                 {record.fieldChanges.length ? (

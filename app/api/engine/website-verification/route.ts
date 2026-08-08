@@ -31,6 +31,17 @@ function safeOptionalInteger(value: unknown, label: string) {
   return value;
 }
 
+function safeSelectedProspectIds(value: unknown) {
+  if (!Array.isArray(value)) throw new Error("Select at least one reviewed website record before applying repairs.");
+  if (value.length > 25) throw new Error("The selected website-record set exceeds the reviewed batch limit.");
+  return value.map((prospectId) => {
+    if (typeof prospectId !== "string") throw new Error("A selected prospect ID is invalid.");
+    const normalized = prospectId.trim();
+    if (!normalized || normalized.length > 100) throw new Error("A selected prospect ID is invalid.");
+    return normalized;
+  });
+}
+
 export async function POST(request: Request) {
   let action = "";
   try {
@@ -82,10 +93,11 @@ export async function POST(request: Request) {
       limit: safeOptionalInteger(input.limit, "Batch size"),
       offset: safeOptionalInteger(input.offset, "Audit offset"),
       reviewToken: safeText(input.reviewToken, 2_000),
+      selectedProspectIds: safeSelectedProspectIds(input.selectedProspectIds),
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Website verification failed safely.";
-    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|read-only|review|snapshot|evidence changed|signing is not configured|batch size|audit offset|candidate range|prospect ID/i.test(message);
+    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|read-only|review|snapshot|evidence changed|signing is not configured|batch size|batch limit|audit offset|candidate range|prospect ID|selected record|selected prospect/i.test(message);
     if (!expected) console.error("[website-verification] Safe operation failed.", {
       action,
       errorName: error instanceof Error ? error.name : "UnknownError",

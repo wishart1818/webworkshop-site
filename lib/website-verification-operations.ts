@@ -69,6 +69,8 @@ export type ExistingWebsiteRepairRecord = {
   proposedOutcome: "exclude_from_rebuild_outreach" | "manual_review" | "potential_candidate" | "protected";
   exactReason: string;
   productionMutationRequired: boolean;
+  selectionEligible: boolean;
+  highConfidenceExclusionEligible: boolean;
 };
 
 export type ExistingWebsiteRepairReport = {
@@ -86,6 +88,8 @@ export type ExistingWebsiteRepairReport = {
   previousOffset: number | null;
   nextOffset: number | null;
   exactProspectId: string;
+  selectedCount: number;
+  selectedProspectIds: string[];
   changed: number;
   skippedProtected: number;
   records: ExistingWebsiteRepairRecord[];
@@ -610,6 +614,8 @@ async function inspectExistingWebsiteRepairCandidate(
         newlyFoundContactPaths: [],
         ...decision,
         productionMutationRequired: false,
+        selectionEligible: false,
+        highConfidenceExclusionEligible: false,
       } satisfies ExistingWebsiteRepairRecord,
     };
   }
@@ -620,6 +626,16 @@ async function inspectExistingWebsiteRepairCandidate(
   );
   const decision = legacyAuditDecision(prospect, verified.prospect, "", queueItems);
   const changedFields = changedProspectFields(prospect, verified.prospect);
+  const selectionEligible = changedFields.length > 0;
+  const highConfidenceExclusionEligible = selectionEligible
+    && decision.proposedOutcome === "exclude_from_rebuild_outreach"
+    && ["adequate_existing_website", "strong_existing_website"].includes(normalizeWebsiteFitDisposition(verified.prospect))
+    && verified.report.version === "website-verification-v2"
+    && verified.report.status === "usable"
+    && verified.report.ownershipDecision === "owned"
+    && decision.websiteEvidenceSufficient
+    && decision.websiteEvidenceConfidence === "high"
+    && verified.report.fit?.confidence === "high";
   return {
     prospect,
     verified,
@@ -641,6 +657,8 @@ async function inspectExistingWebsiteRepairCandidate(
       newlyFoundContactPaths: newContactPaths(prospect, verified.prospect),
       ...decision,
       productionMutationRequired: changedFields.length > 0,
+      selectionEligible,
+      highConfidenceExclusionEligible,
     } satisfies ExistingWebsiteRepairRecord,
   };
 }
@@ -806,6 +824,24 @@ function boundedRepairOffset(value: number | undefined) {
   return offset;
 }
 
+function normalizedSelectedRepairProspectIds(values: string[] | undefined, apply: boolean) {
+  if (!apply) return [];
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("Select at least one reviewed website record before applying repairs.");
+  }
+  if (values.length > websiteRepairRequestBatchLimit) {
+    throw new Error("The selected website-record set exceeds the reviewed batch limit.");
+  }
+  const selected = values.map((value) => value.trim());
+  if (selected.some((value) => !value || value.length > 100)) {
+    throw new Error("A selected prospect ID is invalid.");
+  }
+  if (new Set(selected).size !== selected.length) {
+    throw new Error("Selected prospect IDs must be unique.");
+  }
+  return selected;
+}
+
 export async function auditExistingWebsiteRecords(input: {
   apply: boolean;
   confirmation?: string;
@@ -814,6 +850,7 @@ export async function auditExistingWebsiteRecords(input: {
   offset?: number;
   prospectId?: string;
   reviewToken?: string;
+  selectedProspectIds?: string[];
   snapshotSecret?: string;
 }): Promise<ExistingWebsiteRepairReport> {
   if (input.apply && input.confirmation !== "REPAIR VERIFIED WEBSITE RECORDS") {
@@ -826,6 +863,10 @@ export async function auditExistingWebsiteRecords(input: {
   if (exactProspectId.length > 100) {
     throw new Error("Prospect ID is invalid.");
   }
+  const requestedSelectedProspectIds = normalizedSelectedRepairProspectIds(
+    input.selectedProspectIds,
+    input.apply,
+  );
   const limit = exactProspectId ? 1 : boundedRepairLimit(input.limit);
   const requestedOffset = exactProspectId ? 0 : boundedRepairOffset(input.offset);
   const snapshotSecret = input.snapshotSecret ?? process.env.ENGINE_PASSWORD?.trim() ?? "";
@@ -888,6 +929,8 @@ export async function auditExistingWebsiteRecords(input: {
   };
   const inspected = await inspectCandidatesBounded(candidates, boundedDependencies, queueByProspect);
   const currentDigest = repairReviewDigest(inspected, queue, selection);
+  let selectedCandidates: typeof inspected = [];
+  let selectedProspectIds: string[] = [];
   if (input.apply) {
     const reviewed = verifiedRepairReviewSnapshot(
       input.reviewToken ?? "",
@@ -900,26 +943,35 @@ export async function auditExistingWebsiteRecords(input: {
     ) {
       throw new Error("Website or contact evidence changed since the reviewed dry run. Run a fresh dry run before applying repairs.");
     }
+    const inspectedById = new Map(inspected.map((candidate) => [candidate.prospect.id, candidate]));
+    for (const selectedProspectId of requestedSelectedProspectIds) {
+      const candidate = inspectedById.get(selectedProspectId);
+      if (!candidate) {
+        throw new Error("A selected prospect is outside the signed reviewed website-record snapshot.");
+      }
+      if (!candidate.record.selectionEligible || candidate.record.protectedReason || !candidate.verified) {
+        throw new Error(`The selected record ${candidate.record.businessName} is protected or has no reviewed mutable change.`);
+      }
+    }
+    const requestedSelection = new Set(requestedSelectedProspectIds);
+    selectedCandidates = inspected.filter((candidate) => requestedSelection.has(candidate.prospect.id));
+    selectedProspectIds = selectedCandidates.map((candidate) => candidate.prospect.id);
   }
   let changed = 0;
-  let skippedProtected = 0;
+  const skippedProtected = inspected.filter((candidate) => Boolean(candidate.record.protectedReason)).length;
   if (input.apply) {
-    for (const candidate of inspected) {
-      if (candidate.record.protectedReason || !candidate.verified) {
-        skippedProtected += 1;
-        continue;
-      }
-      if (!candidate.record.changedFields.length) continue;
+    for (const candidate of selectedCandidates) {
+      if (!candidate.verified) continue;
       const queueResult = await revokeStaleQueueApproval(
         candidate.prospect,
-        "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.",
+        candidate.record.proposedOutcome === "exclude_from_rebuild_outreach"
+          ? "Current verified website fit excludes this prospect from website-rebuild outreach. Any stale approval was removed and the record remains non-sendable."
+          : "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.",
       );
       if (queueResult.activeQueueItems || queueResult.protectedQueueItems) {
-        candidate.record.protectedReason = queueResult.activeQueueItems
-          ? "An email provider attempt is in progress or awaiting reconciliation."
-          : "Protected outreach or contact history exists.";
-        skippedProtected += 1;
-        continue;
+        throw new Error(queueResult.activeQueueItems
+          ? "A selected record became protected by an email provider attempt or ambiguous outcome. Run a fresh dry run."
+          : "A selected record gained protected outreach or contact history. Run a fresh dry run.");
       }
       const saved = await saveProspect(withApprovalRevoked(candidate.verified.prospect, true));
       await safeRecordAudit({
@@ -931,13 +983,12 @@ export async function auditExistingWebsiteRecords(input: {
           oldStatus: candidate.record.oldStatus,
           newStatus: candidate.record.proposedStatus,
           changedFields: candidate.record.changedFields,
+          proposedOutcome: candidate.record.proposedOutcome,
           sent: 0,
         },
       });
       changed += 1;
     }
-  } else {
-    skippedProtected = inspected.filter((candidate) => Boolean(candidate.record.protectedReason)).length;
   }
   if (input.apply) {
     await safeRecordAudit({
@@ -946,6 +997,8 @@ export async function auditExistingWebsiteRecords(input: {
       subject: "confirmed repair",
       metadata: {
         inspected: inspected.length,
+        selectedCount: selectedProspectIds.length,
+        selectedProspectIds,
         changed,
         skippedProtected,
         sent: 0,
@@ -971,6 +1024,8 @@ export async function auditExistingWebsiteRecords(input: {
       ? offset + inspected.length
       : null,
     exactProspectId,
+    selectedCount: selectedProspectIds.length,
+    selectedProspectIds,
     changed,
     skippedProtected,
     records: inspected.map((candidate) => candidate.record),
