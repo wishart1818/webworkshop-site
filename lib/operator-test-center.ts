@@ -8,7 +8,7 @@ import {
 } from "@/lib/internal-notifications";
 import { discoveryProviderCoverageStatus, discoveryProviderHealth } from "@/lib/lead-discovery";
 import { databaseHealth, operationalMode } from "@/lib/operational-controls";
-import { createProspect, generateOutreach, prospectEmailNeedsManualVerification, seedProspects, withAnalysis } from "@/lib/prospect-engine";
+import { createProspect, generateOutreach, prospectEmailNeedsManualVerification, prospectWebsiteVerificationBlockReason, seedProspects, withAnalysis, type Prospect } from "@/lib/prospect-engine";
 import {
   getAutonomousGrowthDashboard,
   getAutonomousGrowthSettings,
@@ -25,6 +25,15 @@ import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendRe
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
 import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
+import { listProspects } from "@/lib/prospect-repository";
+import {
+  normalizeWebsiteFitDisposition,
+  outreachObservationForProspect,
+  outreachObservationGroundingProblems,
+  prospectFreshnessAt,
+  verifiedEmailEvidenceForProspect,
+  websiteFitAllowsAutonomousOutreach,
+} from "@/lib/prospect-qualification";
 import { publicProspectPreviewLink } from "@/lib/top-prospects";
 import { topProspectBuildVersion } from "@/lib/top-prospect-list-route";
 import { safeRecordAudit } from "@/lib/operational-controls";
@@ -119,6 +128,7 @@ export type OperatorActionResult = {
     firstEmailLinkFree: boolean;
     firstDmLinkFree: boolean;
     yesReplyLinkFree: boolean;
+    currentWebsiteWording: boolean;
     publicPreviewLink: string;
   };
   fakePackage?: {
@@ -238,7 +248,18 @@ export type FullAutonomousReadinessOutdatedCopyRecord = {
   currentStatus: string;
   contactSource: string;
   proposedChange: string;
+  evidenceState: FullAutonomousReadinessEvidenceState;
   openAction: "prospect_outreach" | "queue_review";
+};
+
+export type FullAutonomousReadinessEvidenceState =
+  | "legacy_candidate"
+  | "manual_review_required"
+  | "evidence_incomplete"
+  | "autonomously_eligible";
+
+export type FullAutonomousReadinessEvidenceRecord = FullAutonomousReadinessFailedRecord & {
+  evidenceState: Exclude<FullAutonomousReadinessEvidenceState, "autonomously_eligible">;
 };
 
 export type FullAutonomousReadinessResult = {
@@ -265,6 +286,8 @@ export type FullAutonomousReadinessResult = {
   failed: FullAutonomousReadinessCheck[];
   failedRecords: FullAutonomousReadinessFailedRecord[];
   outdatedCopyRecords: FullAutonomousReadinessOutdatedCopyRecord[];
+  evidenceReviewRecords: FullAutonomousReadinessEvidenceRecord[];
+  autonomouslyEligibleRecords: number;
   excludedRecords: FullAutonomousReadinessExcludedRecord[];
   optional: FullAutonomousReadinessCheck[];
   notDone: string[];
@@ -380,7 +403,10 @@ const readinessHistoricalStatuses = new Set([
   "Pricing Sent",
 ]);
 
-function readinessExcludedReason(item: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"][number]) {
+function readinessExcludedReason(
+  item: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"][number],
+  prospect?: Prospect,
+) {
   if (item.status === "Queued" && item.contactSource !== "Public email") return "";
   if (item.sentDate) return "Already sent or contacted.";
   if (item.replyStatus) return "Reply, bounce, complaint, opt-out, or suppression history is recorded.";
@@ -392,12 +418,63 @@ function readinessExcludedReason(item: Awaited<ReturnType<typeof getAutonomousGr
   if (/\bphone-only\b/i.test(`${item.blockedReason}\n${item.notes}`)) {
     return "Phone-only history is recorded.";
   }
+  if (
+    prospect?.websiteVerification?.version === "website-verification-v2"
+    && prospect.websiteVerification.status === "usable"
+    && prospect.websiteVerification.ownershipDecision === "owned"
+    && ["adequate_existing_website", "strong_existing_website"].includes(normalizeWebsiteFitDisposition(prospect))
+  ) {
+    return "Current v2 evidence classifies the owned website as adequate or strong, so it is excluded from website-rebuild outreach regardless of business score.";
+  }
   return "";
 }
 
-function readinessRecordsForQueue(queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"], env: ReturnType<typeof outreachEnvironment>) {
+function readinessEvidenceState(prospect: Prospect | undefined, now = new Date()) {
+  if (!prospect || prospect.websiteVerification?.version !== "website-verification-v2") {
+    return {
+      state: "legacy_candidate" as const,
+      reason: "This package predates the v2 website/contact evidence model and requires read-only revalidation before it can be considered for outreach.",
+    };
+  }
+  const disposition = normalizeWebsiteFitDisposition(prospect);
+  if (disposition === "inconclusive_requires_review") {
+    return {
+      state: "manual_review_required" as const,
+      reason: "Current website fit is inconclusive and requires rendered human review.",
+    };
+  }
+  const websiteBlock = prospectWebsiteVerificationBlockReason(prospect, { requireStructuredEvidence: true });
+  const emailEvidence = verifiedEmailEvidenceForProspect(prospect);
+  const freshness = prospectFreshnessAt(prospect, now);
+  const observationProblems = outreachObservationGroundingProblems(outreachObservationForProspect(prospect));
+  const evidenceProblems = [
+    websiteBlock,
+    !websiteFitAllowsAutonomousOutreach(prospect) ? "Website fit does not pass the current autonomous evidence gate." : "",
+    !emailEvidence ? "The exact public email lacks current first-party source URL and provenance evidence." : "",
+    !freshness.websiteVerificationFresh ? "Website verification evidence is stale." : "",
+    !freshness.websiteFitFresh ? "Website-fit evidence is stale." : "",
+    !freshness.contactSourceFresh ? "Public contact evidence is stale." : "",
+    ...observationProblems,
+  ].filter(Boolean);
+  if (evidenceProblems.length) {
+    return { state: "evidence_incomplete" as const, reason: evidenceProblems.join(" ") };
+  }
+  return {
+    state: "autonomously_eligible" as const,
+    reason: "Current v2 website-fit, identity, public-email provenance, freshness, and outreach-observation evidence pass.",
+  };
+}
+
+function readinessRecordsForQueue(
+  queue: Awaited<ReturnType<typeof getAutonomousGrowthDashboard>>["queue"],
+  env: ReturnType<typeof outreachEnvironment>,
+  prospectsById: Map<string, Prospect>,
+  now = new Date(),
+) {
   const records: FullAutonomousReadinessFailedRecord[] = [];
   const excludedRecords: FullAutonomousReadinessExcludedRecord[] = [];
+  const evidenceReviewRecords: FullAutonomousReadinessEvidenceRecord[] = [];
+  const autonomouslyEligiblePackageIds = new Set<string>();
   const seenProspectIds = new Set<string>();
   const seenResultIds = new Set<string>();
   const add = (item: (typeof queue)[number], category: string, reason: string, correction: string, openAction: FullAutonomousReadinessFailedRecord["openAction"] = "prospect_outreach") => {
@@ -427,13 +504,38 @@ function readinessRecordsForQueue(queue: Awaited<ReturnType<typeof getAutonomous
       excludedReason,
     });
   };
+  const addEvidenceReview = (
+    item: (typeof queue)[number],
+    evidenceState: FullAutonomousReadinessEvidenceRecord["evidenceState"],
+    reason: string,
+  ) => {
+    evidenceReviewRecords.push({
+      id: `${item.id}:${evidenceState}:${evidenceReviewRecords.length}`,
+      prospectId: item.prospectId,
+      packageId: item.id,
+      topProspectResultId: item.topProspectResultId,
+      businessName: item.businessName || "Unnamed prospect",
+      category: evidenceState.replaceAll("_", " "),
+      reason,
+      correction: "Run Audit Legacy Website Records in dry-run mode, then review the proposed website disposition and exact public-contact evidence. Do not regenerate or approve this package first.",
+      openAction: "prospect_outreach",
+      evidenceState,
+    });
+  };
 
   for (const item of queue) {
-    const excludedReason = readinessExcludedReason(item);
+    const prospect = prospectsById.get(item.prospectId);
+    const excludedReason = readinessExcludedReason(item, prospect);
     if (excludedReason) {
       exclude(item, excludedReason);
       continue;
     }
+    const evidence = readinessEvidenceState(prospect, now);
+    if (evidence.state !== "autonomously_eligible") {
+      addEvidenceReview(item, evidence.state, evidence.reason);
+      continue;
+    }
+    autonomouslyEligiblePackageIds.add(item.id);
     const emailBody = item.emailBody || "";
     const copy = `${item.subjectLine}\n${item.emailBody}\n${item.dmScript}\n${item.loomTalkingPoints}`;
     if (!item.businessName || !item.city || !item.trade) add(item, "Missing business context", "Business name, city, or trade is missing.", "Open the prospect and fill in the missing public business context.");
@@ -464,7 +566,7 @@ function readinessRecordsForQueue(queue: Awaited<ReturnType<typeof getAutonomous
       seenResultIds.add(item.topProspectResultId);
     }
   }
-  return { failedRecords: records, excludedRecords };
+  return { failedRecords: records, excludedRecords, evidenceReviewRecords, autonomouslyEligiblePackageIds };
 }
 
 function nextRecommendedTest(input: {
@@ -636,8 +738,36 @@ export async function getOperatorTestCenterPayload(): Promise<OperatorTestCenter
   };
 }
 
+export function currentPermissionFirstWebsiteWordingPasses(input: {
+  firstEmail: string;
+  observation: string;
+  rebuildSentence: string;
+}) {
+  const normalized = input.firstEmail.replace(/\s+/g, " ");
+  const observation = input.observation.replace(/\s+/g, " ");
+  const rebuildSentence = input.rebuildSentence.replace(/\s+/g, " ");
+  const observationIndex = normalized.indexOf(observation);
+  const rebuildIndex = normalized.indexOf(rebuildSentence);
+  const ctaIndex = normalized.search(/Would you be interested in seeing what that could look like\?/i);
+  return observationIndex >= 0
+    && rebuildIndex > observationIndex
+    && ctaIndex > rebuildIndex
+    && /\bI can rebuild your current website with a more modern design\b/i.test(rebuildSentence)
+    && !/\b(?:already|previously)\s+(?:built|made|created|finished|designed)\b/i.test(normalized)
+    && !/https?:\/\/|\/p\//i.test(normalized)
+    && !/\bwill get you more calls|guarantee|guaranteed\b/i.test(normalized);
+}
+
 export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = process.env): OperatorActionResult {
-  const prospect = withAnalysis(createProspect({
+  const checkedAt = new Date().toISOString();
+  const observation = {
+    kind: "quote_path" as const,
+    statement: "I noticed the current quote request is difficult to find from the main service page.",
+    rebuildSentence: "I can rebuild your current website with a more modern design that gives the quote request a clear place alongside your core services, while also making your services, contact information, and quote request easier for customers to find.",
+    evidence: ["The rendered service page requires customers to navigate away before reaching the quote request."],
+    demoChecklist: ["Show the quote request beside the primary services", "Show the same quote path on mobile"],
+  };
+  const analyzedProspect = withAnalysis(createProspect({
     ...seedProspects[0],
     businessName: "Test Pressure Washing Co.",
     trade: "Pressure Washing",
@@ -647,6 +777,33 @@ export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = 
     website: "https://operatortest.example",
     status: "New",
   }));
+  const prospect: Prospect = {
+    ...analyzedProspect,
+    websiteStatus: "usable",
+    websiteStatusDetail: "A meaningful owned business website was verified for the fake copy test.",
+    fitDisposition: "clearly_weak_or_outdated_website",
+    websiteVerification: {
+      version: "website-verification-v2",
+      status: "usable",
+      confidence: "high",
+      canonicalUrl: "https://operatortest.example/",
+      attempts: [],
+      usableSignals: ["meaningful page title", "business name", "navigation", "service content", "mobile viewport"],
+      explanation: "A meaningful owned business website was verified for the fake copy test.",
+      checkedAt,
+      ownershipDecision: "owned",
+      identityEvidence: ["The fake business name and owned host match."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website",
+        reason: "The deterministic fake fixture contains one rendered quote-path issue.",
+        supportingEvidence: observation.evidence,
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: checkedAt,
+        observation,
+      },
+    },
+  };
   const publicPreviewLink = publicProspectPreviewLink(createPublicPreviewToken());
   const outreach = generateOutreach(prospect, publicPreviewLink, environment);
   const playbook = casualDmPlaybook(prospect, publicPreviewLink);
@@ -689,6 +846,11 @@ export function generateOneTestOutreachPackage(environment: NodeJS.ProcessEnv = 
       firstEmailLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(outreach.concise),
       firstDmLinkFree: !/https:\/\/webworkshop\.dev\/p\//i.test(allFirstTouch),
       yesReplyLinkFree: !/https?:\/\/|\/p\//i.test(playbook.yesReply),
+      currentWebsiteWording: currentPermissionFirstWebsiteWordingPasses({
+        firstEmail: outreach.concise,
+        observation: observation.statement,
+        rebuildSentence: observation.rebuildSentence,
+      }),
       publicPreviewLink,
     },
     fakePackage: {
@@ -891,20 +1053,37 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
   const jobs = await listTopProspectJobs().catch(() => []);
   const queue = dashboard?.queue ?? [];
-  const { failedRecords, excludedRecords } = readinessRecordsForQueue(queue, env);
+  const prospects = await listProspects().catch(() => []);
+  const prospectsById = new Map(prospects.map((prospect) => [prospect.id, prospect]));
+  const {
+    failedRecords,
+    excludedRecords,
+    evidenceReviewRecords,
+    autonomouslyEligiblePackageIds,
+  } = readinessRecordsForQueue(queue, env, prospectsById, new Date(generatedAt));
   const outdatedCopyRecords: FullAutonomousReadinessOutdatedCopyRecord[] = queue
     .filter((item) => outreachCopyRegenerationEligibility(item).eligible)
-    .map((item) => ({
-      id: `outdated-copy:${item.id}`,
-      prospectId: item.prospectId,
-      packageId: item.id,
-      businessName: item.businessName,
-      currentCopyVersion: item.outreachCopyVersion || "not recorded",
-      currentStatus: item.status,
-      contactSource: item.contactSource,
-      proposedChange: `Regenerate this unsent draft with ${currentOutreachCopyVersion}, preserve contact and suppression history, and send nothing.`,
-      openAction: item.prospectId ? "prospect_outreach" : "queue_review",
-    }));
+    .map((item) => {
+      const prospect = prospectsById.get(item.prospectId);
+      const evidence = readinessEvidenceState(prospect, new Date(generatedAt));
+      const excludedReason = readinessExcludedReason(item, prospect);
+      return {
+        id: `outdated-copy:${item.id}`,
+        prospectId: item.prospectId,
+        packageId: item.id,
+        businessName: item.businessName,
+        currentCopyVersion: item.outreachCopyVersion || "not recorded",
+        currentStatus: item.status,
+        contactSource: item.contactSource,
+        evidenceState: excludedReason ? "manual_review_required" as const : evidence.state,
+        proposedChange: excludedReason
+          ? `Keep this draft informational and do not regenerate it. ${excludedReason}`
+          : evidence.state === "autonomously_eligible"
+            ? `Regenerate this unsent draft with ${currentOutreachCopyVersion}, preserve contact and suppression history, and send nothing.`
+            : "Run read-only legacy website/contact revalidation first. Do not regenerate or approve this draft while current evidence is incomplete.",
+        openAction: item.prospectId ? "prospect_outreach" as const : "queue_review" as const,
+      };
+    });
   const smartSnapshot = dashboard?.smartGrowth ?? null;
   const fakeEnvironment = {
     ...environment,
@@ -935,11 +1114,17 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     ok: false,
     message: `Smart autonomous dry-run failed safely: ${error instanceof Error ? error.name : "unknown error"}`,
   }) as SmartGrowthActionResult);
-  const publicEmailQueued = queue.filter((item) => item.status === "Queued" && item.contactSource === "Public email");
+  const publicEmailQueued = queue.filter((item) => (
+    item.status === "Queued"
+    && item.contactSource === "Public email"
+    && autonomouslyEligiblePackageIds.has(item.id)
+  ));
   const unsafeQueued = queue.filter((item) => item.status === "Queued" && item.contactSource !== "Public email");
   const queuedReadiness = publicEmailQueued.map((item) => evaluateQueuedEmailSendReadiness({ item, queue, settings, environment }));
   const queuedReadyCount = queuedReadiness.filter((item) => item.ready).length;
   const manualEmailCandidates = queue.filter((item) =>
+    autonomouslyEligiblePackageIds.has(item.id)
+    &&
     item.email
     && item.contactSource === "Public email"
     && !["Sent", "Opted Out", "Bounced", "Complained", "Suppressed", "Never Contact", "Not Interested", "Bad Fit", "Blocked"].includes(item.status),
@@ -1053,7 +1238,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "no-scores", category: "Outreach copy quality", label: "No internal score language", passed: !/\b\d{1,3}\/100\b|website quality score|opportunity score|internal score/i.test(fakeCopyBlob), detail: "Fake copy does not expose scoring language." });
   check(checks, { key: "no-engine-links", category: "Outreach copy quality", label: "No internal Prospect Engine links", passed: !/\/engine(?:\/|$|\?)/i.test(fakeCopyBlob), detail: "Prospect-facing fake copy contains no protected engine links." });
   check(checks, { key: "no-guarantees", category: "Outreach copy quality", label: "No guaranteed-result claims", passed: !/\bwill get you more calls|guarantee|guaranteed\b/i.test(fakeCopyBlob), detail: "Fake copy uses help/get wording, not guarantees." });
-  check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses the current permission-first website wording", passed: /designed to help bring in more calls and quote requests/i.test(fakeCopyBlob) && /Would you be interested in seeing what that could look like\?/i.test(fakeCopyBlob), detail: "Fake copy clearly offers a new or refreshed website, states the practical goal without guaranteeing results, and asks permission to show the concept." });
+  check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses the current permission-first website wording", passed: fakePackage.packagePreview?.currentWebsiteWording === true, detail: "Fake v7 copy includes one evidence-backed website problem, a directly matching full-rebuild solution, and the permission-first CTA without a preview link or guaranteed result." });
   check(checks, { key: "why-reaching-out", category: "Outreach copy quality", label: "First-touch email explains why I am reaching out", passed: firstEmailHasApprovedReason, detail: firstEmailHasApprovedReason ? "Current generated fake package includes the approved reason sentence before the CTA." : "Current generated fake package is missing the approved reason sentence before the CTA.", fix: "Regenerate the fake package with the current outreach style guide." });
 
   check(checks, { key: "existing-qualified", category: "Existing prospect readiness", label: "Existing qualified unsent prospects checked", passed: Boolean(existing), detail: existing ? `${existing.total} existing qualified unsent prospect(s) checked.` : "Smart snapshot was unavailable.", fix: "Open Autonomous Growth or rerun the readiness test after database health is restored." });
@@ -1065,12 +1250,19 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, {
     key: "exact-failed-records",
     category: "Existing prospect readiness",
-    label: "Eligible records needing attention",
+    label: "Blocking current-evidence records needing attention",
     passed: failedRecords.length === 0,
     detail: failedRecords.length
-      ? `${failedRecords.length} eligible public-email package/prospect record(s) need operator attention.`
-      : "No eligible package/prospect record failures were found.",
-    fix: "Open the eligible failed records list in Operator Test Center and correct each item before scaling.",
+      ? `${failedRecords.length} public-email package/prospect record(s) with current evidence have blocking package or safety failures.`
+      : "No current-evidence package/prospect record failures were found.",
+    fix: "Open the blocking records list in Operator Test Center and correct each item before scaling.",
+  });
+  check(checks, {
+    key: "legacy-evidence-review",
+    category: "Existing prospect readiness",
+    label: "Legacy and evidence-incomplete records separated",
+    info: true,
+    detail: `${evidenceReviewRecords.length} legacy candidate, evidence-incomplete, or manual-review record(s) are excluded from autonomous eligibility until revalidated.`,
   });
   check(checks, {
     key: "excluded-historical-records",
@@ -1129,11 +1321,11 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const manualReasons = [
     env.emailKillSwitchEnabled ? "Manual prospect email send is blocked by OUTREACH_EMAIL_DISABLED." : "",
     !env.hasPostalAddress ? "Postal address is missing." : "",
-    manualEmailCandidates.length <= 0 ? "No reviewed public-email package is available for a manual send test." : "",
+    manualEmailCandidates.length <= 0 ? "No reviewed public-email package passes the current evidence gates for a manual send test." : "",
     /https:\/\/webworkshop\.dev\/p\//i.test(firstEmail) ? "First-touch email contains a preview link." : "",
     !webworkshopOptOutPattern().test(firstEmail) ? "Opt-out language is missing." : "",
     /\bwill get you more calls|guarantee|guaranteed\b/i.test(firstEmail) ? "Unsupported or guaranteed-result claim detected." : "",
-    manualBlockingFailedRecords.length ? `${manualBlockingFailedRecords.length} eligible reviewed public-email record(s) need copy/safety fixes.` : "",
+    manualBlockingFailedRecords.length ? `${manualBlockingFailedRecords.length} current-evidence reviewed public-email record(s) need copy/safety fixes.` : "",
   ].filter(Boolean);
   const manualStatus = manualReasons.length === 0 ? "Ready" : "Blocked";
   check(checks, { key: "auto-email-pilot-final", category: "Auto Email Pilot readiness", label: "Auto Email Pilot final readiness", info: autoEmailPilotStatus !== "Ready", passed: autoEmailPilotStatus === "Ready", detail: autoEmailPilotStatus === "Ready" ? `${queuedReadyCount} queued public-email lead(s) pass Auto Email Pilot gates.` : autoEmailPilotReasons.join(" ") });
@@ -1149,7 +1341,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     !database.reachable ? "Database health check is not reachable." : "",
     !providerOrInventoryReady ? "Run Provider Smoke Test or use existing qualified unsent inventory before broad discovery." : "",
     checks.some((item) => item.category === "Outreach copy quality" && item.status === "failed") ? "Outreach copy quality checks failed." : "",
-    failedRecords.length ? "Eligible public-email records need attention before scaling." : "",
+    failedRecords.length ? "Current-evidence public-email records have blocking package or safety failures." : "",
     !smartBackfill.ok ? "Smart Backfill dry run failed." : "",
     !smartAutonomous.ok ? "Smart Autonomous dry run failed." : "",
   ].filter(Boolean);
@@ -1198,20 +1390,24 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     ...autoEmailPilotReasons.map((reason) => `- ${reason}`),
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
-    `Eligible records needing attention: ${failedRecords.length}`,
+    `Blocking current-evidence records needing attention: ${failedRecords.length}`,
+    `Autonomously eligible queue records: ${autonomouslyEligiblePackageIds.size}`,
+    `Legacy/evidence-incomplete/manual-review records: ${evidenceReviewRecords.length}`,
     `Informational outdated packages: ${outdatedCopyRecords.length}`,
     `Excluded historical/non-actionable records: ${excludedRecords.length}`,
     `Optional/info: ${optional.length}`,
     `Not done: ${notDone.join(" ")}`,
   ]);
   const failedRecordSummary = failedRecords.map((record) => `- ${record.businessName}: ${record.category}. ${record.reason} Next: ${record.correction}`);
+  const evidenceReviewSummary = evidenceReviewRecords.map((record) => `- ${record.businessName}: ${record.evidenceState.replaceAll("_", " ")}. ${record.reason} Next: ${record.correction}`);
   const outdatedCopySummary = outdatedCopyRecords.map((record) =>
     `- ${record.businessName} [prospect ${record.prospectId || "not linked"}; package ${record.packageId}]: ${record.currentCopyVersion}; status ${record.currentStatus}; contact ${record.contactSource}. Next: ${record.proposedChange}`,
   );
   const excludedRecordSummary = excludedRecords.map((record) => `- ${record.businessName}: ${record.excludedReason}`);
   const failedOnly = safeTextLines([
     formatChecks("Failed checks only", failed),
-    failedRecordSummary.length ? `Eligible records needing attention:\n${failedRecordSummary.join("\n")}` : "Eligible records needing attention: none",
+    failedRecordSummary.length ? `Blocking current-evidence records needing attention:\n${failedRecordSummary.join("\n")}` : "Blocking current-evidence records needing attention: none",
+    evidenceReviewSummary.length ? `Legacy/evidence-incomplete/manual-review records:\n${evidenceReviewSummary.join("\n")}` : "Legacy/evidence-incomplete/manual-review records: none",
     outdatedCopySummary.length ? `Informational outdated drafts:\n${outdatedCopySummary.join("\n")}` : "Informational outdated drafts: none",
     excludedRecordSummary.length ? `Excluded historical/non-actionable records:\n${excludedRecordSummary.join("\n")}` : "Excluded historical/non-actionable records: none",
   ]);
@@ -1234,7 +1430,10 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     `Queued public-email leads: ${publicEmailQueued.length}`,
     `Queued public-email leads passing readiness: ${queuedReadyCount}`,
     `Existing qualified unsent: ${existing?.total ?? 0}`,
-    `Eligible failed records: ${failedRecords.length}`,
+    `Blocking current-evidence failed records: ${failedRecords.length}`,
+    `Autonomously eligible queue records: ${autonomouslyEligiblePackageIds.size}`,
+    `Legacy/evidence-incomplete/manual-review records: ${evidenceReviewRecords.length}`,
+    ...evidenceReviewSummary,
     `Informational outdated packages: ${outdatedCopyRecords.length}`,
     ...outdatedCopySummary,
     `Excluded historical/non-actionable records: ${excludedRecords.length}`,
@@ -1253,6 +1452,8 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
     failed,
     failedRecords,
     outdatedCopyRecords,
+    evidenceReviewRecords,
+    autonomouslyEligibleRecords: autonomouslyEligiblePackageIds.size,
     excludedRecords,
     optional,
     notDone,

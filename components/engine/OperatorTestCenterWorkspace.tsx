@@ -227,12 +227,12 @@ export function OperatorTestCenterWorkspace() {
         ok: true,
         message: apply
           ? `Verified website repair updated ${body.changed} record(s). Nothing was sent.`
-          : `Website verification dry run inspected ${body.inspected} record(s). Nothing was changed or sent.`,
+          : `Website verification dry run inspected ${body.inspected} of ${body.candidates} legacy candidate(s). Nothing was changed or sent.`,
         websiteRepair: body,
       });
       setNotice(apply
         ? `Verified website repair updated ${body.changed} record(s). Nothing was sent.`
-        : `Website verification dry run inspected ${body.inspected} record(s). Nothing was changed or sent.`);
+        : `Website verification dry run inspected ${body.inspected} of ${body.candidates} legacy candidate(s). Nothing was changed or sent.`);
       setWebsiteRepairConfirmationOpen(false);
       setWebsiteRepairConfirmation("");
       setActiveView("results");
@@ -543,6 +543,8 @@ export function OperatorTestCenterWorkspace() {
             <div><dt>Passed</dt><dd>{lastAction.readiness.passed.length}</dd></div>
             <div><dt>Failed</dt><dd>{lastAction.readiness.failed.length}</dd></div>
             <div><dt>Blocking records</dt><dd>{lastAction.readiness.failedRecords.length}</dd></div>
+            <div><dt>Autonomously eligible</dt><dd>{lastAction.readiness.autonomouslyEligibleRecords}</dd></div>
+            <div><dt>Evidence review</dt><dd>{lastAction.readiness.evidenceReviewRecords.length}</dd></div>
             <div><dt>Informational outdated drafts</dt><dd>{lastAction.readiness.outdatedCopyRecords.length}</dd></div>
             <div><dt>Excluded records</dt><dd>{lastAction.readiness.excludedRecords.length}</dd></div>
             <div><dt>Optional / info</dt><dd>{lastAction.readiness.optional.length}</dd></div>
@@ -600,6 +602,28 @@ export function OperatorTestCenterWorkspace() {
               </div>
             </section>
           ) : null}
+          {lastAction.readiness.evidenceReviewRecords.length ? (
+            <section className="engine-readiness-failed-records engine-readiness-info-records" aria-label="Legacy and evidence review records">
+              <header>
+                <div>
+                  <span>Not autonomously eligible</span>
+                  <h3>Legacy and evidence review</h3>
+                </div>
+                <b>{lastAction.readiness.evidenceReviewRecords.length}</b>
+              </header>
+              <div>
+                {lastAction.readiness.evidenceReviewRecords.map((record) => (
+                  <article key={record.id}>
+                    <span>{statusLabel(record.evidenceState)}</span>
+                    <h4>{record.businessName}</h4>
+                    <p>{record.reason}</p>
+                    <p><b>Next:</b> {record.correction}</p>
+                    <button className="engine-button" onClick={() => openEngineRecord(failedRecordOpenDetail(record))} type="button">Open record</button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
           {lastAction.readiness.outdatedCopyRecords.length ? (
             <section className="engine-readiness-failed-records engine-readiness-info-records" aria-label="Informational outdated drafts">
               <header>
@@ -617,6 +641,7 @@ export function OperatorTestCenterWorkspace() {
                     <p><b>Prospect:</b> {record.prospectId || "Not linked"}</p>
                     <p><b>Package:</b> {record.packageId}</p>
                     <p><b>Current:</b> {record.currentCopyVersion} · {record.currentStatus} · {record.contactSource}</p>
+                    <p><b>Evidence:</b> {statusLabel(record.evidenceState)}</p>
                     <p><b>Proposed:</b> {record.proposedChange}</p>
                     <button className="engine-button" onClick={() => openEngineRecord(failedRecordOpenDetail(record))} type="button">Open record</button>
                   </article>
@@ -826,6 +851,8 @@ export function OperatorTestCenterWorkspace() {
           </div>
           <dl className="engine-operator-check-grid">
             <div><dt>Inspected</dt><dd>{lastAction.websiteRepair.inspected}</dd></div>
+            <div><dt>Candidates</dt><dd>{lastAction.websiteRepair.candidates}</dd></div>
+            <div><dt>Remaining</dt><dd>{lastAction.websiteRepair.remainingCandidates}</dd></div>
             <div><dt>Changed</dt><dd>{lastAction.websiteRepair.changed}</dd></div>
             <div><dt>Protected</dt><dd>{lastAction.websiteRepair.skippedProtected}</dd></div>
             <div><dt>Mode</dt><dd>{statusLabel(lastAction.websiteRepair.mode)}</dd></div>
@@ -834,8 +861,17 @@ export function OperatorTestCenterWorkspace() {
             {lastAction.websiteRepair.records.map((record) => (
               <article key={record.prospectId}>
                 <header><h3>{record.businessName}</h3></header>
+                <p><b>Prospect status:</b> {record.currentProspectStatus}</p>
+                <p><b>Queue status:</b> {record.currentQueueStatuses.join(", ") || "No queue package"}</p>
+                <p><b>Website fit:</b> {statusLabel(record.currentDisposition)} {"->"} {statusLabel(record.proposedDisposition)}</p>
                 <p>{record.oldStatus} {"->"} {record.proposedStatus}</p>
                 <p>{record.evidence}</p>
+                <p><b>Business identity sufficient:</b> {record.businessIdentitySufficient ? "Yes" : "No"}</p>
+                <p><b>Website evidence:</b> {record.websiteEvidenceSufficient ? "Sufficient" : "Incomplete"} ({record.websiteEvidenceConfidence} confidence)</p>
+                <p><b>Contact evidence sufficient:</b> {record.contactEvidenceSufficient ? "Yes" : "No"}</p>
+                <p><b>Proposed outcome:</b> {statusLabel(record.proposedOutcome)}</p>
+                <p><b>Reason:</b> {record.exactReason}</p>
+                <p><b>Production mutation later required:</b> {record.productionMutationRequired ? "Yes, only after separate confirmation" : "No"}</p>
                 {record.fieldChanges.length ? (
                   <details>
                     <summary>Old and proposed values</summary>

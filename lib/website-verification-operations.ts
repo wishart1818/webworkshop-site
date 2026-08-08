@@ -4,9 +4,16 @@ import {
   repairOutreachQueueItemForReadiness,
   safeReadinessRepairProtectionReason,
 } from "@/lib/autonomous-growth-repository";
-import { outreachHistoryTextIndicatesProtectedContact, type OutreachQueueItem } from "@/lib/autonomous-growth";
+import { currentOutreachCopyVersion, outreachHistoryTextIndicatesProtectedContact, type OutreachQueueItem } from "@/lib/autonomous-growth";
 import { activity, type Prospect, type WebsiteFitDisposition, type WebsiteVerificationReport } from "@/lib/prospect-engine";
 import { buildActiveProspectQualificationAudit } from "@/lib/prospect-qualification-audit";
+import {
+  normalizeWebsiteFitDisposition,
+  outreachObservationForProspect,
+  outreachObservationGroundingProblems,
+  verifiedEmailEvidenceForProspect,
+  websiteFitAllowsAutonomousOutreach,
+} from "@/lib/prospect-qualification";
 import { getProspect, listProspects, saveProspect } from "@/lib/prospect-repository";
 import { safeRecordAudit } from "@/lib/operational-controls";
 import { verifyProspectWebsite, type WebsiteVerificationDependencies } from "@/lib/site-analysis";
@@ -20,8 +27,9 @@ const protectedProspectStatuses = new Set<Prospect["status"]>([
 ]);
 const transientLegacyEvidence = /\b(?:http\s*(?:403|408|429|500|502|503|504|508)|timeout|timed out|fetch failed|dns|enotfound|connection reset|econnreset|crawler|bot|waf|cloudflare|unreachable)\b/i;
 const websiteRepairReviewMaxAgeMs = 15 * 60 * 1000;
-const websiteRepairRequestBatchSize = 2;
-const websiteRepairRequestBatchLimit = 4;
+const websiteRepairRequestBatchSize = 20;
+const websiteRepairRequestBatchLimit = 25;
+const websiteRepairConcurrency = 3;
 const websiteRepairAttemptLimit = 3;
 const websiteRepairContactPageLimit = 2;
 const websiteRepairRequestTimeoutMs = 6_000;
@@ -38,6 +46,10 @@ export type WebsiteRecheckResult = {
 export type ExistingWebsiteRepairRecord = {
   prospectId: string;
   businessName: string;
+  currentProspectStatus: Prospect["status"];
+  currentQueueStatuses: string[];
+  currentDisposition: string;
+  proposedDisposition: WebsiteFitDisposition;
   oldStatus: Prospect["websiteStatus"];
   proposedStatus: Prospect["websiteStatus"];
   oldEmail: string;
@@ -47,11 +59,23 @@ export type ExistingWebsiteRepairRecord = {
   fieldChanges: Array<{ field: string; oldValue: string; proposedValue: string }>;
   protectedReason: string;
   newlyFoundContactPaths: string[];
+  legacyCandidate: boolean;
+  businessIdentitySufficient: boolean;
+  websiteEvidenceSufficient: boolean;
+  websiteEvidenceConfidence: WebsiteVerificationReport["confidence"];
+  contactEvidenceSufficient: boolean;
+  manualReviewRequired: boolean;
+  autonomouslyEligible: boolean;
+  proposedOutcome: "exclude_from_rebuild_outreach" | "manual_review" | "potential_candidate" | "protected";
+  exactReason: string;
+  productionMutationRequired: boolean;
 };
 
 export type ExistingWebsiteRepairReport = {
   mode: "dry_run" | "applied";
   inspected: number;
+  candidates: number;
+  remainingCandidates: number;
   changed: number;
   skippedProtected: number;
   records: ExistingWebsiteRepairRecord[];
@@ -356,12 +380,195 @@ export async function auditActiveProspectQualificationsReadOnly(now = new Date()
   return buildActiveProspectQualificationAudit(prospects, queue, now);
 }
 
-function existingRecordNeedsWebsiteAudit(prospect: Prospect) {
+const activeLegacyQueueStatuses = new Set<OutreachQueueItem["status"]>([
+  "Draft",
+  "Eligible",
+  "Needs Review",
+  "DM Draft",
+  "Queued",
+]);
+
+function existingRecordNeedsWebsiteAudit(prospect: Prospect, queueItems: OutreachQueueItem[]) {
   const legacyStatus = ["http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus);
   const transientDetail = transientLegacyEvidence.test(prospect.websiteStatusDetail);
   const staleContactClassification = ["phone_only", "social_only", "no_website"].includes(prospect.classification)
     || prospect.recommendedContactMethod === "needs_manual_contact_research";
-  return Boolean(prospect.website && (legacyStatus || transientDetail || staleContactClassification));
+  const activeUnsentInventory = !prospect.inactive
+    && ["New", "Reviewed"].includes(prospect.status)
+    && queueItems.some((item) => (
+      activeLegacyQueueStatuses.has(item.status)
+      && !item.sentDate
+      && !item.replyStatus
+    ));
+  const outdatedActivePackage = queueItems.some((item) => (
+    activeLegacyQueueStatuses.has(item.status)
+    && item.outreachCopyVersion !== currentOutreachCopyVersion
+  ));
+  const legacyEvidenceModel = prospect.websiteVerification?.version !== "website-verification-v2";
+  const incompleteEmailEvidence = Boolean(prospect.email && !verifiedEmailEvidenceForProspect(prospect));
+  return Boolean(
+    (prospect.website && (legacyStatus || transientDetail || staleContactClassification))
+    || (activeUnsentInventory && (legacyEvidenceModel || incompleteEmailEvidence || outdatedActivePackage)),
+  );
+}
+
+const structuralWebsiteSignals = new Set([
+  "meaningful page title",
+  "business name",
+  "navigation",
+  "service content",
+  "mobile viewport",
+  "public phone",
+  "public email",
+  "contact or quote form",
+  "business imagery",
+  "structured business data",
+]);
+
+function normalizedCanonicalUrl(value: string) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.href.replace(/\/$/, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function structuralWebsiteSignature(signals: string[] = []) {
+  return signals.filter((signal) => structuralWebsiteSignals.has(signal)).sort().join("|");
+}
+
+function preserveFreshRenderedFit(
+  before: Prospect,
+  verified: Awaited<ReturnType<typeof verifyProspectWebsite>>,
+  now: Date,
+) {
+  const priorFit = before.websiteVerification?.fit;
+  const sameCanonical = Boolean(
+    normalizedCanonicalUrl(before.websiteVerification?.canonicalUrl ?? "")
+    && normalizedCanonicalUrl(before.websiteVerification?.canonicalUrl ?? "")
+      === normalizedCanonicalUrl(verified.report.canonicalUrl),
+  );
+  const priorSignature = structuralWebsiteSignature(before.websiteVerification?.usableSignals);
+  const sameStructure = Boolean(
+    priorSignature
+    && priorSignature === structuralWebsiteSignature(verified.report.usableSignals),
+  );
+  const evaluatedAt = Date.parse(priorFit?.evaluatedAt ?? "");
+  const freshRenderedFit = Boolean(
+    priorFit
+    && ["manual", "rendered_review"].includes(priorFit.analysisOrigin)
+    && Number.isFinite(evaluatedAt)
+    && now.getTime() - evaluatedAt <= 7 * 24 * 60 * 60 * 1_000,
+  );
+  if (!sameCanonical || !sameStructure || !freshRenderedFit || !verified.prospect.websiteVerification) return verified;
+  const report = { ...verified.report, fit: priorFit };
+  return {
+    ...verified,
+    report,
+    prospect: {
+      ...verified.prospect,
+      fitDisposition: priorFit!.disposition,
+      websiteVerification: report,
+    },
+  };
+}
+
+function websiteEvidenceSufficientForDisposition(prospect: Prospect) {
+  const disposition = normalizeWebsiteFitDisposition(prospect);
+  if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) {
+    return prospect.websiteVerification?.version === "website-verification-v2"
+      && prospect.websiteVerification.status === "usable"
+      && prospect.websiteVerification.ownershipDecision === "owned"
+      && prospect.websiteVerification.fit?.disposition === disposition;
+  }
+  return websiteFitAllowsAutonomousOutreach(prospect);
+}
+
+function legacyAuditDecision(
+  before: Prospect,
+  proposed: Prospect,
+  protectedReason: string,
+  queueItems: OutreachQueueItem[],
+) {
+  const disposition = normalizeWebsiteFitDisposition(proposed);
+  const businessIdentitySufficient = proposed.websiteVerification?.version === "website-verification-v2"
+    && proposed.websiteVerification.ownershipDecision !== "uncertain"
+    && Boolean(proposed.websiteVerification.identityEvidence?.length);
+  const websiteEvidenceSufficient = websiteEvidenceSufficientForDisposition(proposed);
+  const websiteEvidenceConfidence = proposed.websiteVerification?.confidence ?? "low";
+  const contactEvidenceSufficient = Boolean(verifiedEmailEvidenceForProspect(proposed));
+  const observationProblems = outreachObservationGroundingProblems(outreachObservationForProspect(proposed));
+  const legacyCandidate = before.websiteVerification?.version !== "website-verification-v2"
+    || queueItems.some((item) => item.outreachCopyVersion !== currentOutreachCopyVersion);
+  if (protectedReason) {
+    return {
+      legacyCandidate,
+      businessIdentitySufficient,
+      websiteEvidenceSufficient,
+      websiteEvidenceConfidence,
+      contactEvidenceSufficient,
+      manualReviewRequired: false,
+      autonomouslyEligible: false,
+      proposedOutcome: "protected" as const,
+      exactReason: protectedReason,
+    };
+  }
+  if (["adequate_existing_website", "strong_existing_website"].includes(disposition) && websiteEvidenceSufficient) {
+    return {
+      legacyCandidate,
+      businessIdentitySufficient,
+      websiteEvidenceSufficient,
+      websiteEvidenceConfidence,
+      contactEvidenceSufficient,
+      manualReviewRequired: false,
+      autonomouslyEligible: false,
+      proposedOutcome: "exclude_from_rebuild_outreach" as const,
+      exactReason: `The current evidence classifies the owned website as ${disposition.replaceAll("_", " ")}. It is excluded regardless of business score or contactability.`,
+    };
+  }
+  if (disposition === "inconclusive_requires_review" || !websiteEvidenceSufficient) {
+    return {
+      legacyCandidate,
+      businessIdentitySufficient,
+      websiteEvidenceSufficient,
+      websiteEvidenceConfidence,
+      contactEvidenceSufficient,
+      manualReviewRequired: true,
+      autonomouslyEligible: false,
+      proposedOutcome: "manual_review" as const,
+      exactReason: disposition === "inconclusive_requires_review"
+        ? "Website fit remains inconclusive under the v2 evidence model and requires rendered human review."
+        : "Current structured website identity, ownership, status, or fit evidence is incomplete.",
+    };
+  }
+  if (!contactEvidenceSufficient || observationProblems.length) {
+    return {
+      legacyCandidate,
+      businessIdentitySufficient,
+      websiteEvidenceSufficient,
+      websiteEvidenceConfidence,
+      contactEvidenceSufficient,
+      manualReviewRequired: true,
+      autonomouslyEligible: false,
+      proposedOutcome: "manual_review" as const,
+      exactReason: !contactEvidenceSufficient
+        ? "The stored public email lacks current autonomous-quality source URL and provenance evidence."
+        : observationProblems.join(" "),
+    };
+  }
+  return {
+    legacyCandidate,
+    businessIdentitySufficient,
+    websiteEvidenceSufficient,
+    websiteEvidenceConfidence,
+    contactEvidenceSufficient,
+    manualReviewRequired: false,
+    autonomouslyEligible: true,
+    proposedOutcome: "potential_candidate" as const,
+    exactReason: "Current website-fit, business identity, public-email provenance, and outreach-observation evidence pass. The package still requires current copy and deliberate human approval before any send.",
+  };
 }
 
 async function inspectExistingWebsiteRepairCandidate(
@@ -371,12 +578,17 @@ async function inspectExistingWebsiteRepairCandidate(
 ) {
   const protectedReason = prospectProtectionReason(prospect, queueItems);
   if (protectedReason) {
+    const decision = legacyAuditDecision(prospect, prospect, protectedReason, queueItems);
     return {
       prospect,
       verified: null,
       record: {
         prospectId: prospect.id,
         businessName: prospect.businessName,
+        currentProspectStatus: prospect.status,
+        currentQueueStatuses: queueItems.map((item) => item.status),
+        currentDisposition: prospect.fitDisposition,
+        proposedDisposition: normalizeWebsiteFitDisposition(prospect),
         oldStatus: prospect.websiteStatus,
         proposedStatus: prospect.websiteStatus,
         oldEmail: prospect.email,
@@ -386,27 +598,66 @@ async function inspectExistingWebsiteRepairCandidate(
         fieldChanges: [],
         protectedReason,
         newlyFoundContactPaths: [],
+        ...decision,
+        productionMutationRequired: false,
       } satisfies ExistingWebsiteRepairRecord,
     };
   }
-  const verified = await verifyProspectWebsite(prospect, dependencies);
+  const verified = preserveFreshRenderedFit(
+    prospect,
+    await verifyProspectWebsite(prospect, dependencies),
+    dependencies.now?.() ?? new Date(),
+  );
+  const decision = legacyAuditDecision(prospect, verified.prospect, "", queueItems);
+  const changedFields = changedProspectFields(prospect, verified.prospect);
   return {
     prospect,
     verified,
     record: {
       prospectId: prospect.id,
       businessName: prospect.businessName,
+      currentProspectStatus: prospect.status,
+      currentQueueStatuses: queueItems.map((item) => item.status),
+      currentDisposition: prospect.fitDisposition,
+      proposedDisposition: normalizeWebsiteFitDisposition(verified.prospect),
       oldStatus: prospect.websiteStatus,
       proposedStatus: verified.prospect.websiteStatus,
       oldEmail: prospect.email,
       proposedEmail: verified.prospect.email,
       evidence: `Stored trigger: ${prospect.websiteStatus}${prospect.websiteStatusDetail ? ` (${prospect.websiteStatusDetail})` : ""}. Recheck: ${verified.report.explanation}`,
-      changedFields: changedProspectFields(prospect, verified.prospect),
+      changedFields,
       fieldChanges: repairFieldChanges(prospect, verified.prospect),
       protectedReason: "",
       newlyFoundContactPaths: newContactPaths(prospect, verified.prospect),
+      ...decision,
+      productionMutationRequired: changedFields.length > 0,
     } satisfies ExistingWebsiteRepairRecord,
   };
+}
+
+async function inspectCandidatesBounded(
+  candidates: Prospect[],
+  dependencies: WebsiteVerificationDependencies,
+  queueByProspect: Map<string, OutreachQueueItem[]>,
+) {
+  const inspected = new Array<Awaited<ReturnType<typeof inspectExistingWebsiteRepairCandidate>>>(candidates.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < candidates.length) {
+      const index = nextIndex++;
+      const prospect = candidates[index]!;
+      inspected[index] = await inspectExistingWebsiteRepairCandidate(
+        prospect,
+        dependencies,
+        queueByProspect.get(prospect.id) ?? [],
+      );
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(websiteRepairConcurrency, candidates.length) },
+    () => worker(),
+  ));
+  return inspected;
 }
 
 const volatileRepairReviewKeys = new Set([
@@ -515,13 +766,26 @@ export async function auditExistingWebsiteRecords(input: {
     throw new Error("Website-repair review signing is not configured.");
   }
   const now = input.dependencies?.now?.() ?? new Date();
-  const candidates = (await listProspects())
-    .filter(existingRecordNeedsWebsiteAudit)
-    .slice(0, Math.min(
+  const [prospects, queue] = await Promise.all([
+    listProspects(),
+    listOutreachQueueItemsForBackfill(),
+  ]);
+  const queueByProspect = new Map<string, OutreachQueueItem[]>();
+  for (const item of queue) {
+    queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
+  }
+  const allCandidates = prospects
+    .filter((prospect) => existingRecordNeedsWebsiteAudit(prospect, queueByProspect.get(prospect.id) ?? []))
+    .sort((left, right) => {
+      const leftProtected = Boolean(prospectProtectionReason(left, queueByProspect.get(left.id) ?? []));
+      const rightProtected = Boolean(prospectProtectionReason(right, queueByProspect.get(right.id) ?? []));
+      return Number(leftProtected) - Number(rightProtected)
+        || left.businessName.localeCompare(right.businessName);
+    });
+  const candidates = allCandidates.slice(0, Math.min(
       websiteRepairRequestBatchLimit,
       Math.max(1, input.limit ?? websiteRepairRequestBatchSize),
     ));
-  const queue = await listOutreachQueueItemsForBackfill();
   const boundedDependencies: WebsiteVerificationDependencies = {
     ...(input.dependencies ?? {}),
     maxVerificationAttempts: Math.min(
@@ -537,13 +801,7 @@ export async function auditExistingWebsiteRecords(input: {
       Math.max(500, input.dependencies?.requestTimeoutMs ?? websiteRepairRequestTimeoutMs),
     ),
   };
-  const inspected = await Promise.all(candidates.map((prospect) => (
-    inspectExistingWebsiteRepairCandidate(
-      prospect,
-      boundedDependencies,
-      queue.filter((item) => item.prospectId === prospect.id),
-    )
-  )));
+  const inspected = await inspectCandidatesBounded(candidates, boundedDependencies, queueByProspect);
   const currentDigest = repairReviewDigest(inspected, queue);
   if (input.apply) {
     const reviewedDigest = verifiedRepairReviewDigest(
@@ -593,20 +851,24 @@ export async function auditExistingWebsiteRecords(input: {
   } else {
     skippedProtected = inspected.filter((candidate) => Boolean(candidate.record.protectedReason)).length;
   }
-  await safeRecordAudit({
-    action: "existing_website_record_audit",
-    outcome: "success",
-    subject: input.apply ? "confirmed repair" : "dry run",
-    metadata: {
-      inspected: inspected.length,
-      changed,
-      skippedProtected,
-      sent: 0,
-    },
-  });
+  if (input.apply) {
+    await safeRecordAudit({
+      action: "existing_website_record_audit",
+      outcome: "success",
+      subject: "confirmed repair",
+      metadata: {
+        inspected: inspected.length,
+        changed,
+        skippedProtected,
+        sent: 0,
+      },
+    });
+  }
   return {
     mode: input.apply ? "applied" : "dry_run",
     inspected: inspected.length,
+    candidates: allCandidates.length,
+    remainingCandidates: Math.max(0, allCandidates.length - inspected.length),
     changed,
     skippedProtected,
     records: inspected.map((candidate) => candidate.record),
