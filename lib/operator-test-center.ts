@@ -920,7 +920,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const firstEmailHasApprovedReason =
   /I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\./i.test(firstEmail)
   && /I came across [\s\S]+(?: while looking at [\s\S]+ businesses(?: around [^.]+)?)?\./i.test(firstEmail)
-  && /(?:I can build you a refreshed, more modern website designed to help bring in more calls and quote requests|It looks like you don't currently have a full website up\. I can build you a modern one designed to help bring in more calls and quote requests)\./i.test(firstEmail)
+  && /(?:I can rebuild your current website with a more modern design|I can build you a modern website from the ground up)/i.test(firstEmail)
   && /Would you be interested in seeing what that could look like\?/i.test(firstEmail);
   const configuredPostalAddress = environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
   const smartBackfill = await processExistingQualifiedProspects({ dryRun: true }).catch((error) => ({

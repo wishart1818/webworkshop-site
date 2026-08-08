@@ -24,6 +24,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { normalizeWebsiteFitDisposition, websiteFitAllowsAutonomousOutreach } from "@/lib/prospect-qualification";
 import { verifyProspectWebsite } from "@/lib/site-analysis";
 import {
   likelyNationalOrLargeBrand,
@@ -763,6 +764,13 @@ async function processLead(
       recoverableTopProspect(existing, jobCreatedAt)
       || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach)
     ) {
+      if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        const fit = normalizeWebsiteFitDisposition(existing);
+        addSkip(summary, fit === "adequate_existing_website" || fit === "strong_existing_website"
+          ? "confirmed_usable_website_not_fit"
+          : "website_fit_requires_review");
+        return false;
+      }
       const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
       return rejectionReason === null;
@@ -784,9 +792,12 @@ async function processLead(
     addSkip(summary, `website_${prospect.websiteStatus}`);
     return false;
   }
-  if (prospect.fitDisposition === "confirmed_usable_not_fit") {
+  if (!websiteFitAllowsAutonomousOutreach(prospect)) {
     await saveProspect(prospect);
-    addSkip(summary, "confirmed_usable_website_not_fit");
+    const fit = normalizeWebsiteFitDisposition(prospect);
+    addSkip(summary, fit === "adequate_existing_website" || fit === "strong_existing_website"
+      ? "confirmed_usable_website_not_fit"
+      : "website_fit_requires_review");
     return false;
   }
 

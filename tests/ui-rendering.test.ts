@@ -230,7 +230,7 @@ test("prospect detail renders structured website and contact evidence with safe 
     websiteStatus: "usable" as const,
     websiteStatusDetail: "A meaningful public business website was verified.",
     websiteVerification: {
-      version: "website-verification-v1" as const,
+      version: "website-verification-v2" as const,
       status: "usable" as const,
       confidence: "high" as const,
       canonicalUrl: "https://summitridgeroofing.com/",
@@ -251,8 +251,18 @@ test("prospect detail renders structured website and contact evidence with safe 
       usableSignals: ["business name", "service content", "public email"],
       explanation: "A meaningful public business website was verified.",
       checkedAt,
+      ownershipDecision: "owned" as const,
+      identityEvidence: ["The business name and public phone match the canonical website."],
+      fit: {
+        disposition: "strong_existing_website" as const,
+        reason: "The site has clear services, navigation, and contact paths.",
+        supportingEvidence: ["Clear services, navigation, phone, and quote form were verified."],
+        confidence: "high" as const,
+        analysisOrigin: "rendered_review" as const,
+        evaluatedAt: checkedAt,
+      },
     },
-    fitDisposition: "manual_review_required" as const,
+    fitDisposition: "strong_existing_website" as const,
     contactPageUrl: "https://summitridgeroofing.com/contact",
     contactFormDetected: true,
     quoteFormDetected: true,
@@ -264,6 +274,10 @@ test("prospect detail renders structured website and contact evidence with safe 
       confidence: "high" as const,
       domainMatchesBusiness: true,
       discoveredAt: checkedAt,
+      sourceType: "owned_website" as const,
+      firstParty: true,
+      decision: "autonomous_eligible" as const,
+      decisionReason: "The business-domain mailbox is visibly published on the verified contact page.",
     }],
   } satisfies Prospect;
   const html = renderDetail(prospect, "Analysis");
@@ -275,7 +289,10 @@ test("prospect detail renders structured website and contact evidence with safe 
   assert.match(html, /Detected, never submitted/);
   assert.match(html, /Verification evidence \(1 bounded attempt\)/);
   assert.match(html, /Re-check website and contact paths/);
-  assert.match(html, /Confirmed usable website \/ not a fit/);
+  assert.match(html, /strong existing website/);
+  assert.match(html, /Not a website-rebuild opportunity/);
+  assert.match(html, /stays out of rebuild outreach/);
+  assert.doesNotMatch(html, /Ready for Email Review|Generate preview|Website verification required/);
 });
 
 test("website re-check and controlled-pilot controls retain guarded progress and confirmation wiring", () => {

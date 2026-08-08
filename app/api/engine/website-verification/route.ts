@@ -4,6 +4,7 @@ import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
   recheckProspectWebsite,
+  setProspectWebsiteFitDisposition,
 } from "@/lib/website-verification-operations";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,7 @@ export const runtime = "nodejs";
 const supportedActions = [
   "recheck_website",
   "confirm_usable_not_fit",
+  "set_website_fit",
   "audit_existing_records",
   "apply_existing_record_repair",
 ] as const;
@@ -39,6 +41,16 @@ export async function POST(request: Request) {
       const prospectId = safeText(input.prospectId, 100);
       if (!prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });
       return NextResponse.json(await confirmUsableWebsiteNotFit(prospectId, input.confirmed === true));
+    }
+    if (action === "set_website_fit") {
+      const prospectId = safeText(input.prospectId, 100);
+      if (!prospectId) return NextResponse.json({ error: "Prospect ID is required." }, { status: 400 });
+      return NextResponse.json(await setProspectWebsiteFitDisposition({
+        prospectId,
+        disposition: safeText(input.disposition, 80) as Parameters<typeof setProspectWebsiteFitDisposition>[0]["disposition"],
+        reason: safeText(input.reason, 1_500),
+        confirmed: input.confirmed === true,
+      }));
     }
     if (action === "audit_existing_records") {
       await enforceRateLimit({ action: "website_record_audit", subject: "operator", limit: 3, windowMs: 60 * 60 * 1000 });

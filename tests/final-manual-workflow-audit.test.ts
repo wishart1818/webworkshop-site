@@ -12,7 +12,7 @@ import {
 
 const environment = { WEBWORKSHOP_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840" } as NodeJS.ProcessEnv;
 
-test("permission-first V6 copy is current while the old already-built CTA is stale", () => {
+test("permission-first V7 copy is current while the old already-built CTA is stale", () => {
   const prospect = structuredClone(seedProspects[0]);
   const current = generateOutreach(prospect, "", environment);
   assert.equal(current.outreachCopyVersion, OUTREACH_COPY_VERSION);
@@ -29,7 +29,7 @@ test("permission-first V6 copy is current while the old already-built CTA is sta
 
   const falseBuiltClaim = {
     ...current,
-    concise: current.concise.replace(/I can build you a refreshed, more modern website designed to help bring in more calls and quote requests\.|It looks like you don't currently have a full website up\. I can build you a modern one designed to help bring in more calls and quote requests\./i, "I built a website preview for the business."),
+    concise: current.concise.replace(/I can rebuild your current website with a more modern design[^\n]*\.|I can build you a modern website from the ground up[^\n]*\./i, "I built a website preview for the business."),
   };
   assert.equal(outreachDraftLooksCurrent(falseBuiltClaim, environment), false);
 });

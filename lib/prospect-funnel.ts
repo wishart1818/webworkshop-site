@@ -3,6 +3,11 @@ import {
   prospectWrittenContactMethodIsUsable,
   type Prospect,
 } from "@/lib/prospect-engine";
+import {
+  normalizeWebsiteFitDisposition,
+  verifiedEmailEvidenceForProspect,
+  websiteFitAllowsAutonomousOutreach,
+} from "@/lib/prospect-qualification";
 
 export const prospectExclusiveBucketKeys = [
   "ready_email",
@@ -49,7 +54,7 @@ export const prospectFunnelLabels: Record<ProspectFunnelFilterKey, string> = {
   ready_contact_form: "Ready for Contact Form Review",
   needs_manual_research: "Needs Manual Research",
   phone_only: "Phone Only",
-  website_already_strong: "Website Already Strong / Low Opportunity",
+  website_already_strong: "Website Adequate / Strong (Not a Fit)",
   bad_fit: "Bad Fit / Blocked",
   suppressed_do_not_contact: "Suppressed / Do Not Contact",
   already_contacted: "Already Contacted",
@@ -126,11 +131,12 @@ export function prospectHasQuoteFormPath(prospect: Prospect) {
 }
 
 export function prospectHasUsablePublicEmail(prospect: Prospect) {
-  return Boolean(prospect.email) && prospect.recommendedContactMethod !== "verify_email_manually";
+  return Boolean(verifiedEmailEvidenceForProspect(prospect))
+    && prospect.recommendedContactMethod !== "verify_email_manually";
 }
 
 export function prospectHasUsableWrittenContactPath(prospect: Prospect) {
-  return prospectHasUsablePublicEmail(prospect)
+  return Boolean(prospect.email)
     || prospectHasFacebookPath(prospect)
     || prospectHasInstagramPath(prospect)
     || prospectHasLinkedInPath(prospect)
@@ -144,7 +150,10 @@ export function prospectIsPhoneOnly(prospect: Prospect) {
 }
 
 export function prospectIsWebsiteAlreadyStrong(prospect: Prospect) {
-  return Boolean(prospect.analysis && prospect.analysis.overallScore >= 85 && prospect.analysis.opportunityRating === "Low")
+  const fit = normalizeWebsiteFitDisposition(prospect);
+  return fit === "adequate_existing_website"
+    || fit === "strong_existing_website"
+    || Boolean(prospect.analysis && prospect.analysis.overallScore >= 85 && prospect.analysis.opportunityRating === "Low")
     || /\balready strong website|website already strong|strong website\b/i.test(noteText(prospect));
 }
 
@@ -188,7 +197,11 @@ export function prospectCurrentBucket(prospect: Prospect): ProspectExclusiveBuck
   if (prospectIsDuplicate(prospect)) return "duplicate";
   if (prospectIsBadFit(prospect)) return "bad_fit";
   if (prospectIsWebsiteAlreadyStrong(prospect)) return "website_already_strong";
-  if (prospectIsQualifiedUnsent(prospect) && prospectHasUsablePublicEmail(prospect)) return "ready_email";
+  if (
+    prospectIsQualifiedUnsent(prospect)
+    && websiteFitAllowsAutonomousOutreach(prospect)
+    && prospectHasUsablePublicEmail(prospect)
+  ) return "ready_email";
   if (prospectIsQualifiedUnsent(prospect) && prospectHasFacebookPath(prospect)) return "ready_facebook";
   if (prospectIsQualifiedUnsent(prospect) && prospectHasInstagramPath(prospect)) return "ready_instagram";
   if (prospectIsQualifiedUnsent(prospect) && (prospectHasContactFormPath(prospect) || prospectHasQuoteFormPath(prospect))) return "ready_contact_form";
@@ -243,7 +256,7 @@ export function explainProspectBucket(prospect: Prospect) {
       : currentBucket === "already_contacted" ? "Already contacted or closed in the pipeline."
         : currentBucket === "duplicate" ? "Existing business already stored or marked duplicate."
           : currentBucket === "bad_fit" ? "Not a clear local service-business fit."
-            : currentBucket === "website_already_strong" ? "Website already appears strong enough that outreach is low priority."
+            : currentBucket === "website_already_strong" ? "The evidence-backed website fit is adequate or strong, so rebuild outreach is blocked."
               : currentBucket === "ready_email" ? "Qualified, unsent, and a usable public business email was found."
                 : currentBucket === "ready_facebook" ? "Qualified, unsent, Facebook found, and no usable public email took priority."
                   : currentBucket === "ready_instagram" ? "Qualified, unsent, Instagram found, and no email or Facebook path took priority."
@@ -258,7 +271,7 @@ export function explainProspectBucket(prospect: Prospect) {
         : currentBucket === "ready_instagram" ? "Open Instagram and manually send the link-free first DM if the package looks accurate."
           : currentBucket === "ready_contact_form" ? "Review the contact-form draft and submit manually only if appropriate."
             : currentBucket === "phone_only" || currentBucket === "needs_manual_research" ? "Find a written contact path or leave it blocked."
-              : currentBucket === "website_already_strong" ? "Skip unless you find a specific conversion issue worth a manual note."
+              : currentBucket === "website_already_strong" ? "Keep it out of rebuild outreach unless a later verified review changes the fit disposition."
                 : currentBucket === "already_contacted" ? "Continue from the pipeline history instead of starting new outreach."
                   : currentBucket === "suppressed_do_not_contact" ? "Do not contact."
                     : currentBucket === "duplicate" ? "Use the existing stored business record."

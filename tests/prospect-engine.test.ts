@@ -17,6 +17,7 @@ import {
   withOutreach,
   withPresenceGapReview,
   withPreview,
+  type Prospect,
 } from "../lib/prospect-engine";
 import {
   buildProspectFunnel,
@@ -46,6 +47,89 @@ const testFooter = [
   "",
   "If you'd rather not hear from me again, just let me know.",
 ].join("\n");
+
+function withVerifiedNoOwnedWebsite(prospect: typeof seedProspects[number]) {
+  const checkedAt = new Date().toISOString();
+  const reviewed = withPresenceGapReview(prospect, "no_owned_website", "Verified public profiles did not identify an owned website.");
+  return {
+    ...reviewed,
+    fitDisposition: "no_owned_website" as const,
+    websiteVerification: {
+      version: "website-verification-v2" as const,
+      status: "no_owned_website" as const,
+      confidence: "high" as const,
+      canonicalUrl: "",
+      attempts: [],
+      usableSignals: [],
+      explanation: "Verified public profiles did not identify an owned website.",
+      checkedAt,
+      ownershipDecision: "not_owned" as const,
+      identityEvidence: ["The verified business profile did not link to an owned website."],
+      fit: {
+        disposition: "no_owned_website" as const,
+        reason: "No owned website was linked from the verified public business profiles.",
+        supportingEvidence: ["The verified business profile did not link to an owned website."],
+        confidence: "high" as const,
+        analysisOrigin: "not_applicable" as const,
+        evaluatedAt: checkedAt,
+      },
+    },
+  };
+}
+
+function withVerifiedWeakWebsite(prospect: Prospect, email = "owner@example.com") {
+  const checkedAt = new Date().toISOString();
+  const website = "https://example.com";
+  return {
+    ...prospect,
+    website,
+    email,
+    recommendedContactMethod: "send_email" as const,
+    bestManualContactMethod: "email" as const,
+    websiteStatus: "usable" as const,
+    fitDisposition: "clearly_weak_or_outdated_website" as const,
+    websiteVerification: {
+      version: "website-verification-v2" as const,
+      status: "usable" as const,
+      confidence: "high" as const,
+      canonicalUrl: website,
+      attempts: [],
+      usableSignals: ["business name"],
+      explanation: "The owned website was verified.",
+      checkedAt,
+      ownershipDecision: "owned" as const,
+      identityEvidence: ["The business and domain match."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website" as const,
+        reason: "Rendered review found a difficult-to-reach quote request.",
+        supportingEvidence: ["The primary rendered customer path did not expose the quote request."],
+        confidence: "high" as const,
+        analysisOrigin: "rendered_review" as const,
+        evaluatedAt: checkedAt,
+        observation: {
+          kind: "quote_path" as const,
+          statement: "I noticed the quote request is difficult to reach on the current website.",
+          rebuildSentence: "I can rebuild your current website with a more modern design that makes requesting a quote easier while presenting your services and contact information more clearly.",
+          evidence: ["Rendered review found no quote action in the primary customer path."],
+          demoChecklist: ["Show the improved quote action on desktop and mobile."],
+        },
+      },
+    },
+    contactEvidence: [{
+      kind: "email" as const,
+      value: email,
+      sourceUrl: `${website}/contact`,
+      extractionMethod: "mailto" as const,
+      confidence: "high" as const,
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+      sourceType: "owned_website" as const,
+      firstParty: true,
+      decision: "autonomous_eligible" as const,
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
+    }],
+  } as Prospect;
+}
 
 test("analysis prioritizes weaker websites and moves new leads to reviewed", () => {
   const analyzed = withAnalysis(structuredClone(seedProspects[0]));
@@ -85,7 +169,8 @@ test("Outreach Package uses truthful permission-first copy before a manual build
 
   assert.equal(outreach.subjects[0], "Quick website idea for MC Pressure Washing FL");
   assert.match(outreach.concise, /I came across MC Pressure Washing FL while looking at pressure-washing businesses around Tampa/i);
-  assert.match(outreach.concise, /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+  assert.match(outreach.concise, /rebuild your current website with a more modern design/i);
+  assert.match(outreach.concise, /services, contact information, and quote request easier for customers to find/i);
   assert.match(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.concise, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,60}\bpreview\b/i);
@@ -108,24 +193,26 @@ test("first-touch email wording matches the manual Lovable permission-first temp
   hasWebsite.city = "St Augustine";
 
   assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
-  "Hi there,",
+  "Hi Styles Power Wash team,",
   "",
   "I'm Brendan, and I build websites for local service businesses. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine.",
   "",
-  "I can build you a refreshed, more modern website designed to help bring in more calls and quote requests.",
+  "I can rebuild your current website with a more modern design that better represents your business and makes your services, contact information, and quote request easier for customers to find.",
   "",
   "Would you be interested in seeing what that could look like?",
   "",
   testFooter,
 ].join("\n"));
 
-const noWebsite = withPresenceGapReview({ ...structuredClone(seedProspects[0]), businessName: "ClearFlow Plumbing", trade: "Plumbing", city: "Toledo", website: "" }, "no_owned_website");
+const noWebsite = withVerifiedNoOwnedWebsite({ ...structuredClone(seedProspects[0]), businessName: "ClearFlow Plumbing", trade: "Plumbing", city: "Toledo", website: "" });
 assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
-  "Hi there,",
+  "Hi ClearFlow Plumbing team,",
   "",
   "I'm Brendan, based in Findlay, and I build websites for local service businesses. I came across ClearFlow Plumbing while looking at plumbing businesses around Toledo.",
   "",
-  "It looks like you don't currently have a full website up. I can build you a modern one designed to help bring in more calls and quote requests.",
+  "I couldn't find a dedicated website linked from the business's public profiles.",
+  "",
+  "I can build you a modern website from the ground up that clearly presents your services and makes it easier for customers to call or request a quote.",
   "",
   "Would you be interested in seeing what that could look like?",
   "",
@@ -135,17 +222,53 @@ assert.equal(firstTouchEmailDraft(noWebsite, testFooter), [
 
 
 test("first-touch email uses the saved contact first name and never infers one from the email address", () => {
+  const checkedAt = "2026-08-04T12:00:00.000Z";
   const prospect = withAnalysis({
     ...structuredClone(seedProspects[0]),
     businessName: "Pinnacle Pressure Washing of Toledo",
     trade: "Pressure Washing",
     city: "Toledo",
+    website: "https://pinnacle419.com",
+    websiteStatus: "usable",
+    websiteVerification: {
+      version: "website-verification-v2" as const,
+      status: "usable" as const,
+      confidence: "high" as const,
+      canonicalUrl: "https://pinnacle419.com",
+      attempts: [],
+      usableSignals: ["business name"],
+      explanation: "The owned website was verified.",
+      checkedAt,
+      ownershipDecision: "owned" as const,
+      identityEvidence: ["The business and domain match."],
+      fit: {
+        disposition: "inconclusive_requires_review" as const,
+        reason: "Rendered review is pending.",
+        supportingEvidence: [],
+        confidence: "low" as const,
+        analysisOrigin: "automated_html" as const,
+        evaluatedAt: checkedAt,
+      },
+    },
     email: "nick@pinnacle419.com",
     contactPersonName: "Nick Smith",
+    contactEvidence: [{
+      kind: "contact_person" as const,
+      value: "Nick Smith",
+      sourceUrl: "https://pinnacle419.com/contact",
+      extractionMethod: "visible_text" as const,
+      confidence: "high" as const,
+      domainMatchesBusiness: true,
+      discoveredAt: checkedAt,
+      sourceType: "owned_website" as const,
+      firstParty: true,
+      decision: "autonomous_eligible" as const,
+      decisionReason: "The contact page explicitly names Nick Smith as the business contact.",
+    }],
   });
 
   assert.match(firstTouchEmailDraft(prospect, testFooter), /^Hi Nick,/);
-  assert.match(firstTouchEmailDraft({ ...prospect, contactPersonName: "" }, testFooter), /^Hi there,/);
+  assert.match(firstTouchEmailDraft({ ...prospect, contactEvidence: [] }, testFooter), /^Hi Pinnacle Pressure Washing of Toledo team,/);
 });
 
 test("permission-first outreach avoids repeating the business name and stays link-free", () => {
@@ -156,8 +279,8 @@ test("permission-first outreach avoids repeating the business name and stays lin
   const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
   const outreach = generateOutreach(prospect, previewLink, { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /Hi there,\n\nI'm Brendan, and I build websites for local service businesses\. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine\./);
-  assert.doesNotMatch(outreach.concise, /Hi there,\n\n[^.]+Styles Power Wash[^.]+Styles Power Wash/i);
+  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI'm Brendan, and I build websites for local service businesses\. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine\./);
+  assert.doesNotMatch(outreach.concise, /Hi Styles Power Wash team,\n\n[^.]+Styles Power Wash[^.]+Styles Power Wash/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
   assert.match(outreach.detailed, /I'll put together a website concept and send you a quick video walkthrough/i);
@@ -183,7 +306,7 @@ test("outreach avoids analytical strength claims for weak websites", () => {
   }
   const outreach = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+  assert.match(outreach.concise, /rebuild your current website with a more modern design/i);
   assert.match(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.concise, /already pretty easy|solid technical foundation/i);
@@ -396,9 +519,7 @@ test("priority scoring accounts for broader service-area reach", () => {
 });
 
 test("prospect funnel totals reconcile and bucket counts match filtered lists", () => {
-  const emailReady = withAnalysis(structuredClone(seedProspects[0]));
-  emailReady.email = "owner@example.com";
-  emailReady.recommendedContactMethod = "send_email";
+  const emailReady = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
   const facebookReady = withPresenceGapReview({ ...structuredClone(seedProspects[1]), email: "" }, "no_owned_website", "No owned website.");
   facebookReady.facebookUrl = "https://facebook.com/example";
   facebookReady.recommendedContactMethod = "message_on_facebook";
@@ -522,9 +643,7 @@ test("manual Calls queue badge states resolve or stay pending by call outcome", 
 });
 
 test("prospect funnel explanations are human-readable and do not change ranking or outreach", () => {
-  const prospect = withAnalysis(structuredClone(seedProspects[0]));
-  prospect.email = "owner@example.com";
-  prospect.recommendedContactMethod = "send_email";
+  const prospect = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
   const before = JSON.stringify(prospect);
   const sortedBefore = sortProspects([prospect], "priority").map((item) => item.id);
   const outreachBefore = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }).concise;
@@ -564,14 +683,14 @@ test("website analysis failures remain conservative until independent evidence c
 });
 
 test("verified no-website prospects receive careful dedicated-website wording", () => {
-  const noWebsite = withPresenceGapReview({
+  const noWebsite = withVerifiedNoOwnedWebsite({
     ...structuredClone(seedProspects[0]),
     website: "",
-  }, "no_owned_website", "No owned website detected.");
+  });
   const withDraft = withOutreach(noWebsite);
 
-  assert.match(withDraft.outreach?.concise ?? "", /don't currently have a full website up/i);
-  assert.match(withDraft.outreach?.concise ?? "", /modern one designed to help bring in more calls and quote requests/i);
+  assert.match(withDraft.outreach?.concise ?? "", /couldn't find a dedicated website linked from the business's public profiles/i);
+  assert.match(withDraft.outreach?.concise ?? "", /modern website from the ground up/i);
   assert.match(withDraft.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /https?:\/\/|\/p\//i);
   assert.doesNotMatch(withDraft.outreach?.concise ?? "", /your website has issues|you don't have a website/i);

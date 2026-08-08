@@ -22,7 +22,7 @@ import {
 } from "../lib/prospect-engine";
 import type { OperatorActionResult } from "../lib/operator-test-center";
 
-const now = new Date("2026-07-28T14:00:00.000Z");
+const now = new Date();
 
 function environment(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   const defaults: Record<string, string | undefined> = {
@@ -72,7 +72,7 @@ function eligibleProspect(overrides: Partial<Prospect> = {}) {
     websiteStatus: "usable",
     websiteStatusDetail: "A meaningful public business website was verified.",
     websiteVerification: {
-      version: "website-verification-v1",
+      version: "website-verification-v2",
       status: "usable",
       confidence: "high",
       canonicalUrl: "https://groundedhvac.com/",
@@ -80,8 +80,25 @@ function eligibleProspect(overrides: Partial<Prospect> = {}) {
       usableSignals: ["meaningful page title", "business name", "service content", "public email"],
       explanation: "A meaningful public business website was verified.",
       checkedAt: now.toISOString(),
+      ownershipDecision: "owned",
+      identityEvidence: ["The business name and website host match."],
+      fit: {
+        disposition: "clearly_weak_or_outdated_website",
+        reason: "Rendered fixture review found that the quote request is difficult to reach.",
+        supportingEvidence: ["The primary customer path does not expose the quote action."],
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: now.toISOString(),
+        observation: {
+          kind: "quote_path",
+          statement: "I noticed the quote request is difficult to reach on the current website.",
+          rebuildSentence: "I can rebuild your current website with a more modern design that makes requesting a quote easier while presenting your verified services and contact information more clearly.",
+          evidence: ["Rendered fixture review found no quote action in the primary customer path."],
+          demoChecklist: ["Show the quote action on desktop", "Show the quote action on mobile"],
+        },
+      },
     },
-    fitDisposition: "weak_redesign_opportunity",
+    fitDisposition: "clearly_weak_or_outdated_website",
     recommendedContactMethod: "send_email",
     bestManualContactMethod: "email",
     contactConfidence: "high",
@@ -94,6 +111,10 @@ function eligibleProspect(overrides: Partial<Prospect> = {}) {
       confidence: "high",
       domainMatchesBusiness: true,
       discoveredAt: now.toISOString(),
+      sourceType: "owned_website",
+      firstParty: true,
+      decision: "autonomous_eligible",
+      decisionReason: "The business-domain address is publicly displayed on the verified owned website.",
     }],
     ...overrides,
   } satisfies Prospect;
@@ -311,12 +332,14 @@ test("unverified email and transient website evidence block controlled readiness
 });
 
 test("manual-fit websites and prior sends to the same prospect block controlled readiness", async () => {
-  const manualFitProspect = eligibleProspect({ fitDisposition: "manual_review_required" });
+  const eligibleBeforeManualReview = eligibleProspect();
+  const manualFitItem = queueItemFor(eligibleBeforeManualReview);
+  const manualFitProspect = { ...eligibleBeforeManualReview, fitDisposition: "manual_review_required" as const };
   const manualFit = await runControlledOutreachLaunchReadiness({
     environment: environment(),
     dependencies: dependencies({
       prospect: manualFitProspect,
-      item: queueItemFor(manualFitProspect),
+      item: manualFitItem,
     }),
     now,
   });

@@ -14,13 +14,18 @@ import {
   type Analysis,
   type ContactRouteEvidence,
   type Prospect,
-  type ProspectFitDisposition,
   type ScoreKey,
   type WebsiteAvailabilityStatus,
   type WebsiteVerificationAttempt,
   type WebsiteVerificationFailureCategory,
   type WebsiteVerificationReport,
 } from "@/lib/prospect-engine";
+import {
+  classifyPublicEmailEvidence,
+  initialProspectFreshness,
+  verifiedContactFirstNameForProspect,
+  verifiedEmailEvidenceForProspect,
+} from "@/lib/prospect-qualification";
 
 const userAgent = "WebWorkshopProspectEngine/1.0 (+https://webworkshop.dev)";
 const browserCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
@@ -361,6 +366,9 @@ function likelyVendorEmail(value: string) {
 }
 
 function contactEvidenceRank(item: ContactRouteEvidence) {
+  const decisionScore = item.decision === "autonomous_eligible"
+    ? 100
+    : item.decision === "manual_review_required" ? 10 : -100;
   const confidenceScore = item.confidence === "high" ? 30 : item.confidence === "medium" ? 20 : 10;
   const methodScore: Partial<Record<ContactRouteEvidence["extractionMethod"], number>> = {
     mailto: 30,
@@ -378,13 +386,13 @@ function contactEvidenceRank(item: ContactRouteEvidence) {
   } catch {
     sourceScore = 0;
   }
-  return confidenceScore + (methodScore[item.extractionMethod] ?? 0) + sourceScore + (item.domainMatchesBusiness ? 50 : 0);
+  return decisionScore + confidenceScore + (methodScore[item.extractionMethod] ?? 0) + sourceScore + (item.domainMatchesBusiness ? 50 : 0);
 }
 
 function bestEmail(evidence: ContactRouteEvidence[], existing: Partial<Prospect>) {
   const unique = [...new Map(
     evidence
-      .filter((item) => item.kind === "email" && emailAllowed(item.value))
+      .filter((item) => item.kind === "email" && emailAllowed(item.value) && item.decision === "autonomous_eligible")
       .map((item) => [item.value.toLowerCase(), item]),
   ).values()];
   const rank = (item: ContactRouteEvidence) => {
@@ -392,7 +400,7 @@ function bestEmail(evidence: ContactRouteEvidence[], existing: Partial<Prospect>
     if (item.extractionMethod === "mailto") score += 25;
     if (item.extractionMethod === "json_ld") score += 22;
     if (commonPublicMailbox(item.value)) score += 15;
-    if (commonFreeEmailDomains.has(emailDomain(item.value))) score += 8;
+    if (commonFreeEmailDomains.has(emailDomain(item.value))) score -= 8;
     if (/^privacy@/i.test(item.value)) score -= 30;
     if (likelyVendorEmail(item.value)) score -= 100;
     if (prospectEmailNeedsManualVerification({ ...existing, email: item.value })) score -= 40;
@@ -424,6 +432,12 @@ function detectForm(html: string, text: string) {
 
 function visiblePhoneNumbers(text: string) {
   return [...new Set(text.match(/(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}/g) ?? [])];
+}
+
+function nearbyContactText(value: string, email: string, radius = 220) {
+  const index = value.toLowerCase().indexOf(email.toLowerCase());
+  if (index < 0) return "";
+  return cleanHtmlText(value.slice(Math.max(0, index - radius), index + email.length + radius));
 }
 
 function jsonLdContactValues(html: string) {
@@ -502,6 +516,8 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
     sourceUrl: string,
     extractionMethod: ContactRouteEvidence["extractionMethod"],
     confidence: ContactRouteEvidence["confidence"],
+    sourceText = "",
+    sourceType: ContactRouteEvidence["sourceType"] = "owned_website",
   ) => {
     const cleaned = value.trim();
     if (!cleaned) return;
@@ -516,27 +532,29 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
     const domainMatchesBusiness = kind === "email"
       ? emailDomainMatchesWebsite(cleaned, baseWebsite)
       : normalizedBusinessHostname(normalizedSourceUrl) === normalizedBusinessHostname(baseWebsite);
-    const needsManualEmailVerification = kind === "email"
-      && prospectEmailNeedsManualVerification({
-        businessName: existing.businessName,
-        website: baseWebsite,
-        email: cleaned,
-      });
-    if (
-      kind === "email"
-      && !domainMatchesBusiness
-      && !commonFreeEmailDomains.has(emailDomain(cleaned))
-      && needsManualEmailVerification
-    ) return;
-    if (kind === "email" && likelyVendorEmail(cleaned)) return;
+    const emailDecision = kind === "email"
+      ? classifyPublicEmailEvidence({
+          email: cleaned,
+          businessName: existing.businessName ?? "",
+          website: baseWebsite,
+          sourceUrl: normalizedSourceUrl,
+          extractionMethod,
+          sourceText,
+          sourceType,
+        })
+      : null;
     const candidate: ContactRouteEvidence = {
       kind,
       value: cleaned,
       sourceUrl: normalizedSourceUrl,
       extractionMethod,
-      confidence,
+      confidence: emailDecision?.decision === "autonomous_eligible" ? "high" : confidence,
       domainMatchesBusiness,
       discoveredAt,
+      sourceType: emailDecision?.sourceType ?? sourceType,
+      firstParty: emailDecision?.firstParty ?? sourceType === "owned_website",
+      decision: emailDecision?.decision,
+      decisionReason: emailDecision?.reason,
     };
     const existingIndex = evidence.findIndex(
       (item) => item.kind === kind && item.value.toLowerCase() === cleaned.toLowerCase(),
@@ -553,17 +571,17 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
   for (const item of existing.contactEvidence ?? []) {
     // Prior evidence is retained only as low-confidence provider context until
     // the current bounded crawl observes the same contact route again.
-    addEvidence(item.kind, item.value, item.sourceUrl, "existing_provider", "low");
+    addEvidence(item.kind, item.value, item.sourceUrl, "existing_provider", "low", "", "provider");
   }
-  if (existing.phone) addEvidence("phone", existing.phone, baseWebsite, "existing_provider", "medium");
-  if (existing.contactPageUrl) addEvidence("contact_page", existing.contactPageUrl, existing.contactPageUrl, "existing_provider", "medium");
-  if (existing.contactFormUrl) addEvidence("contact_form", existing.contactFormUrl, existing.contactFormUrl, "existing_provider", "medium");
-  if (existing.quoteFormUrl) addEvidence("quote_form", existing.quoteFormUrl, existing.quoteFormUrl, "existing_provider", "medium");
-  if (existing.facebookUrl) addEvidence("facebook", existing.facebookUrl, baseWebsite, "existing_provider", "medium");
-  if (existing.instagramUrl) addEvidence("instagram", existing.instagramUrl, baseWebsite, "existing_provider", "medium");
-  if (existing.linkedinUrl) addEvidence("linkedin", existing.linkedinUrl, baseWebsite, "existing_provider", "medium");
-  if (existing.xUrl) addEvidence("x", existing.xUrl, baseWebsite, "existing_provider", "medium");
-  if (existing.youtubeUrl) addEvidence("youtube", existing.youtubeUrl, baseWebsite, "existing_provider", "medium");
+  if (existing.phone) addEvidence("phone", existing.phone, baseWebsite, "existing_provider", "medium", "", "provider");
+  if (existing.contactPageUrl) addEvidence("contact_page", existing.contactPageUrl, existing.contactPageUrl, "existing_provider", "medium", "", "provider");
+  if (existing.contactFormUrl) addEvidence("contact_form", existing.contactFormUrl, existing.contactFormUrl, "existing_provider", "medium", "", "provider");
+  if (existing.quoteFormUrl) addEvidence("quote_form", existing.quoteFormUrl, existing.quoteFormUrl, "existing_provider", "medium", "", "provider");
+  if (existing.facebookUrl) addEvidence("facebook", existing.facebookUrl, baseWebsite, "existing_provider", "medium", "", "provider");
+  if (existing.instagramUrl) addEvidence("instagram", existing.instagramUrl, baseWebsite, "existing_provider", "medium", "", "provider");
+  if (existing.linkedinUrl) addEvidence("linkedin", existing.linkedinUrl, baseWebsite, "existing_provider", "medium", "", "provider");
+  if (existing.xUrl) addEvidence("x", existing.xUrl, baseWebsite, "existing_provider", "medium", "", "provider");
+  if (existing.youtubeUrl) addEvidence("youtube", existing.youtubeUrl, baseWebsite, "existing_provider", "medium", "", "provider");
 
   for (const page of pages) {
     const text = cleanHtmlText(page.html);
@@ -571,12 +589,16 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
     const lower = text.toLowerCase();
     const links = extractLinks(page.html, page.url);
     for (const email of text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []) {
-      addEvidence("email", email, page.url, "visible_text", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium");
+      addEvidence("email", email, page.url, "visible_text", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium", nearbyContactText(text, email));
     }
     for (const match of page.html.matchAll(/href\s*=\s*["']mailto:([^?"']+)/gi)) {
       if (match[1]) {
         const email = decodeURIComponent(match[1]);
-        addEvidence("email", email, page.url, "mailto", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium");
+        const matchIndex = match.index ?? page.html.toLowerCase().indexOf(email.toLowerCase());
+        const nearbyHtml = matchIndex >= 0
+          ? page.html.slice(Math.max(0, matchIndex - 220), matchIndex + match[0].length)
+          : "";
+        addEvidence("email", email, page.url, "mailto", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium", cleanHtmlText(nearbyHtml));
       }
     }
     for (const match of page.html.matchAll(/href\s*=\s*["']tel:([^"']+)/gi)) {
@@ -587,14 +609,14 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
     }
     const structured = jsonLdContactValues(page.html);
     for (const email of structured.emails) {
-      addEvidence("email", email, page.url, "json_ld", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium");
+      addEvidence("email", email, page.url, "json_ld", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium", text);
     }
     for (const candidate of structured.phones) {
       addEvidence("phone", candidate, page.url, "json_ld", "high");
     }
     const metadata = metadataContactValues(page.html);
     for (const email of metadata.emails) {
-      addEvidence("email", email, page.url, "metadata", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium");
+      addEvidence("email", email, page.url, "metadata", emailDomainMatchesWebsite(email, baseWebsite) ? "high" : "medium", text);
     }
     for (const candidate of metadata.phones) {
       addEvidence("phone", candidate, page.url, "metadata", "medium");
@@ -651,6 +673,8 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
       existing.contactPageUrl || baseWebsite,
       "existing_provider",
       "low",
+      "",
+      "provider",
     );
   }
   const email = bestEmail(evidence, existing);
@@ -676,8 +700,16 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
   };
   return {
     ...result,
-    contactConfidence: prospectContactConfidence({ ...existing, ...result }),
-    bestManualContactMethod: prospectBestManualContactMethod({ ...existing, ...result }),
+    contactConfidence: prospectContactConfidence({
+      ...existing,
+      website: existing.website || baseWebsite,
+      ...result,
+    }),
+    bestManualContactMethod: prospectBestManualContactMethod({
+      ...existing,
+      website: existing.website || baseWebsite,
+      ...result,
+    }),
   };
 }
 
@@ -1165,6 +1197,177 @@ async function collectContactPages(
   return pages;
 }
 
+export type PublicEmailSourceRevalidation = {
+  valid: boolean;
+  checkedAt: string;
+  sourceUrl: string;
+  reason: string;
+  evidence?: ContactRouteEvidence;
+  contactPersonValid?: boolean;
+  contactPersonReason?: string;
+  contactPersonEvidence?: ContactRouteEvidence;
+};
+
+function supportedOfficialSocialHost(value: string) {
+  try {
+    const host = new URL(value).hostname.replace(/^www\./i, "").toLowerCase();
+    return officialSocialDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+const officialSocialDomains = ["facebook.com", "instagram.com", "linkedin.com", "x.com", "twitter.com", "youtube.com"];
+
+function normalizedComparableUrl(value: string) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.hostname = url.hostname.replace(/^www\./i, "").toLowerCase();
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function officialSocialSourceMatchesProspect(sourceUrl: string, prospect: Prospect) {
+  const source = normalizedComparableUrl(sourceUrl);
+  return Boolean(source) && [
+    prospect.profileUrl,
+    prospect.facebookUrl,
+    prospect.instagramUrl,
+    prospect.linkedinUrl,
+    prospect.xUrl,
+    prospect.youtubeUrl,
+  ].some((candidate) => normalizedComparableUrl(candidate) === source);
+}
+
+function officialSocialDomain(value: string) {
+  try {
+    const host = new URL(value).hostname.replace(/^www\./i, "").toLowerCase();
+    return officialSocialDomains.find((domain) => host === domain || host.endsWith(`.${domain}`)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function emailSourceRedirectAllowed(
+  sourceType: ContactRouteEvidence["sourceType"],
+  sourceUrl: string,
+  targetUrl: URL,
+) {
+  if (sourceType === "owned_website") return equivalentOwnedHost(sourceUrl, targetUrl.href);
+  if (sourceType !== "official_social" || !supportedOfficialSocialHost(targetUrl.href)) return false;
+  const sourceDomain = officialSocialDomain(sourceUrl);
+  return Boolean(sourceDomain && sourceDomain === officialSocialDomain(targetUrl.href));
+}
+
+export async function revalidateProspectPublicEmailSource(
+  prospect: Prospect,
+  dependencies: WebsiteVerificationDependencies = {},
+): Promise<PublicEmailSourceRevalidation> {
+  const checkedAt = verificationNow(dependencies).toISOString();
+  const evidence = verifiedEmailEvidenceForProspect(prospect);
+  const verifiedFirstName = verifiedContactFirstNameForProspect(prospect);
+  const contactPersonEvidence = verifiedFirstName
+    ? prospect.contactEvidence.find((item) => (
+        item.kind === "contact_person"
+        && item.value.trim().toLowerCase() === verifiedFirstName.toLowerCase()
+        && item.firstParty === true
+        && item.confidence === "high"
+      ))
+    : undefined;
+  if (!evidence) {
+    return { valid: false, checkedAt, sourceUrl: "", reason: "The exact public-email source is missing or no longer autonomous-quality." };
+  }
+  const sourceType = evidence.sourceType;
+  const sourceAllowed = sourceType === "owned_website"
+    ? equivalentOwnedHost(evidence.sourceUrl, prospect.websiteVerification?.canonicalUrl || prospect.website)
+    : sourceType === "official_social"
+      && supportedOfficialSocialHost(evidence.sourceUrl)
+      && officialSocialSourceMatchesProspect(evidence.sourceUrl, prospect);
+  if (!sourceAllowed) {
+    return { valid: false, checkedAt, sourceUrl: evidence.sourceUrl, reason: "The saved email source no longer matches the verified owned website or official social profile." };
+  }
+
+  const robotsCache = new Map<string, boolean>();
+  try {
+    const safeUrl = await assertPublicUrl(evidence.sourceUrl, dependencies.lookup ?? defaultLookup);
+    if (!await robotsAllowedFor(safeUrl, dependencies, robotsCache)) {
+      return { valid: false, checkedAt, sourceUrl: evidence.sourceUrl, reason: "The public email source cannot be revalidated because robots.txt blocks this check." };
+    }
+    const attempt = async (browserCompatible: boolean) => fetchPublicPage(safeUrl.href, {
+      browserCompatible,
+      fetchImpl: dependencies.fetch,
+      lookupAddresses: dependencies.lookup,
+      timeoutMs: Math.min(maxRequestTimeoutMs, Math.max(500, dependencies.requestTimeoutMs ?? maxRequestTimeoutMs)),
+      onRedirectTarget: async (redirectUrl) => {
+        if (!emailSourceRedirectAllowed(sourceType, safeUrl.href, redirectUrl)) {
+          throw new Error("The public email source redirected outside its verified first-party host.");
+        }
+        if (!await robotsAllowedFor(redirectUrl, dependencies, robotsCache)) {
+          throw new Error("Website robots.txt does not allow analysis of this page.");
+        }
+      },
+    });
+    let result = await attempt(false);
+    if (!result.response.ok && retryWithBrowserHeaders(attemptCategory(
+      result.response.status,
+      result.response.headers.get("content-type")?.toLowerCase() ?? "",
+      "",
+      false,
+    ))) {
+      result = await attempt(true);
+    }
+    const contentType = result.response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!result.response.ok || (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml"))) {
+      return { valid: false, checkedAt, sourceUrl: evidence.sourceUrl, reason: "The public email source did not return usable public HTML during the final check." };
+    }
+    const html = await readLimitedText(result.response);
+    const exactEmail = prospect.email.trim().toLowerCase();
+    const publicText = cleanHtmlText(html).toLowerCase();
+    const exactAddressPresent = publicText.includes(exactEmail)
+      || html.toLowerCase().replace(/\s+/g, "").includes(`mailto:${exactEmail}`);
+    if (!exactAddressPresent) {
+      return { valid: false, checkedAt, sourceUrl: evidence.sourceUrl, reason: "The exact approved email is no longer visible on its saved public source page." };
+    }
+    if (sourceType === "official_social") {
+      const normalizedBusiness = prospect.businessName.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const normalizedPage = publicText.replace(/[^a-z0-9]+/g, " ");
+      if (normalizedBusiness.length < 4 || !normalizedPage.includes(normalizedBusiness)) {
+        return { valid: false, checkedAt, sourceUrl: evidence.sourceUrl, reason: "The official social source did not reconfirm the business identity during the final check." };
+      }
+    }
+    const samePersonSource = !verifiedFirstName || Boolean(
+      contactPersonEvidence
+      && normalizedComparableUrl(contactPersonEvidence.sourceUrl) === normalizedComparableUrl(evidence.sourceUrl),
+    );
+    const contactPersonStillVisible = !verifiedFirstName || Boolean(
+      samePersonSource
+      && new RegExp(`(?:^|[^a-z])${verifiedFirstName.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^a-z])`, "i").test(publicText),
+    );
+    return {
+      valid: true,
+      checkedAt,
+      sourceUrl: evidence.sourceUrl,
+      reason: "The exact approved email remains publicly visible on its verified first-party source.",
+      evidence: { ...evidence, lastVerifiedAt: checkedAt },
+      contactPersonValid: contactPersonStillVisible,
+      contactPersonReason: contactPersonStillVisible
+        ? verifiedFirstName ? "The verified first name remains visible on the same public source." : "No person name is used in the greeting."
+        : samePersonSource
+          ? "The verified first name is no longer visible on the saved public source."
+          : "The verified first name uses a different source that was not revalidated in this bounded final check.",
+      contactPersonEvidence: contactPersonStillVisible && contactPersonEvidence
+        ? { ...contactPersonEvidence, lastVerifiedAt: checkedAt }
+        : undefined,
+    };
+  } catch {
+    return { valid: false, checkedAt, sourceUrl: evidence.sourceUrl, reason: "The public email source could not be safely revalidated before dispatch." };
+  }
+}
+
 export type ProspectWebsiteVerificationResult = {
   prospect: Prospect;
   analysis?: Analysis;
@@ -1175,7 +1378,8 @@ function fitDispositionForVerifiedWebsite(
   analysis: Analysis,
   prospect: Prospect,
   usableSignals: string[],
-): ProspectFitDisposition {
+  evaluatedAt: string,
+) {
   const signals = new Set(usableSignals);
   const hasContactPath = Boolean(
     prospect.contactFormDetected
@@ -1183,7 +1387,7 @@ function fitDispositionForVerifiedWebsite(
     || prospect.email
     || prospect.phone,
   );
-  const establishedSignals = [
+  const structuralSignals = [
     signals.has("meaningful page title"),
     signals.has("navigation"),
     signals.has("service content"),
@@ -1191,34 +1395,54 @@ function fitDispositionForVerifiedWebsite(
     hasContactPath,
     signals.has("business imagery") || signals.has("structured business data"),
   ].filter(Boolean).length;
-  if (establishedSignals >= 5) return "confirmed_usable_not_fit";
+  const supportingEvidence = [
+    signals.has("meaningful page title") ? "A meaningful page title is present." : "",
+    signals.has("navigation") ? "Customer navigation is present." : "",
+    signals.has("service content") ? "Meaningful service content is present." : "",
+    signals.has("mobile viewport") ? "Mobile viewport markup is present." : "",
+    hasContactPath ? "A public phone, email, or form contact path is present." : "",
+    signals.has("business imagery") ? "Business imagery is present." : "",
+    signals.has("structured business data") ? "Structured business data is present." : "",
+  ].filter(Boolean);
 
-  const severeDefects = [
-    !signals.has("navigation"),
-    !signals.has("service content"),
-    !signals.has("mobile viewport"),
-    !hasContactPath,
-    analysis.scores.technicalQuality <= 30,
-  ].filter(Boolean).length;
-  if (severeDefects >= 2) return "genuine_redesign_opportunity";
-  if (severeDefects === 1 && analysis.overallScore < 60) return "weak_redesign_opportunity";
-  return "manual_review_required";
+  if (structuralSignals >= 5) {
+    return {
+      disposition: "adequate_existing_website" as const,
+      reason: "The verified website contains a complete customer-facing structure. Automated HTML checks do not provide evidence for a redesign claim.",
+      supportingEvidence,
+      confidence: "high" as const,
+      analysisOrigin: "automated_html" as const,
+      evaluatedAt,
+    };
+  }
+
+  void analysis;
+  return {
+    disposition: "inconclusive_requires_review" as const,
+    reason: "The HTML evidence is not complete enough to prove either an adequate site or a genuine rebuild opportunity. Raw HTML cannot establish a customer-facing visual defect, so a rendered human review is required.",
+    supportingEvidence,
+    confidence: "low" as const,
+    analysisOrigin: "automated_html" as const,
+    evaluatedAt,
+  };
 }
 
 const discoveryAbsenceSources = new Set(["osm", "google", "bing", "yelp", "yellowPages"]);
 const authoritativeAbsenceSources = new Set(["google", "bing", "yelp"]);
 
 function officialSocialProfileStored(prospect: Prospect) {
-  const values = [
-    prospect.profileUrl,
-    prospect.facebookUrl,
-    prospect.instagramUrl,
-    prospect.linkedinUrl,
-  ].filter(Boolean);
-  return values.some((value) => {
+  const values: Array<{ kind: ContactRouteEvidence["kind"]; value: string }> = [
+    ...(/facebook\.com/i.test(prospect.profileUrl) ? [{ kind: "facebook" as const, value: prospect.profileUrl }] : []),
+    ...(/instagram\.com/i.test(prospect.profileUrl) ? [{ kind: "instagram" as const, value: prospect.profileUrl }] : []),
+    ...(/linkedin\.com/i.test(prospect.profileUrl) ? [{ kind: "linkedin" as const, value: prospect.profileUrl }] : []),
+    { kind: "facebook" as const, value: prospect.facebookUrl },
+    { kind: "instagram" as const, value: prospect.instagramUrl },
+    { kind: "linkedin" as const, value: prospect.linkedinUrl },
+  ].filter((candidate) => Boolean(candidate.value));
+  return values.some(({ kind, value }) => {
     try {
       const host = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
-      return [
+      const supportedHost = [
         "facebook.com",
         "instagram.com",
         "linkedin.com",
@@ -1226,6 +1450,15 @@ function officialSocialProfileStored(prospect: Prospect) {
         "twitter.com",
         "youtube.com",
       ].some((domain) => host === domain || host.endsWith(`.${domain}`));
+      if (!supportedHost) return false;
+      const normalizedValue = normalizedComparableUrl(value);
+      return prospect.contactEvidence.some((evidence) => (
+        evidence.kind === kind
+        && evidence.firstParty === true
+        && evidence.confidence === "high"
+        && ["owned_website", "official_social"].includes(evidence.sourceType ?? "")
+        && [evidence.value, evidence.sourceUrl].some((candidate) => normalizedComparableUrl(candidate) === normalizedValue)
+      ));
     } catch {
       return false;
     }
@@ -1252,17 +1485,26 @@ function boundedNoOwnedWebsiteEvidence(prospect: Prospect) {
 }
 
 function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDependencies): WebsiteVerificationReport {
-  const checkedAt = verificationNow(dependencies).toISOString();
-  const priorVerifiedAbsence = prospect.websiteVerification?.version === "website-verification-v1"
-    && prospect.websiteVerification.status === "no_owned_website"
-    && prospect.websiteVerification.confidence === "high";
+  const currentCheckAt = verificationNow(dependencies).toISOString();
+  const priorVerifiedAbsence = prospect.websiteVerification?.version === "website-verification-v2"
+    && prospect.websiteVerification?.status === "no_owned_website"
+    && prospect.websiteVerification?.confidence === "high"
+    && prospect.websiteVerification?.ownershipDecision === "not_owned"
+    && prospect.websiteVerification?.fit?.disposition === "no_owned_website";
+  const checkedAt = priorVerifiedAbsence
+    ? prospect.websiteVerification!.checkedAt
+    : currentCheckAt;
+  const fitEvaluatedAt = priorVerifiedAbsence
+    ? prospect.websiteVerification!.fit!.evaluatedAt
+    : currentCheckAt;
   const boundedEvidence = boundedNoOwnedWebsiteEvidence(prospect);
   const verifiedAbsence = priorVerifiedAbsence || boundedEvidence.length > 0;
   const evidenceDetail = boundedEvidence.length
     ? ` Independent provider evidence: ${boundedEvidence.join(", ")}.`
     : "";
-  return {
-    version: "website-verification-v1",
+  const disposition = verifiedAbsence ? "no_owned_website" as const : "inconclusive_requires_review" as const;
+  const report: WebsiteVerificationReport = {
+    version: "website-verification-v2",
     status: verifiedAbsence ? "no_owned_website" : "inconclusive",
     confidence: verifiedAbsence ? "high" : "low",
     canonicalUrl: "",
@@ -1272,7 +1514,25 @@ function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDe
       ? `Verified bounded public research found no owned business website.${evidenceDetail}`.trim()
       : "No owned website URL is stored, but absence has not been independently verified.",
     checkedAt,
+    ownershipDecision: verifiedAbsence ? "not_owned" : "uncertain",
+    identityEvidence: boundedEvidence.map((source) => `Provider identity and website-absence evidence: ${source}.`),
+    fit: {
+      disposition,
+      reason: verifiedAbsence
+        ? "Independent bounded public sources and an official profile did not identify an owned website."
+        : "Owned-website absence has not been independently established.",
+      supportingEvidence: boundedEvidence.map((source) => `No owned website was supplied by ${source}.`),
+      confidence: verifiedAbsence ? "high" : "low",
+      analysisOrigin: "not_applicable",
+      evaluatedAt: fitEvaluatedAt,
+    },
   };
+  report.freshness = {
+    ...initialProspectFreshness(prospect, checkedAt),
+    humanReviewRequired: !verifiedAbsence,
+    staleReason: verifiedAbsence ? "" : "Owned-website absence requires manual review.",
+  };
+  return report;
 }
 
 export async function verifyProspectWebsite(
@@ -1290,7 +1550,7 @@ export async function verifyProspectWebsite(
           websiteAnalysisAttemptedAt: report.checkedAt,
           recommendedContactMethod: "needs_manual_contact_research" as const,
         };
-    const updated = { ...reviewed, websiteVerification: report, fitDisposition: "manual_review_required" as const };
+    const updated = { ...reviewed, websiteVerification: report, fitDisposition: report.fit!.disposition };
     return { prospect: updated, report };
   }
 
@@ -1301,7 +1561,7 @@ export async function verifyProspectWebsite(
   } catch {
     const checkedAt = verificationNow(dependencies).toISOString();
     const report: WebsiteVerificationReport = {
-      version: "website-verification-v1",
+      version: "website-verification-v2",
       status: "invalid_website",
       confidence: "high",
       canonicalUrl: "",
@@ -1309,6 +1569,21 @@ export async function verifyProspectWebsite(
       usableSignals: [],
       explanation: "The stored website URL is invalid and requires manual correction.",
       checkedAt,
+      ownershipDecision: "uncertain",
+      identityEvidence: [],
+      fit: {
+        disposition: "inconclusive_requires_review",
+        reason: "The stored URL cannot be safely evaluated until it is corrected.",
+        supportingEvidence: ["The stored website URL is invalid."],
+        confidence: "high",
+        analysisOrigin: "not_applicable",
+        evaluatedAt: checkedAt,
+      },
+      freshness: {
+        ...initialProspectFreshness(prospect, checkedAt),
+        humanReviewRequired: true,
+        staleReason: "Website URL requires manual correction.",
+      },
     };
     return {
       prospect: {
@@ -1317,7 +1592,7 @@ export async function verifyProspectWebsite(
         websiteStatusDetail: report.explanation,
         websiteAnalysisAttemptedAt: checkedAt,
         websiteVerification: report,
-        fitDisposition: "manual_review_required",
+        fitDisposition: "inconclusive_requires_review",
         recommendedContactMethod: "needs_manual_contact_research",
       },
       report,
@@ -1381,15 +1656,40 @@ export async function verifyProspectWebsite(
     }, contact.contactEvidence.filter((item) => item.kind === "email").map((item) => item.value));
     const analysis = analyzeWebsiteHtml(contactProspect, successful.html, finalUrl);
     const switchingFromPresenceGap = prospect.prospectType === "no_website_social_only";
+    const identityEvidence = [
+      successful.usableSignals.includes("business name") ? "The business name appears prominently in the verified page title or primary heading." : "",
+      equivalentOwnedHost(canonicalUrl, prospect.website) ? "The canonical host matches the stored business website host." : "",
+    ].filter(Boolean);
+    const ownershipDecision = successful.usableSignals.includes("business name") ? "owned" as const : "uncertain" as const;
+    const fit = ownershipDecision === "owned"
+      ? fitDispositionForVerifiedWebsite(analysis, contactProspect, successful.usableSignals, checkedAt)
+      : {
+          disposition: "inconclusive_requires_review" as const,
+          reason: "The page is usable, but the business identity was not prominent enough to confirm website ownership automatically.",
+          supportingEvidence: identityEvidence,
+          confidence: "low" as const,
+          analysisOrigin: "automated_html" as const,
+          evaluatedAt: checkedAt,
+        };
     const report: WebsiteVerificationReport = {
-      version: "website-verification-v1",
+      version: "website-verification-v2",
       status: "usable",
-      confidence: "high",
+      confidence: ownershipDecision === "owned" ? "high" : "medium",
       canonicalUrl,
       attempts: results.map((result) => result.attempt),
       usableSignals: successful.usableSignals,
       explanation: "A meaningful public business website was verified. Earlier transient or crawler-specific failures, if any, did not override the successful evidence.",
       checkedAt,
+      ownershipDecision,
+      identityEvidence,
+      fit,
+    };
+    report.freshness = {
+      ...initialProspectFreshness({ ...contactProspect, websiteVerification: report, fitDisposition: fit.disposition }, checkedAt),
+      humanReviewRequired: ownershipDecision !== "owned" || fit.disposition === "inconclusive_requires_review",
+      staleReason: ownershipDecision !== "owned"
+        ? "Website ownership requires manual review."
+        : fit.disposition === "inconclusive_requires_review" ? "Rendered website-fit review is required." : "",
     };
     const updated = {
       ...contactProspect,
@@ -1402,20 +1702,47 @@ export async function verifyProspectWebsite(
       preview: switchingFromPresenceGap ? undefined : prospect.preview,
       priorityScore: calculatePriority(analysis, prospect.sizeIndicator, prospect.serviceArea),
       status: prospect.status === "New" ? "Reviewed" as const : prospect.status,
-      fitDisposition: fitDispositionForVerifiedWebsite(analysis, contactProspect, successful.usableSignals),
+      fitDisposition: fit.disposition,
       activities: [activity("analysis", `Website verified as usable after ${results.length} bounded attempt${results.length === 1 ? "" : "s"}; contact paths were refreshed. Nothing was sent.`), ...prospect.activities],
     };
     return { prospect: updated, analysis, report };
   }
 
   const classification = classifyVerification(results);
+  const priorOwnershipConfirmed = prospect.websiteVerification?.version === "website-verification-v2"
+    && prospect.websiteVerification.ownershipDecision === "owned";
+  const confirmedUnavailable = classification.status === "confirmed_broken" || classification.status === "confirmed_inactive";
+  const fitDisposition = confirmedUnavailable
+    ? "broken_or_inactive_website" as const
+    : "inconclusive_requires_review" as const;
   const report: WebsiteVerificationReport = {
-    version: "website-verification-v1",
+    version: "website-verification-v2",
     ...classification,
     canonicalUrl: "",
     attempts: results.map((result) => result.attempt),
     usableSignals: [],
     checkedAt,
+    ownershipDecision: priorOwnershipConfirmed ? "owned" : "uncertain",
+    identityEvidence: priorOwnershipConfirmed
+      ? prospect.websiteVerification?.identityEvidence ?? ["A prior current verification confirmed website ownership."]
+      : [],
+    fit: {
+      disposition: fitDisposition,
+      reason: confirmedUnavailable
+        ? "Independent bounded attempts confirmed the stored website is inactive or broken. Website ownership still must remain established before autonomous use."
+        : "The website result is temporary, crawler-blocked, invalid, or otherwise inconclusive.",
+      supportingEvidence: [classification.explanation],
+      confidence: classification.confidence,
+      analysisOrigin: "not_applicable",
+      evaluatedAt: checkedAt,
+    },
+  };
+  report.freshness = {
+    ...initialProspectFreshness({ ...prospect, websiteVerification: report, fitDisposition }, checkedAt),
+    humanReviewRequired: !confirmedUnavailable || !priorOwnershipConfirmed,
+    staleReason: !confirmedUnavailable
+      ? "Website verification requires manual review."
+      : !priorOwnershipConfirmed ? "Website ownership is not established." : "",
   };
   if (report.status === "confirmed_broken" || report.status === "confirmed_inactive") {
     const presenceGap = withPresenceGapReview(prospect, report.status, report.explanation);
@@ -1423,7 +1750,7 @@ export async function verifyProspectWebsite(
       prospect: {
         ...presenceGap,
         websiteVerification: report,
-        fitDisposition: "manual_review_required",
+        fitDisposition,
       },
       report,
     };
@@ -1437,7 +1764,7 @@ export async function verifyProspectWebsite(
       websiteStatusDetail: report.explanation,
       websiteAnalysisAttemptedAt: checkedAt,
       websiteVerification: report,
-      fitDisposition: "manual_review_required",
+      fitDisposition,
       recommendedContactMethod: "needs_manual_contact_research",
       status: prospect.status === "New" ? "Reviewed" : prospect.status,
       activities: [activity("analysis", `${report.explanation} Manual review is required. Nothing was sent.`), ...prospect.activities],

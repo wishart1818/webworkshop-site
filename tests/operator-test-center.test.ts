@@ -559,7 +559,7 @@ test("Operator Test Center fake package models the manual Lovable workflow witho
   assert.ok(fake?.scripts.some((script) => script.label === "Pricing reply"));
   assert.ok(fake?.scripts.some((script) => script.label === "Follow-up"));
   assert.ok(fake?.scripts.some((script) => script.label === "Not interested reply"));
-  assert.match(fake?.fullSummary ?? "", /refreshed, more modern website designed to help bring in more calls and quote requests/i);
+  assert.match(fake?.fullSummary ?? "", /rebuild your current website with a more modern design/i);
   assert.match(fake?.fullSummary ?? "", /No email, DM, form, phone call, or Loom was sent/i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First email script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First Facebook\/Instagram DM script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
@@ -831,7 +831,7 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     assert.equal(repairedCopy?.status, "Needs Review");
     assert.doesNotMatch(repairedCopy?.notes ?? "", /\[auto-email-approved\]/);
     assert.doesNotMatch(repairedCopy?.emailBody ?? "", /https:\/\/webworkshop\.dev\/p\/|One missed opportunity/i);
-    assert.match(repairedCopy?.emailBody ?? "", /^Hi there,/);
+    assert.match(repairedCopy?.emailBody ?? "", /^Hi Ready Pressure Washing team,/);
     assert.match(repairedCopy?.emailBody ?? "", /Would you be interested in seeing what that could look like\?/i);
     assert.match(repairedCopy?.emailBody ?? "", /If you'd rather not hear from me again/i);
     assert.equal(excludedEmail?.contactSource, "Needs manual verification");

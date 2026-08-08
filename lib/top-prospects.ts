@@ -1,5 +1,10 @@
 import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
 import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
+import {
+  normalizeWebsiteFitDisposition,
+  outreachObservationSupported,
+  verifiedEmailEvidenceForProspect,
+} from "@/lib/prospect-qualification";
 import { siteUrl } from "@/lib/site";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
 import {
@@ -10,7 +15,6 @@ import {
   displayStateCode,
   displayTradeCategory,
   prospectContactMethodIsUsable,
-  prospectEmailNeedsManualVerification,
   prospectWebsiteVerificationBlockReason,
   prospectWebsiteAbsenceNeedsManualReview,
   prospectWrittenContactMethodIsUsable,
@@ -667,7 +671,7 @@ export function evaluateOutreachEmailQuality(
   const socialFirstDm = ["facebook", "instagram", "linkedin"].includes(prospect.bestManualContactMethod || "");
   const optOutPattern = webworkshopOptOutPattern();
   const senderPostalAddress = webworkshopPostalAddress(environment);
-  const emailNeedsVerification = prospectEmailNeedsManualVerification(prospect)
+  const emailNeedsVerification = Boolean(prospect.email && !verifiedEmailEvidenceForProspect(prospect))
     && !prospect.quoteFormUrl
     && !prospect.contactFormUrl
     && !prospect.facebookUrl
@@ -683,8 +687,7 @@ export function evaluateOutreachEmailQuality(
   const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   const firstTouchLinkFree = !/https?:\/\/|\/p\//i.test(firstTouch);
   const businessContextReady = Boolean(prospect.businessName) && firstTouch.toLowerCase().includes(prospect.businessName.toLowerCase());
-  const relevantReasonReady = /I can build you a refreshed, more modern website designed to help bring in more calls and quote requests\./i.test(firstTouch)
-    || /It looks like you don't currently have a full website up\. I can build you a modern one designed to help bring in more calls and quote requests\./i.test(firstTouch);
+  const relevantReasonReady = outreachObservationSupported(prospect, firstTouch);
   const uncertainWebsiteAbsence = prospectWebsiteAbsenceNeedsManualReview(prospect);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
@@ -981,12 +984,6 @@ export function assessNoWebsiteOpportunity(prospect: Prospect): OpportunityAsses
   };
 }
 
-function hasMeaningfulImprovementGap(prospect: Pick<Prospect, "analysis">) {
-  const analysis = prospect.analysis;
-  if (!analysis) return false;
-  return analysis.overallScore < 95 || Object.values(analysis.scores).some((score) => score < 90);
-}
-
 export function topProspectRejectionReason(
   prospect: Pick<Prospect, "businessName" | "website" | "profileUrl" | "phone" | "email" | "contactFormUrl" | "quoteFormUrl" | "facebookUrl" | "instagramUrl" | "linkedinUrl" | "trade" | "analysis" | "prospectType" | "classification" | "recommendedContactMethod" | "inactive" | "reviewCount" | "rating" | "sourceConfidence" | "websiteStatus" | "websiteVerification" | "fitDisposition">,
   assessment: OpportunityAssessment,
@@ -1000,8 +997,9 @@ export function topProspectRejectionReason(
   if (!hasClearLocalServiceIntent(prospect)) return "No clear local service intent";
   if (prospect.inactive) return "Inactive business";
   if (prospect.classification === "duplicate_bad_fit") return "Duplicate/bad fit";
+  const fitDisposition = normalizeWebsiteFitDisposition(prospect);
   const websiteVerificationBlock = prospectWebsiteVerificationBlockReason(prospect, { requireStructuredEvidence: true });
-  if (websiteVerificationBlock === "Confirmed usable website / not a fit.") return "Confirmed usable website / not a fit";
+  if (["adequate_existing_website", "strong_existing_website"].includes(fitDisposition)) return "Confirmed usable website / not a fit";
   if (websiteVerificationBlock) return "Website verification required";
   if (thirdPartyListingOnly(prospect)) return "Third-party listing only";
   const usableContact = outreachPreference === "phone_allowed"
@@ -1018,7 +1016,6 @@ export function topProspectRejectionReason(
   }
   const websiteScore = prospect.analysis?.overallScore;
   if (mode === "volume") {
-    if (!hasMeaningfulImprovementGap(prospect)) return "Low redesign opportunity";
     return null;
   }
   if (phoneOnlyBlocked) return "Phone-only / written outreach blocked";

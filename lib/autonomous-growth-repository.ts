@@ -46,11 +46,11 @@ import {
   createProspect,
   generateOutreach,
   normalizeTradeCategory,
-  prospectEmailNeedsManualVerification,
   prospectVerifiedEmailEvidence,
   prospectWebsiteVerificationBlockReason,
   prospectWrittenContactMethodIsUsable,
   reconcileProspectContactRouting,
+  type ContactRouteEvidence,
   type Prospect,
 } from "@/lib/prospect-engine";
 import { getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
@@ -75,9 +75,21 @@ import {
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
-import { webworkshopRecipientFirstName } from "@/lib/outreach-style-guide";
+import { webworkshopCleanBusinessName, webworkshopRecipientFirstName } from "@/lib/outreach-style-guide";
 import { sendInternalOperatorNotification, sendInternalOperatorSms, type InternalNotificationInput } from "@/lib/internal-notifications";
 import type { TopProspectJob } from "@/lib/top-prospects";
+import {
+  outreachObservationSupported,
+  prospectFreshnessAt,
+  prospectQualificationBlockReasons,
+  verifiedContactFirstNameForProspect,
+  verifiedEmailEvidenceForProspect,
+} from "@/lib/prospect-qualification";
+import {
+  revalidateProspectPublicEmailSource,
+  verifyProspectWebsite,
+  type WebsiteVerificationDependencies,
+} from "@/lib/site-analysis";
 
 const globalAutonomous = globalThis as typeof globalThis & {
   autonomousGrowthSettingsMemory?: AutonomousGrowthSettings;
@@ -819,13 +831,7 @@ export async function runSmartAutonomousDryRun(): Promise<SmartGrowthActionResul
 }
 
 function sourceForProspect(prospect: Prospect) {
-  if (
-    prospect.email
-    && (
-      !prospectEmailNeedsManualVerification(prospect)
-      || (prospect.recommendedContactMethod === "send_email" && prospect.bestManualContactMethod === "email")
-    )
-  ) return "Public email";
+  if (prospect.email && verifiedEmailEvidenceForProspect(prospect)) return "Public email";
   if (prospect.quoteFormUrl) return "Quote form";
   if (prospect.contactFormUrl) return "Contact form";
   if (prospect.facebookUrl || prospect.instagramUrl || prospect.linkedinUrl || /facebook|instagram|linkedin/i.test(prospect.profileUrl)) return "Social profile";
@@ -846,7 +852,11 @@ function cityStateFromQueueCity(value: string) {
   };
 }
 
-function prospectForQueueCopyRegeneration(item: OutreachQueueItem, contactPersonName = ""): Prospect {
+function prospectForQueueCopyRegeneration(
+  item: OutreachQueueItem,
+  contactPersonName = "",
+  contactEvidence: ContactRouteEvidence[] = [],
+): Prospect {
   const location = cityStateFromQueueCity(item.city);
   const contactSource = item.contactSource.toLowerCase();
   const manualContact: Prospect["bestManualContactMethod"] =
@@ -868,6 +878,7 @@ function prospectForQueueCopyRegeneration(item: OutreachQueueItem, contactPerson
     phone: "",
     email: item.email,
     contactPersonName,
+    contactEvidence,
     city: location.city,
     state: location.state,
     trade: normalizeTradeCategory(item.trade) ?? "Pressure Washing",
@@ -2010,9 +2021,28 @@ function providerDispatchProspectBlockReasons(
 ) {
   if (!prospect) return ["A persisted prospect record is required before provider dispatch."];
   const history = [...prospect.notes, ...prospect.activities.map((entry) => entry.label)].join("\n");
+  const verifiedFirstName = verifiedContactFirstNameForProspect(prospect);
+  const expectedGreeting = verifiedFirstName
+    ? `Hi ${verifiedFirstName},`
+    : `Hi ${webworkshopCleanBusinessName(prospect.businessName)} team,`;
   return [
     !["New", "Reviewed"].includes(prospect.status)
       ? `Prospect status ${prospect.status} is already contacted or closed.`
+      : "",
+    prospect.inactive
+      ? "Inactive prospects cannot reach provider dispatch."
+      : "",
+    ["national_large_brand", "duplicate_bad_fit"].includes(prospect.classification)
+      ? "National, duplicate, or bad-fit prospects cannot reach provider dispatch."
+      : "",
+    ["call_first", "message_on_facebook", "message_on_social", "submit_contact_form", "do_not_contact"].includes(prospect.recommendedContactMethod)
+      ? `Prospect contact method ${prospect.recommendedContactMethod} is not eligible for automatic email.`
+      : "",
+    !prospectWrittenContactMethodIsUsable(prospect)
+      ? "The prospect no longer has a usable verified email contact path."
+      : "",
+    prospect.activitySignals.some((signal) => /\b(no[- ]?solicitation|do not solicit|no sales calls|no marketing emails|opt(?:ed)? out)\b/i.test(signal))
+      ? "No-solicitation or opt-out evidence blocks provider dispatch."
       : "",
     outreachHistoryTextIndicatesProtectedContact(history)
       ? "Prospect activity or notes show protected prior contact or suppression."
@@ -2024,12 +2054,155 @@ function providerDispatchProspectBlockReasons(
     !prospectVerifiedEmailEvidence(prospect)
       ? "The approved recipient lacks stored public source and extraction evidence."
       : "",
+    !outreachObservationSupported(prospect, item.emailBody)
+      ? "The approved first-touch draft is not tied to the saved, supported website observation and rebuild solution."
+      : "",
+    !item.emailBody.trimStart().startsWith(expectedGreeting)
+      ? "The approved greeting no longer matches the currently verified person or business-team fallback."
+      : "",
+    ...prospectQualificationBlockReasons(prospect, { allowRefreshableStaleness: true }),
   ].filter(Boolean);
+}
+
+export async function revalidateProspectForProviderDispatch(
+  prospect: Prospect,
+  item: OutreachQueueItem,
+  dependencies: WebsiteVerificationDependencies = {},
+) {
+  const approvedEmailEvidence = verifiedEmailEvidenceForProspect(prospect);
+  const approvedFirstName = verifiedContactFirstNameForProspect(prospect);
+  const approvedPersonEvidence = approvedFirstName
+    ? prospect.contactEvidence.find((evidence) => (
+        evidence.kind === "contact_person"
+        && evidence.value.trim().toLowerCase() === approvedFirstName.toLowerCase()
+      )) ?? null
+    : null;
+  const verified = await verifyProspectWebsite(prospect, {
+    ...dependencies,
+    maxVerificationAttempts: Math.min(6, Math.max(1, dependencies.maxVerificationAttempts ?? 6)),
+    maxContactPages: Math.min(6, Math.max(0, dependencies.maxContactPages ?? 6)),
+    requestTimeoutMs: Math.min(10_000, Math.max(500, dependencies.requestTimeoutMs ?? 10_000)),
+  });
+  let refreshed = verified.prospect;
+  const priorFit = prospect.websiteVerification?.fit;
+  const currentTime = dependencies.now?.() ?? new Date();
+  const sameCanonical = Boolean(
+    prospect.websiteVerification?.canonicalUrl
+    && verified.report.canonicalUrl
+    && normalizedPublicSourceUrl(prospect.websiteVerification.canonicalUrl)
+      === normalizedPublicSourceUrl(verified.report.canonicalUrl)
+  );
+  const structuralSignalNames = new Set([
+    "meaningful page title",
+    "business name",
+    "navigation",
+    "service content",
+    "mobile viewport",
+    "public phone",
+    "public email",
+    "contact or quote form",
+    "business imagery",
+    "structured business data",
+  ]);
+  const structuralSignature = (signals: string[] = []) => signals
+    .filter((signal) => structuralSignalNames.has(signal))
+    .sort()
+    .join("|");
+  const priorStructuralSignature = structuralSignature(prospect.websiteVerification?.usableSignals);
+  const sameStructuralEvidence = Boolean(
+    priorStructuralSignature
+    && priorStructuralSignature === structuralSignature(verified.report.usableSignals),
+  );
+  const priorFitStillFresh = priorFit
+    && ["manual", "rendered_review"].includes(priorFit.analysisOrigin)
+    && currentTime.getTime() - Date.parse(priorFit.evaluatedAt) <= 7 * 24 * 60 * 60 * 1_000;
+  if (sameCanonical && sameStructuralEvidence && priorFitStillFresh && refreshed.websiteVerification) {
+    refreshed = {
+      ...refreshed,
+      fitDisposition: priorFit.disposition,
+      websiteVerification: {
+        ...refreshed.websiteVerification,
+        fit: priorFit,
+        freshness: refreshed.websiteVerification.freshness ? {
+          ...refreshed.websiteVerification.freshness,
+          lastMeaningfulChange: prospect.websiteVerification?.freshness?.lastMeaningfulChange
+            || priorFit.evaluatedAt,
+        } : undefined,
+      },
+    };
+  }
+  const refreshedEmailEvidence = verifiedEmailEvidenceForProspect(refreshed);
+  const emailSourceChanged = Boolean(
+    approvedEmailEvidence
+    && refreshedEmailEvidence
+    && (
+      approvedEmailEvidence.sourceUrl !== refreshedEmailEvidence.sourceUrl
+      || approvedEmailEvidence.extractionMethod !== refreshedEmailEvidence.extractionMethod
+      || approvedEmailEvidence.sourceType !== refreshedEmailEvidence.sourceType
+    ),
+  );
+  const sourceCheckProspect = approvedPersonEvidence
+    ? {
+        ...refreshed,
+        contactPersonName: approvedFirstName,
+        contactEvidence: [
+          ...refreshed.contactEvidence.filter((evidence) => evidence.kind !== "contact_person"),
+          approvedPersonEvidence,
+        ],
+      }
+    : refreshed;
+  const publicEmailSource = await revalidateProspectPublicEmailSource(sourceCheckProspect, dependencies);
+  if (publicEmailSource.valid && publicEmailSource.evidence) {
+    const exactEmail = normalizeEmailAddress(refreshed.email);
+    const revalidatedEmailEvidence = approvedEmailEvidence && !emailSourceChanged
+      ? {
+          ...publicEmailSource.evidence,
+          discoveredAt: approvedEmailEvidence.discoveredAt,
+        }
+      : publicEmailSource.evidence;
+    const evidenceWithoutPerson = refreshed.contactEvidence.filter((evidence) => evidence.kind !== "contact_person");
+    const exactEmailAlreadyPresent = evidenceWithoutPerson.some((evidence) => (
+      evidence.kind === "email" && normalizeEmailAddress(evidence.value) === exactEmail
+    ));
+    refreshed = {
+      ...refreshed,
+      contactPersonName: publicEmailSource.contactPersonEvidence ? approvedFirstName : refreshed.contactPersonName,
+      contactEvidence: [
+        ...evidenceWithoutPerson
+          .map((evidence) => (
+            evidence.kind === "email" && normalizeEmailAddress(evidence.value) === exactEmail
+              ? revalidatedEmailEvidence
+              : evidence
+          )),
+        ...(!exactEmailAlreadyPresent ? [revalidatedEmailEvidence] : []),
+        ...(publicEmailSource.contactPersonEvidence ? [publicEmailSource.contactPersonEvidence] : []),
+      ],
+    };
+  }
+  const freshness = prospectFreshnessAt(refreshed, currentTime);
+  const reasons = [
+    verified.report.status !== "usable" && verified.report.status !== "no_owned_website"
+      ? `Just-in-time website verification is ${verified.report.status.replaceAll("_", " ")}.`
+      : "",
+    emailSourceChanged ? "The public email source or extraction method changed after approval." : "",
+    !publicEmailSource.valid ? publicEmailSource.reason : "",
+    approvedFirstName && publicEmailSource.contactPersonValid !== true
+      ? publicEmailSource.contactPersonReason || "The verified greeting name could not be revalidated before dispatch."
+      : "",
+    ...providerDispatchProspectBlockReasons(refreshed, item),
+    !freshness.websiteVerificationFresh ? "Just-in-time website verification is stale." : "",
+    !freshness.websiteFitFresh ? "Just-in-time website-fit evidence is stale." : "",
+    !freshness.contactSourceFresh ? "Just-in-time public-email evidence is stale or was removed." : "",
+  ].filter(Boolean);
+  return { prospect: refreshed, report: verified.report, blockedReasons: [...new Set(reasons)] };
 }
 
 export async function sendQueuedEmailQueueItem(
   id: string,
-  options: { beforeProviderDispatch?: () => Promise<void> } = {},
+  options: {
+    beforeProviderDispatch?: () => Promise<void>;
+    websiteVerificationDependencies?: WebsiteVerificationDependencies;
+  } = {},
 ): Promise<SendQueuedEmailResult> {
   const settings = await getAutonomousGrowthSettings();
   const initialQueue = await listOutreachQueueItems();
@@ -2087,6 +2260,42 @@ export async function sendQueuedEmailQueueItem(
       },
     });
     return { item: released, sent: false, blockedReasons: claimedProspectBlockedReasons };
+  }
+
+  if (claimedProspect && (process.env.NODE_ENV !== "test" || options.websiteVerificationDependencies)) {
+    try {
+      const justInTime = await revalidateProspectForProviderDispatch(
+        claimedProspect,
+        claim.item,
+        options.websiteVerificationDependencies,
+      );
+      if (justInTime.blockedReasons.length) {
+        const released = await finishClaimWithReview(claim, justInTime.blockedReasons.join(" "), false);
+        await safeRecordAudit({
+          action: "autonomous_email_send",
+          outcome: "rejected",
+          subject: claim.item.email,
+          metadata: {
+            queueItemId: claim.item.id,
+            reasons: justInTime.blockedReasons,
+            phase: "just_in_time_revalidation",
+          },
+        });
+        return { item: released, sent: false, blockedReasons: justInTime.blockedReasons };
+      }
+    } catch (error) {
+      const message = error instanceof Error
+        ? `Just-in-time website/contact verification failed safely: ${error.message}`
+        : "Just-in-time website/contact verification failed safely.";
+      const released = await finishClaimWithReview(claim, message, false);
+      await safeRecordAudit({
+        action: "autonomous_email_send",
+        outcome: "rejected",
+        subject: claim.item.email,
+        metadata: { queueItemId: claim.item.id, phase: "just_in_time_revalidation", sent: 0 },
+      });
+      return { item: released, sent: false, blockedReasons: [message] };
+    }
   }
 
   try {
@@ -2895,6 +3104,63 @@ export async function createOrRefreshAutonomousReviewPackageForProspect(prospect
   });
 }
 
+function normalizedPublicSourceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    url.hash = "";
+    url.hostname = url.hostname.replace(/^www\./i, "").toLowerCase();
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function samePublicWebsite(sourceUrl: string, websiteUrl: string) {
+  try {
+    const source = new URL(sourceUrl);
+    const website = new URL(websiteUrl);
+    return source.hostname.replace(/^www\./i, "").toLowerCase()
+      === website.hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function verifiedPersonSource(prospect: Prospect) {
+  const ownedWebsiteVerified = prospect.websiteVerification?.version === "website-verification-v2"
+    && prospect.websiteVerification.ownershipDecision === "owned";
+  const ownedWebsite = prospect.websiteVerification?.canonicalUrl || prospect.website;
+  if (ownedWebsiteVerified && ownedWebsite) {
+    const contactPage = prospect.contactPageUrl && samePublicWebsite(prospect.contactPageUrl, ownedWebsite)
+      ? prospect.contactPageUrl
+      : ownedWebsite;
+    return { url: contactPage, sourceType: "owned_website" as const };
+  }
+
+  const socialCandidates: Array<{ kind: ContactRouteEvidence["kind"]; url: string }> = [
+    { kind: "facebook" as const, url: prospect.facebookUrl },
+    { kind: "instagram" as const, url: prospect.instagramUrl },
+    { kind: "linkedin" as const, url: prospect.linkedinUrl },
+    ...(/facebook\.com/i.test(prospect.profileUrl) ? [{ kind: "facebook" as const, url: prospect.profileUrl }] : []),
+    ...(/instagram\.com/i.test(prospect.profileUrl) ? [{ kind: "instagram" as const, url: prospect.profileUrl }] : []),
+    ...(/linkedin\.com/i.test(prospect.profileUrl) ? [{ kind: "linkedin" as const, url: prospect.profileUrl }] : []),
+  ].filter((candidate) => Boolean(candidate.url));
+  for (const candidate of socialCandidates) {
+    const normalizedCandidate = normalizedPublicSourceUrl(candidate.url);
+    const evidence = prospect.contactEvidence.find((item) => (
+      item.kind === candidate.kind
+      && item.firstParty === true
+      && item.confidence === "high"
+      && ["owned_website", "official_social"].includes(item.sourceType ?? "")
+      && [item.value, item.sourceUrl].some((value) => normalizedPublicSourceUrl(value) === normalizedCandidate)
+    ));
+    if (evidence) return { url: candidate.url, sourceType: "official_social" as const };
+  }
+  return null;
+}
+
 
 export async function saveVerifiedContactFirstNameAndRegenerate(
   id: string,
@@ -2921,9 +3187,31 @@ export async function saveVerifiedContactFirstNameAndRegenerate(
   const prospect = await getProspect(queueItem.prospectId);
   if (!prospect) throw new Error("The linked prospect was not found.");
 
+  const personSource = verifiedPersonSource(prospect);
+  if (!personSource) {
+    throw new Error("Save a first-party public source before using a person's name in outreach.");
+  }
+  const verifiedAt = new Date().toISOString();
+  const contactPersonEvidence: ContactRouteEvidence = {
+    kind: "contact_person",
+    value: verifiedFirstName,
+    sourceUrl: personSource.url,
+    extractionMethod: "visible_text",
+    confidence: "high",
+    domainMatchesBusiness: personSource.sourceType === "owned_website",
+    discoveredAt: verifiedAt,
+    sourceType: personSource.sourceType,
+    firstParty: true,
+    decisionReason: "The operator explicitly verified this first name against the saved first-party public source.",
+  };
+
   await saveProspect({
     ...prospect,
     contactPersonName: verifiedFirstName,
+    contactEvidence: [
+      ...prospect.contactEvidence.filter((item) => item.kind !== "contact_person"),
+      contactPersonEvidence,
+    ],
     activities: [
       activity("outreach", `Verified contact first name saved as ${verifiedFirstName}. The editable first-touch draft will be regenerated. Nothing was sent.`),
       ...prospect.activities,
@@ -3017,7 +3305,7 @@ export async function rewriteOutreachQueueItem(id: string) {
     if (queueItemDraftMutationIsProtected(item)) {
       throw new Error("Outreach copy cannot be rewritten after approval, sending, contact, or suppression.");
     }
-    item.emailBody = rewriteOutreachWithFixes(item.emailBody);
+    item.emailBody = rewriteOutreachWithFixes(item.emailBody, item.businessName);
     item.rewritePlan = [];
     item.recommendedNextAction = "Needs Human Review";
     item.reviewSummary = `${item.businessName} outreach was rewritten for review. Nothing was sent.`;
@@ -3045,7 +3333,7 @@ export async function rewriteOutreachQueueItem(id: string) {
       ],
     },
     data: {
-      emailBody: rewriteOutreachWithFixes(current.emailBody),
+      emailBody: rewriteOutreachWithFixes(current.emailBody, current.businessName),
       rewritePlan: [],
       recommendedNextAction: "Needs Human Review",
       reviewSummary: `${current.businessName} outreach was rewritten for review. Nothing was sent.`,
@@ -3074,8 +3362,17 @@ function summarizeRegeneration(summary: OutreachCopyRegenerationSummary) {
   ].filter(Boolean).join(". ");
 }
 
-function regeneratedQueueCopy(item: OutreachQueueItem, nowIso: string, contactPersonName = "") {
-  const prospect = prospectForQueueCopyRegeneration(item, contactPersonName);
+function regeneratedQueueCopy(
+  item: OutreachQueueItem,
+  nowIso: string,
+  sourceProspect: Prospect | null = null,
+) {
+  const prospect = sourceProspect
+    ? {
+        ...sourceProspect,
+        contactPersonName: verifiedContactFirstNameForProspect(sourceProspect),
+      }
+    : prospectForQueueCopyRegeneration(item);
   const previewLink = item.previewLink && /\/p\//i.test(item.previewLink) ? item.previewLink : "";
   const outreach = generateOutreach(prospect, previewLink);
   return {
@@ -3119,7 +3416,7 @@ function readinessRepairData(
   action: SafeReadinessQueueRepairAction,
   reason: string,
   nowIso: string,
-  contactPersonName = "",
+  sourceProspect: Prospect | null = null,
 ) {
   const notesWithoutApproval = stripApprovalMarker(item.notes);
   const auditNote = `Safe readiness repair: ${reason}. Approval removed when present. Nothing was sent.`;
@@ -3131,7 +3428,11 @@ function readinessRepairData(
   };
   if (action === "regenerate_current_copy") {
     return {
-      ...regeneratedQueueCopy({ ...item, notes: notesWithoutApproval }, nowIso, contactPersonName),
+      ...regeneratedQueueCopy(
+        { ...item, notes: notesWithoutApproval },
+        nowIso,
+        sourceProspect,
+      ),
       ...base,
       blockedReason: null,
     };
@@ -3176,7 +3477,13 @@ export async function repairOutreachQueueItemForReadiness(input: {
     const prospect = current.prospectId ? await getProspect(current.prospectId) : null;
     const blockedReason = safeReadinessRepairProtectionReason(current, prospect?.status ?? "");
     if (blockedReason) return { item: structuredClone(current), changed: false, action: input.action, blockedReason };
-    const data = readinessRepairData(current, input.action, reason, nowIso, prospect?.contactPersonName ?? "");
+    const data = readinessRepairData(
+      current,
+      input.action,
+      reason,
+      nowIso,
+      prospect,
+    );
     Object.assign(current, {
       ...data,
       queuedDate: "",
@@ -3197,6 +3504,8 @@ export async function repairOutreachQueueItemForReadiness(input: {
 
   await ensureTopProspectSchema();
   const database = getProspectDatabase();
+  const currentItem = (await listOutreachQueueItems()).find((item) => item.id === input.id) ?? null;
+  const sourceProspect = currentItem?.prospectId ? await getProspect(currentItem.prospectId) : null;
   const result = await database.$transaction(async (transaction) => {
     const row = await transaction.outreachQueueItem.findUnique({ where: { id: input.id } });
     if (!row) return { row: null, changed: false, blockedReason: "Queue item was not found." };
@@ -3209,7 +3518,7 @@ export async function repairOutreachQueueItemForReadiness(input: {
       : "";
     const blockedReason = safeReadinessRepairProtectionReason(item, prospectStatus);
     if (blockedReason) return { row, changed: false, blockedReason };
-    const data = readinessRepairData(item, input.action, reason, nowIso, prospect?.contactPersonName ?? "");
+    const data = readinessRepairData(item, input.action, reason, nowIso, sourceProspect);
     const updated = await transaction.outreachQueueItem.updateMany({
       where: {
         id: item.id,
@@ -3278,7 +3587,11 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
       }
       const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
       Object.assign(item, {
-        ...regeneratedQueueCopy(item, nowIso, prospect?.contactPersonName ?? ""),
+        ...regeneratedQueueCopy(
+          item,
+          nowIso,
+          prospect,
+        ),
         outreachCopyGeneratedAt: nowIso,
         lastRegeneratedAt: nowIso,
         updatedAt: nowIso,
@@ -3300,7 +3613,11 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
       continue;
     }
     const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
-    const regenerated = regeneratedQueueCopy(item, nowIso, prospect?.contactPersonName ?? "");
+    const regenerated = regeneratedQueueCopy(
+      item,
+      nowIso,
+      prospect,
+    );
     const updated = await database.outreachQueueItem.updateMany({
       where: {
         id: item.id,

@@ -119,13 +119,17 @@ test("True Clean crawler-specific 508 is overridden by bounded usable-site and c
   assert.equal(result.prospect.contactFormDetected || result.prospect.quoteFormDetected, true);
   assert.equal(result.prospect.prospectType, "redesign");
   assert.equal(result.prospect.classification, "website_redesign");
-  assert.equal(result.prospect.fitDisposition, "confirmed_usable_not_fit");
+  assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
+  assert.equal(result.report.ownershipDecision, "owned");
   assert.notEqual(result.prospect.recommendedContactMethod, "call_first");
   assert.notEqual(result.prospect.websiteStatus, "no_owned_website");
   const emailEvidence = result.prospect.contactEvidence.find((item) => item.value === "info@truecleanprowash.com");
   assert.equal(emailEvidence?.sourceUrl, "https://truecleanprowash.com/contact");
   assert.equal(emailEvidence?.extractionMethod, "mailto");
   assert.equal(emailEvidence?.domainMatchesBusiness, true);
+  assert.equal(emailEvidence?.firstParty, true);
+  assert.equal(emailEvidence?.sourceType, "owned_website");
+  assert.equal(emailEvidence?.decision, "autonomous_eligible");
   assert.ok(calls.length <= 10);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
 });
@@ -177,7 +181,9 @@ test("independent definite inactive pages are required before a site becomes con
   assert.equal(result.report.status, "confirmed_broken");
   assert.equal(result.report.confidence, "high");
   assert.ok(result.report.attempts.filter((attempt) => attempt.failureCategory === "empty_or_error_page").length >= 2);
-  assert.equal(result.prospect.fitDisposition, "manual_review_required");
+  assert.equal(result.prospect.fitDisposition, "broken_or_inactive_website");
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.match(prospectWebsiteVerificationBlockReason(result.prospect, { requireStructuredEvidence: true }), /ownership|not eligible/i);
   assert.equal(result.prospect.email, "");
 });
 
@@ -214,6 +220,18 @@ test("bounded provider and official social evidence preserves a discovered no-we
     profileUrl: "https://www.facebook.com/truecleanprowash",
     activitySignals: ["discovery_source:google", "public_profile"],
     sourceConfidence: 42,
+    contactEvidence: [{
+      kind: "facebook",
+      value: "https://www.facebook.com/truecleanprowash",
+      sourceUrl: "https://www.facebook.com/truecleanprowash",
+      extractionMethod: "visible_text",
+      confidence: "high",
+      domainMatchesBusiness: false,
+      discoveredAt: fixedNow.toISOString(),
+      sourceType: "official_social",
+      firstParty: true,
+      decisionReason: "The official profile was manually verified for this business.",
+    }],
   }), verificationDependencies(
     (async () => {
       throw new Error("No website request should run for bounded provider absence evidence.");
@@ -274,7 +292,7 @@ test("a rich cross-domain redirect cannot replace the prospect website without m
   assert.ok(result.report.attempts.every((attempt) => attempt.failureCategory === "redirect"));
   assert.equal(result.prospect.website, "https://truecleanprowash.com");
   assert.equal(result.prospect.email, "");
-  assert.equal(result.prospect.fitDisposition, "manual_review_required");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
 });
 
 test("robots policy is evaluated for each contact path rather than inherited from the homepage", async () => {
@@ -356,8 +374,12 @@ test("contact discovery prefers grounded business mailboxes and filters unsafe c
   assert.equal(result.contactFormDetected || result.quoteFormDetected, true);
   assert.equal(result.facebookUrl, "https://facebook.com/truecleanprowash");
   assert.equal(result.contactEvidence.some((item) => item.value.includes("example.com")), false);
-  assert.equal(result.contactEvidence.some((item) => /noreply|analytics-vendor|sitebuilder|email\.svg/i.test(item.value)), false);
-  assert.equal(result.contactEvidence.some((item) => item.value === "design@unrelated-agency.com"), false);
+  assert.equal(result.contactEvidence.some((item) => /noreply|sitebuilder|email\.svg/i.test(item.value)), false);
+  const vendor = result.contactEvidence.find((item) => item.value === "tracker@analytics-vendor.com");
+  assert.equal(vendor?.decision, "rejected");
+  const unrelated = result.contactEvidence.find((item) => item.value === "design@unrelated-agency.com");
+  assert.equal(unrelated?.decision, "manual_review_required");
+  assert.equal(result.contactEvidence.some((item) => /sitebuilder|email\.svg/i.test(item.value)), false);
 });
 
 test("stale contact evidence is not re-verified unless the current crawl observes it", async () => {

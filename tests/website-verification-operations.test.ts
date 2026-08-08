@@ -15,6 +15,7 @@ import {
   generateOutreach,
   type Prospect,
 } from "../lib/prospect-engine";
+import { prospectQualificationBlockReasons } from "../lib/prospect-qualification";
 import {
   getProspect,
   resetProspectMemoryForTests,
@@ -23,6 +24,8 @@ import {
 import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
+  recheckProspectWebsite,
+  setProspectWebsiteFitDisposition,
 } from "../lib/website-verification-operations";
 
 const now = "2026-07-28T15:00:00.000Z";
@@ -55,8 +58,35 @@ function legacyProspect(overrides: Partial<Prospect> = {}) {
   } satisfies Prospect;
 }
 
+function verifiedWebsiteReport() {
+  return {
+    version: "website-verification-v2" as const,
+    status: "usable" as const,
+    confidence: "high" as const,
+    canonicalUrl: "https://truecleanprowash.com/",
+    attempts: [],
+    usableSignals: ["business name", "service content", "contact or quote form"],
+    explanation: "A meaningful public business website was verified.",
+    checkedAt: now,
+    ownershipDecision: "owned" as const,
+    identityEvidence: ["The business name and owned host match."],
+    fit: {
+      disposition: "inconclusive_requires_review" as const,
+      reason: "Rendered review is required.",
+      supportingEvidence: ["The owned website is usable."],
+      confidence: "medium" as const,
+      analysisOrigin: "automated_html" as const,
+      evaluatedAt: now,
+    },
+  };
+}
+
 function queueItem(prospect: Prospect, status: OutreachQueueItem["status"] = "Queued") {
-  const outreach = generateOutreach(prospect, "", postalEnvironment);
+  const outreach = prospect.outreach ?? generateOutreach(
+    { ...prospect, websiteVerification: undefined },
+    "",
+    postalEnvironment,
+  );
   return {
     id: `queue-${prospect.id}`,
     prospectId: prospect.id,
@@ -372,17 +402,8 @@ test("protected queue history is preflighted before any editable approval is rev
   const prospect = legacyProspect({
     websiteStatus: "usable",
     websiteStatusDetail: "A meaningful public business website was verified.",
-    websiteVerification: {
-      version: "website-verification-v1",
-      status: "usable",
-      confidence: "high",
-      canonicalUrl: "https://truecleanprowash.com/",
-      attempts: [],
-      usableSignals: ["business name", "service content", "contact or quote form"],
-      explanation: "A meaningful public business website was verified.",
-      checkedAt: now,
-    },
-    fitDisposition: "manual_review_required",
+    websiteVerification: verifiedWebsiteReport(),
+    fitDisposition: "inconclusive_requires_review",
   });
   const editable = { ...queueItem(prospect, "Queued"), id: "queue-editable" };
   const sent = { ...queueItem(prospect, "Sent"), id: "queue-sent" };
@@ -397,7 +418,7 @@ test("protected queue history is preflighted before any editable approval is rev
     assert.equal(queueAfter.find((item) => item.id === editable.id)?.status, "Queued");
     assert.match(queueAfter.find((item) => item.id === editable.id)?.notes ?? "", /\[auto-email-approved\]/);
     assert.equal(queueAfter.find((item) => item.id === sent.id)?.status, "Sent");
-    assert.equal((await getProspect(prospect.id))?.fitDisposition, "manual_review_required");
+    assert.equal((await getProspect(prospect.id))?.fitDisposition, "inconclusive_requires_review");
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -410,17 +431,8 @@ test("usable-not-fit disposition removes eligibility without recording contact o
   const prospect = legacyProspect({
     websiteStatus: "usable",
     websiteStatusDetail: "A meaningful public business website was verified.",
-    websiteVerification: {
-      version: "website-verification-v1",
-      status: "usable",
-      confidence: "high",
-      canonicalUrl: "https://truecleanprowash.com/",
-      attempts: [],
-      usableSignals: ["business name", "service content", "contact or quote form"],
-      explanation: "A meaningful public business website was verified.",
-      checkedAt: now,
-    },
-    fitDisposition: "manual_review_required",
+    websiteVerification: verifiedWebsiteReport(),
+    fitDisposition: "inconclusive_requires_review",
   });
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([queueItem(prospect)]);
@@ -428,9 +440,54 @@ test("usable-not-fit disposition removes eligibility without recording contact o
     const result = await confirmUsableWebsiteNotFit(prospect.id, true);
     const saved = await getProspect(prospect.id);
     assert.equal(result.nothingSent, true);
-    assert.equal(saved?.fitDisposition, "confirmed_usable_not_fit");
+    assert.equal(saved?.fitDisposition, "strong_existing_website");
     assert.equal(saved?.status, "Reviewed");
     assert.ok(saved?.activities.some((item) => /not a fit/i.test(item.label) && /nothing was sent/i.test(item.label)));
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("website re-check cannot mutate protected contacted history", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({ status: "Contacted" });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    await assert.rejects(
+      recheckProspectWebsite(prospect.id, verificationDependencies()),
+      /protected outreach or contact history/i,
+    );
+    assert.deepEqual(await getProspect(prospect.id), prospect);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("manual weak-fit reason stays internal until a grounded customer-facing observation is verified", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({
+    websiteStatus: "usable",
+    websiteStatusDetail: "A meaningful public business website was verified.",
+    websiteVerification: verifiedWebsiteReport(),
+    fitDisposition: "inconclusive_requires_review",
+  });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect)]);
+  try {
+    const result = await setProspectWebsiteFitDisposition({
+      prospectId: prospect.id,
+      disposition: "clearly_weak_or_outdated_website",
+      reason: "The operator observed a weak quote-request path in the rendered website.",
+      confirmed: true,
+    });
+    assert.equal(result.prospect.websiteVerification?.fit?.observation, undefined);
+    assert.match(prospectQualificationBlockReasons(result.prospect).join(" "), /No evidence-backed outreach observation is saved/i);
+    assert.equal(result.nothingSent, true);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -443,17 +500,8 @@ test("an active provider attempt blocks fit mutation and remains untouched", asy
   const prospect = legacyProspect({
     websiteStatus: "usable",
     websiteStatusDetail: "A meaningful public business website was verified.",
-    websiteVerification: {
-      version: "website-verification-v1",
-      status: "usable",
-      confidence: "high",
-      canonicalUrl: "https://truecleanprowash.com/",
-      attempts: [],
-      usableSignals: ["business name", "service content", "contact or quote form"],
-      explanation: "A meaningful public business website was verified.",
-      checkedAt: now,
-    },
-    fitDisposition: "manual_review_required",
+    websiteVerification: verifiedWebsiteReport(),
+    fitDisposition: "inconclusive_requires_review",
   });
   const sending = {
     ...queueItem(prospect, "Sending"),
@@ -466,7 +514,7 @@ test("an active provider attempt blocks fit mutation and remains untouched", asy
       confirmUsableWebsiteNotFit(prospect.id, true),
       /provider attempt is in progress/i,
     );
-    assert.equal((await getProspect(prospect.id))?.fitDisposition, "manual_review_required");
+    assert.equal((await getProspect(prospect.id))?.fitDisposition, "inconclusive_requires_review");
     assert.equal(outreachQueueMemoryForTests()[0]?.status, "Sending");
   } finally {
     resetProspectMemoryForTests();

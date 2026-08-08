@@ -541,7 +541,7 @@ test("manual no-website analysis returns a persisted Presence Gap state", async 
     websiteStatus: "no_owned_website" as const,
     websiteStatusDetail: "",
     websiteVerification: {
-      version: "website-verification-v1" as const,
+      version: "website-verification-v2" as const,
       status: "no_owned_website" as const,
       confidence: "high" as const,
       canonicalUrl: "",
@@ -549,6 +549,16 @@ test("manual no-website analysis returns a persisted Presence Gap state", async 
       usableSignals: [],
       explanation: "Verified public research found no owned business website.",
       checkedAt: "2026-07-28T12:00:00.000Z",
+      ownershipDecision: "not_owned" as const,
+      identityEvidence: ["Two independent provider records matched the business and had no owned website."],
+      fit: {
+        disposition: "no_owned_website" as const,
+        reason: "Bounded public research found no owned business website.",
+        supportingEvidence: ["Two independent provider records matched the business and had no owned website."],
+        confidence: "high" as const,
+        analysisOrigin: "manual" as const,
+        evaluatedAt: "2026-07-28T12:00:00.000Z",
+      },
     },
     analysis: undefined,
   };

@@ -27,11 +27,19 @@ import {
   type ProspectStatus,
   type RecommendedContactMethod,
   type ScoreKey,
+  type WebsiteFitDisposition,
 } from "@/lib/prospect-engine";
 import { resolvePreviewImages } from "@/lib/preview-image-resolver";
 import { normalizePreviewForRender } from "@/lib/preview-compatibility";
 import { evaluatePreviewSendWorthiness } from "@/lib/preview-send-worthiness";
 import { calculateNoWebsitePresenceScores } from "@/lib/top-prospects";
+import {
+  prospectDecisionDimensions,
+  prospectFreshnessAt,
+  prospectQualificationBlockReasons,
+  verifiedContactFirstNameForProspect,
+  verifiedEmailEvidenceForProspect,
+} from "@/lib/prospect-qualification";
 
 const readOnlyUnavailablePreview: PreviewConcept = {
   direction: "Unavailable saved preview",
@@ -93,7 +101,10 @@ type ProspectDetailProps = {
   onAnalyze: () => void;
   onPresenceGap: () => void;
   onRecheckWebsite?: () => Promise<ProspectDetailActionResult | void>;
-  onConfirmUsableNotFit?: () => Promise<ProspectDetailActionResult | void>;
+  onSetWebsiteFit?: (
+    disposition: Extract<WebsiteFitDisposition, "clearly_weak_or_outdated_website" | "adequate_existing_website" | "strong_existing_website" | "inconclusive_requires_review">,
+    reason: string,
+  ) => Promise<ProspectDetailActionResult | void>;
   onOutreach: () => void;
   onRegenerateOutreach: () => Promise<ProspectDetailActionResult | void>;
   onRegeneratePreview: (feedback?: string) => Promise<PreviewRegenerationResult | void>;
@@ -828,7 +839,7 @@ export function ProspectDetail({
   onAnalyze,
   onPresenceGap,
   onRecheckWebsite = async () => ({ ok: false, message: "Website re-check is unavailable in this view." }),
-  onConfirmUsableNotFit = async () => ({ ok: false, message: "Fit disposition is unavailable in this view." }),
+  onSetWebsiteFit = async () => ({ ok: false, message: "Fit disposition is unavailable in this view." }),
   onOutreach,
   onRegenerateOutreach,
   onRegeneratePreview,
@@ -852,7 +863,9 @@ export function ProspectDetail({
   const [websiteFitUpdateProspectId, setWebsiteFitUpdateProspectId] = useState("");
   const [outreachActionFeedback, setOutreachActionFeedback] = useState<{ prospectId: string; tone: "success" | "error"; message: string } | null>(null);
   const [websiteActionFeedback, setWebsiteActionFeedback] = useState<{ prospectId: string; tone: "success" | "error"; message: string } | null>(null);
-  const [confirmNotFitOpen, setConfirmNotFitOpen] = useState(false);
+  const [fitEditorOpen, setFitEditorOpen] = useState(false);
+  const [fitDispositionChoice, setFitDispositionChoice] = useState<"clearly_weak_or_outdated_website" | "adequate_existing_website" | "strong_existing_website" | "inconclusive_requires_review">("inconclusive_requires_review");
+  const [fitReason, setFitReason] = useState("");
   const detailBodyRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
   const outreachRegenerationGuardRef = useRef<symbol | null>(null);
@@ -875,9 +888,14 @@ export function ProspectDetail({
   const visibleWebsiteActionFeedback = websiteActionFeedback?.prospectId === prospect.id ? websiteActionFeedback : null;
   const presenceGap = prospectHasUnusableWebsite(prospect);
   const websiteVerificationBlocked = Boolean(prospectWebsiteVerificationBlockReason(prospect));
+  const websiteFitDisposition = prospect.websiteVerification?.fit?.disposition ?? prospect.fitDisposition;
+  const verifiedNonOpportunity = prospect.websiteVerification?.version === "website-verification-v2"
+    && (websiteFitDisposition === "adequate_existing_website" || websiteFitDisposition === "strong_existing_website");
   const presenceLabels = prospectPresenceLabels(prospect);
   const publicPreviewUrl = publicPreviewUrlForProspect(prospect);
-  const primaryAction = !prospect.analysis && prospect.websiteStatus === "unknown"
+  const primaryAction = verifiedNonOpportunity
+    ? { label: "Re-check website", action: recheckWebsiteWithFeedback }
+    : !prospect.analysis && prospect.websiteStatus === "unknown"
     ? { label: "Analyze website", action: onAnalyze }
     : !prospect.preview
       ? { label: "Generate preview", action: onPreview }
@@ -973,21 +991,22 @@ export function ProspectDetail({
     }
   }
 
-  async function confirmUsableNotFitWithFeedback() {
+  async function setWebsiteFitWithFeedback() {
     const owner = { ...activeProspectRef.current };
     setWebsiteActionFeedback(null);
     try {
       const result = await runProspectDetailActionOnce(
         websiteFitUpdateGuardRef,
         (pending) => setWebsiteFitUpdateProspectId((current) => pending ? owner.prospectId : current === owner.prospectId ? "" : current),
-        onConfirmUsableNotFit,
+        () => onSetWebsiteFit(fitDispositionChoice, fitReason),
       );
       if (!result.started || !prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
       if (result.value && !result.value.ok) {
         setWebsiteActionFeedback({ prospectId: owner.prospectId, tone: "error", message: result.value.message });
         return;
       }
-      setConfirmNotFitOpen(false);
+      setFitEditorOpen(false);
+      setFitReason("");
       setWebsiteActionFeedback({ prospectId: owner.prospectId, tone: "success", message: result.value?.message || "Fit disposition updated. Nothing was sent." });
     } catch (error) {
       if (!prospectDetailActionIsCurrent(owner, activeProspectRef.current.prospectId, activeProspectRef.current.selectionVersion)) return;
@@ -1010,7 +1029,8 @@ export function ProspectDetail({
     setWebsiteRecheckProspectId("");
     setWebsiteFitUpdateProspectId("");
     setWebsiteActionFeedback(null);
-    setConfirmNotFitOpen(false);
+    setFitEditorOpen(false);
+    setFitReason("");
     outreachRegenerationGuardRef.current = null;
     reviewPackageRefreshGuardRef.current = null;
     websiteRecheckGuardRef.current = null;
@@ -1085,10 +1105,18 @@ export function ProspectDetail({
           <div className="engine-stack">
             <WebsiteVerificationPanel
               actionFeedback={visibleWebsiteActionFeedback}
-              confirmNotFitOpen={confirmNotFitOpen}
-              onCancelNotFit={() => setConfirmNotFitOpen(false)}
-              onConfirmNotFit={confirmUsableNotFitWithFeedback}
-              onOpenNotFit={() => setConfirmNotFitOpen(true)}
+              fitDispositionChoice={fitDispositionChoice}
+              fitEditorOpen={fitEditorOpen}
+              fitReason={fitReason}
+              onCancelFit={() => setFitEditorOpen(false)}
+              onConfirmFit={setWebsiteFitWithFeedback}
+              onFitDispositionChange={setFitDispositionChoice}
+              onFitReasonChange={setFitReason}
+              onOpenFit={() => {
+                setFitDispositionChoice("inconclusive_requires_review");
+                setFitReason("");
+                setFitEditorOpen(true);
+              }}
               onRecheck={recheckWebsiteWithFeedback}
               prospect={prospect}
               websiteFitUpdating={websiteFitUpdating}
@@ -1096,6 +1124,8 @@ export function ProspectDetail({
             />
             {presenceGap
               ? <PresenceGapView onAnalyze={onAnalyze} onPresenceGap={onPresenceGap} prospect={prospect} />
+              : verifiedNonOpportunity
+                ? <NonOpportunityWebsiteView disposition={websiteFitDisposition as "adequate_existing_website" | "strong_existing_website"} />
               : prospect.analysis
               ? <AnalysisView prospect={prospect} onAnalyze={onAnalyze} />
               : websiteVerificationBlocked
@@ -1220,7 +1250,7 @@ function ContactExplanation({ prospect }: { prospect: Prospect }) {
 }
 
 function websiteVerificationNextAction(prospect: Prospect) {
-  if (prospect.fitDisposition === "confirmed_usable_not_fit") return "Keep this record out of outreach. No contact was recorded.";
+  if (["confirmed_usable_not_fit", "adequate_existing_website", "strong_existing_website"].includes(prospect.fitDisposition)) return "Keep this record out of website-rebuild outreach. No contact was recorded.";
   if (prospect.websiteStatus === "usable") return "Review the website evidence and fit before approving any outreach.";
   if (prospect.websiteStatus === "no_owned_website") return "Review the verified public profile and contact source before considering permission-first outreach.";
   if (prospect.websiteStatus === "crawler_blocked") return "Open the public website manually. Do not classify it as broken or no-website from crawler evidence.";
@@ -1235,25 +1265,38 @@ function WebsiteVerificationPanel({
   websiteRechecking,
   websiteFitUpdating,
   actionFeedback,
-  confirmNotFitOpen,
+  fitEditorOpen,
+  fitDispositionChoice,
+  fitReason,
   onRecheck,
-  onOpenNotFit,
-  onCancelNotFit,
-  onConfirmNotFit,
+  onOpenFit,
+  onCancelFit,
+  onConfirmFit,
+  onFitDispositionChange,
+  onFitReasonChange,
 }: {
   prospect: Prospect;
   websiteRechecking: boolean;
   websiteFitUpdating: boolean;
   actionFeedback: { tone: "success" | "error"; message: string } | null;
-  confirmNotFitOpen: boolean;
+  fitEditorOpen: boolean;
+  fitDispositionChoice: "clearly_weak_or_outdated_website" | "adequate_existing_website" | "strong_existing_website" | "inconclusive_requires_review";
+  fitReason: string;
   onRecheck: () => Promise<void>;
-  onOpenNotFit: () => void;
-  onCancelNotFit: () => void;
-  onConfirmNotFit: () => Promise<void>;
+  onOpenFit: () => void;
+  onCancelFit: () => void;
+  onConfirmFit: () => Promise<void>;
+  onFitDispositionChange: (value: "clearly_weak_or_outdated_website" | "adequate_existing_website" | "strong_existing_website" | "inconclusive_requires_review") => void;
+  onFitReasonChange: (value: string) => void;
 }) {
   const verification = prospect.websiteVerification;
-  const emailEvidence = prospect.contactEvidence.find((item) => item.kind === "email" && item.value.toLowerCase() === prospect.email.toLowerCase());
+  const emailEvidence = verifiedEmailEvidenceForProspect(prospect)
+    ?? prospect.contactEvidence.find((item) => item.kind === "email" && item.value.toLowerCase() === prospect.email.toLowerCase());
   const socialEvidence = prospect.contactEvidence.filter((item) => ["facebook", "instagram", "linkedin", "x", "youtube"].includes(item.kind));
+  const dimensions = prospectDecisionDimensions(prospect);
+  const freshness = prospectFreshnessAt(prospect);
+  const blockers = prospectQualificationBlockReasons(prospect);
+  const verifiedFirstName = verifiedContactFirstNameForProspect(prospect);
   return (
     <section aria-busy={websiteRechecking || websiteFitUpdating} className="engine-verification-panel">
       <div className="engine-section-heading">
@@ -1268,17 +1311,39 @@ function WebsiteVerificationPanel({
       </div>
       <dl className="engine-detail-facts">
         <div><dt>Final status</dt><dd>{websiteAvailabilityLabels[prospect.websiteStatus]}</dd></div>
+        <div><dt>Website ownership</dt><dd>{verification?.ownershipDecision?.replaceAll("_", " ") || "Not established"}</dd></div>
         <div><dt>Canonical URL</dt><dd>{verification?.canonicalUrl ? <a href={safeWebsiteUrl(verification.canonicalUrl)} rel="noreferrer" target="_blank">{verification.canonicalUrl}</a> : "Not confirmed"}</dd></div>
         <div><dt>Last checked</dt><dd>{verification?.checkedAt ? formatDate(verification.checkedAt) : prospect.websiteAnalysisAttemptedAt ? formatDate(prospect.websiteAnalysisAttemptedAt) : "Not checked"}</dd></div>
         <div><dt>Discovered email</dt><dd>{prospect.email || "None verified"}</dd></div>
         <div><dt>Email source</dt><dd>{emailEvidence?.sourceUrl ? <a href={safeWebsiteUrl(emailEvidence.sourceUrl)} rel="noreferrer" target="_blank">{emailEvidence.sourceUrl}</a> : "No structured source stored"}</dd></div>
         <div><dt>Extraction method</dt><dd>{emailEvidence ? emailEvidence.extractionMethod.replaceAll("_", " ") : "Not available"}</dd></div>
+        <div><dt>Email evidence decision</dt><dd>{emailEvidence?.decision?.replaceAll("_", " ") || "Manual verification required"}</dd></div>
+        <div><dt>Why the email is trusted</dt><dd>{emailEvidence?.decisionReason || "No autonomous-quality public-email evidence is saved."}</dd></div>
         <div><dt>Contact page</dt><dd>{prospect.contactPageUrl || "Not detected"}</dd></div>
         <div><dt>Contact form</dt><dd>{prospect.contactFormDetected ? "Detected, never submitted" : "Not detected"}</dd></div>
         <div><dt>Quote form</dt><dd>{prospect.quoteFormDetected ? "Detected, never submitted" : "Not detected"}</dd></div>
         <div><dt>Social links</dt><dd>{socialEvidence.length ? socialEvidence.map((item) => item.kind).join(", ") : "None detected"}</dd></div>
         <div><dt>Fit disposition</dt><dd>{prospect.fitDisposition.replaceAll("_", " ")}</dd></div>
+        <div><dt>Website-fit reason</dt><dd>{verification?.fit?.reason || "No evidence-backed fit decision is stored."}</dd></div>
+        <div><dt>Email observation</dt><dd>{verification?.fit?.observation?.statement || "No supported first-touch observation is saved."}</dd></div>
+        <div><dt>Greeting</dt><dd>{verifiedFirstName ? `Verified first name: ${verifiedFirstName}` : `${prospect.businessName.replace(/(?:,?\s+)(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?)$/i, "")} team`}</dd></div>
+        <div><dt>Freshness</dt><dd>{freshness.staleReason || `Current; next lightweight check ${freshness.nextVerificationAt ? formatDate(freshness.nextVerificationAt) : "not scheduled"}`}</dd></div>
       </dl>
+      <div className="engine-score-grid" aria-label="Prospect decision dimensions">
+        <div><span>Business Quality</span><b>{dimensions.businessQuality}</b></div>
+        <div><span>Website Quality (higher is better)</span><b>{dimensions.websiteQuality}</b></div>
+        <div><span>Website Need (higher means more need)</span><b>{dimensions.websiteNeed}</b></div>
+        <div><span>Contactability</span><b>{dimensions.contactability}</b></div>
+        <div><span>Identity Confidence</span><b>{dimensions.businessIdentityConfidence}</b></div>
+        <div><span>Contact Evidence Confidence</span><b>{dimensions.contactEvidenceConfidence}</b></div>
+        <div><span>Outreach Fit</span><b>{dimensions.outreachFit}</b></div>
+        <div><span>Autonomous Eligibility</span><b>{dimensions.finalAutonomousEligibility}</b></div>
+      </div>
+      <details>
+        <summary>Why this can or cannot be contacted</summary>
+        {blockers.length ? <ul>{blockers.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p>All saved evidence gates currently pass. Approval and dispatch-time checks still apply.</p>}
+        {verification?.fit?.observation?.demoChecklist?.length ? <><h4>Lovable / Loom checklist</h4><ul>{verification.fit.observation.demoChecklist.map((item) => <li key={item}>{item}</li>)}</ul></> : null}
+      </details>
       {verification?.attempts.length ? (
         <details>
           <summary>Verification evidence ({verification.attempts.length} bounded attempt{verification.attempts.length === 1 ? "" : "s"})</summary>
@@ -1301,19 +1366,32 @@ function WebsiteVerificationPanel({
           {websiteRechecking ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
           {websiteRechecking ? "Re-checking website…" : "Re-check website and contact paths"}
         </button>
-        {prospect.websiteStatus === "usable" && prospect.fitDisposition !== "confirmed_usable_not_fit" ? (
-          <button className="engine-button" disabled={websiteRechecking || websiteFitUpdating} onClick={onOpenNotFit} type="button">Confirmed usable website / not a fit</button>
+        {prospect.websiteStatus === "usable" && verification?.version === "website-verification-v2" && verification.ownershipDecision === "owned" ? (
+          <button className="engine-button" disabled={websiteRechecking || websiteFitUpdating} onClick={onOpenFit} type="button">Set website fit</button>
         ) : null}
       </div>
-      {confirmNotFitOpen ? (
-        <div className="engine-confirmation-panel" role="group" aria-label="Confirm usable website not a fit">
-          <p><b>Remove this record from outreach eligibility?</b></p>
-          <p>This preserves prospect history, records no contact, revokes stale approval when safe, and sends nothing.</p>
+      {fitEditorOpen ? (
+        <div className="engine-confirmation-panel" role="group" aria-label="Set evidence-backed website fit">
+          <p><b>Set the rendered website-fit decision</b></p>
+          <p>Use a factual reason from your review. This preserves history, revokes stale approval when safe, and sends nothing.</p>
+          <label>
+            Decision
+            <select disabled={websiteFitUpdating} onChange={(event) => onFitDispositionChange(event.target.value as typeof fitDispositionChoice)} value={fitDispositionChoice}>
+              <option value="clearly_weak_or_outdated_website">Website needs help</option>
+              <option value="adequate_existing_website">Website is adequate</option>
+              <option value="strong_existing_website">Website is strong / not a fit</option>
+              <option value="inconclusive_requires_review">Unable to determine</option>
+            </select>
+          </label>
+          <label>
+            Factual review reason
+            <textarea disabled={websiteFitUpdating} onChange={(event) => onFitReasonChange(event.target.value)} placeholder="Describe only what you verified in the rendered desktop/mobile site." rows={3} value={fitReason} />
+          </label>
           <div className="engine-inline-actions">
-            <button className="engine-button" disabled={websiteFitUpdating} onClick={onCancelNotFit} type="button">Cancel</button>
-            <button aria-busy={websiteFitUpdating} className="engine-button engine-button--primary" disabled={websiteFitUpdating} onClick={() => void onConfirmNotFit()} type="button">
+            <button className="engine-button" disabled={websiteFitUpdating} onClick={onCancelFit} type="button">Cancel</button>
+            <button aria-busy={websiteFitUpdating} className="engine-button engine-button--primary" disabled={websiteFitUpdating || fitReason.trim().length < 12} onClick={() => void onConfirmFit()} type="button">
               {websiteFitUpdating ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
-              {websiteFitUpdating ? "Updating…" : "Confirm not a fit"}
+              {websiteFitUpdating ? "Updating…" : "Save fit decision"}
             </button>
           </div>
         </div>
@@ -1346,6 +1424,15 @@ function VerificationPendingView() {
     <section className="engine-safety-note">
       <h3>Website verification required</h3>
       <p>The stored result is not enough to classify this business as a broken-site or no-website opportunity. Re-check the website and public contact paths above before taking an outreach action.</p>
+    </section>
+  );
+}
+
+function NonOpportunityWebsiteView({ disposition }: { disposition: "adequate_existing_website" | "strong_existing_website" }) {
+  return (
+    <section className="engine-safety-note">
+      <h3>Not a website-rebuild opportunity</h3>
+      <p>The verified website is {disposition === "strong_existing_website" ? "strong" : "adequate"}. This record stays out of rebuild outreach unless a later evidence-backed review changes that fit decision.</p>
     </section>
   );
 }
