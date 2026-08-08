@@ -4,6 +4,7 @@ import {
   outreachQueueItemHasPersistedApproval,
   outreachQueueMemoryForTests,
   resetAutonomousGrowthMemoryForTests,
+  setAtomicWebsiteRepairFailureProspectIdForTests,
   setOutreachQueueMemoryForTests,
 } from "../lib/autonomous-growth-repository";
 import {
@@ -226,6 +227,8 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
     });
     assert.equal(dryRun.mode, "dry_run");
     assert.equal(dryRun.changed, 0);
+    assert.equal(dryRun.selectedCount, 0);
+    assert.deepEqual(dryRun.selectedProspectIds, []);
     assert.equal(dryRun.records[0]?.currentProspectStatus, "Reviewed");
     assert.deepEqual(dryRun.records[0]?.currentQueueStatuses, ["Queued"]);
     assert.equal(dryRun.records[0]?.proposedStatus, "usable");
@@ -234,6 +237,8 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
     assert.equal(dryRun.records[0]?.contactEvidenceSufficient, true);
     assert.equal(dryRun.records[0]?.autonomouslyEligible, false);
     assert.equal(dryRun.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.equal(dryRun.records[0]?.selectionEligible, true);
+    assert.equal(dryRun.records[0]?.highConfidenceExclusionEligible, true);
     assert.match(dryRun.records[0]?.exactReason ?? "", /regardless of business score/i);
     assert.match(dryRun.records[0]?.evidence ?? "", /Stored trigger: unreachable_website.*HTTP 508/i);
     assert.deepEqual(
@@ -293,6 +298,7 @@ test("confirmed repair preserves history, revokes stale approval, and returns th
       confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
       dependencies,
       reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
       snapshotSecret,
     });
     const saved = await getProspect(prospect.id);
@@ -334,6 +340,7 @@ test("repair apply rejects changed website evidence instead of applying a differ
         confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
         dependencies: verificationDependencies("sales@truecleanprowash.com"),
         reviewToken: review.reviewToken,
+        selectedProspectIds: [prospect.id],
         snapshotSecret,
       }),
       /evidence changed since the reviewed dry run/i,
@@ -380,7 +387,7 @@ test("legacy website audit uses an explicit bounded request batch without hiding
   }
 });
 
-test("protected contacted records are never changed by existing-record repair", async () => {
+test("protected contacted records cannot be selected for existing-record repair", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const prospect = legacyProspect({ status: "Contacted" });
@@ -393,25 +400,28 @@ test("protected contacted records are never changed by existing-record repair", 
       dependencies,
       snapshotSecret,
     });
-    const result = await auditExistingWebsiteRecords({
-      apply: true,
-      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies,
-      reviewToken: review.reviewToken,
-      snapshotSecret,
-    });
-    assert.equal(result.changed, 0);
-    assert.equal(result.skippedProtected, 1);
-    assert.match(result.records[0]?.protectedReason ?? "", /Contacted/);
+    assert.equal(review.records[0]?.selectionEligible, false);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [prospect.id],
+        snapshotSecret,
+      }),
+      /protected or has no reviewed mutable change/i,
+    );
+    assert.match(review.records[0]?.protectedReason ?? "", /Contacted/);
     assert.equal((await getProspect(prospect.id))?.websiteStatus, "unreachable_website");
-    assert.equal(result.nothingSent, true);
+    assert.equal(outreachQueueMemoryForTests()[0]?.status, "Sent");
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
   }
 });
 
-test("protected sent queue history blocks existing-record repair even when the prospect status is still Reviewed", async () => {
+test("protected sent queue history cannot be selected even when the prospect status is still Reviewed", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const prospect = legacyProspect({ status: "Reviewed" });
@@ -424,19 +434,21 @@ test("protected sent queue history blocks existing-record repair even when the p
       dependencies,
       snapshotSecret,
     });
-    const result = await auditExistingWebsiteRecords({
-      apply: true,
-      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies,
-      reviewToken: review.reviewToken,
-      snapshotSecret,
-    });
-    assert.equal(result.changed, 0);
-    assert.equal(result.skippedProtected, 1);
-    assert.match(result.records[0]?.protectedReason ?? "", /queue history is protected/i);
+    assert.equal(review.records[0]?.selectionEligible, false);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [prospect.id],
+        snapshotSecret,
+      }),
+      /protected or has no reviewed mutable change/i,
+    );
+    assert.match(review.records[0]?.protectedReason ?? "", /queue history is protected/i);
     assert.equal((await getProspect(prospect.id))?.websiteStatus, "unreachable_website");
     assert.equal(outreachQueueMemoryForTests()[0]?.status, "Sent");
-    assert.equal(result.nothingSent, true);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -522,6 +534,243 @@ test("legacy Needs Review inventory is inspected even without a legacy error sta
     assert.equal(result.nothingSent, true);
     assert.equal((await getProspect(prospect.id))?.websiteVerification, undefined);
     assert.equal(outreachQueueMemoryForTests()[0]?.status, "Needs Review");
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("suppression, reply, and provider-attempt history remain byte-for-byte unchanged", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospects = [
+    legacyProspect({ id: "protected-suppressed" }),
+    legacyProspect({ id: "protected-replied" }),
+    legacyProspect({ id: "protected-provider" }),
+  ];
+  const queue = [
+    queueItem(prospects[0]!, "Suppressed"),
+    { ...queueItem(prospects[1]!, "Replied"), replyStatus: "Reply recorded" },
+    { ...queueItem(prospects[2]!, "Sending"), notes: "[auto-email-ambiguous] Provider outcome pending." },
+  ];
+  const prospectsBefore = structuredClone(prospects);
+  const queueBefore = structuredClone(queue);
+  setProspectMemoryForTests(prospects);
+  setOutreachQueueMemoryForTests(queue);
+  try {
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+    });
+    assert.equal(review.records.every((record) => !record.selectionEligible), true);
+    assert.equal(review.records.every((record) => record.proposedOutcome === "protected"), true);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies: verificationDependencies(),
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [prospects[0]!.id],
+        snapshotSecret,
+      }),
+      /protected or has no reviewed mutable change/i,
+    );
+    assert.deepEqual(await Promise.all(prospects.map((prospect) => getProspect(prospect.id))), prospectsBefore);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
+    assert.equal(memoryAuditEventsForTests().some((event) => /send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("selective repair changes only the explicitly selected signed-snapshot record", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const selected = legacyProspect({ id: "selective-repair-1" });
+  const unselected = legacyProspect({ id: "selective-repair-2" });
+  const selectedQueue = queueItem(selected);
+  const unselectedQueue = queueItem(unselected);
+  const unselectedBefore = structuredClone(unselected);
+  const unselectedQueueBefore = structuredClone(unselectedQueue);
+  setProspectMemoryForTests([selected, unselected]);
+  setOutreachQueueMemoryForTests([selectedQueue, unselectedQueue]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 2,
+    });
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [selected.id],
+      snapshotSecret,
+      limit: 2,
+    });
+    const queueAfter = outreachQueueMemoryForTests();
+    assert.equal(result.changed, 1);
+    assert.equal(result.selectedCount, 1);
+    assert.deepEqual(result.selectedProspectIds, [selected.id]);
+    const selectedAfter = await getProspect(selected.id);
+    assert.equal(selectedAfter?.websiteStatus, "usable");
+    assert.match(prospectQualificationBlockReasons(selectedAfter!).join(" "), /not a fit for rebuild outreach/i);
+    assert.deepEqual(await getProspect(unselected.id), unselectedBefore);
+    assert.equal(queueAfter.find((item) => item.id === selectedQueue.id)?.status, "Needs Review");
+    assert.match(queueAfter.find((item) => item.id === selectedQueue.id)?.notes ?? "", /website fit excludes.*non-sendable/i);
+    assert.deepEqual(queueAfter.find((item) => item.id === unselectedQueue.id), unselectedQueueBefore);
+    assert.equal(result.nothingSent, true);
+    assert.equal(memoryAuditEventsForTests().some((event) => /send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("multi-record selective apply fails before mutation when a later record becomes protected", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const first = legacyProspect({ id: "atomic-preflight-1" });
+  const later = legacyProspect({ id: "atomic-preflight-2" });
+  const firstQueue = queueItem(first);
+  const laterQueue = queueItem(later);
+  const prospectsBefore = structuredClone([first, later]);
+  setProspectMemoryForTests([first, later]);
+  setOutreachQueueMemoryForTests([firstQueue, laterQueue]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 2,
+    });
+    const protectedQueue = {
+      ...laterQueue,
+      status: "Sending" as const,
+      notes: "[auto-email-ambiguous] Provider outcome pending.",
+      updatedAt: "2026-07-28T15:01:00.000Z",
+    };
+    setOutreachQueueMemoryForTests([firstQueue, protectedQueue]);
+    const queueBeforeApply = structuredClone(outreachQueueMemoryForTests());
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [first.id, later.id],
+        snapshotSecret,
+        limit: 2,
+      }),
+      /evidence changed since the reviewed dry run|protected|provider/i,
+    );
+    assert.deepEqual(await Promise.all([getProspect(first.id), getProspect(later.id)]), prospectsBefore);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBeforeApply);
+    assert.equal(memoryAuditEventsForTests().some((event) => event.outcome === "success"), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("atomic selected repair rolls back earlier writes when a later persistence write fails", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const first = legacyProspect({ id: "atomic-rollback-1" });
+  const later = legacyProspect({ id: "atomic-rollback-2" });
+  const prospectsBefore = structuredClone([first, later]);
+  const queueBefore = [queueItem(first), queueItem(later)];
+  setProspectMemoryForTests([first, later]);
+  setOutreachQueueMemoryForTests(queueBefore);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 2,
+    });
+    setAtomicWebsiteRepairFailureProspectIdForTests(later.id);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [first.id, later.id],
+        snapshotSecret,
+        limit: 2,
+      }),
+      /simulated atomic website-repair write failure/i,
+    );
+    assert.deepEqual(await Promise.all([getProspect(first.id), getProspect(later.id)]), prospectsBefore);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
+    assert.equal(memoryAuditEventsForTests().some((event) => event.outcome === "success"), false);
+  } finally {
+    setAtomicWebsiteRepairFailureProspectIdForTests();
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("selective repair requires a non-empty selection from the signed reviewed snapshot", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const reviewed = legacyProspect({ id: "selection-snapshot-1" });
+  const outside = legacyProspect({ id: "selection-snapshot-2" });
+  setProspectMemoryForTests([reviewed, outside]);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 1,
+      offset: 0,
+    });
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [],
+        snapshotSecret,
+        limit: 1,
+        offset: 0,
+      }),
+      /select at least one reviewed website record/i,
+    );
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [outside.id],
+        snapshotSecret,
+        limit: 1,
+        offset: 0,
+      }),
+      /outside the signed reviewed website-record snapshot/i,
+    );
+    assert.deepEqual(await getProspect(reviewed.id), reviewed);
+    assert.deepEqual(await getProspect(outside.id), outside);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -647,6 +896,7 @@ test("review token for one legacy audit batch cannot apply another batch", async
         dependencies: verificationDependencies(),
         snapshotSecret,
         reviewToken: pageOne.reviewToken,
+        selectedProspectIds: [prospects[2]!.id],
         limit: 2,
         offset: 2,
       }),
@@ -689,6 +939,18 @@ test("exact-prospect legacy dry run proposes strong-site exclusion without mutat
     assert.equal((await getProspect(pinnacleStyle.id))?.websiteStatus, pinnacleStyle.websiteStatus);
     assert.equal((await getProspect(other.id))?.websiteStatus, other.websiteStatus);
     assert.equal(memoryAuditEventsForTests().length, 0);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies: verificationDependencies(),
+        snapshotSecret,
+        prospectId: pinnacleStyle.id,
+        reviewToken: result.reviewToken,
+        selectedProspectIds: [pinnacleStyle.id],
+      }),
+      /exact-prospect website audits are read-only/i,
+    );
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -717,6 +979,7 @@ test("inconclusive legacy website remains manual review and source-less email is
     assert.equal(record.proposedOutcome, "manual_review");
     assert.equal(record.manualReviewRequired, true);
     assert.equal(record.autonomouslyEligible, false);
+    assert.equal(record.highConfidenceExclusionEligible, false);
     assert.equal(record.contactEvidenceSufficient, false);
     assert.match(record.exactReason, /rendered human review/i);
   } finally {
@@ -773,6 +1036,7 @@ test("fresh rendered weak-site evidence becomes only a potential candidate when 
     assert.equal(record.contactEvidenceSufficient, true);
     assert.equal(record.proposedOutcome, "potential_candidate");
     assert.equal(record.autonomouslyEligible, true);
+    assert.equal(record.highConfidenceExclusionEligible, false);
     assert.match(record.exactReason, /deliberate human approval/i);
   } finally {
     resetProspectMemoryForTests();

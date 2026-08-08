@@ -322,8 +322,14 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(testCenterSource, /offset: reviewedBatch\?\.offset/);
   assert.match(testCenterSource, /limit: reviewedBatch\?\.batchSize/);
   assert.match(testCenterSource, /reviewedBatch\?\.scope === "batch"/);
+  assert.match(testCenterSource, /selectedProspectIds: selectedWebsiteRepairProspectIds/);
+  assert.match(testCenterSource, /Select high-confidence exclusions/);
+  assert.match(testCenterSource, /record\.selectionEligible && record\.highConfidenceExclusionEligible/);
+  assert.match(testCenterSource, /disabled=\{busy \|\| !record\.selectionEligible\}/);
+  assert.match(testCenterSource, /Apply \{selectedWebsiteRepairRecords\.length\} selected website-record repair/);
   assert.match(verificationRoute, /website_record_audit_exact/);
   assert.match(verificationRoute, /prospectId,/);
+  assert.match(verificationRoute, /safeSelectedProspectIds\(input\.selectedProspectIds\)/);
   assert.match(testCenterSource, /Activation sends nothing/);
 });
 

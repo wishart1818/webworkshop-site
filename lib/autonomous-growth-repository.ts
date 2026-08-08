@@ -53,7 +53,14 @@ import {
   type ContactRouteEvidence,
   type Prospect,
 } from "@/lib/prospect-engine";
-import { getProspect, getProspectDatabase, listProspects, saveProspect } from "@/lib/prospect-repository";
+import {
+  getProspect,
+  getProspectDatabase,
+  getProspectInTransaction,
+  listProspects,
+  persistProspectInTransaction,
+  saveProspect,
+} from "@/lib/prospect-repository";
 import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
@@ -3471,6 +3478,139 @@ async function clearMemoryReadinessApproval(item: OutreachQueueItem) {
     ...prospect,
     outreach: { ...prospect.outreach, approved: false },
   });
+}
+
+export type AtomicWebsiteRepairMutation = {
+  expectedProspect: Prospect;
+  proposedProspect: Prospect;
+  expectedQueueItems: OutreachQueueItem[];
+  queueReason: string;
+};
+
+let atomicWebsiteRepairFailureProspectIdForTests = "";
+
+export function setAtomicWebsiteRepairFailureProspectIdForTests(prospectId = "") {
+  if (process.env.NODE_ENV === "production") throw new Error("Atomic repair test hooks are unavailable in production.");
+  atomicWebsiteRepairFailureProspectIdForTests = prospectId;
+}
+
+function orderedQueueSnapshot(items: OutreachQueueItem[]) {
+  return [...items].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function atomicRepairProtectionReason(prospect: Prospect, queueItems: OutreachQueueItem[]) {
+  if (!["New", "Reviewed"].includes(prospect.status)) return `Prospect status ${prospect.status} is already contacted or closed.`;
+  const history = [...prospect.notes, ...prospect.activities.map((item) => item.label)].join("\n");
+  if (outreachHistoryTextIndicatesProtectedContact(history)) return "Contact, suppression, or provider-outcome history is protected.";
+  return queueItems.map((item) => safeReadinessRepairProtectionReason(item, prospect.status)).find(Boolean) ?? "";
+}
+
+function assertAtomicRepairSnapshot(
+  mutation: AtomicWebsiteRepairMutation,
+  currentProspect: Prospect | null,
+  currentQueueItems: OutreachQueueItem[],
+) {
+  if (!currentProspect) throw new Error("A selected prospect no longer exists. Run a fresh dry run.");
+  if (JSON.stringify(currentProspect) !== JSON.stringify(mutation.expectedProspect)) {
+    throw new Error("A selected prospect changed after review. Run a fresh dry run.");
+  }
+  if (JSON.stringify(orderedQueueSnapshot(currentQueueItems)) !== JSON.stringify(orderedQueueSnapshot(mutation.expectedQueueItems))) {
+    throw new Error("A selected outreach queue changed after review. Run a fresh dry run.");
+  }
+  const protectedReason = atomicRepairProtectionReason(currentProspect, currentQueueItems);
+  if (protectedReason) throw new Error(`${protectedReason} Run a fresh dry run.`);
+}
+
+export async function applySelectedWebsiteRepairsAtomically(input: {
+  mutations: AtomicWebsiteRepairMutation[];
+  now?: Date;
+}) {
+  if (!input.mutations.length) throw new Error("Select at least one reviewed website record before applying repairs.");
+  const now = input.now ?? new Date();
+  const nowIso = now.toISOString();
+
+  if (!hasDatabase) {
+    const queueBefore = structuredClone(memoryQueue());
+    const approvedBefore = new Set(memoryApprovedAutoEmailQueueIds());
+    const prospectsBefore = await Promise.all(input.mutations.map((mutation) => getProspect(mutation.expectedProspect.id)));
+    for (const [index, mutation] of input.mutations.entries()) {
+      const currentQueueItems = memoryQueue().filter((item) => item.prospectId === mutation.expectedProspect.id);
+      assertAtomicRepairSnapshot(mutation, prospectsBefore[index] ?? null, currentQueueItems);
+    }
+    try {
+      for (const mutation of input.mutations) {
+        if (atomicWebsiteRepairFailureProspectIdForTests === mutation.expectedProspect.id) {
+          throw new Error("Simulated atomic website-repair write failure.");
+        }
+        for (const item of memoryQueue().filter((candidate) => candidate.prospectId === mutation.expectedProspect.id)) {
+          const data = readinessRepairData(item, "mark_needs_manual_review", mutation.queueReason, nowIso, mutation.expectedProspect);
+          Object.assign(item, {
+            ...data,
+            queuedDate: "",
+            notes: data.notes ?? "",
+            blockedReason: data.blockedReason ?? "",
+            updatedAt: nowIso,
+          });
+          memoryApprovedAutoEmailQueueIds().delete(item.id);
+        }
+        await saveProspect(mutation.proposedProspect);
+      }
+    } catch (error) {
+      memoryQueue().splice(0, memoryQueue().length, ...structuredClone(queueBefore));
+      memoryApprovedAutoEmailQueueIds().clear();
+      for (const id of approvedBefore) memoryApprovedAutoEmailQueueIds().add(id);
+      for (const prospect of prospectsBefore) {
+        if (prospect) await saveProspect(prospect);
+      }
+      throw error;
+    }
+    return { changedProspectIds: input.mutations.map((mutation) => mutation.expectedProspect.id) };
+  }
+
+  await ensureTopProspectSchema();
+  const database = getProspectDatabase();
+  return database.$transaction(async (transaction) => {
+    const contexts: Array<{
+      mutation: AtomicWebsiteRepairMutation;
+      queueRows: Awaited<ReturnType<typeof transaction.outreachQueueItem.findMany>>;
+      queueItems: OutreachQueueItem[];
+    }> = [];
+
+    for (const mutation of input.mutations) {
+      const [currentProspect, queueRows] = await Promise.all([
+        getProspectInTransaction(transaction, mutation.expectedProspect.id),
+        transaction.outreachQueueItem.findMany({ where: { prospectId: mutation.expectedProspect.id } }),
+      ]);
+      const queueItems = queueRows.map(queueToDomain);
+      assertAtomicRepairSnapshot(mutation, currentProspect, queueItems);
+      contexts.push({ mutation, queueRows, queueItems });
+    }
+
+    for (const { mutation, queueRows, queueItems } of contexts) {
+      for (const [index, item] of queueItems.entries()) {
+        const row = queueRows[index]!;
+        const data = readinessRepairData(item, "mark_needs_manual_review", mutation.queueReason, nowIso, mutation.expectedProspect);
+        const updated = await transaction.outreachQueueItem.updateMany({
+          where: {
+            id: item.id,
+            status: row.status,
+            updatedAt: row.updatedAt,
+            sentDate: null,
+            NOT: [
+              { status: { in: [...protectedQueueStatuses] } },
+              { notes: { contains: ambiguousOutcomeMarker } },
+            ],
+          },
+          data,
+        });
+        if (updated.count !== 1) throw new Error("A selected outreach queue changed during repair. The transaction was rolled back.");
+        await clearPersistedApproval(transaction, item, now);
+      }
+      await persistProspectInTransaction(transaction, mutation.proposedProspect);
+    }
+
+    return { changedProspectIds: input.mutations.map((mutation) => mutation.expectedProspect.id) };
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function repairOutreachQueueItemForReadiness(input: {

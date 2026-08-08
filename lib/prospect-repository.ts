@@ -231,10 +231,10 @@ function toDomain(row: StoredProspect): Prospect {
   };
 }
 
-async function persistProspect(prospect: Prospect) {
-  const prisma = getProspectDatabase();
-
-  await prisma.$transaction(async (tx) => {
+export async function persistProspectInTransaction(
+  tx: Prisma.TransactionClient,
+  prospect: Prospect,
+) {
     const previous = await tx.prospect.findUnique({ where: { id: prospect.id }, select: { status: true, prospectType: true } });
     await tx.prospect.upsert({
       where: { id: prospect.id },
@@ -400,7 +400,21 @@ async function persistProspect(prospect: Prospect) {
         data: { prospectId: prospect.id, fromStatus: previous.status, toStatus: toPrismaStatus[prospect.status] },
       });
     }
+}
+
+async function persistProspect(prospect: Prospect) {
+  const prisma = getProspectDatabase();
+  await prisma.$transaction(async (tx) => {
+    await persistProspectInTransaction(tx, prospect);
   });
+}
+
+export async function getProspectInTransaction(
+  tx: Prisma.TransactionClient,
+  id: string,
+): Promise<Prospect | null> {
+  const row = await tx.prospect.findUnique({ where: { id }, include: prospectInclude });
+  return row ? toDomain(row) : null;
 }
 
 export function decodeProspectRows<T extends { id: string }>(
