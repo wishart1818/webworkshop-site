@@ -309,6 +309,7 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(engineSource, /const prospectId = selected\.id[\s\S]*action: "recheck_website", prospectId/);
   assert.match(verificationRoute, /confirm_usable_not_fit/);
   assert.match(verificationRoute, /apply_existing_record_repair/);
+  assert.match(verificationRoute, /safeText\(input\.reviewToken, websiteRepairReviewTokenMaxLength\)/);
   assert.match(testCenterSource, /Controlled Outreach Launch Readiness/);
   assert.match(testCenterSource, /Enable Controlled Email Pilot/);
   assert.match(testCenterSource, /lastAction\.controlledReadiness\.activationConfirmation/);
