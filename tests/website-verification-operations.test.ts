@@ -366,6 +366,12 @@ test("legacy website audit uses an explicit bounded request batch without hiding
     assert.equal(result.candidates, 6);
     assert.equal(result.inspected, 3);
     assert.equal(result.remainingCandidates, 3);
+    assert.equal(result.rangeStart, 1);
+    assert.equal(result.rangeEnd, 3);
+    assert.equal(result.currentPage, 1);
+    assert.equal(result.totalPages, 2);
+    assert.equal(result.previousOffset, null);
+    assert.equal(result.nextOffset, 3);
     assert.equal(result.records.length, 3);
     assert.equal(result.nothingSent, true);
   } finally {
@@ -519,6 +525,174 @@ test("legacy Needs Review inventory is inspected even without a legacy error sta
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("legacy website audit pages traverse different deterministic candidates without mutation", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospects = Array.from({ length: 5 }, (_, index) => legacyProspect({
+    id: `legacy-page-${index + 1}`,
+    businessName: `Legacy Page ${String(index + 1).padStart(2, "0")}`,
+  }));
+  setProspectMemoryForTests(prospects);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    const pageOne = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+      limit: 2,
+      offset: 0,
+    });
+    const pageTwo = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+      limit: 2,
+      offset: pageOne.nextOffset ?? -1,
+    });
+    const pageThree = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+      limit: 2,
+      offset: pageTwo.nextOffset ?? -1,
+    });
+    const repeatedPageOne = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+      limit: 2,
+      offset: 0,
+    });
+    const pageOneIds = pageOne.records.map((record) => record.prospectId);
+    const pageTwoIds = pageTwo.records.map((record) => record.prospectId);
+    assert.deepEqual(pageOneIds, ["legacy-page-1", "legacy-page-2"]);
+    assert.deepEqual(pageTwoIds, ["legacy-page-3", "legacy-page-4"]);
+    assert.notDeepEqual(pageOneIds, pageTwoIds);
+    assert.deepEqual(repeatedPageOne.records.map((record) => record.prospectId), pageOneIds);
+    assert.deepEqual(
+      [...pageOne.records, ...pageTwo.records, ...pageThree.records].map((record) => record.prospectId),
+      prospects.map((prospect) => prospect.id),
+    );
+    assert.equal(pageTwo.rangeStart, 3);
+    assert.equal(pageTwo.rangeEnd, 4);
+    assert.equal(pageTwo.currentPage, 2);
+    assert.equal(pageThree.remainingCandidates, 0);
+    assert.equal(pageThree.nextOffset, null);
+    assert.equal(memoryAuditEventsForTests().length, 0);
+    for (const prospect of prospects) {
+      assert.equal((await getProspect(prospect.id))?.websiteStatus, prospect.websiteStatus);
+    }
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("legacy website audit rejects invalid page bounds without changing records", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({ id: "legacy-bounds" });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    for (const input of [
+      { offset: -1, limit: 1 },
+      { offset: 0, limit: 0 },
+      { offset: 0, limit: 26 },
+      { offset: 1, limit: 1 },
+    ]) {
+      await assert.rejects(
+        auditExistingWebsiteRecords({
+          apply: false,
+          dependencies: verificationDependencies(),
+          snapshotSecret,
+          ...input,
+        }),
+        /offset|batch size|candidate range/i,
+      );
+    }
+    assert.equal((await getProspect(prospect.id))?.websiteStatus, prospect.websiteStatus);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("review token for one legacy audit batch cannot apply another batch", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospects = Array.from({ length: 4 }, (_, index) => legacyProspect({
+    id: `legacy-token-page-${index + 1}`,
+    businessName: `Token Page ${index + 1}`,
+  }));
+  setProspectMemoryForTests(prospects);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    const pageOne = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+      limit: 2,
+      offset: 0,
+    });
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies: verificationDependencies(),
+        snapshotSecret,
+        reviewToken: pageOne.reviewToken,
+        limit: 2,
+        offset: 2,
+      }),
+      /evidence changed since the reviewed dry run/i,
+    );
+    for (const prospect of prospects) {
+      assert.equal((await getProspect(prospect.id))?.websiteStatus, prospect.websiteStatus);
+    }
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("exact-prospect legacy dry run proposes strong-site exclusion without mutation", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const pinnacleStyle = legacyProspect({
+    id: "pinnacle-style-exact",
+  });
+  const other = legacyProspect({ id: "other-legacy-exact", businessName: "Another Legacy Company" });
+  setProspectMemoryForTests([other, pinnacleStyle]);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    const result = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: verificationDependencies(),
+      snapshotSecret,
+      prospectId: pinnacleStyle.id,
+    });
+    assert.equal(result.scope, "exact_prospect");
+    assert.equal(result.exactProspectId, pinnacleStyle.id);
+    assert.equal(result.inspected, 1);
+    assert.equal(result.remainingCandidates, 0);
+    assert.equal(result.records[0]?.prospectId, pinnacleStyle.id);
+    assert.equal(result.records[0]?.proposedDisposition, "adequate_existing_website");
+    assert.equal(result.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.equal(result.nothingSent, true);
+    assert.equal((await getProspect(pinnacleStyle.id))?.websiteStatus, pinnacleStyle.websiteStatus);
+    assert.equal((await getProspect(other.id))?.websiteStatus, other.websiteStatus);
+    assert.equal(memoryAuditEventsForTests().length, 0);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
   }
 });
 

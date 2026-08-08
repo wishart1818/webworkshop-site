@@ -53,7 +53,7 @@ import {
   type ContactRouteEvidence,
   type Prospect,
 } from "@/lib/prospect-engine";
-import { getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { getProspect, getProspectDatabase, listProspects, saveProspect } from "@/lib/prospect-repository";
 import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
@@ -586,11 +586,13 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
   const queue = await listOutreachQueueItems();
   const runReviews = await listAutonomousRunReviews();
   const topProspectJobs = await listTopProspectJobsSafely();
+  const prospects = await listProspects();
   const env = outreachEnvironment();
   globalAutonomous.autopilotCampaignMemory = await refreshAutopilotCampaignFromTopProspects(memoryAutopilotCampaign());
   const autopilot = buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
   const smartGrowth = buildSmartAutonomousGrowthSnapshot({
     queue,
+    prospects,
     topProspectJobs,
     lastRunSummary: globalAutonomous.smartAutonomousRunSummaryMemory,
   });
@@ -695,7 +697,12 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
   const dryRun = options.dryRun ?? false;
   const initialQueue = await listOutreachQueueItems();
   const jobs = await listTopProspectJobsSafely();
-  const initialSnapshot = buildSmartAutonomousGrowthSnapshot({ queue: initialQueue, topProspectJobs: jobs });
+  const initialProspects = await listProspects();
+  const initialSnapshot = buildSmartAutonomousGrowthSnapshot({
+    queue: initialQueue,
+    prospects: initialProspects,
+    topProspectJobs: jobs,
+  });
   const touchedResultIds = new Set(initialQueue.map((item) => item.topProspectResultId).filter(Boolean));
   const skippedReasons: Record<string, number> = { ...initialSnapshot.existingQualifiedUnsent.blockedSkippedReasons };
   let generatedMissingPackages = 0;
@@ -754,7 +761,8 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
 
   const queue = await listOutreachQueueItems();
   const refreshedJobs = await listTopProspectJobsSafely();
-  const snapshot = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: refreshedJobs });
+  const prospects = await listProspects();
+  const snapshot = buildSmartAutonomousGrowthSnapshot({ queue, prospects, topProspectJobs: refreshedJobs });
   const existing = {
     ...snapshot.existingQualifiedUnsent,
     generatedMissingPackages,
@@ -772,6 +780,7 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
   globalAutonomous.smartAutonomousRunSummaryMemory = summary;
   const smartGrowth = buildSmartAutonomousGrowthSnapshot({
     queue,
+    prospects,
     topProspectJobs: refreshedJobs,
     lastRunSummary: summary,
   });
@@ -790,12 +799,13 @@ export async function processExistingQualifiedProspects(options: { dryRun?: bool
 export async function runMarketScoutDryRunForDashboard(input?: Partial<MarketScoutSettings>): Promise<SmartGrowthActionResult> {
   const queue = await listOutreachQueueItems();
   const jobs = await listTopProspectJobsSafely();
-  const existing = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs }).existingQualifiedUnsent;
+  const prospects = await listProspects();
+  const existing = buildSmartAutonomousGrowthSnapshot({ queue, prospects, topProspectJobs: jobs }).existingQualifiedUnsent;
   const scout = buildMarketScoutDryRun(input, jobs);
   const recommendation = smartRecommendationForGrowth({ existing, scout });
   const summary = buildSmartRunSummary({ existing, scout, recommendation, actionLabel: "Market Scout Dry Run" });
   globalAutonomous.smartAutonomousRunSummaryMemory = summary;
-  const smartGrowth = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs, marketScoutSettings: input, lastRunSummary: summary });
+  const smartGrowth = buildSmartAutonomousGrowthSnapshot({ queue, prospects, topProspectJobs: jobs, marketScoutSettings: input, lastRunSummary: summary });
   return {
     ok: true,
     dryRun: true,
@@ -809,7 +819,8 @@ export async function runMarketScoutDryRunForDashboard(input?: Partial<MarketSco
 export async function runSmartAutonomousDryRun(): Promise<SmartGrowthActionResult> {
   const queue = await listOutreachQueueItems();
   const jobs = await listTopProspectJobsSafely();
-  const snapshot = buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs });
+  const prospects = await listProspects();
+  const snapshot = buildSmartAutonomousGrowthSnapshot({ queue, prospects, topProspectJobs: jobs });
   const actionLabel = snapshot.existingQualifiedUnsent.total > 0 || snapshot.existingQualifiedUnsent.needsRefreshedCopy > 0
     ? "Smart Autonomous Dry Run: Use Existing Prospects First"
     : "Smart Autonomous Dry Run: Scout Next Market";
@@ -824,7 +835,7 @@ export async function runSmartAutonomousDryRun(): Promise<SmartGrowthActionResul
     ok: true,
     dryRun: true,
     message: `${snapshot.recommendation.nextBestMove} Dry run only. Nothing was sent or submitted.`,
-    smartGrowth: buildSmartAutonomousGrowthSnapshot({ queue, topProspectJobs: jobs, lastRunSummary: summary }),
+    smartGrowth: buildSmartAutonomousGrowthSnapshot({ queue, prospects, topProspectJobs: jobs, lastRunSummary: summary }),
     summary,
     autoEmailPilot: { attempted: 0, sent: 0, blocked: 0, approvedQueued: 0, blockedReasons: [] },
   };

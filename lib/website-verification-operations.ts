@@ -73,9 +73,19 @@ export type ExistingWebsiteRepairRecord = {
 
 export type ExistingWebsiteRepairReport = {
   mode: "dry_run" | "applied";
+  scope: "batch" | "exact_prospect";
   inspected: number;
   candidates: number;
   remainingCandidates: number;
+  offset: number;
+  batchSize: number;
+  rangeStart: number;
+  rangeEnd: number;
+  currentPage: number;
+  totalPages: number;
+  previousOffset: number | null;
+  nextOffset: number | null;
+  exactProspectId: string;
   changed: number;
   skippedProtected: number;
   records: ExistingWebsiteRepairRecord[];
@@ -692,31 +702,48 @@ function proposedProspectReviewValue(prospect: Prospect) {
 function repairReviewDigest(
   inspected: Array<Awaited<ReturnType<typeof inspectExistingWebsiteRepairCandidate>>>,
   queue: OutreachQueueItem[],
+  selection: ExistingWebsiteRepairSelection,
 ) {
-  const snapshot = inspected.map((candidate) => ({
-    record: candidate.record,
-    currentProspect: candidate.prospect,
-    proposedProspect: candidate.verified
-      ? proposedProspectReviewValue(candidate.verified.prospect)
-      : null,
-    queueItems: queue.filter((item) => item.prospectId === candidate.prospect.id),
-  }));
+  const snapshot = {
+    selection,
+    records: inspected.map((candidate) => ({
+      record: candidate.record,
+      currentProspect: candidate.prospect,
+      proposedProspect: candidate.verified
+        ? proposedProspectReviewValue(candidate.verified.prospect)
+        : null,
+      queueItems: queue.filter((item) => item.prospectId === candidate.prospect.id),
+    })),
+  };
   return createHash("sha256")
     .update(JSON.stringify(canonicalRepairReviewValue(snapshot)))
     .digest("hex");
 }
 
-function repairReviewToken(digest: string, secret: string, issuedAt: Date) {
+type ExistingWebsiteRepairSelection = {
+  scope: "batch" | "exact_prospect";
+  offset: number;
+  limit: number;
+  prospectId: string;
+};
+
+function repairReviewToken(
+  digest: string,
+  secret: string,
+  issuedAt: Date,
+  selection: ExistingWebsiteRepairSelection,
+) {
   const encodedPayload = Buffer.from(JSON.stringify({
-    version: 1,
+    version: 2,
     digest,
     issuedAt: issuedAt.toISOString(),
+    selection,
   })).toString("base64url");
   const signature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
   return `${encodedPayload}.${signature}`;
 }
 
-function verifiedRepairReviewDigest(token: string, secret: string, now: Date) {
+function verifiedRepairReviewSnapshot(token: string, secret: string, now: Date) {
   const [encodedPayload, suppliedSignature, extra] = token.split(".");
   if (!encodedPayload || !suppliedSignature || extra) {
     throw new Error("Run a fresh website-record dry run before applying repairs.");
@@ -731,7 +758,12 @@ function verifiedRepairReviewDigest(token: string, secret: string, now: Date) {
   if (supplied.length !== expectedSignature.length || !timingSafeEqual(supplied, expectedSignature)) {
     throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
   }
-  let payload: { version?: number; digest?: string; issuedAt?: string };
+  let payload: {
+    version?: number;
+    digest?: string;
+    issuedAt?: string;
+    selection?: ExistingWebsiteRepairSelection;
+  };
   try {
     payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as typeof payload;
   } catch {
@@ -739,15 +771,39 @@ function verifiedRepairReviewDigest(token: string, secret: string, now: Date) {
   }
   const issuedAt = Date.parse(payload.issuedAt ?? "");
   if (
-    payload.version !== 1
+    payload.version !== 2
     || !/^[a-f0-9]{64}$/.test(payload.digest ?? "")
+    || !payload.selection
+    || !["batch", "exact_prospect"].includes(payload.selection.scope)
+    || !Number.isInteger(payload.selection.offset)
+    || !Number.isInteger(payload.selection.limit)
+    || payload.selection.offset < 0
+    || payload.selection.limit < 1
+    || payload.selection.limit > websiteRepairRequestBatchLimit
+    || typeof payload.selection.prospectId !== "string"
     || !Number.isFinite(issuedAt)
     || issuedAt > now.getTime() + 60_000
     || now.getTime() - issuedAt > websiteRepairReviewMaxAgeMs
   ) {
     throw new Error("The reviewed website-repair snapshot expired or is invalid. Run the dry run again.");
   }
-  return payload.digest!;
+  return { digest: payload.digest!, selection: payload.selection };
+}
+
+function boundedRepairLimit(value: number | undefined) {
+  const limit = value ?? websiteRepairRequestBatchSize;
+  if (!Number.isInteger(limit) || limit < 1 || limit > websiteRepairRequestBatchLimit) {
+    throw new Error(`Website-record audit batch size must be between 1 and ${websiteRepairRequestBatchLimit}.`);
+  }
+  return limit;
+}
+
+function boundedRepairOffset(value: number | undefined) {
+  const offset = value ?? 0;
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error("Website-record audit offset must be a non-negative integer.");
+  }
+  return offset;
 }
 
 export async function auditExistingWebsiteRecords(input: {
@@ -755,12 +811,23 @@ export async function auditExistingWebsiteRecords(input: {
   confirmation?: string;
   dependencies?: WebsiteVerificationDependencies;
   limit?: number;
+  offset?: number;
+  prospectId?: string;
   reviewToken?: string;
   snapshotSecret?: string;
 }): Promise<ExistingWebsiteRepairReport> {
   if (input.apply && input.confirmation !== "REPAIR VERIFIED WEBSITE RECORDS") {
     throw new Error("Type REPAIR VERIFIED WEBSITE RECORDS to apply this audit.");
   }
+  const exactProspectId = input.prospectId?.trim() ?? "";
+  if (input.apply && exactProspectId) {
+    throw new Error("Exact-prospect website audits are read-only and cannot be applied.");
+  }
+  if (exactProspectId.length > 100) {
+    throw new Error("Prospect ID is invalid.");
+  }
+  const limit = exactProspectId ? 1 : boundedRepairLimit(input.limit);
+  const requestedOffset = exactProspectId ? 0 : boundedRepairOffset(input.offset);
   const snapshotSecret = input.snapshotSecret ?? process.env.ENGINE_PASSWORD?.trim() ?? "";
   if (!snapshotSecret) {
     throw new Error("Website-repair review signing is not configured.");
@@ -780,12 +847,30 @@ export async function auditExistingWebsiteRecords(input: {
       const leftProtected = Boolean(prospectProtectionReason(left, queueByProspect.get(left.id) ?? []));
       const rightProtected = Boolean(prospectProtectionReason(right, queueByProspect.get(right.id) ?? []));
       return Number(leftProtected) - Number(rightProtected)
-        || left.businessName.localeCompare(right.businessName);
+        || left.businessName.localeCompare(right.businessName)
+        || left.id.localeCompare(right.id);
     });
-  const candidates = allCandidates.slice(0, Math.min(
-      websiteRepairRequestBatchLimit,
-      Math.max(1, input.limit ?? websiteRepairRequestBatchSize),
-    ));
+  let offset = requestedOffset;
+  let candidates: Prospect[];
+  let selection: ExistingWebsiteRepairSelection;
+  if (exactProspectId) {
+    const exactIndex = allCandidates.findIndex((prospect) => prospect.id === exactProspectId);
+    if (exactIndex < 0) {
+      const prospectExists = prospects.some((prospect) => prospect.id === exactProspectId);
+      throw new Error(prospectExists
+        ? "The selected prospect is not part of the current legacy website audit inventory."
+        : "Prospect was not found.");
+    }
+    offset = exactIndex;
+    candidates = [allCandidates[exactIndex]!];
+    selection = { scope: "exact_prospect", offset, limit: 1, prospectId: exactProspectId };
+  } else {
+    if (offset > 0 && offset >= allCandidates.length) {
+      throw new Error("Website-record audit offset is outside the current candidate range.");
+    }
+    candidates = allCandidates.slice(offset, offset + limit);
+    selection = { scope: "batch", offset, limit, prospectId: "" };
+  }
   const boundedDependencies: WebsiteVerificationDependencies = {
     ...(input.dependencies ?? {}),
     maxVerificationAttempts: Math.min(
@@ -802,14 +887,17 @@ export async function auditExistingWebsiteRecords(input: {
     ),
   };
   const inspected = await inspectCandidatesBounded(candidates, boundedDependencies, queueByProspect);
-  const currentDigest = repairReviewDigest(inspected, queue);
+  const currentDigest = repairReviewDigest(inspected, queue, selection);
   if (input.apply) {
-    const reviewedDigest = verifiedRepairReviewDigest(
+    const reviewed = verifiedRepairReviewSnapshot(
       input.reviewToken ?? "",
       snapshotSecret,
       now,
     );
-    if (reviewedDigest !== currentDigest) {
+    if (
+      reviewed.digest !== currentDigest
+      || JSON.stringify(reviewed.selection) !== JSON.stringify(selection)
+    ) {
       throw new Error("Website or contact evidence changed since the reviewed dry run. Run a fresh dry run before applying repairs.");
     }
   }
@@ -866,13 +954,27 @@ export async function auditExistingWebsiteRecords(input: {
   }
   return {
     mode: input.apply ? "applied" : "dry_run",
+    scope: selection.scope,
     inspected: inspected.length,
     candidates: allCandidates.length,
-    remainingCandidates: Math.max(0, allCandidates.length - inspected.length),
+    remainingCandidates: selection.scope === "batch"
+      ? Math.max(0, allCandidates.length - (offset + inspected.length))
+      : 0,
+    offset,
+    batchSize: limit,
+    rangeStart: inspected.length ? offset + 1 : 0,
+    rangeEnd: offset + inspected.length,
+    currentPage: selection.scope === "batch" ? Math.floor(offset / limit) + 1 : 1,
+    totalPages: selection.scope === "batch" ? Math.max(1, Math.ceil(allCandidates.length / limit)) : 1,
+    previousOffset: selection.scope === "batch" && offset > 0 ? Math.max(0, offset - limit) : null,
+    nextOffset: selection.scope === "batch" && offset + inspected.length < allCandidates.length
+      ? offset + inspected.length
+      : null,
+    exactProspectId,
     changed,
     skippedProtected,
     records: inspected.map((candidate) => candidate.record),
-    reviewToken: input.apply ? "" : repairReviewToken(currentDigest, snapshotSecret, now),
+    reviewToken: input.apply ? "" : repairReviewToken(currentDigest, snapshotSecret, now, selection),
     nothingSent: true,
   };
 }

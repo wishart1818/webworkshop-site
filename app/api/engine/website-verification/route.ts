@@ -23,6 +23,14 @@ function safeText(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function safeOptionalInteger(value: unknown, label: string) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error(`${label} must be an integer.`);
+  }
+  return value;
+}
+
 export async function POST(request: Request) {
   let action = "";
   try {
@@ -53,18 +61,31 @@ export async function POST(request: Request) {
       }));
     }
     if (action === "audit_existing_records") {
-      await enforceRateLimit({ action: "website_record_audit", subject: "operator", limit: 3, windowMs: 60 * 60 * 1000 });
-      return NextResponse.json(await auditExistingWebsiteRecords({ apply: false }));
+      const prospectId = safeText(input.prospectId, 100);
+      await enforceRateLimit({
+        action: prospectId ? "website_record_audit_exact" : "website_record_audit",
+        subject: prospectId || "operator",
+        limit: prospectId ? 4 : 12,
+        windowMs: 60 * 60 * 1000,
+      });
+      return NextResponse.json(await auditExistingWebsiteRecords({
+        apply: false,
+        limit: safeOptionalInteger(input.limit, "Batch size"),
+        offset: safeOptionalInteger(input.offset, "Audit offset"),
+        prospectId,
+      }));
     }
     await enforceRateLimit({ action: "website_record_repair", subject: "operator", limit: 1, windowMs: 60 * 60 * 1000 });
     return NextResponse.json(await auditExistingWebsiteRecords({
       apply: true,
       confirmation: safeText(input.confirmation, 80),
+      limit: safeOptionalInteger(input.limit, "Batch size"),
+      offset: safeOptionalInteger(input.offset, "Audit offset"),
       reviewToken: safeText(input.reviewToken, 2_000),
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Website verification failed safely.";
-    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|review|snapshot|evidence changed|signing is not configured/i.test(message);
+    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|read-only|review|snapshot|evidence changed|signing is not configured|batch size|audit offset|candidate range|prospect ID/i.test(message);
     if (!expected) console.error("[website-verification] Safe operation failed.", {
       action,
       errorName: error instanceof Error ? error.name : "UnknownError",
