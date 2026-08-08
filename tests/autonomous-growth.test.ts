@@ -2933,7 +2933,8 @@ test("Smart Growth summarizes existing qualified unsent prospects across queue i
     results: [topResult],
     reviewedNotRecommended: [],
   });
-  const summary = summarizeExistingQualifiedUnsent([queued], [job], new Date(10));
+  const currentQueuedProspect = { ...eligibleProspect(), id: queued.prospectId };
+  const summary = summarizeExistingQualifiedUnsent([queued], [job], new Date(10), [currentQueuedProspect]);
 
   assert.equal(summary.total, 2);
   assert.equal(summary.needsRefreshedCopy, 1);
@@ -2947,6 +2948,80 @@ test("Smart Growth summarizes existing qualified unsent prospects across queue i
   assert.equal(summary.sourceCounts.rankedProspects, 1);
   assert.equal(summary.checkedSources.some((source) => /Top Prospects/i.test(source)), true);
   assert.equal(smartQueueKeyForItem(queued), "readyForEmailReview");
+});
+
+test("Smart Growth does not recommend copy refresh for legacy, strong-site, or protected records", () => {
+  const currentWeak = eligibleProspect();
+  const strongSite = {
+    ...currentWeak,
+    id: "strong-site-copy-refresh",
+    fitDisposition: "strong_existing_website" as const,
+    websiteVerification: {
+      ...currentWeak.websiteVerification!,
+      fit: {
+        disposition: "strong_existing_website" as const,
+        reason: "Rendered review confirms a complete professional website.",
+        supportingEvidence: ["Branding, mobile layout, services, and quote paths are complete."],
+        confidence: "high" as const,
+        analysisOrigin: "rendered_review" as const,
+        evaluatedAt: new Date().toISOString(),
+      },
+    },
+  } satisfies Prospect;
+  const legacy = {
+    ...currentWeak,
+    id: "legacy-copy-refresh",
+    websiteVerification: undefined,
+    fitDisposition: "inconclusive_requires_review" as const,
+  } satisfies Prospect;
+  const strongItem = queueItem({
+    id: "strong-old-copy",
+    prospectId: strongSite.id,
+    outreachCopyVersion: "old_copy_v0",
+  });
+  const legacyItem = queueItem({
+    id: "legacy-old-copy",
+    prospectId: legacy.id,
+    outreachCopyVersion: "old_copy_v0",
+  });
+  const suppressed = queueItem({
+    id: "suppressed-old-copy",
+    prospectId: "suppressed-prospect",
+    outreachCopyVersion: "old_copy_v0",
+    status: "Suppressed",
+    replyStatus: "complaint",
+  });
+
+  const snapshot = buildSmartAutonomousGrowthSnapshot({
+    queue: [strongItem, legacyItem, suppressed],
+    prospects: [strongSite, legacy],
+    environment: { OUTREACH_EMAIL_DISABLED: "true" } as NodeJS.ProcessEnv,
+  });
+
+  assert.equal(snapshot.existingQualifiedUnsent.needsRefreshedCopy, 0);
+  assert.doesNotMatch(snapshot.recommendation.nextBestMove, /copy refresh/i);
+  assert.match(snapshot.copySummaries.blockedReasons, /Copy refresh deferred/i);
+  assert.equal(snapshot.existingQualifiedUnsent.queueCounts.suppressedDoNotContact, 1);
+});
+
+test("Smart Growth still recommends copy refresh for a current grounded weak-site candidate", () => {
+  const prospect = eligibleProspect();
+  const oldCopy = queueItem({
+    id: "current-weak-old-copy",
+    prospectId: prospect.id,
+    website: prospect.website,
+    email: prospect.email,
+    outreachCopyVersion: "old_copy_v0",
+  });
+
+  const snapshot = buildSmartAutonomousGrowthSnapshot({
+    queue: [oldCopy],
+    prospects: [prospect],
+    environment: { OUTREACH_EMAIL_DISABLED: "true" } as NodeJS.ProcessEnv,
+  });
+
+  assert.equal(snapshot.existingQualifiedUnsent.needsRefreshedCopy, 1);
+  assert.match(snapshot.recommendation.nextBestMove, /copy refresh/i);
 });
 
 test("Smart Growth skips contacted, suppressed, bad-fit, and phone-only inventory before recommending new discovery", () => {

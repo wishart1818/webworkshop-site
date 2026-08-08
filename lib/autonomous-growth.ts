@@ -688,10 +688,38 @@ function resultIsQualifiedUnsent(result: TopProspectResult) {
   return Boolean(result.selected || result.resultBucket === "reviewable_lower_priority" || result.packageStatus !== "NOT_GENERATED" || prospectHasManualWrittenPath(result.prospect));
 }
 
+const copyRefreshOnlyQualificationReasons = [
+  /^Outreach copy is outdated\.$/i,
+  /^Approval predates the current evidence or copy\.$/i,
+  /^The first-touch claim is not tied to the saved website observation and rebuild solution\.$/i,
+];
+
+function copyRefreshEvidenceBlockReason(
+  item: OutreachQueueItem,
+  prospect: Prospect | undefined,
+  now: Date,
+) {
+  if (!prospect) return "current prospect evidence is unavailable";
+  const evidenceReasons = prospectQualificationBlockReasons(prospect, { now })
+    .filter((reason) => !copyRefreshOnlyQualificationReasons.some((pattern) => pattern.test(reason)));
+  if (evidenceReasons.length) return evidenceReasons[0]!;
+  if (!prospectWrittenContactMethodIsUsable(prospect)) {
+    return "a current verified written contact path is unavailable";
+  }
+  if (item.contactSource === "Public email") {
+    const evidence = prospectVerifiedEmailEvidence(prospect);
+    if (!evidence || evidence.value.trim().toLowerCase() !== item.email.trim().toLowerCase()) {
+      return "the queued recipient lacks matching current first-party email evidence";
+    }
+  }
+  return "";
+}
+
 export function summarizeExistingQualifiedUnsent(
   queue: OutreachQueueItem[],
   jobs: Pick<TopProspectJob, "results" | "reviewedNotRecommended">[] = [],
   now = new Date(),
+  prospects: Prospect[] = [],
 ): ExistingQualifiedUnsentSummary {
   const summary: ExistingQualifiedUnsentSummary = {
     total: 0,
@@ -724,6 +752,7 @@ export function summarizeExistingQualifiedUnsent(
     lastRunAt: now.toISOString(),
   };
   const seen = new Set<string>();
+  const prospectsById = new Map(prospects.map((prospect) => [prospect.id, prospect]));
   for (const item of queue) {
     const key = item.topProspectResultId || item.prospectId || `${item.businessName}:${item.website}:${item.email}`;
     seen.add(key);
@@ -742,7 +771,12 @@ export function summarizeExistingQualifiedUnsent(
     if (queueKey === "readyForFacebookDm" || queueKey === "readyForInstagramDm") summary.readyForFacebookInstagramManualDm += 1;
     if (queueKey === "readyForContactFormReview" || queueKey === "needsManualResearch") summary.readyForContactFormManualResearch += 1;
     if (queueKey === "needsPreviewReview") summary.needsPreview += 1;
-    if (eligibility.eligible) summary.needsRefreshedCopy += 1;
+    if (eligibility.eligible) {
+      const prospect = prospectsById.get(item.prospectId);
+      const evidenceBlock = copyRefreshEvidenceBlockReason(item, prospect, now);
+      if (evidenceBlock) incrementRecord(summary.blockedSkippedReasons, `Copy refresh deferred: ${evidenceBlock}`);
+      else summary.needsRefreshedCopy += 1;
+    }
   }
   for (const job of jobs) {
     const results = [...(job.results ?? []), ...(job.reviewedNotRecommended ?? [])];
@@ -1034,6 +1068,7 @@ export function buildSmartRunSummary(input: {
 
 export function buildSmartAutonomousGrowthSnapshot(input: {
   queue: OutreachQueueItem[];
+  prospects?: Prospect[];
   topProspectJobs?: Pick<TopProspectJob, "input" | "results" | "reviewedNotRecommended" | "blockedProspects" | "discoveryDiagnostics">[];
   marketScoutSettings?: Partial<MarketScoutSettings>;
   lastRunSummary?: SmartRunSummary | null;
@@ -1041,7 +1076,7 @@ export function buildSmartAutonomousGrowthSnapshot(input: {
   now?: Date;
 }): SmartAutonomousGrowthSnapshot {
   const jobs = input.topProspectJobs ?? [];
-  const existing = summarizeExistingQualifiedUnsent(input.queue, jobs, input.now);
+  const existing = summarizeExistingQualifiedUnsent(input.queue, jobs, input.now, input.prospects);
   const scout = buildMarketScoutDryRun(input.marketScoutSettings, jobs, input.now);
   const recommendation = smartRecommendationForGrowth({ existing, scout, environment: input.environment });
   const summary = input.lastRunSummary ?? buildSmartRunSummary({ existing, scout, recommendation, actionLabel: "Dashboard Snapshot", now: input.now });

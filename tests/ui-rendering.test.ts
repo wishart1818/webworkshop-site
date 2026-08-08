@@ -315,7 +315,15 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(controlledLaunchSource, /ENABLE CONTROLLED PILOT/);
   assert.match(testCenterSource, /Disable All Prospect Email Sending/);
   assert.match(testCenterSource, /REPAIR VERIFIED WEBSITE RECORDS/);
-  assert.match(testCenterSource, /reviewToken: lastAction\?\.websiteRepair\?\.reviewToken/);
+  assert.match(testCenterSource, /reviewToken: reviewedBatch\?\.reviewToken/);
+  assert.match(testCenterSource, /Previous batch/);
+  assert.match(testCenterSource, /Next batch/);
+  assert.match(testCenterSource, /Audit Exact Prospect/);
+  assert.match(testCenterSource, /offset: reviewedBatch\?\.offset/);
+  assert.match(testCenterSource, /limit: reviewedBatch\?\.batchSize/);
+  assert.match(testCenterSource, /reviewedBatch\?\.scope === "batch"/);
+  assert.match(verificationRoute, /website_record_audit_exact/);
+  assert.match(verificationRoute, /prospectId,/);
   assert.match(testCenterSource, /Activation sends nothing/);
 });
 
