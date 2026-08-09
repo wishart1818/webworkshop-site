@@ -1244,7 +1244,13 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "existing-qualified", category: "Existing prospect readiness", label: "Existing qualified unsent prospects checked", passed: Boolean(existing), detail: existing ? `${existing.total} existing qualified unsent prospect(s) checked.` : "Smart snapshot was unavailable.", fix: "Open Autonomous Growth or rerun the readiness test after database health is restored." });
   check(checks, { key: "saved-results", category: "Existing prospect readiness", label: "Saved Top Prospects results checked", passed: Boolean(sourceCounts), detail: sourceCounts ? `${sourceCounts.savedTopProspectsResults} saved result(s), ${sourceCounts.rankedProspects} ranked, ${sourceCounts.reviewablePackages} reviewable.` : `${jobs.length} Top Prospects job(s) available.` });
   check(checks, { key: "queue-items", category: "Existing prospect readiness", label: "Outreach queue items checked", passed: dashboard !== null, detail: `${queue.length} queue item(s) checked.` });
-  check(checks, { key: "outdated-copy", category: "Existing prospect readiness", label: "Outdated unsent copy detected", info: true, detail: `${existing?.needsRefreshedCopy ?? 0} package(s) need refreshed copy.` });
+  check(checks, {
+    key: "outdated-copy",
+    category: "Existing prospect readiness",
+    label: "Outdated unsent copy detected",
+    info: true,
+    detail: `${existing?.informationalOutdatedPackages ?? 0} informational outdated package(s); ${existing?.needsRefreshedCopy ?? 0} current-qualified package(s) may be refreshed.`,
+  });
   check(checks, { key: "missing-packages", category: "Existing prospect readiness", label: "Missing first-touch packages detected", info: true, detail: `${existing?.needsPreview ?? 0} prospect(s) need first-touch package work. A website preview is not required until a prospect asks for one.` });
   check(checks, { key: "queue-counts", category: "Existing prospect readiness", label: "Queue bucket counts checked", passed: Boolean(queueCounts), detail: queueCounts ? `Email ${queueCounts.readyForEmailReview}, Facebook DM ${queueCounts.readyForFacebookDm}, Instagram DM ${queueCounts.readyForInstagramDm}, manual research ${queueCounts.needsManualResearch}, bad-fit ${queueCounts.badFitBlocked}, suppressed ${queueCounts.suppressedDoNotContact}, contacted ${queueCounts.alreadyContacted}.` : "Queue counts unavailable." });
   check(checks, {
