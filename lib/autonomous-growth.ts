@@ -349,6 +349,7 @@ export type ExistingQualifiedUnsentSummary = {
   readyForEmailReview: number;
   readyForFacebookInstagramManualDm: number;
   readyForContactFormManualResearch: number;
+  informationalOutdatedPackages: number;
   needsRefreshedCopy: number;
   needsPreview: number;
   alreadySavedAsQueuePackage: number;
@@ -664,6 +665,7 @@ export function smartQueueKeyForItem(item: OutreachQueueItem): SmartQueueKey {
   const statusText = `${item.status} ${item.blockedReason} ${item.notes} ${item.replyStatus}`;
   const contactSourceNeedsVerification = /\b(?:verify|verification|unverified|suspicious|placeholder|invalid)\b/i.test(item.contactSource);
   if (/suppressed|opted out|bounced|complained|never contact/i.test(statusText)) return "suppressedDoNotContact";
+  if (item.status === "Sending" || item.notes.includes("[auto-email-ambiguous]")) return "alreadyContacted";
   if (
     item.sentDate
     || outreachHistoryTextIndicatesProtectedContact(statusText)
@@ -679,6 +681,64 @@ export function smartQueueKeyForItem(item: OutreachQueueItem): SmartQueueKey {
   if (item.email) return "readyForEmailReview";
   if (/manual research|unknown/i.test(item.contactSource)) return "needsManualResearch";
   return "needsPreviewReview";
+}
+
+const actionableProspectBuckets = new Set<ProspectExclusiveBucketKey>([
+  "ready_email",
+  "ready_facebook",
+  "ready_instagram",
+  "ready_contact_form",
+]);
+
+const queueInventoryVetoKeys = new Set<SmartQueueKey>([
+  "needsManualResearch",
+  "phoneOnlyBlocked",
+  "badFitBlocked",
+  "alreadyContacted",
+  "suppressedDoNotContact",
+]);
+
+function reconcileQueueInventoryWithCurrentProspect(
+  item: OutreachQueueItem,
+  prospect: Prospect | undefined,
+): { qualified: boolean; queueKey: SmartQueueKey; reason: string } {
+  const storedQueueKey = smartQueueKeyForItem(item);
+  if (queueInventoryVetoKeys.has(storedQueueKey)) {
+    return {
+      qualified: false,
+      queueKey: storedQueueKey,
+      reason: smartQueueLabels[storedQueueKey],
+    };
+  }
+  if (!prospect) {
+    return {
+      qualified: false,
+      queueKey: "needsManualResearch",
+      reason: "Current prospect evidence unavailable / manual review",
+    };
+  }
+
+  const prospectBucket = prospectCurrentBucket(prospect);
+  const currentQueueKey = smartQueueKeyForProspectBucket(prospectBucket);
+  if (!actionableProspectBuckets.has(prospectBucket)) {
+    return {
+      qualified: false,
+      queueKey: currentQueueKey,
+      reason: prospectFunnelLabels[prospectBucket],
+    };
+  }
+
+  if (storedQueueKey === "needsPreviewReview") {
+    return { qualified: true, queueKey: storedQueueKey, reason: "" };
+  }
+  if (storedQueueKey !== currentQueueKey) {
+    return {
+      qualified: false,
+      queueKey: "needsManualResearch",
+      reason: "Current prospect and stored queue contact routes require reconciliation",
+    };
+  }
+  return { qualified: true, queueKey: currentQueueKey, reason: "" };
 }
 
 function resultIsQualifiedUnsent(result: TopProspectResult) {
@@ -726,6 +786,7 @@ export function summarizeExistingQualifiedUnsent(
     readyForEmailReview: 0,
     readyForFacebookInstagramManualDm: 0,
     readyForContactFormManualResearch: 0,
+    informationalOutdatedPackages: 0,
     needsRefreshedCopy: 0,
     needsPreview: 0,
     alreadySavedAsQueuePackage: 0,
@@ -756,13 +817,16 @@ export function summarizeExistingQualifiedUnsent(
   for (const item of queue) {
     const key = item.topProspectResultId || item.prospectId || `${item.businessName}:${item.website}:${item.email}`;
     seen.add(key);
-    const queueKey = smartQueueKeyForItem(item);
+    const eligibility = outreachCopyRegenerationEligibility(item);
+    if (eligibility.eligible) summary.informationalOutdatedPackages += 1;
+    const prospect = prospectsById.get(item.prospectId);
+    const reconciliation = reconcileQueueInventoryWithCurrentProspect(item, prospect);
+    const queueKey = reconciliation.queueKey;
     summary.queueCounts[queueKey] += 1;
     summary.sourceCounts.outreachQueueItems += 1;
-    const eligibility = outreachCopyRegenerationEligibility(item);
-    if (queueKey === "suppressedDoNotContact" || queueKey === "alreadyContacted" || queueKey === "badFitBlocked" || queueKey === "phoneOnlyBlocked") {
+    if (!reconciliation.qualified) {
       summary.skippedCount += 1;
-      incrementRecord(summary.blockedSkippedReasons, smartQueueLabels[queueKey]);
+      incrementRecord(summary.blockedSkippedReasons, reconciliation.reason);
       continue;
     }
     summary.total += 1;
@@ -772,7 +836,6 @@ export function summarizeExistingQualifiedUnsent(
     if (queueKey === "readyForContactFormReview" || queueKey === "needsManualResearch") summary.readyForContactFormManualResearch += 1;
     if (queueKey === "needsPreviewReview") summary.needsPreview += 1;
     if (eligibility.eligible) {
-      const prospect = prospectsById.get(item.prospectId);
       const evidenceBlock = copyRefreshEvidenceBlockReason(item, prospect, now);
       if (evidenceBlock) incrementRecord(summary.blockedSkippedReasons, `Copy refresh deferred: ${evidenceBlock}`);
       else summary.needsRefreshedCopy += 1;
@@ -794,10 +857,17 @@ export function summarizeExistingQualifiedUnsent(
         incrementRecord(summary.blockedSkippedReasons, result.rejectionReason ?? result.emailQuality.readinessLabel ?? "Not qualified for outreach");
         continue;
       }
-      const prospectBucket = prospectCurrentBucket(result.prospect);
-      const queueKey = prospectQueueKey(result.prospect);
+      const currentProspect = prospectsById.get(result.prospect.id);
+      if (!currentProspect) {
+        summary.queueCounts.needsManualResearch += 1;
+        summary.skippedCount += 1;
+        incrementRecord(summary.blockedSkippedReasons, "Current prospect evidence unavailable / manual review");
+        continue;
+      }
+      const prospectBucket = prospectCurrentBucket(currentProspect);
+      const queueKey = prospectQueueKey(currentProspect);
       summary.queueCounts[queueKey] += 1;
-      if (queueKey === "phoneOnlyBlocked" || queueKey === "badFitBlocked" || queueKey === "suppressedDoNotContact" || queueKey === "alreadyContacted") {
+      if (!actionableProspectBuckets.has(prospectBucket)) {
         summary.skippedCount += 1;
         incrementRecord(summary.blockedSkippedReasons, prospectFunnelLabels[prospectBucket] ?? smartQueueLabels[queueKey]);
         continue;
@@ -947,7 +1017,7 @@ export function smartRecommendationForGrowth(input: {
       recommendedAction: "process_existing_qualified_prospects",
     };
   }
-  if (input.existing.foundOnlyInTopProspectsResults > 0 || input.existing.total > 0) {
+  if (input.existing.total > 0) {
     const inventorySummary = [
       `You currently have ${input.existing.total} qualified unsent prospect${input.existing.total === 1 ? "" : "s"}.`,
       `Exclusive actionable buckets: ${input.existing.readyForEmailReview} email-review, ${input.existing.queueCounts.readyForFacebookDm} Facebook-DM, ${input.existing.queueCounts.readyForInstagramDm} Instagram-DM, and ${input.existing.queueCounts.readyForContactFormReview} contact-form-review.`,
@@ -1022,6 +1092,7 @@ export function buildSmartRunSummary(input: {
     `Smart Autonomous Growth Summary: ${input.actionLabel ?? "Dry Run"}`,
     `Checked: ${input.existing.checkedSources.join(", ")}`,
     `Existing qualified unsent prospects found: ${input.existing.total}`,
+    `Informational outdated packages: ${input.existing.informationalOutdatedPackages}`,
     `Where found: queue ${input.existing.sourceCounts.outreachQueueItems}, ranked ${input.existing.sourceCounts.rankedProspects}, reviewable ${input.existing.sourceCounts.reviewablePackages}, saved results ${input.existing.sourceCounts.savedTopProspectsResults}, generated packages ${input.existing.sourceCounts.generatedOutreachPackages}`,
     `Copy refreshed: ${input.existing.refreshedCopyCount}`,
     `Missing packages generated: ${input.existing.generatedMissingPackages}`,
@@ -1099,6 +1170,7 @@ export function buildSmartAutonomousGrowthSnapshot(input: {
         `Ready for email review: ${existing.readyForEmailReview}`,
         `Ready for Facebook/Instagram manual DM: ${existing.readyForFacebookInstagramManualDm}`,
         `Ready for contact form/manual research: ${existing.readyForContactFormManualResearch}`,
+        `Informational outdated packages: ${existing.informationalOutdatedPackages}`,
         `Needs refreshed copy: ${existing.needsRefreshedCopy}`,
         `Needs preview: ${existing.needsPreview}`,
         `Found only in Top Prospects results: ${existing.foundOnlyInTopProspectsResults}`,

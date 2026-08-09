@@ -30,6 +30,7 @@ import {
 } from "../lib/autonomous-growth";
 import {
   approveAndQueueEmail,
+  getAutonomousGrowthDashboard,
   normalizeRecipientEmailDomain,
   processExistingQualifiedProspects,
   prospectInitialEmailIdempotencyKey,
@@ -40,6 +41,8 @@ import {
   outreachQueueMemoryForTests,
   runFullAutoEmailBatch,
   runAutoEmailPilotCycle,
+  runMarketScoutDryRunForDashboard,
+  runSmartAutonomousDryRun,
   sendQueuedEmailQueueItem,
   setOutreachQueueMemoryForTests,
   updateAutonomousGrowthSettings,
@@ -2914,17 +2917,19 @@ test("Smart Growth summarizes existing qualified unsent prospects across queue i
     city: "Tampa, FL",
     outreachCopyVersion: "old_copy_v0",
   });
-  const socialProspect = withAnalysis({
-    ...structuredClone(seedProspects[2]),
+  const socialProspect = {
+    ...eligibleProspect(),
+    id: "current-social-first-landscaping",
     businessName: "Social First Landscaping",
     trade: "Landscaping",
     city: "Orlando",
     state: "FL",
     email: "",
+    contactEvidence: [],
     facebookUrl: "https://facebook.com/socialfirstlandscaping",
-    recommendedContactMethod: "message_on_facebook",
-    classification: "website_redesign",
-  } as Prospect);
+    recommendedContactMethod: "message_on_facebook" as const,
+    bestManualContactMethod: "facebook" as const,
+  } satisfies Prospect;
   const topResult = topProspectResultFixture(socialProspect, {
     id: "result-social-only",
     packageStatus: "PACKAGE_GENERATED",
@@ -2935,9 +2940,10 @@ test("Smart Growth summarizes existing qualified unsent prospects across queue i
     reviewedNotRecommended: [],
   });
   const currentQueuedProspect = { ...eligibleProspect(), id: queued.prospectId };
-  const summary = summarizeExistingQualifiedUnsent([queued], [job], new Date(10), [currentQueuedProspect]);
+  const summary = summarizeExistingQualifiedUnsent([queued], [job], new Date(10), [currentQueuedProspect, socialProspect]);
 
   assert.equal(summary.total, 2);
+  assert.equal(summary.informationalOutdatedPackages, 1);
   assert.equal(summary.needsRefreshedCopy, 1);
   assert.equal(summary.alreadySavedAsQueuePackage, 1);
   assert.equal(summary.foundOnlyInTopProspectsResults, 1);
@@ -3000,9 +3006,253 @@ test("Smart Growth does not recommend copy refresh for legacy, strong-site, or p
   });
 
   assert.equal(snapshot.existingQualifiedUnsent.needsRefreshedCopy, 0);
+  assert.equal(snapshot.existingQualifiedUnsent.informationalOutdatedPackages, 2);
+  assert.equal(snapshot.existingQualifiedUnsent.total, 0);
   assert.doesNotMatch(snapshot.recommendation.nextBestMove, /copy refresh/i);
-  assert.match(snapshot.copySummaries.blockedReasons, /Copy refresh deferred/i);
+  assert.doesNotMatch(snapshot.recommendation.nextBestMove, /Use existing qualified unsent/i);
+  assert.match(snapshot.copySummaries.blockedReasons, /Website Adequate|Other \/ Not Currently Actionable/i);
   assert.equal(snapshot.existingQualifiedUnsent.queueCounts.suppressedDoNotContact, 1);
+});
+
+test("stale public-email queue packages cannot override adequate or strong current website evidence", () => {
+  const base = eligibleProspect();
+  const prospects = (["adequate_existing_website", "strong_existing_website"] as const).map((disposition, index) => ({
+    ...base,
+    id: `current-fit-${index}`,
+    fitDisposition: disposition,
+    websiteVerification: {
+      ...base.websiteVerification!,
+      fit: {
+        ...base.websiteVerification!.fit!,
+        disposition,
+        reason: "Rendered review confirms the existing website is already suitable.",
+        supportingEvidence: ["Branding, service content, and contact paths are complete."],
+      },
+    },
+  } satisfies Prospect));
+  const queue = prospects.map((prospect, index) => queueItem({
+    id: `stale-current-fit-${index}`,
+    prospectId: prospect.id,
+    topProspectResultId: `stale-current-fit-result-${index}`,
+    email: prospect.email,
+    contactSource: "Public email",
+    outreachCopyVersion: "old_copy_v0",
+    status: "Needs Review",
+  }));
+
+  const summary = summarizeExistingQualifiedUnsent(queue, [], new Date(), prospects);
+
+  assert.equal(summary.total, 0);
+  assert.equal(summary.readyForEmailReview, 0);
+  assert.equal(summary.readyForFacebookInstagramManualDm, 0);
+  assert.equal(summary.readyForContactFormManualResearch, 0);
+  assert.equal(summary.informationalOutdatedPackages, 2);
+  assert.equal(summary.needsRefreshedCopy, 0);
+  assert.equal(summary.queueCounts.badFitBlocked, 2);
+  assert.match(JSON.stringify(summary.blockedSkippedReasons), /Website Adequate \/ Strong/);
+});
+
+test("saved Top Prospect results use the current prospect rather than stale embedded fit evidence", () => {
+  const staleEmbedded = eligibleProspect();
+  const current = {
+    ...staleEmbedded,
+    fitDisposition: "strong_existing_website" as const,
+    websiteVerification: {
+      ...staleEmbedded.websiteVerification!,
+      fit: {
+        ...staleEmbedded.websiteVerification!.fit!,
+        disposition: "strong_existing_website" as const,
+      },
+    },
+  } satisfies Prospect;
+  const result = topProspectResultFixture(staleEmbedded, {
+    id: "stale-saved-result",
+    packageStatus: "PACKAGE_GENERATED",
+  });
+  const job = topProspectJobFixture(createAutopilotCampaign(defaultAutopilotCampaignSettings), {
+    results: [result],
+    reviewedNotRecommended: [],
+  });
+
+  const summary = summarizeExistingQualifiedUnsent([], [job], new Date(), [current]);
+
+  assert.equal(summary.total, 0);
+  assert.equal(summary.readyForEmailReview, 0);
+  assert.equal(summary.foundOnlyInTopProspectsResults, 0);
+  assert.equal(summary.queueCounts.badFitBlocked, 1);
+});
+
+test("legacy, inconclusive, and missing current prospect evidence fail conservative", () => {
+  const base = eligibleProspect();
+  const inconclusive = {
+    ...base,
+    id: "current-inconclusive",
+    fitDisposition: "inconclusive_requires_review" as const,
+    websiteVerification: {
+      ...base.websiteVerification!,
+      status: "inconclusive" as const,
+      confidence: "low" as const,
+      ownershipDecision: "unresolved" as const,
+      fit: {
+        disposition: "inconclusive_requires_review" as const,
+        reason: "Current ownership and website-fit evidence is incomplete.",
+        supportingEvidence: [],
+        confidence: "low" as const,
+        analysisOrigin: "metadata" as const,
+        evaluatedAt: new Date().toISOString(),
+      },
+    },
+  } satisfies Prospect;
+  const queue = [
+    queueItem({ id: "inconclusive-old-email", prospectId: inconclusive.id, topProspectResultId: "inconclusive-result", outreachCopyVersion: "old_copy_v0" }),
+    queueItem({ id: "missing-current-old-email", prospectId: "missing-current", topProspectResultId: "missing-current-result", outreachCopyVersion: "old_copy_v0" }),
+  ];
+
+  const snapshot = buildSmartAutonomousGrowthSnapshot({
+    queue,
+    prospects: [inconclusive],
+    environment: { OUTREACH_EMAIL_DISABLED: "true" } as NodeJS.ProcessEnv,
+  });
+
+  assert.equal(snapshot.existingQualifiedUnsent.total, 0);
+  assert.equal(snapshot.existingQualifiedUnsent.readyForEmailReview, 0);
+  assert.equal(snapshot.existingQualifiedUnsent.informationalOutdatedPackages, 2);
+  assert.equal(snapshot.existingQualifiedUnsent.needsRefreshedCopy, 0);
+  assert.equal(snapshot.existingQualifiedUnsent.queueCounts.needsManualResearch, 1);
+  assert.equal(snapshot.existingQualifiedUnsent.queueCounts.badFitBlocked, 1);
+  assert.match(snapshot.copySummaries.blockedReasons, /Current prospect evidence unavailable|Other \/ Not Currently Actionable/i);
+  assert.doesNotMatch(snapshot.recommendation.nextBestMove, /Use existing qualified unsent|copy refresh/i);
+});
+
+test("Smart inventory requires current website-fit evidence before every written contact route", () => {
+  const base = eligibleProspect();
+  const manualBase = {
+    ...base,
+    email: "",
+    contactEvidence: [],
+    facebookUrl: "",
+    instagramUrl: "",
+    linkedinUrl: "",
+    profileUrl: "",
+    contactFormUrl: "",
+    quoteFormUrl: "",
+    contactFormDetected: false,
+    quoteFormDetected: false,
+    recommendedContactMethod: "verify_email_manually" as const,
+    bestManualContactMethod: "unknown" as const,
+  } satisfies Prospect;
+  const inconclusiveBase = {
+    ...manualBase,
+    fitDisposition: "inconclusive_requires_review" as const,
+    websiteStatus: "inconclusive" as const,
+    websiteVerification: {
+      ...manualBase.websiteVerification!,
+      status: "inconclusive" as const,
+      confidence: "low" as const,
+      ownershipDecision: "unresolved" as const,
+      fit: {
+        disposition: "inconclusive_requires_review" as const,
+        reason: "Current evidence is incomplete.",
+        supportingEvidence: [],
+        confidence: "low" as const,
+        analysisOrigin: "metadata" as const,
+        evaluatedAt: new Date().toISOString(),
+      },
+    },
+  } satisfies Prospect;
+  const blockedProspects: Prospect[] = [
+    { ...inconclusiveBase, id: "smart-inconclusive-facebook", facebookUrl: "https://facebook.com/inconclusive", recommendedContactMethod: "message_on_facebook" },
+    { ...inconclusiveBase, id: "smart-inconclusive-instagram", instagramUrl: "https://instagram.com/inconclusive", profileUrl: "https://instagram.com/inconclusive", recommendedContactMethod: "message_on_social" },
+    { ...inconclusiveBase, id: "smart-inconclusive-form", contactFormUrl: "https://example.com/contact", contactFormDetected: true, recommendedContactMethod: "submit_contact_form" },
+    { ...manualBase, id: "smart-legacy-form", websiteVerification: undefined, fitDisposition: "inconclusive_requires_review", contactFormUrl: "https://example.com/legacy-contact", contactFormDetected: true, recommendedContactMethod: "submit_contact_form" },
+  ];
+  const verifiedWeakFacebook = {
+    ...manualBase,
+    id: "smart-verified-weak-facebook",
+    facebookUrl: "https://facebook.com/verified-weak",
+    recommendedContactMethod: "message_on_facebook" as const,
+    bestManualContactMethod: "facebook" as const,
+  } satisfies Prospect;
+  const verifiedNoOwnedForm = {
+    ...manualBase,
+    id: "smart-verified-no-owned-form",
+    website: "",
+    websiteStatus: "no_owned_website" as const,
+    fitDisposition: "no_owned_website" as const,
+    contactFormUrl: "https://facebook.com/verified-business/contact",
+    contactFormDetected: true,
+    recommendedContactMethod: "submit_contact_form" as const,
+    bestManualContactMethod: "contact_form" as const,
+    websiteVerification: {
+      ...manualBase.websiteVerification!,
+      status: "no_owned_website" as const,
+      canonicalUrl: "",
+      ownershipDecision: "not_owned" as const,
+      fit: {
+        ...manualBase.websiteVerification!.fit!,
+        disposition: "no_owned_website" as const,
+      },
+    },
+  } satisfies Prospect;
+  const prospects = [...blockedProspects, verifiedWeakFacebook, verifiedNoOwnedForm];
+  const queue = [
+    queueItem({ id: "smart-inconclusive-facebook-item", prospectId: blockedProspects[0]!.id, contactSource: "Facebook", email: "" }),
+    queueItem({ id: "smart-inconclusive-instagram-item", prospectId: blockedProspects[1]!.id, contactSource: "Instagram", email: "" }),
+    queueItem({ id: "smart-inconclusive-form-item", prospectId: blockedProspects[2]!.id, contactSource: "Contact form", email: "" }),
+    queueItem({ id: "smart-legacy-form-item", prospectId: blockedProspects[3]!.id, contactSource: "Contact form", email: "" }),
+    queueItem({ id: "smart-verified-weak-facebook-item", prospectId: verifiedWeakFacebook.id, contactSource: "Facebook", email: "" }),
+    queueItem({ id: "smart-verified-no-owned-form-item", prospectId: verifiedNoOwnedForm.id, contactSource: "Contact form", email: "" }),
+  ];
+  const before = structuredClone({ prospects, queue });
+
+  const summary = summarizeExistingQualifiedUnsent(queue, [], new Date(), prospects);
+
+  assert.equal(summary.total, 2);
+  assert.equal(summary.readyForFacebookInstagramManualDm, 1);
+  assert.equal(summary.readyForContactFormManualResearch, 1);
+  assert.equal(summary.queueCounts.readyForFacebookDm, 1);
+  assert.equal(summary.queueCounts.readyForContactFormReview, 1);
+  assert.equal(summary.queueCounts.badFitBlocked, 4);
+  for (const prospect of blockedProspects) assert.equal(prospectCurrentBucket(prospect), "other_not_actionable");
+  assert.equal(prospectCurrentBucket(verifiedWeakFacebook), "ready_facebook");
+  assert.equal(prospectCurrentBucket(verifiedNoOwnedForm), "ready_contact_form");
+  assert.deepEqual({ prospects, queue }, before);
+});
+
+test("current prospect and queue protections can only make Smart inventory more restrictive", () => {
+  const currentSuppressed = {
+    ...eligibleProspect(),
+    id: "current-suppressed",
+    recommendedContactMethod: "do_not_contact" as const,
+    notes: ["Suppressed by operator."],
+  } satisfies Prospect;
+  const currentContacted = {
+    ...eligibleProspect(),
+    id: "current-contacted",
+    status: "Contacted" as const,
+  } satisfies Prospect;
+  const queueSuppressedProspect = { ...eligibleProspect(), id: "queue-suppressed-current-eligible" } satisfies Prospect;
+  const queueContactedProspect = { ...eligibleProspect(), id: "queue-contacted-current-eligible" } satisfies Prospect;
+  const queueProviderAmbiguousProspect = { ...eligibleProspect(), id: "queue-provider-ambiguous-current-eligible" } satisfies Prospect;
+  const routeConflictProspect = { ...eligibleProspect(), id: "queue-route-conflict" } satisfies Prospect;
+  const prospects = [currentSuppressed, currentContacted, queueSuppressedProspect, queueContactedProspect, queueProviderAmbiguousProspect, routeConflictProspect];
+  const queue = [
+    queueItem({ id: "current-suppressed-item", prospectId: currentSuppressed.id, topProspectResultId: "current-suppressed-result" }),
+    queueItem({ id: "current-contacted-item", prospectId: currentContacted.id, topProspectResultId: "current-contacted-result" }),
+    queueItem({ id: "queue-suppressed-item", prospectId: queueSuppressedProspect.id, topProspectResultId: "queue-suppressed-result", status: "Suppressed", notes: "Complaint suppression." }),
+    queueItem({ id: "queue-contacted-item", prospectId: queueContactedProspect.id, topProspectResultId: "queue-contacted-result", status: "Sent", sentDate: new Date().toISOString() }),
+    queueItem({ id: "queue-provider-ambiguous-item", prospectId: queueProviderAmbiguousProspect.id, topProspectResultId: "queue-provider-ambiguous-result", status: "Sending", notes: "[auto-email-ambiguous] Provider outcome requires reconciliation." }),
+    queueItem({ id: "route-conflict-item", prospectId: routeConflictProspect.id, topProspectResultId: "route-conflict-result", contactSource: "Social profile", email: "" }),
+  ];
+
+  const summary = summarizeExistingQualifiedUnsent(queue, [], new Date(), prospects);
+
+  assert.equal(summary.total, 0);
+  assert.equal(summary.readyForEmailReview, 0);
+  assert.equal(summary.queueCounts.suppressedDoNotContact, 2);
+  assert.equal(summary.queueCounts.alreadyContacted, 3);
+  assert.equal(summary.queueCounts.needsManualResearch, 1);
+  assert.equal(summary.skippedCount, 6);
 });
 
 test("Smart Growth still recommends copy refresh for a current grounded weak-site candidate", () => {
@@ -3022,7 +3272,66 @@ test("Smart Growth still recommends copy refresh for a current grounded weak-sit
   });
 
   assert.equal(snapshot.existingQualifiedUnsent.needsRefreshedCopy, 1);
+  assert.equal(snapshot.existingQualifiedUnsent.informationalOutdatedPackages, 1);
+  assert.equal(snapshot.existingQualifiedUnsent.total, 1);
+  assert.equal(snapshot.existingQualifiedUnsent.readyForEmailReview, 1);
   assert.match(snapshot.recommendation.nextBestMove, /copy refresh/i);
+});
+
+test("Smart Backfill, Market Scout, dashboard, and Smart Autonomous share current-evidence inventory counts", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const base = eligibleProspect();
+  const strong = {
+    ...base,
+    id: "shared-current-evidence-strong",
+    fitDisposition: "adequate_existing_website" as const,
+    websiteVerification: {
+      ...base.websiteVerification!,
+      fit: {
+        ...base.websiteVerification!.fit!,
+        disposition: "adequate_existing_website" as const,
+      },
+    },
+  } satisfies Prospect;
+  const stale = queueItem({
+    id: "shared-current-evidence-queue",
+    prospectId: strong.id,
+    topProspectResultId: "shared-current-evidence-result",
+    outreachCopyVersion: "old_copy_v0",
+  });
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new Error("Summary-only inventory checks must not call a provider."); };
+    setProspectMemoryForTests([strong]);
+    setOutreachQueueMemoryForTests([stale]);
+
+    const dashboard = await getAutonomousGrowthDashboard();
+    const backfill = await processExistingQualifiedProspects({ dryRun: true });
+    const scout = await runMarketScoutDryRunForDashboard();
+    const smart = await runSmartAutonomousDryRun();
+    const totals = [
+      dashboard.smartGrowth.existingQualifiedUnsent.total,
+      backfill.smartGrowth.existingQualifiedUnsent.total,
+      scout.smartGrowth.existingQualifiedUnsent.total,
+      smart.smartGrowth.existingQualifiedUnsent.total,
+    ];
+
+    assert.deepEqual(totals, [0, 0, 0, 0]);
+    assert.equal(backfill.smartGrowth.existingQualifiedUnsent.informationalOutdatedPackages, 1);
+    assert.doesNotMatch(backfill.summary.nextBestAction, /Use existing qualified unsent|copy refresh/i);
+    assert.doesNotMatch(scout.summary.nextBestAction, /Use existing qualified unsent|copy refresh/i);
+    assert.doesNotMatch(smart.summary.nextBestAction, /Use existing qualified unsent|copy refresh/i);
+    assert.equal(memoryAuditEventsForTests().some((event) => /send|provider/i.test(event.action)), false);
+    assert.deepEqual(await getProspect(strong.id), strong);
+    assert.deepEqual(outreachQueueMemoryForTests(), [stale]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
 });
 
 test("Smart Growth skips contacted, suppressed, bad-fit, and phone-only inventory before recommending new discovery", () => {

@@ -478,6 +478,59 @@ test("outdated unsent packages are named in readiness output instead of appearin
   }
 });
 
+test("Full Readiness reports stale strong-site queue inventory as informational rather than qualified", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  resetProspectMemoryForTests();
+  const stale = readinessQueueItem({
+    id: "readiness-stale-strong-site",
+    prospectId: "readiness-current-strong-site",
+    topProspectResultId: "readiness-current-strong-site-result",
+    businessName: "Current Strong Site",
+    outreachCopyVersion: "old_copy_v0",
+    status: "Needs Review",
+    contactSource: "Public email",
+  });
+  const current = evidenceReadyProspectForQueue(stale, {
+    fitDisposition: "adequate_existing_website",
+  });
+  current.websiteVerification = {
+    ...current.websiteVerification!,
+    fit: {
+      ...current.websiteVerification!.fit!,
+      disposition: "adequate_existing_website",
+      reason: "Rendered review confirms the current website is already suitable.",
+      supportingEvidence: ["Branding, service content, and contact paths are complete."],
+    },
+  };
+  setOutreachQueueMemoryForTests([stale]);
+  setProspectMemoryForTests([current]);
+  const queueBefore = structuredClone(outreachQueueMemoryForTests());
+  const prospectBefore = structuredClone(await getProspect(current.id));
+
+  try {
+    const result = await runFullAutonomousReadinessTest(readinessEnv({
+      OUTREACH_EMAIL_DISABLED: "true",
+      OUTREACH_AUTO_SEND_ENABLED: "false",
+    }));
+    const existingCheck = result.readiness?.checks.find((check) => check.key === "existing-qualified");
+    const outdatedCheck = result.readiness?.checks.find((check) => check.key === "outdated-copy");
+    const scoutInventoryCheck = result.readiness?.checks.find((check) => check.key === "market-scout-existing-inventory");
+
+    assert.match(existingCheck?.detail ?? "", /^0 existing qualified unsent prospect/);
+    assert.match(outdatedCheck?.detail ?? "", /1 informational outdated package/);
+    assert.match(outdatedCheck?.detail ?? "", /0 current-qualified package/);
+    assert.equal(scoutInventoryCheck?.status, "passed");
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
+    assert.deepEqual(await getProspect(current.id), prospectBefore);
+    assert.equal(memoryAuditEventsForTests().some((event) => /send|provider/i.test(event.action)), false);
+  } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+    resetProspectMemoryForTests();
+  }
+});
+
 test("readiness separates legacy and source-less email records from autonomous eligibility", async () => {
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
