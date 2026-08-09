@@ -4,6 +4,11 @@ import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { getProspectDatabase, persistenceMode } from "@/lib/prospect-repository";
 import type { ExistingWebsiteRepairReviewedItem } from "@/lib/website-verification-operations";
 
+// A 20-record audit chunk can require seven bounded verification waves at
+// three-way concurrency. Keep the lease above that worst-case network budget.
+export const websiteRepairAuditLeaseMs = 5 * 60 * 1_000;
+export const websiteRepairApplyLeaseMs = 2 * 60 * 1_000;
+
 export type WebsiteRepairAuditRunStatus = "AUDITING" | "READY" | "AUDIT_FAILED" | "APPLYING" | "APPLIED" | "PARTIAL_NEEDS_REVIEW" | "APPLY_FAILED";
 
 export type WebsiteRepairAuditRun = {
@@ -246,7 +251,7 @@ export async function claimWebsiteRepairAuditWork(input: {
   const now = input.now ?? new Date();
   await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now);
   const leaseToken = randomUUID();
-  const leaseUntil = new Date(now.getTime() + (input.leaseMs ?? 45_000));
+  const leaseUntil = new Date(now.getTime() + (input.leaseMs ?? websiteRepairAuditLeaseMs));
   if (persistenceMode() === "memory") {
     const run = memoryRuns().find((candidate) => candidate.id === input.id)!;
     if (run.status !== "AUDITING" || (run.leaseUntil && Date.parse(run.leaseUntil) > now.getTime())) return null;
@@ -397,7 +402,7 @@ export async function claimWebsiteRepairApplyWork(input: {
   const authorized = await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now);
   if (authorized.status === "APPLIED") return { run: authorized, leaseToken: "" };
   const leaseToken = randomUUID();
-  const leaseUntil = new Date(now.getTime() + (input.leaseMs ?? 45_000));
+  const leaseUntil = new Date(now.getTime() + (input.leaseMs ?? websiteRepairApplyLeaseMs));
   if (persistenceMode() === "memory") {
     const run = memoryRuns().find((candidate) => candidate.id === input.id)!;
     if (run.status !== "APPLYING" || (run.leaseUntil && Date.parse(run.leaseUntil) > now.getTime())) return null;

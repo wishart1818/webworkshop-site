@@ -161,6 +161,67 @@ test("website identity requires one complete published phone instead of concaten
   assert.equal(result.report.identitySignals?.includes("stored_website_host_match"), true);
 });
 
+test("a branded directory profile does not become affirmative first-party ownership evidence", async () => {
+  const directoryRoot = `
+    <!doctype html><html><head><title>Best Local Contractors</title></head><body>
+      <h1>Find local contractors</h1><a href="/example-plumbing-toledo">Example Plumbing</a>
+    </body></html>
+  `;
+  const profile = `
+    <!doctype html><html><head><title>Example Plumbing in Toledo</title>
+      <link rel="canonical" href="https://bestlocalcontractors.example/example-plumbing-toledo" />
+      <meta name="viewport" content="width=device-width" />
+    </head><body><nav><a href="/">Directory</a><a href="/contact">Contact</a></nav>
+      <h1>Example Plumbing</h1><p>Plumbing services in Toledo.</p>
+      <a href="tel:+14195550123">(419) 555-0123</a><form><button>Request information</button></form>
+    </body></html>
+  `;
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => (
+    new URL(requestUrl(input)).pathname === "/example-plumbing-toledo"
+      ? htmlResponse(profile)
+      : htmlResponse(directoryRoot)
+  )) as typeof fetch;
+  const result = await verifyProspectWebsite(prospect({
+    businessName: "Example Plumbing",
+    website: "https://bestlocalcontractors.example/example-plumbing-toledo",
+    phone: "+14195550123",
+    city: "Toledo",
+    trade: "Plumbing",
+  }), verificationDependencies(fetchImpl));
+
+  assert.equal(result.report.identitySignals?.includes("prominent_business_name"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), true);
+  assert.equal(result.report.identitySignals?.includes("canonical_root_business_identity"), false);
+  assert.equal(result.report.identitySignals?.includes("first_party_site_structure"), false);
+});
+
+test("an abbreviated first-party domain records strong root, structure, phone, and domain-email evidence", async () => {
+  const homepage = `
+    <!doctype html><html><head><title>Example Plumbing | Toledo</title><meta name="viewport" content="width=device-width" /></head>
+    <body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav><h1>Example Plumbing</h1>
+      <p>Plumbing service for Toledo homes.</p><a href="tel:+14195550123">(419) 555-0123</a>
+      <form><button>Request service</button></form><img src="/truck.jpg" alt="Example Plumbing service truck" />
+    </body></html>
+  `;
+  const contact = `<!doctype html><html><head><title>Contact Example Plumbing</title></head><body>
+    <h1>Contact Example Plumbing</h1><a href="mailto:info@ep419.com">info@ep419.com</a></body></html>`;
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => (
+    new URL(requestUrl(input)).pathname === "/contact" ? htmlResponse(contact) : htmlResponse(homepage)
+  )) as typeof fetch;
+  const result = await verifyProspectWebsite(prospect({
+    businessName: "Example Plumbing",
+    website: "https://ep419.com",
+    phone: "+14195550123",
+    city: "Toledo",
+    trade: "Plumbing",
+  }), verificationDependencies(fetchImpl));
+
+  assert.equal(result.report.identitySignals?.includes("canonical_root_business_identity"), true);
+  assert.equal(result.report.identitySignals?.includes("first_party_site_structure"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), true);
+  assert.equal(result.report.identitySignals?.includes("business_domain_email_match"), true);
+});
+
 test("repeated transient failures remain temporary and never become a no-website prospect", async () => {
   const fetchImpl = (async () => htmlResponse("<html><title>Service unavailable</title><body>Service unavailable</body></html>", 503)) as typeof fetch;
   const result = await verifyProspectWebsite(prospect(), verificationDependencies(fetchImpl));

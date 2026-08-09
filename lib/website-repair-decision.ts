@@ -88,11 +88,15 @@ export function safeHighConfidenceWebsiteExclusion(input: {
   const canonicalHost = normalizedHost(canonicalWebsite);
   const storedHost = normalizedHost(input.before.website);
   const signals = new Set(report?.identitySignals ?? []);
+  const hasIndependentBusinessBinding = signals.has("public_phone_match")
+    || signals.has("business_domain_email_match");
   const identitySafe = Boolean(
     report?.ownershipDecision === "owned"
     && signals.has("prominent_business_name")
     && signals.has("stored_website_host_match")
-    && (signals.has("market_location_match") || signals.has("public_phone_match")),
+    && signals.has("canonical_root_business_identity")
+    && signals.has("first_party_site_structure")
+    && hasIndependentBusinessBinding,
   );
   const evidenceSafe = Boolean(
     report?.version === "website-verification-v2"
@@ -125,8 +129,11 @@ export function safeHighConfidenceWebsiteExclusion(input: {
   if (!signals.has("prominent_business_name") || !signals.has("stored_website_host_match")) {
     return { eligible: false, reasonCode: "insufficient_identity", disposition, identitySafe: false, evidenceSafe, canonicalWebsite, identitySummary: "Business-name and first-party host evidence do not both match the prospect." };
   }
-  if (!signals.has("market_location_match") && !signals.has("public_phone_match")) {
-    return { eligible: false, reasonCode: "ambiguous_same_name", disposition, identitySafe: false, evidenceSafe, canonicalWebsite, identitySummary: "The site is not bound to the exact stored market or business phone." };
+  if (!signals.has("canonical_root_business_identity") || !signals.has("first_party_site_structure")) {
+    return { eligible: false, reasonCode: "insufficient_identity", disposition, identitySafe: false, evidenceSafe, canonicalWebsite, identitySummary: "The canonical root does not provide enough affirmative first-party business identity and site-structure evidence." };
+  }
+  if (!hasIndependentBusinessBinding) {
+    return { eligible: false, reasonCode: "ambiguous_same_name", disposition, identitySafe: false, evidenceSafe, canonicalWebsite, identitySummary: "A city mention alone cannot bind the site to this prospect; a complete published business phone or business-domain email is required." };
   }
   if (!evidenceSafe) {
     return { eligible: false, reasonCode: "insufficient_website_evidence", disposition, identitySafe, evidenceSafe: false, canonicalWebsite, identitySummary: "Website status, fit, or confidence evidence is incomplete." };
@@ -142,7 +149,7 @@ export function safeHighConfidenceWebsiteExclusion(input: {
     evidenceSafe: true,
     canonicalWebsite,
     identitySummary: signals.has("public_phone_match")
-      ? "Business name, first-party host, and published phone match the exact prospect."
-      : "Business name, first-party host, and stored market match the exact prospect.",
+      ? "The branded first-party root, site structure, stored host, and complete published phone match the prospect."
+      : "The branded first-party root, site structure, stored host, and business-domain email match the prospect.",
   };
 }

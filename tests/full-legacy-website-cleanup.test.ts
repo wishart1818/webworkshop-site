@@ -19,12 +19,18 @@ import { createProspect, type Prospect } from "../lib/prospect-engine";
 import { listProspects, resetProspectMemoryForTests, setProspectMemoryForTests } from "../lib/prospect-repository";
 import { resetOperationalMemoryForTests } from "../lib/operational-controls";
 import {
+  claimWebsiteRepairAuditWork,
   claimWebsiteRepairApplyWork,
+  completeWebsiteRepairApplyGroup,
+  completeWebsiteRepairAuditChunk,
   releaseWebsiteRepairApplyLease,
   resetWebsiteRepairAuditRunsForTests,
+  websiteRepairApplyLeaseMs,
+  websiteRepairAuditLeaseMs,
 } from "../lib/website-repair-audit-repository";
 import {
   applyReviewedWebsiteRepairItems,
+  buildExistingWebsiteRepairReviewedItem,
   type ExistingWebsiteRepairRecord,
 } from "../lib/website-verification-operations";
 
@@ -107,8 +113,15 @@ function verifiedReport(prospect: Prospect, disposition: "adequate_existing_webs
     explanation: "A meaningful first-party business website was verified.",
     checkedAt: now,
     ownershipDecision: "owned" as const,
-    identityEvidence: ["Business name, first-party host, and exact market match."],
-    identitySignals: ["prominent_business_name", "stored_website_host_match", "market_location_match"] as NonNullable<Prospect["websiteVerification"]>["identitySignals"],
+    identityEvidence: ["The branded first-party root, site structure, stored host, and complete published phone match."],
+    identitySignals: [
+      "prominent_business_name",
+      "stored_website_host_match",
+      "market_location_match",
+      "canonical_root_business_identity",
+      "first_party_site_structure",
+      "public_phone_match",
+    ] as NonNullable<Prospect["websiteVerification"]>["identitySignals"],
     fit: {
       disposition,
       reason: "The current website is already suitable for the rebuild offer.",
@@ -589,4 +602,135 @@ test("a committed group resumes idempotently when progress persistence was inter
   assert.equal(resumed.appliedCount, 1);
   assert.equal((await listProspects())[0]?.websiteStatus, "usable");
   assert.equal(resumed.nothingSent, true);
+});
+
+test("audit work keeps one owner beyond 45 seconds, reclaims only after the bounded lease, and rejects stale completion", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  resetWebsiteRepairAuditRunsForTests();
+  const prospect = legacyProspect(1);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([]);
+  const dependencies = {
+    now: () => new Date(now),
+    listPopulation: async () => ({ prospects: [prospect], queue: [], queueByProspect: new Map(), candidates: [prospect] }),
+    enforceAuditRateLimit: async () => undefined,
+    recordAudit: async () => undefined,
+  };
+  const report = await startFullLegacyWebsiteCleanup(dependencies);
+  const claims = await Promise.all([
+    claimWebsiteRepairAuditWork({ id: report.auditRunId, accessToken: report.accessToken, now: new Date(now) }),
+    claimWebsiteRepairAuditWork({ id: report.auditRunId, accessToken: report.accessToken, now: new Date(now) }),
+  ]);
+  const first = claims.find((claim) => claim !== null);
+  assert.ok(first);
+  assert.equal(claims.filter(Boolean).length, 1);
+  const afterOldLease = new Date(new Date(now).getTime() + 60_000);
+  assert.equal(await claimWebsiteRepairAuditWork({ id: report.auditRunId, accessToken: report.accessToken, now: afterOldLease }), null);
+
+  const afterBoundedLease = new Date(new Date(now).getTime() + websiteRepairAuditLeaseMs + 1);
+  const reclaimed = await claimWebsiteRepairAuditWork({
+    id: report.auditRunId,
+    accessToken: report.accessToken,
+    now: afterBoundedLease,
+  });
+  assert.ok(reclaimed);
+  await assert.rejects(() => completeWebsiteRepairAuditChunk({
+    id: report.auditRunId,
+    leaseToken: first.leaseToken,
+    expectedNextIndex: 0,
+    reviewedItems: [],
+    safeExclusionCount: 0,
+    manualReviewCount: 0,
+    protectedCount: 0,
+    manualReasonCounts: {},
+    now: afterBoundedLease,
+  }), /lease changed/i);
+
+  const proposed = proposedProspect(prospect, 1)!;
+  const reviewedItem = buildExistingWebsiteRepairReviewedItem({
+    prospect,
+    verified: null,
+    proposedProspect: proposed,
+    record: recordFor(prospect, 1),
+    queueItems: [],
+  }, []);
+  const completed = await completeWebsiteRepairAuditChunk({
+    id: report.auditRunId,
+    leaseToken: reclaimed.leaseToken,
+    expectedNextIndex: 0,
+    reviewedItems: [reviewedItem],
+    safeExclusionCount: 1,
+    manualReviewCount: 0,
+    protectedCount: 0,
+    manualReasonCounts: {},
+    now: afterBoundedLease,
+  });
+  assert.equal(completed.inspectedCount, 1);
+  assert.equal(completed.reviewedItems.length, 1);
+});
+
+test("Apply work keeps one owner beyond 45 seconds, reclaims expired work, and rejects stale completion", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  resetWebsiteRepairAuditRunsForTests();
+  const prospect = legacyProspect(1);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([]);
+  const dependencies = {
+    now: () => new Date(now),
+    listPopulation: async () => ({ prospects: [prospect], queue: [], queueByProspect: new Map(), candidates: [prospect] }),
+    enforceAuditRateLimit: async () => undefined,
+    enforceApplyRateLimit: async () => undefined,
+    recordAudit: async () => undefined,
+    inspect: async () => [{
+      prospect,
+      verified: null,
+      proposedProspect: proposedProspect(prospect, 1),
+      record: recordFor(prospect, 1),
+      queueItems: [],
+    }],
+  };
+  let report = await startFullLegacyWebsiteCleanup(dependencies);
+  report = await continueFullLegacyWebsiteCleanup({ auditRunId: report.auditRunId, accessToken: report.accessToken, dependencies });
+  report = await beginFullLegacyWebsiteCleanupApply({
+    auditRunId: report.auditRunId,
+    accessToken: report.accessToken,
+    confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+    dependencies,
+  });
+  const first = await claimWebsiteRepairApplyWork({ id: report.auditRunId, accessToken: report.accessToken, now: new Date(now) });
+  assert.ok(first);
+  const afterOldLease = new Date(new Date(now).getTime() + 60_000);
+  assert.equal(await claimWebsiteRepairApplyWork({ id: report.auditRunId, accessToken: report.accessToken, now: afterOldLease }), null);
+
+  const afterBoundedLease = new Date(new Date(now).getTime() + websiteRepairApplyLeaseMs + 1);
+  const reclaimed = await claimWebsiteRepairApplyWork({
+    id: report.auditRunId,
+    accessToken: report.accessToken,
+    now: afterBoundedLease,
+  });
+  assert.ok(reclaimed);
+  await assert.rejects(() => completeWebsiteRepairApplyGroup({
+    id: report.auditRunId,
+    leaseToken: first.leaseToken,
+    expectedApplyNextIndex: 0,
+    processedCount: 1,
+    changedCount: 1,
+    done: true,
+    now: afterBoundedLease,
+  }), /lease changed/i);
+  const completed = await completeWebsiteRepairApplyGroup({
+    id: report.auditRunId,
+    leaseToken: reclaimed.leaseToken,
+    expectedApplyNextIndex: 0,
+    processedCount: 1,
+    changedCount: 1,
+    done: true,
+    now: afterBoundedLease,
+  });
+  assert.equal(completed.status, "APPLIED");
+  assert.equal(completed.appliedCount, 1);
 });

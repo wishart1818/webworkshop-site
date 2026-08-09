@@ -43,7 +43,14 @@ function verifiedProspect(input: {
       checkedAt,
       ownershipDecision: "owned",
       identityEvidence: ["The business identity is grounded in first-party website evidence."],
-      identitySignals: input.signals ?? ["prominent_business_name", "stored_website_host_match", "market_location_match"],
+      identitySignals: input.signals ?? [
+        "prominent_business_name",
+        "stored_website_host_match",
+        "market_location_match",
+        "canonical_root_business_identity",
+        "first_party_site_structure",
+        "public_phone_match",
+      ],
       fit: {
         disposition,
         reason: "The owned website is already suitable for the current offer.",
@@ -96,6 +103,19 @@ test("Otter Creek wrong-domain, directories, and generic social URLs remain manu
   }
 });
 
+test("Pinnacle-style wrong-host evidence cannot authorize an exclusion", () => {
+  const stored = verifiedProspect({
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    website: "https://pinnaclepressurewashingoftoledo.com",
+  });
+  const wrongHost = verifiedProspect({
+    businessName: "Pinnacle Pressure Washing of Toledo",
+    website: stored.website,
+    canonicalUrl: "https://toledoserviceproviders.example/pinnacle-pressure-washing",
+  });
+  assert.equal(decision(wrongHost, stored).reasonCode, "cross_domain_mismatch");
+});
+
 test("unsupported or credential-bearing canonical URLs cannot establish first-party ownership", () => {
   for (const website of [
     "ftp://examplecontractor.com/",
@@ -125,19 +145,80 @@ test("Gator contact discoveries cannot establish ownership or invalidate indepen
   assert.equal(decision(firstParty, firstParty).eligible, true);
 });
 
-test("Titan same-name evidence requires an exact market or public-phone binding", () => {
+test("unknown directory and lead-generation hosts fail closed without affirmative first-party evidence", () => {
+  for (const website of [
+    "https://bestlocalcontractors.example/example-plumbing-toledo",
+    "https://findaplumber.example/providers/example-plumbing",
+    "https://localservices.example/toledo/example-plumbing",
+  ]) {
+    const candidate = verifiedProspect({
+      businessName: "Example Plumbing",
+      website,
+      canonicalUrl: website,
+      signals: ["prominent_business_name", "stored_website_host_match", "market_location_match"],
+    });
+    assert.equal(decision(candidate, candidate).eligible, false);
+    assert.equal(decision(candidate, candidate).reasonCode, "insufficient_identity");
+  }
+});
+
+test("a city mention alone cannot bind same-name or multi-location listings", () => {
+  for (const businessName of ["Titan Pro Wash", "National Home Services Toledo"]) {
+    const candidate = verifiedProspect({
+      businessName,
+      website: `https://${businessName.toLowerCase().replace(/[^a-z0-9]+/g, "")}.example`,
+      signals: [
+        "prominent_business_name",
+        "stored_website_host_match",
+        "market_location_match",
+        "canonical_root_business_identity",
+        "first_party_site_structure",
+      ],
+    });
+    assert.equal(decision(candidate, candidate).reasonCode, "ambiguous_same_name");
+  }
+});
+
+test("Titan same-name evidence requires affirmative root structure and an independent binding", () => {
   const ambiguous = verifiedProspect({
     businessName: "Titan Pro Wash",
     website: "https://titanprowash.com",
-    signals: ["prominent_business_name", "stored_website_host_match"],
+    signals: [
+      "prominent_business_name",
+      "stored_website_host_match",
+      "canonical_root_business_identity",
+      "first_party_site_structure",
+    ],
   });
   assert.equal(decision(ambiguous, ambiguous).reasonCode, "ambiguous_same_name");
   const exact = verifiedProspect({
     businessName: "Titan Pro Wash",
     website: "https://titanprowash.com",
-    signals: ["prominent_business_name", "stored_website_host_match", "public_phone_match"],
+    signals: [
+      "prominent_business_name",
+      "stored_website_host_match",
+      "canonical_root_business_identity",
+      "first_party_site_structure",
+      "public_phone_match",
+    ],
   });
   assert.equal(decision(exact, exact).eligible, true);
+});
+
+test("an abbreviated first-party domain can pass with strong independent evidence", () => {
+  const abbreviated = verifiedProspect({
+    businessName: "Example Plumbing",
+    website: "https://ep419.com",
+    canonicalUrl: "https://ep419.com/",
+    signals: [
+      "prominent_business_name",
+      "stored_website_host_match",
+      "canonical_root_business_identity",
+      "first_party_site_structure",
+      "public_phone_match",
+    ],
+  });
+  assert.equal(decision(abbreviated, abbreviated).eligible, true);
 });
 
 test("identity signals survive saved website-report validation", () => {

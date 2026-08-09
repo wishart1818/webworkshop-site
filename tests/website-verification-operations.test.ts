@@ -619,7 +619,7 @@ test("strong-site exclusion uses the same website-only allowlist", async () => {
   }
 });
 
-test("contact evidence is irrelevant to a valid high-confidence website exclusion", async () => {
+test("a branded site without an independent published phone or domain email remains manual review", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const prospect = legacyProspect({ id: "exclusion-without-contact-evidence", phone: "", email: "", contactEvidence: [] });
@@ -631,20 +631,13 @@ test("contact evidence is irrelevant to a valid high-confidence website exclusio
     const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
     assert.equal(review.records[0]?.contactEvidenceSufficient, false);
     assert.equal(review.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
-    assert.equal(review.records[0]?.highConfidenceExclusionEligible, true);
-    const result = await auditExistingWebsiteRecords({
-      apply: true,
-      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies,
-      reviewToken: review.reviewToken,
-      selectedProspectIds: [prospect.id],
-      snapshotSecret,
-    });
+    assert.equal(review.records[0]?.highConfidenceExclusionEligible, false);
+    assert.equal(review.records[0]?.safeExclusionReasonCode, "ambiguous_same_name");
     const saved = await getProspect(prospect.id);
-    assert.equal(result.changed, 1);
     assert.ok(saved);
     assert.deepEqual(contactState(saved!), contactBefore);
-    assert.equal(saved?.fitDisposition, "adequate_existing_website");
+    assert.equal(saved?.fitDisposition, prospect.fitDisposition);
+    assert.equal(saved?.websiteStatus, prospect.websiteStatus);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
