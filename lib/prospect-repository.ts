@@ -65,11 +65,11 @@ const fromPrismaStatus: Record<PrismaProspectStatus, ProspectStatus> = {
 };
 
 const prospectInclude = {
-  analyses: { orderBy: { createdAt: "desc" as const }, take: 1 },
-  outreach: { orderBy: { createdAt: "desc" as const }, take: 1 },
-  previews: { orderBy: { createdAt: "desc" as const }, take: 1 },
-  notes: { orderBy: { createdAt: "desc" as const } },
-  activities: { orderBy: { createdAt: "desc" as const } },
+  analyses: { orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }], take: 1 },
+  outreach: { orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }], take: 1 },
+  previews: { orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }], take: 1 },
+  notes: { orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }] },
+  activities: { orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }] },
 } satisfies Prisma.ProspectInclude;
 
 type StoredProspect = Prisma.ProspectGetPayload<{ include: typeof prospectInclude }>;
