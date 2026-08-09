@@ -933,6 +933,20 @@ export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificat
   if (ownershipDecision && !["owned", "not_owned", "uncertain"].includes(ownershipDecision)) {
     throw new Error("Website ownership decision is not supported.");
   }
+  const identitySignals = value.identitySignals === undefined
+    ? undefined
+    : stringArray(value.identitySignals, "Website identity signals", 7, 80) as NonNullable<WebsiteVerificationReport["identitySignals"]>;
+  if (identitySignals?.some((signal) => ![
+    "prominent_business_name",
+    "stored_website_host_match",
+    "market_location_match",
+    "public_phone_match",
+    "canonical_root_business_identity",
+    "first_party_site_structure",
+    "business_domain_email_match",
+  ].includes(signal))) {
+    throw new Error("Website identity signal is not supported.");
+  }
   return {
     version,
     status,
@@ -944,6 +958,7 @@ export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificat
     checkedAt: dateText(value.checkedAt, "Website verification checked date"),
     ownershipDecision,
     identityEvidence: value.identityEvidence === undefined ? undefined : stringArray(value.identityEvidence, "Website identity evidence", 20, 1000),
+    identitySignals,
     fit: value.fit === undefined ? undefined : websiteFitAssessmentValue(value.fit),
     freshness: value.freshness === undefined ? undefined : prospectFreshnessValue(value.freshness),
   };

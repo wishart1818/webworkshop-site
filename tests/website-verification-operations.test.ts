@@ -30,8 +30,10 @@ import { enforceWebsiteRepairApplyRateLimit } from "../lib/website-repair-rate-l
 import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
+  inspectCandidatesBounded,
   recheckProspectWebsite,
   setProspectWebsiteFitDisposition,
+  websiteRepairConcurrency,
   websiteRepairReviewTokenMaxLength,
 } from "../lib/website-verification-operations";
 
@@ -617,7 +619,7 @@ test("strong-site exclusion uses the same website-only allowlist", async () => {
   }
 });
 
-test("contact evidence is irrelevant to a valid high-confidence website exclusion", async () => {
+test("a branded site without an independent published phone or domain email remains manual review", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const prospect = legacyProspect({ id: "exclusion-without-contact-evidence", phone: "", email: "", contactEvidence: [] });
@@ -629,20 +631,13 @@ test("contact evidence is irrelevant to a valid high-confidence website exclusio
     const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
     assert.equal(review.records[0]?.contactEvidenceSufficient, false);
     assert.equal(review.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
-    assert.equal(review.records[0]?.highConfidenceExclusionEligible, true);
-    const result = await auditExistingWebsiteRecords({
-      apply: true,
-      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
-      dependencies,
-      reviewToken: review.reviewToken,
-      selectedProspectIds: [prospect.id],
-      snapshotSecret,
-    });
+    assert.equal(review.records[0]?.highConfidenceExclusionEligible, false);
+    assert.equal(review.records[0]?.safeExclusionReasonCode, "ambiguous_same_name");
     const saved = await getProspect(prospect.id);
-    assert.equal(result.changed, 1);
     assert.ok(saved);
     assert.deepEqual(contactState(saved!), contactBefore);
-    assert.equal(saved?.fitDisposition, "adequate_existing_website");
+    assert.equal(saved?.fitDisposition, prospect.fitDisposition);
+    assert.equal(saved?.websiteStatus, prospect.websiteStatus);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -2011,4 +2006,28 @@ test("an active provider attempt blocks fit mutation and remains untouched", asy
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
   }
+});
+
+test("website repair inspection bounds concurrent candidate verification", async () => {
+  const candidates = Array.from({ length: 8 }, (_, index) => legacyProspect({ id: `bounded-inspection-${index}` }));
+  const base = verificationDependencies();
+  let activeFetches = 0;
+  let peakFetches = 0;
+  const fetchImpl = base.fetch!;
+  const inspected = await inspectCandidatesBounded(candidates, {
+    ...base,
+    fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      activeFetches += 1;
+      peakFetches = Math.max(peakFetches, activeFetches);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await fetchImpl(input, init);
+      } finally {
+        activeFetches -= 1;
+      }
+    }) as typeof fetch,
+  }, new Map());
+  assert.equal(inspected.length, candidates.length);
+  assert.ok(peakFetches > 1);
+  assert.ok(peakFetches <= websiteRepairConcurrency);
 });

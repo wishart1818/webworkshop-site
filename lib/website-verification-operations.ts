@@ -24,6 +24,10 @@ import {
   websiteRepairProspectStateDigest,
   websiteRepairStateDigest,
 } from "@/lib/website-repair-snapshot";
+import {
+  safeHighConfidenceWebsiteExclusion,
+  type WebsiteRepairDecisionReasonCode,
+} from "@/lib/website-repair-decision";
 
 const protectedProspectStatuses = new Set<Prospect["status"]>([
   "Contacted",
@@ -36,7 +40,7 @@ const transientLegacyEvidence = /\b(?:http\s*(?:403|408|429|500|502|503|504|508)
 const websiteRepairReviewMaxAgeMs = 15 * 60 * 1000;
 const websiteRepairRequestBatchSize = 20;
 export const websiteRepairRequestBatchLimit = 25;
-const websiteRepairConcurrency = 3;
+export const websiteRepairConcurrency = 3;
 const websiteRepairAttemptLimit = 3;
 const websiteRepairContactPageLimit = 2;
 const websiteRepairRequestTimeoutMs = 6_000;
@@ -79,6 +83,11 @@ export type ExistingWebsiteRepairRecord = {
   alreadyCurrent: boolean;
   selectionEligible: boolean;
   highConfidenceExclusionEligible: boolean;
+  safeExclusionReasonCode: WebsiteRepairDecisionReasonCode;
+  identitySafetyResult: "safe" | "manual_review";
+  evidenceSafetyResult: "safe" | "manual_review";
+  verifiedCanonicalWebsite: string;
+  identitySummary: string;
 };
 
 export type ExistingWebsiteRepairReport = {
@@ -184,7 +193,7 @@ type WebsiteRepairPatchEntry = {
   unset: boolean;
   value?: unknown;
 };
-type ReviewedProspectPatch = {
+export type ReviewedProspectPatch = {
   entries: WebsiteRepairPatchEntry[];
   addedActivities: Prospect["activities"];
 };
@@ -560,6 +569,7 @@ function canonicalWebsiteVerificationForExclusion(report: Prospect["websiteVerif
     explanation: normalizedEvidenceText(report.explanation),
     ownershipDecision: report.ownershipDecision ?? "",
     identityEvidence: normalizedEvidenceList(report.identityEvidence),
+    identitySignals: [...(report.identitySignals ?? [])].sort(),
     fit: report.fit ? {
       disposition: report.fit.disposition,
       reason: normalizedEvidenceText(report.fit.reason),
@@ -774,7 +784,7 @@ function legacyAuditDecision(
   };
 }
 
-async function inspectExistingWebsiteRepairCandidate(
+export async function inspectExistingWebsiteRepairCandidate(
   prospect: Prospect,
   dependencies: WebsiteVerificationDependencies,
   queueItems: OutreachQueueItem[],
@@ -782,6 +792,13 @@ async function inspectExistingWebsiteRepairCandidate(
   const protectedReason = prospectProtectionReason(prospect, queueItems);
   if (protectedReason) {
     const decision = legacyAuditDecision(prospect, prospect, protectedReason, queueItems);
+    const exclusionDecision = safeHighConfidenceWebsiteExclusion({
+      before: prospect,
+      verified: prospect,
+      protectedReason,
+      websiteMutationRequired: false,
+      websiteEvidenceSufficient: decision.websiteEvidenceSufficient,
+    });
     return {
       prospect,
       verified: null,
@@ -807,6 +824,11 @@ async function inspectExistingWebsiteRepairCandidate(
         alreadyCurrent: false,
         selectionEligible: false,
         highConfidenceExclusionEligible: false,
+        safeExclusionReasonCode: exclusionDecision.reasonCode,
+        identitySafetyResult: exclusionDecision.identitySafe ? "safe" : "manual_review",
+        evidenceSafetyResult: exclusionDecision.evidenceSafe ? "safe" : "manual_review",
+        verifiedCanonicalWebsite: exclusionDecision.canonicalWebsite,
+        identitySummary: exclusionDecision.identitySummary,
       } satisfies ExistingWebsiteRepairRecord,
     };
   }
@@ -822,15 +844,14 @@ async function inspectExistingWebsiteRepairCandidate(
   const changedFields = changedProspectFields(prospect, proposedProspect);
   const alreadyCurrent = decision.proposedOutcome === "exclude_from_rebuild_outreach" && changedFields.length === 0;
   const selectionEligible = changedFields.length > 0;
-  const highConfidenceExclusionEligible = selectionEligible
-    && decision.proposedOutcome === "exclude_from_rebuild_outreach"
-    && ["adequate_existing_website", "strong_existing_website"].includes(normalizeWebsiteFitDisposition(verified.prospect))
-    && verified.report.version === "website-verification-v2"
-    && verified.report.status === "usable"
-    && verified.report.ownershipDecision === "owned"
-    && decision.websiteEvidenceSufficient
-    && decision.websiteEvidenceConfidence === "high"
-    && verified.report.fit?.confidence === "high";
+  const exclusionDecision = safeHighConfidenceWebsiteExclusion({
+    before: prospect,
+    verified: verified.prospect,
+    protectedReason: "",
+    websiteMutationRequired: selectionEligible,
+    websiteEvidenceSufficient: decision.websiteEvidenceSufficient,
+  });
+  const highConfidenceExclusionEligible = exclusionDecision.eligible;
   return {
     prospect,
     verified,
@@ -856,11 +877,16 @@ async function inspectExistingWebsiteRepairCandidate(
       alreadyCurrent,
       selectionEligible,
       highConfidenceExclusionEligible,
+      safeExclusionReasonCode: exclusionDecision.reasonCode,
+      identitySafetyResult: exclusionDecision.identitySafe ? "safe" : "manual_review",
+      evidenceSafetyResult: exclusionDecision.evidenceSafe ? "safe" : "manual_review",
+      verifiedCanonicalWebsite: exclusionDecision.canonicalWebsite,
+      identitySummary: exclusionDecision.identitySummary,
     } satisfies ExistingWebsiteRepairRecord,
   };
 }
 
-async function inspectCandidatesBounded(
+export async function inspectCandidatesBounded(
   candidates: Prospect[],
   dependencies: WebsiteVerificationDependencies,
   queueByProspect: Map<string, OutreachQueueItem[]>,
@@ -913,14 +939,16 @@ type ExistingWebsiteRepairReviewSnapshot = {
     exactProspectId: string;
     skippedProtected: number;
   };
-  records: Array<{
-    prospectId: string;
-    record: ExistingWebsiteRepairRecord;
-    currentProspectDigest: string;
-    currentQueueDigest: string;
-    postApplyProspectDigest: string;
-    proposedPatch: ReviewedProspectPatch | null;
-  }>;
+  records: ExistingWebsiteRepairReviewedItem[];
+};
+
+export type ExistingWebsiteRepairReviewedItem = {
+  prospectId: string;
+  record: ExistingWebsiteRepairRecord;
+  currentProspectDigest: string;
+  currentQueueDigest: string;
+  postApplyProspectDigest: string;
+  proposedPatch: ReviewedProspectPatch | null;
 };
 
 function reviewedProspectPatch(
@@ -998,6 +1026,33 @@ function applyReviewedProspectPatch(
     assertWebsiteExclusionPreservesContactState(prospect, updated);
   }
   return updated;
+}
+
+export function buildExistingWebsiteRepairReviewedItem(
+  candidate: Awaited<ReturnType<typeof inspectExistingWebsiteRepairCandidate>>,
+  queueItems: OutreachQueueItem[],
+): ExistingWebsiteRepairReviewedItem {
+  const proposedPatch = candidate.proposedProspect
+    ? reviewedProspectPatch(
+      candidate.prospect,
+      candidate.proposedProspect,
+      candidate.record.proposedOutcome,
+    )
+    : null;
+  const postApplyProspect = proposedPatch
+    ? withApprovalRevoked(
+      applyReviewedProspectPatch(candidate.prospect, proposedPatch, candidate.record.proposedOutcome),
+      true,
+    )
+    : candidate.prospect;
+  return {
+    prospectId: candidate.prospect.id,
+    record: candidate.record,
+    currentProspectDigest: websiteRepairProspectStateDigest(candidate.prospect),
+    currentQueueDigest: websiteRepairStateDigest(orderedRepairQueueSnapshot(queueItems)),
+    postApplyProspectDigest: websiteRepairProspectStateDigest(postApplyProspect),
+    proposedPatch,
+  };
 }
 
 function repairReviewToken(snapshot: ExistingWebsiteRepairReviewSnapshot, secret: string) {
@@ -1153,6 +1208,102 @@ async function queueAlreadyReflectsReviewedExclusion(
   return true;
 }
 
+export async function listExistingWebsiteRepairCandidatePopulation() {
+  const [prospects, queue] = await Promise.all([
+    listProspects(),
+    listOutreachQueueItemsForBackfill(),
+  ]);
+  const queueByProspect = new Map<string, OutreachQueueItem[]>();
+  for (const item of queue) {
+    queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
+  }
+  const candidates = prospects
+    .filter((prospect) => existingRecordNeedsWebsiteAudit(prospect, queueByProspect.get(prospect.id) ?? []))
+    .sort((left, right) => {
+      const leftProtected = Boolean(prospectProtectionReason(left, queueByProspect.get(left.id) ?? []));
+      const rightProtected = Boolean(prospectProtectionReason(right, queueByProspect.get(right.id) ?? []));
+      return Number(leftProtected) - Number(rightProtected)
+        || left.businessName.localeCompare(right.businessName)
+        || left.id.localeCompare(right.id);
+    });
+  return { prospects, queue, queueByProspect, candidates };
+}
+
+async function prepareReviewedWebsiteRepairMutations(reviewedItems: ExistingWebsiteRepairReviewedItem[]) {
+  const [currentProspects, queue] = await Promise.all([
+    Promise.all(reviewedItems.map((candidate) => getProspect(candidate.prospectId))),
+    listOutreachQueueItemsForBackfill(),
+  ]);
+  const queueByProspect = new Map<string, OutreachQueueItem[]>();
+  for (const item of queue) {
+    queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
+  }
+  const mutations = [] as Parameters<typeof applySelectedWebsiteRepairsAtomically>[0]["mutations"];
+  for (const [index, candidate] of reviewedItems.entries()) {
+    if (!candidate.record.selectionEligible || candidate.record.protectedReason || !candidate.proposedPatch) {
+      throw new Error(`The selected record ${candidate.record.businessName} is protected or has no reviewed mutable change.`);
+    }
+    const currentProspect = currentProspects[index];
+    if (!currentProspect) {
+      throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+    }
+    const currentQueueItems = queueByProspect.get(candidate.prospectId) ?? [];
+    const protectedReason = prospectProtectionReason(currentProspect, currentQueueItems);
+    if (protectedReason) {
+      throw new Error(`${candidate.record.businessName} is now protected. ${protectedReason} Run a fresh dry run.`);
+    }
+    const currentProspectDigest = websiteRepairProspectStateDigest(currentProspect);
+    const currentQueueDigest = websiteRepairStateDigest(orderedRepairQueueSnapshot(currentQueueItems));
+    const queueReason = reviewedRepairQueueReason(candidate.record);
+    if (
+      currentProspectDigest === candidate.postApplyProspectDigest
+      && await queueAlreadyReflectsReviewedExclusion(currentQueueItems, candidate.record)
+    ) {
+      mutations.push({
+        expectedProspect: currentProspect,
+        proposedProspect: currentProspect,
+        expectedQueueItems: currentQueueItems,
+        queueReason,
+        alreadyApplied: true,
+      });
+      continue;
+    }
+    if (currentProspectDigest !== candidate.currentProspectDigest) {
+      throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+    }
+    if (currentQueueDigest !== candidate.currentQueueDigest) {
+      throw new Error(`The selected outreach queue for ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+    }
+    const proposedProspect = withApprovalRevoked(
+      applyReviewedProspectPatch(currentProspect, candidate.proposedPatch, candidate.record.proposedOutcome),
+      true,
+    );
+    if (websiteRepairProspectStateDigest(proposedProspect) !== candidate.postApplyProspectDigest) {
+      throw new Error("The reviewed website-repair proposal is invalid. Run a fresh dry run.");
+    }
+    mutations.push({
+      expectedProspect: currentProspect,
+      proposedProspect,
+      expectedQueueItems: currentQueueItems,
+      queueReason,
+    });
+  }
+  return mutations;
+}
+
+export async function validateReviewedWebsiteRepairItems(reviewedItems: ExistingWebsiteRepairReviewedItem[]) {
+  await prepareReviewedWebsiteRepairMutations(reviewedItems);
+}
+
+export async function applyReviewedWebsiteRepairItems(input: {
+  reviewedItems: ExistingWebsiteRepairReviewedItem[];
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const mutations = await prepareReviewedWebsiteRepairMutations(input.reviewedItems);
+  return applySelectedWebsiteRepairsAtomically({ mutations, now });
+}
+
 export async function auditExistingWebsiteRecords(input: {
   apply: boolean;
   confirmation?: string;
@@ -1213,62 +1364,7 @@ export async function auditExistingWebsiteRecords(input: {
     const requestedSelectionIds = new Set(requestedSelectedProspectIds);
     const selectedReviewed = reviewed.records.filter((candidate) => requestedSelectionIds.has(candidate.prospectId));
     const selectedProspectIds = selectedReviewed.map((candidate) => candidate.prospectId);
-    const [currentProspects, queue] = await Promise.all([
-      Promise.all(selectedReviewed.map((candidate) => getProspect(candidate.prospectId))),
-      listOutreachQueueItemsForBackfill(),
-    ]);
-    const queueByProspect = new Map<string, OutreachQueueItem[]>();
-    for (const item of queue) {
-      queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
-    }
-    const mutations = [] as Parameters<typeof applySelectedWebsiteRepairsAtomically>[0]["mutations"];
-    for (const [index, candidate] of selectedReviewed.entries()) {
-      const currentProspect = currentProspects[index];
-      if (!currentProspect) {
-        throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
-      }
-      const currentQueueItems = queueByProspect.get(candidate.prospectId) ?? [];
-      const protectedReason = prospectProtectionReason(currentProspect, currentQueueItems);
-      if (protectedReason) {
-        throw new Error(`${candidate.record.businessName} is now protected. ${protectedReason} Run a fresh dry run.`);
-      }
-      const currentProspectDigest = websiteRepairProspectStateDigest(currentProspect);
-      const currentQueueDigest = websiteRepairStateDigest(orderedRepairQueueSnapshot(currentQueueItems));
-      const queueReason = reviewedRepairQueueReason(candidate.record);
-      if (
-        currentProspectDigest === candidate.postApplyProspectDigest
-        && await queueAlreadyReflectsReviewedExclusion(currentQueueItems, candidate.record)
-      ) {
-        mutations.push({
-          expectedProspect: currentProspect,
-          proposedProspect: currentProspect,
-          expectedQueueItems: currentQueueItems,
-          queueReason,
-          alreadyApplied: true,
-        });
-        continue;
-      }
-      if (currentProspectDigest !== candidate.currentProspectDigest) {
-        throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
-      }
-      if (currentQueueDigest !== candidate.currentQueueDigest) {
-        throw new Error(`The selected outreach queue for ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
-      }
-      const proposedProspect = withApprovalRevoked(
-        applyReviewedProspectPatch(currentProspect, candidate.proposedPatch!, candidate.record.proposedOutcome),
-        true,
-      );
-      if (websiteRepairProspectStateDigest(proposedProspect) !== candidate.postApplyProspectDigest) {
-        throw new Error("The reviewed website-repair proposal is invalid. Run a fresh dry run.");
-      }
-      mutations.push({
-        expectedProspect: currentProspect,
-        proposedProspect,
-        expectedQueueItems: currentQueueItems,
-        queueReason,
-      });
-    }
-    const atomicResult = await applySelectedWebsiteRepairsAtomically({ mutations, now });
+    const atomicResult = await applyReviewedWebsiteRepairItems({ reviewedItems: selectedReviewed, now });
     const changedProspectIds = new Set(atomicResult.changedProspectIds);
     for (const candidate of selectedReviewed) {
       await safeRecordAudit({
@@ -1326,23 +1422,7 @@ export async function auditExistingWebsiteRecords(input: {
     };
   }
 
-  const [prospects, queue] = await Promise.all([
-    listProspects(),
-    listOutreachQueueItemsForBackfill(),
-  ]);
-  const queueByProspect = new Map<string, OutreachQueueItem[]>();
-  for (const item of queue) {
-    queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
-  }
-  const allCandidates = prospects
-    .filter((prospect) => existingRecordNeedsWebsiteAudit(prospect, queueByProspect.get(prospect.id) ?? []))
-    .sort((left, right) => {
-      const leftProtected = Boolean(prospectProtectionReason(left, queueByProspect.get(left.id) ?? []));
-      const rightProtected = Boolean(prospectProtectionReason(right, queueByProspect.get(right.id) ?? []));
-      return Number(leftProtected) - Number(rightProtected)
-        || left.businessName.localeCompare(right.businessName)
-        || left.id.localeCompare(right.id);
-    });
+  const { prospects, queueByProspect, candidates: allCandidates } = await listExistingWebsiteRepairCandidatePopulation();
   let offset = requestedOffset;
   let candidates: Prospect[];
   let selection: ExistingWebsiteRepairSelection;
@@ -1403,30 +1483,10 @@ export async function auditExistingWebsiteRecords(input: {
     issuedAt: now.toISOString(),
     selection,
     summary,
-    records: inspected.map((candidate) => {
-      const queueItems = queueByProspect.get(candidate.prospect.id) ?? [];
-      const proposedPatch = candidate.proposedProspect
-        ? reviewedProspectPatch(
-          candidate.prospect,
-          candidate.proposedProspect,
-          candidate.record.proposedOutcome,
-        )
-        : null;
-      const postApplyProspect = proposedPatch
-        ? withApprovalRevoked(
-          applyReviewedProspectPatch(candidate.prospect, proposedPatch, candidate.record.proposedOutcome),
-          true,
-        )
-        : candidate.prospect;
-      return {
-        prospectId: candidate.prospect.id,
-        record: candidate.record,
-        currentProspectDigest: websiteRepairProspectStateDigest(candidate.prospect),
-        currentQueueDigest: websiteRepairStateDigest(orderedRepairQueueSnapshot(queueItems)),
-        postApplyProspectDigest: websiteRepairProspectStateDigest(postApplyProspect),
-        proposedPatch,
-      };
-    }),
+    records: inspected.map((candidate) => buildExistingWebsiteRepairReviewedItem(
+      candidate,
+      queueByProspect.get(candidate.prospect.id) ?? [],
+    )),
   };
   return {
     mode: "dry_run",

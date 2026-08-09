@@ -4,6 +4,7 @@ import React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import type { OperatorActionResult, OperatorTestCenterPayload } from "@/lib/operator-test-center";
+import type { FullLegacyCleanupReport } from "@/lib/full-legacy-website-cleanup";
 
 type ActionState = "idle" | "running";
 type TestCenterView = "readiness" | "safeTests" | "results" | "diagnostics";
@@ -21,6 +22,28 @@ function statusLabel(status: string) {
 
 function apiError(payload: { error?: string; message?: string }, fallback: string) {
   return payload.error || payload.message || fallback;
+}
+
+const fullLegacyCleanupStorageKey = "webworkshop-full-legacy-cleanup-run";
+const fullLegacyCleanupMaximumClientSteps = 100;
+
+async function fullLegacyCleanupRequest(
+  action: string,
+  reference: Partial<Pick<FullLegacyCleanupReport, "auditRunId" | "accessToken">> = {},
+  confirmation = "",
+) {
+  const response = await fetch("/api/engine/website-verification", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...reference, ...(confirmation ? { confirmation } : {}) }),
+  });
+  const body = await response.json() as FullLegacyCleanupReport & { error?: string };
+  if (!response.ok || !body.auditRunId) throw new Error(apiError(body, "Full Legacy Cleanup failed safely."));
+  return body;
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function failedRecordOpenDetail(record: { openAction: "prospect_outreach" | "prospect_preview" | "top_prospects" | "queue_review"; prospectId: string }) {
@@ -68,6 +91,10 @@ export function OperatorTestCenterWorkspace() {
   const [websiteAuditProspectId, setWebsiteAuditProspectId] = useState("");
   const [selectedWebsiteRepairProspectIds, setSelectedWebsiteRepairProspectIds] = useState<string[]>([]);
   const websiteAuditRequestInFlight = useRef(false);
+  const [fullLegacyCleanup, setFullLegacyCleanup] = useState<FullLegacyCleanupReport | null>(null);
+  const [fullLegacyCleanupConfirmationOpen, setFullLegacyCleanupConfirmationOpen] = useState(false);
+  const [fullLegacyCleanupConfirmation, setFullLegacyCleanupConfirmation] = useState("");
+  const fullLegacyCleanupRequestInFlight = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +124,103 @@ export function OperatorTestCenterWorkspace() {
   useEffect(() => {
     window.localStorage.setItem("webworkshop-test-center-view", activeView);
   }, [activeView]);
+
+  const rememberFullLegacyCleanup = useCallback((report: FullLegacyCleanupReport) => {
+    setFullLegacyCleanup(report);
+    window.localStorage.setItem(fullLegacyCleanupStorageKey, JSON.stringify({
+      auditRunId: report.auditRunId,
+      accessToken: report.accessToken,
+    }));
+  }, []);
+
+  const driveFullLegacyCleanup = useCallback(async (initial: FullLegacyCleanupReport) => {
+    let current = initial;
+    let steps = 0;
+    while (current.status === "AUDITING" || current.status === "APPLYING") {
+      steps += 1;
+      if (steps > fullLegacyCleanupMaximumClientSteps) {
+        throw new Error("Full Legacy Cleanup paused at the client safety limit. Resume the persisted run to continue safely.");
+      }
+      const previousProgress = current.status === "AUDITING" ? current.inspectedCount : current.appliedCount;
+      current = await fullLegacyCleanupRequest(
+        current.status === "AUDITING" ? "continue_full_legacy_cleanup" : "continue_full_legacy_cleanup_apply",
+        current,
+      );
+      rememberFullLegacyCleanup(current);
+      const nextProgress = current.status === "AUDITING" ? current.inspectedCount : current.appliedCount;
+      if (current.status === "AUDITING" || current.status === "APPLYING") {
+        await wait(nextProgress === previousProgress ? 500 : 80);
+      }
+    }
+    return current;
+  }, [rememberFullLegacyCleanup]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(fullLegacyCleanupStorageKey);
+    if (!saved || fullLegacyCleanupRequestInFlight.current) return;
+    let reference: { auditRunId: string; accessToken: string };
+    try {
+      reference = JSON.parse(saved) as { auditRunId: string; accessToken: string };
+    } catch {
+      window.localStorage.removeItem(fullLegacyCleanupStorageKey);
+      return;
+    }
+    if (!reference.auditRunId || !reference.accessToken) return;
+    fullLegacyCleanupRequestInFlight.current = true;
+    setActionState("running");
+    setActiveView("results");
+    void fullLegacyCleanupRequest("get_full_legacy_cleanup", reference)
+      .then((report) => {
+        rememberFullLegacyCleanup(report);
+        return driveFullLegacyCleanup(report);
+      })
+      .then(() => setActiveView("results"))
+      .catch((resumeError) => {
+        const message = resumeError instanceof Error ? resumeError.message : "Unable to resume Full Legacy Cleanup safely.";
+        if (/invalid|expired/i.test(message)) window.localStorage.removeItem(fullLegacyCleanupStorageKey);
+        setError(message);
+      })
+      .finally(() => {
+        fullLegacyCleanupRequestInFlight.current = false;
+        setActionState("idle");
+      });
+  }, [driveFullLegacyCleanup, rememberFullLegacyCleanup]);
+
+  async function runFullLegacyCleanup(options: { apply?: boolean } = {}) {
+    if (fullLegacyCleanupRequestInFlight.current) return;
+    fullLegacyCleanupRequestInFlight.current = true;
+    setActionState("running");
+    setActiveView("results");
+    setError("");
+    setNotice("");
+    try {
+      const resumable = fullLegacyCleanup
+        && (fullLegacyCleanup.status === "AUDITING" || fullLegacyCleanup.status === "APPLYING");
+      const initial = options.apply
+        ? await fullLegacyCleanupRequest(
+          "apply_full_legacy_cleanup",
+          fullLegacyCleanup ?? {},
+          fullLegacyCleanupConfirmation,
+        )
+        : resumable
+          ? await fullLegacyCleanupRequest("get_full_legacy_cleanup", fullLegacyCleanup)
+          : await fullLegacyCleanupRequest("start_full_legacy_cleanup");
+      rememberFullLegacyCleanup(initial);
+      const completed = await driveFullLegacyCleanup(initial);
+      setActiveView("results");
+      setFullLegacyCleanupConfirmationOpen(false);
+      setFullLegacyCleanupConfirmation("");
+      setNotice(completed.status === "APPLIED"
+        ? `${completed.appliedCount} verified website record(s) repaired. Nothing was sent.`
+        : `Full Legacy Cleanup inspected ${completed.inspectedCount} candidate(s). Nothing was changed or sent.`);
+      await load();
+    } catch (cleanupError) {
+      setError(cleanupError instanceof Error ? cleanupError.message : "Full Legacy Cleanup failed safely.");
+    } finally {
+      fullLegacyCleanupRequestInFlight.current = false;
+      setActionState("idle");
+    }
+  }
 
   async function runOperatorAction(action: string) {
     setActionState("running");
@@ -452,6 +576,29 @@ export function OperatorTestCenterWorkspace() {
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_notification")} type="button">Send Internal Test Notification</button>
           <button className="engine-button" disabled={busy} onClick={() => void runOperatorAction("send_internal_resend_test")} type="button">Send Internal Test Email Through Resend</button>
         </div>
+        <section className="engine-operator-safety-note" aria-labelledby="full-legacy-cleanup-title">
+          <div className="engine-panel__head">
+            <div>
+              <b id="full-legacy-cleanup-title">Full Legacy Website Cleanup</b>
+              <p>Audit the entire current legacy inventory in resumable 20-record chunks, then review one consolidated safe-exclusion list. Audit sends nothing and changes no records.</p>
+            </div>
+            <span>{fullLegacyCleanup?.status ? statusLabel(fullLegacyCleanup.status) : "Ready"}</span>
+          </div>
+          <button
+            aria-busy={busy && fullLegacyCleanupRequestInFlight.current}
+            className="engine-button engine-button--primary"
+            disabled={busy}
+            onClick={() => void runFullLegacyCleanup()}
+            type="button"
+          >
+            {busy && fullLegacyCleanupRequestInFlight.current ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
+            {busy && fullLegacyCleanupRequestInFlight.current
+              ? "Scanning legacy records..."
+              : fullLegacyCleanup?.status === "AUDITING" || fullLegacyCleanup?.status === "APPLYING"
+                ? "Resume Full Legacy Cleanup"
+                : "Run Full Legacy Cleanup"}
+          </button>
+        </section>
         <div className="engine-operator-safety-note">
           <b>Inspect one legacy prospect</b>
           <p>Enter an exact prospect ID to run the same website/contact revalidation for that record only. This action is read-only and cannot be applied.</p>
@@ -858,6 +1005,116 @@ export function OperatorTestCenterWorkspace() {
               <b>Full auto disabled: {lastAction.postSendValidation.fullAutonomousSendingDisabled ? "Yes" : "No"}</b>
             </div>
           </div>
+        </section>
+      ) : null}
+
+      {activeView === "results" && fullLegacyCleanup ? (
+        <section className="engine-panel engine-operator-package-check" aria-label="Full Legacy Website Cleanup">
+          <div className="engine-panel__head">
+            <div>
+              <span>Full Legacy Website Cleanup</span>
+              <h2>{fullLegacyCleanup.status === "AUDITING"
+                ? `Scanning ${fullLegacyCleanup.inspectedCount} / ${fullLegacyCleanup.totalCandidates} candidates...`
+                : fullLegacyCleanup.status === "APPLYING"
+                  ? `Applying ${fullLegacyCleanup.appliedCount} / ${fullLegacyCleanup.safeExclusionCount} verified exclusions...`
+                  : fullLegacyCleanup.status === "APPLIED"
+                    ? "Cleanup applied"
+                    : fullLegacyCleanup.status === "READY" ? "Consolidated review ready" : statusLabel(fullLegacyCleanup.status)}</h2>
+              <p>Only exact, high-confidence first-party website exclusions can be applied. Contact data, notes, activities, suppression, and outreach history remain untouched.</p>
+            </div>
+            <span>Nothing sent</span>
+          </div>
+          <progress
+            aria-label={fullLegacyCleanup.status === "APPLYING" ? "Verified exclusion Apply progress" : "Legacy website audit progress"}
+            max={fullLegacyCleanup.status === "APPLYING" ? Math.max(1, fullLegacyCleanup.safeExclusionCount) : Math.max(1, fullLegacyCleanup.totalCandidates)}
+            value={fullLegacyCleanup.status === "APPLYING" ? fullLegacyCleanup.appliedCount : fullLegacyCleanup.inspectedCount}
+          />
+          <dl className="engine-operator-check-grid">
+            <div><dt>Inspected</dt><dd>{fullLegacyCleanup.inspectedCount} / {fullLegacyCleanup.totalCandidates}</dd></div>
+            <div><dt>Safe exclusions</dt><dd>{fullLegacyCleanup.safeExclusionCount}</dd></div>
+            <div><dt>Manual review</dt><dd>{fullLegacyCleanup.manualReviewCount}</dd></div>
+            <div><dt>Protected</dt><dd>{fullLegacyCleanup.protectedCount}</dd></div>
+            <div><dt>Applied</dt><dd>{fullLegacyCleanup.appliedCount}</dd></div>
+            <div><dt>Apply strategy</dt><dd>{fullLegacyCleanup.applyMode === "whole_set_atomic" ? "One atomic transaction" : `Atomic groups of ${fullLegacyCleanup.applyGroupSize}`}</dd></div>
+          </dl>
+          {fullLegacyCleanup.status === "READY" ? (
+            <div className="engine-inline-actions">
+              <button
+                className="engine-button engine-button--primary"
+                disabled={busy || fullLegacyCleanup.safeExclusionCount === 0}
+                onClick={() => setFullLegacyCleanupConfirmationOpen(true)}
+                type="button"
+              >
+                Review {fullLegacyCleanup.safeExclusionCount} verified exclusion(s)
+              </button>
+              <span>{fullLegacyCleanup.safeExclusionCount === 0 ? "No verified exclusions require repair." : "One confirmation applies this reviewed set."}</span>
+            </div>
+          ) : null}
+          {fullLegacyCleanupConfirmationOpen && fullLegacyCleanup.status === "READY" ? (
+            <section aria-labelledby="full-legacy-cleanup-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
+              <b id="full-legacy-cleanup-confirmation-title">Apply {fullLegacyCleanup.safeExclusionCount} verified website exclusion(s)?</b>
+              <p>Only reviewed website state will be updated. Contact fields, notes, activities, suppression, and outreach history remain intact. Nothing will be sent.</p>
+              <ul>
+                {fullLegacyCleanup.safeExclusions.map((record) => (
+                  <li key={record.prospectId}>
+                    <b>{record.businessName}</b>: {record.disposition.replaceAll("_", " ")} at {record.canonicalWebsite}. {record.identitySummary}
+                  </li>
+                ))}
+              </ul>
+              <label className="engine-field">
+                <span>Type REPAIR VERIFIED WEBSITE RECORDS</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setFullLegacyCleanupConfirmation(event.target.value)}
+                  value={fullLegacyCleanupConfirmation}
+                />
+              </label>
+              <div className="engine-inline-actions">
+                <button
+                  aria-busy={busy}
+                  className="engine-button engine-button--primary"
+                  disabled={busy || fullLegacyCleanupConfirmation !== "REPAIR VERIFIED WEBSITE RECORDS"}
+                  onClick={() => void runFullLegacyCleanup({ apply: true })}
+                  type="button"
+                >
+                  {busy ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
+                  {busy ? "Applying verified exclusions..." : "Apply All Verified Exclusions"}
+                </button>
+                <button className="engine-button" disabled={busy} onClick={() => setFullLegacyCleanupConfirmationOpen(false)} type="button">Cancel</button>
+              </div>
+            </section>
+          ) : null}
+          {fullLegacyCleanup.safeExclusions.length ? (
+            <details open={fullLegacyCleanup.status === "READY"}>
+              <summary>{fullLegacyCleanup.safeExclusions.length} safe verified exclusion(s)</summary>
+              <div className="engine-operator-summary-grid">
+                {fullLegacyCleanup.safeExclusions.map((record) => (
+                  <article key={record.prospectId}>
+                    <h3>{record.businessName}</h3>
+                    <p><b>Canonical website:</b> {record.canonicalWebsite}</p>
+                    <p><b>Disposition:</b> {record.disposition.replaceAll("_", " ")}</p>
+                    <p>{record.identitySummary}</p>
+                    <p>{record.reason}</p>
+                  </article>
+                ))}
+              </div>
+            </details>
+          ) : null}
+          {Object.keys(fullLegacyCleanup.manualReasonCounts).length ? (
+            <details>
+              <summary>Manual-review reasons</summary>
+              <ul>
+                {Object.entries(fullLegacyCleanup.manualReasonCounts).map(([reason, count]) => (
+                  <li key={reason}><b>{reason.replaceAll("_", " ")}:</b> {count}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          {fullLegacyCleanup.remainingCandidatesAfter !== null ? (
+            <p><b>Legacy candidates:</b> {fullLegacyCleanup.remainingCandidatesBefore} {"->"} {fullLegacyCleanup.remainingCandidatesAfter}. Nothing was sent.</p>
+          ) : null}
+          {fullLegacyCleanup.errorMessage ? <div className="engine-error-banner" role="alert"><div><b>Cleanup needs review</b><p>{fullLegacyCleanup.errorMessage}</p></div></div> : null}
+          {fullLegacyCleanup.partialApplyRequiresReview ? <p><b>Partial completion:</b> Earlier atomic groups committed safely; remaining records require a fresh audit before any additional Apply.</p> : null}
         </section>
       ) : null}
 

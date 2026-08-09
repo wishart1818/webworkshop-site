@@ -1047,6 +1047,101 @@ function htmlProminentlyMatchesBusinessIdentity(html: string, businessName: stri
     .some((value) => value.includes(expected));
 }
 
+function normalizedIdentityText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function normalizedPhoneDigits(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.length > 10 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
+function pagePhoneNumbers(html: string) {
+  return (cleanHtmlText(html).match(/\+?\d[\d().\s-]{7,}\d/g) ?? [])
+    .map(normalizedPhoneDigits)
+    .filter((value) => value.length === 10);
+}
+
+function rootPageForOrigin(canonicalUrl: string, pages: ContactDiscoveryPage[]) {
+  const origin = new URL(canonicalUrl).origin;
+  return pages.find((page) => {
+    try {
+      const url = new URL(page.url);
+      return url.origin === origin && (url.pathname === "/" || url.pathname === "");
+    } catch {
+      return false;
+    }
+  });
+}
+
+function rootHasFirstPartySiteStructure(canonicalUrl: string, businessName: string, pages: ContactDiscoveryPage[]) {
+  const rootPage = rootPageForOrigin(canonicalUrl, pages);
+  if (!rootPage || !htmlProminentlyMatchesBusinessIdentity(rootPage.html, businessName)) return false;
+  const origin = new URL(canonicalUrl).origin;
+  const linkedBusinessPagePaths = new Set(extractLinks(rootPage.html, rootPage.url).flatMap((link) => {
+    try {
+      const url = new URL(link);
+      return url.origin === origin && url.pathname !== "/" && likelyContactPageUrl(url.href)
+        ? [url.pathname.replace(/\/+$/, "") || "/"]
+        : [];
+    } catch {
+      return [];
+    }
+  }));
+  return pages.some((page) => {
+    try {
+      const url = new URL(page.url);
+      const path = url.pathname.replace(/\/+$/, "") || "/";
+      return url.origin === origin
+        && linkedBusinessPagePaths.has(path)
+        && htmlProminentlyMatchesBusinessIdentity(page.html, businessName);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function pagesPublishBusinessDomainEmail(canonicalUrl: string, pages: ContactDiscoveryPage[]) {
+  return pages.some((page) => (
+    (cleanHtmlText(page.html).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])
+      .some((email) => emailAllowed(email) && emailDomainMatchesWebsite(email, canonicalUrl))
+    || [...page.html.matchAll(/href\s*=\s*["']mailto:([^?"']+)/gi)]
+      .some((match) => {
+        try {
+          const email = decodeURIComponent(match[1] ?? "");
+          return emailAllowed(email) && emailDomainMatchesWebsite(email, canonicalUrl);
+        } catch {
+          return false;
+        }
+      })
+  ));
+}
+
+function websiteIdentitySignals(
+  prospect: Prospect,
+  canonicalUrl: string,
+  pages: ContactDiscoveryPage[],
+) {
+  const html = pages.map((page) => page.html).join("\n");
+  const text = normalizedIdentityText(cleanHtmlText(html));
+  const city = normalizedIdentityText(prospect.city);
+  const phone = normalizedPhoneDigits(prospect.phone);
+  const publishedPhones = pagePhoneNumbers(html);
+  const canonicalRoot = rootPageForOrigin(canonicalUrl, pages);
+  const rootBusinessIdentity = Boolean(
+    canonicalRoot && htmlProminentlyMatchesBusinessIdentity(canonicalRoot.html, prospect.businessName),
+  );
+  return [
+    htmlProminentlyMatchesBusinessIdentity(html, prospect.businessName) ? "prominent_business_name" as const : null,
+    equivalentOwnedHost(canonicalUrl, prospect.website) ? "stored_website_host_match" as const : null,
+    city.length >= 3 && text.includes(city) ? "market_location_match" as const : null,
+    phone.length === 10 && publishedPhones.includes(phone) ? "public_phone_match" as const : null,
+    rootBusinessIdentity ? "canonical_root_business_identity" as const : null,
+    rootHasFirstPartySiteStructure(canonicalUrl, prospect.businessName, pages) ? "first_party_site_structure" as const : null,
+    pagesPublishBusinessDomainEmail(canonicalUrl, pages) ? "business_domain_email_match" as const : null,
+  ].filter((signal): signal is NonNullable<typeof signal> => Boolean(signal));
+}
+
 function rejectUnverifiedCrossDomainRedirect(
   result: VerificationAttemptResult,
   ownedWebsite: string,
@@ -1151,6 +1246,7 @@ async function collectContactPages(
 ) {
   const root = new URL(rootUrl);
   const candidates = new Set<string>([initialPage.url]);
+  candidates.add(new URL("/", root.origin).href);
   for (const link of extractLinks(initialPage.html, initialPage.url)) {
     try {
       const parsed = new URL(link);
@@ -1637,7 +1733,7 @@ export async function verifyProspectWebsite(
     const canonicalUrl = await canonicalUrlFromHtml(successful.html, finalUrl, dependencies);
     const pages = await collectContactPages(
       canonicalUrl,
-      { url: canonicalUrl, html: successful.html },
+      { url: finalUrl, html: successful.html },
       dependencies,
       robotsCache,
     );
@@ -1656,9 +1752,15 @@ export async function verifyProspectWebsite(
     }, contact.contactEvidence.filter((item) => item.kind === "email").map((item) => item.value));
     const analysis = analyzeWebsiteHtml(contactProspect, successful.html, finalUrl);
     const switchingFromPresenceGap = prospect.prospectType === "no_website_social_only";
+    const identitySignals = websiteIdentitySignals(prospect, canonicalUrl, pages);
     const identityEvidence = [
-      successful.usableSignals.includes("business name") ? "The business name appears prominently in the verified page title or primary heading." : "",
-      equivalentOwnedHost(canonicalUrl, prospect.website) ? "The canonical host matches the stored business website host." : "",
+      identitySignals.includes("prominent_business_name") ? "The business name appears prominently in the verified page title or primary heading." : "",
+      identitySignals.includes("stored_website_host_match") ? "The canonical host matches the stored business website host." : "",
+      identitySignals.includes("market_location_match") ? "The verified website names the prospect's stored city or market." : "",
+      identitySignals.includes("public_phone_match") ? "The verified website publishes the prospect's stored business phone number." : "",
+      identitySignals.includes("canonical_root_business_identity") ? "The canonical website root prominently identifies the business." : "",
+      identitySignals.includes("first_party_site_structure") ? "The branded root links to same-origin business detail or contact pages." : "",
+      identitySignals.includes("business_domain_email_match") ? "The verified website publishes an email on its own business domain." : "",
     ].filter(Boolean);
     const ownershipDecision = successful.usableSignals.includes("business name") ? "owned" as const : "uncertain" as const;
     const fit = ownershipDecision === "owned"
@@ -1682,6 +1784,7 @@ export async function verifyProspectWebsite(
       checkedAt,
       ownershipDecision,
       identityEvidence,
+      identitySignals,
       fit,
     };
     report.freshness = {
