@@ -3485,6 +3485,7 @@ export type AtomicWebsiteRepairMutation = {
   proposedProspect: Prospect;
   expectedQueueItems: OutreachQueueItem[];
   queueReason: string;
+  alreadyApplied?: boolean;
 };
 
 let atomicWebsiteRepairFailureProspectIdForTests = "";
@@ -3536,9 +3537,13 @@ export async function applySelectedWebsiteRepairsAtomically(input: {
     for (const [index, mutation] of input.mutations.entries()) {
       const currentQueueItems = memoryQueue().filter((item) => item.prospectId === mutation.expectedProspect.id);
       assertAtomicRepairSnapshot(mutation, prospectsBefore[index] ?? null, currentQueueItems);
+      if (mutation.alreadyApplied && currentQueueItems.some((item) => memoryApprovedAutoEmailQueueIds().has(item.id))) {
+        throw new Error("A selected outreach approval changed after review. Run a fresh dry run.");
+      }
     }
     try {
       for (const mutation of input.mutations) {
+        if (mutation.alreadyApplied) continue;
         if (atomicWebsiteRepairFailureProspectIdForTests === mutation.expectedProspect.id) {
           throw new Error("Simulated atomic website-repair write failure.");
         }
@@ -3564,7 +3569,11 @@ export async function applySelectedWebsiteRepairsAtomically(input: {
       }
       throw error;
     }
-    return { changedProspectIds: input.mutations.map((mutation) => mutation.expectedProspect.id) };
+    return {
+      changedProspectIds: input.mutations
+        .filter((mutation) => !mutation.alreadyApplied)
+        .map((mutation) => mutation.expectedProspect.id),
+    };
   }
 
   await ensureTopProspectSchema();
@@ -3583,10 +3592,17 @@ export async function applySelectedWebsiteRepairsAtomically(input: {
       ]);
       const queueItems = queueRows.map(queueToDomain);
       assertAtomicRepairSnapshot(mutation, currentProspect, queueItems);
+      if (
+        mutation.alreadyApplied
+        && (await Promise.all(queueItems.map((item) => queueItemHasPersistedApproval(item, transaction)))).some(Boolean)
+      ) {
+        throw new Error("A selected outreach approval changed after review. Run a fresh dry run.");
+      }
       contexts.push({ mutation, queueRows, queueItems });
     }
 
     for (const { mutation, queueRows, queueItems } of contexts) {
+      if (mutation.alreadyApplied) continue;
       for (const [index, item] of queueItems.entries()) {
         const row = queueRows[index]!;
         const data = readinessRepairData(item, "mark_needs_manual_review", mutation.queueReason, nowIso, mutation.expectedProspect);
@@ -3609,7 +3625,11 @@ export async function applySelectedWebsiteRepairsAtomically(input: {
       await persistProspectInTransaction(transaction, mutation.proposedProspect);
     }
 
-    return { changedProspectIds: input.mutations.map((mutation) => mutation.expectedProspect.id) };
+    return {
+      changedProspectIds: input.mutations
+        .filter((mutation) => !mutation.alreadyApplied)
+        .map((mutation) => mutation.expectedProspect.id),
+    };
   }, { isolationLevel: "Serializable" });
 }
 

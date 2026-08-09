@@ -3,6 +3,7 @@ import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
   applySelectedWebsiteRepairsAtomically,
   listOutreachQueueItemsForBackfill,
+  outreachQueueItemHasPersistedApproval,
   repairOutreachQueueItemForReadiness,
   safeReadinessRepairProtectionReason,
 } from "@/lib/autonomous-growth-repository";
@@ -71,6 +72,7 @@ export type ExistingWebsiteRepairRecord = {
   proposedOutcome: "exclude_from_rebuild_outreach" | "manual_review" | "potential_candidate" | "protected";
   exactReason: string;
   productionMutationRequired: boolean;
+  alreadyCurrent: boolean;
   selectionEligible: boolean;
   highConfidenceExclusionEligible: boolean;
 };
@@ -141,6 +143,36 @@ const websiteRepairPatchFields = [
   "status",
 ] as const satisfies readonly (keyof Prospect)[];
 
+const websiteExclusionPatchFields = [
+  "website",
+  "websiteStatus",
+  "websiteStatusDetail",
+  "websiteVerification",
+  "fitDisposition",
+] as const satisfies readonly (keyof Prospect)[];
+
+const websiteRepairContactFields = [
+  "phone",
+  "email",
+  "contactPageUrl",
+  "contactFormUrl",
+  "quoteFormUrl",
+  "contactFormDetected",
+  "quoteFormDetected",
+  "facebookUrl",
+  "instagramUrl",
+  "linkedinUrl",
+  "xUrl",
+  "youtubeUrl",
+  "contactPersonName",
+  "contactConfidence",
+  "contactEvidence",
+  "contactDiscoveryNotes",
+  "recommendedContactMethod",
+  "bestManualContactMethod",
+  "address",
+] as const satisfies readonly (keyof Prospect)[];
+
 type WebsiteRepairPatchField = (typeof websiteRepairPatchFields)[number];
 type WebsiteRepairPatchEntry = {
   field: WebsiteRepairPatchField;
@@ -151,6 +183,14 @@ type ReviewedProspectPatch = {
   entries: WebsiteRepairPatchEntry[];
   addedActivities: Prospect["activities"];
 };
+
+function assertWebsiteExclusionPreservesContactState(before: Prospect, after: Prospect) {
+  for (const field of websiteRepairContactFields) {
+    if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
+      throw new Error(`Website exclusion repair cannot modify ${field}. Run a fresh dry run.`);
+    }
+  }
+}
 
 function prospectProtectionReason(prospect: Prospect, queueItems: OutreachQueueItem[] = []) {
   if (protectedProspectStatuses.has(prospect.status)) return `Prospect status ${prospect.status} is protected.`;
@@ -436,8 +476,11 @@ const activeLegacyQueueStatuses = new Set<OutreachQueueItem["status"]>([
 ]);
 
 function existingRecordNeedsWebsiteAudit(prospect: Prospect, queueItems: OutreachQueueItem[]) {
+  if (authoritativeCurrentWebsiteExclusion(prospect)) return false;
+  const currentExclusionRequiresRepair = currentWebsiteExclusionConclusion(prospect);
   const legacyStatus = ["http_404", "unreachable_website", "broken_website", "inactive_website"].includes(prospect.websiteStatus);
-  const transientDetail = transientLegacyEvidence.test(prospect.websiteStatusDetail);
+  const transientDetail = transientLegacyEvidence.test(prospect.websiteStatusDetail)
+    && (prospect.websiteVerification?.version !== "website-verification-v2" || prospect.websiteVerification.status !== "usable");
   const staleContactClassification = ["phone_only", "social_only", "no_website"].includes(prospect.classification)
     || prospect.recommendedContactMethod === "needs_manual_contact_research";
   const activeUnsentInventory = !prospect.inactive
@@ -447,15 +490,12 @@ function existingRecordNeedsWebsiteAudit(prospect: Prospect, queueItems: Outreac
       && !item.sentDate
       && !item.replyStatus
     ));
-  const outdatedActivePackage = queueItems.some((item) => (
-    activeLegacyQueueStatuses.has(item.status)
-    && item.outreachCopyVersion !== currentOutreachCopyVersion
-  ));
   const legacyEvidenceModel = prospect.websiteVerification?.version !== "website-verification-v2";
   const incompleteEmailEvidence = Boolean(prospect.email && !verifiedEmailEvidenceForProspect(prospect));
   return Boolean(
-    (prospect.website && (legacyStatus || transientDetail || staleContactClassification))
-    || (activeUnsentInventory && (legacyEvidenceModel || incompleteEmailEvidence || outdatedActivePackage)),
+    currentExclusionRequiresRepair
+    || (prospect.website && (legacyStatus || transientDetail || staleContactClassification))
+    || (activeUnsentInventory && (legacyEvidenceModel || incompleteEmailEvidence)),
   );
 }
 
@@ -476,10 +516,121 @@ function normalizedCanonicalUrl(value: string) {
   try {
     const url = new URL(value);
     url.hash = "";
-    return url.href.replace(/\/$/, "").toLowerCase();
+    return url.href.replace(/\/$/, "");
   } catch {
     return "";
   }
+}
+
+function normalizedEvidenceText(value: string | undefined) {
+  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizedEvidenceList(values: string[] | undefined) {
+  return [...new Set((values ?? []).map(normalizedEvidenceText).filter(Boolean))].sort();
+}
+
+function canonicalWebsiteVerificationForExclusion(report: Prospect["websiteVerification"]) {
+  if (!report) return null;
+  const attempts = report.attempts.map((attempt) => ({
+    requestedUrl: normalizedCanonicalUrl(attempt.requestedUrl),
+    normalizedUrl: normalizedCanonicalUrl(attempt.normalizedUrl),
+    finalUrl: normalizedCanonicalUrl(attempt.finalUrl),
+    httpStatus: attempt.httpStatus,
+    redirectChain: attempt.redirectChain.map(normalizedCanonicalUrl),
+    contentType: normalizedEvidenceText(attempt.contentType),
+    failureCategory: attempt.failureCategory,
+    robotsAllowed: attempt.robotsAllowed,
+    botBlocked: attempt.botBlocked,
+    browserCompatibleHeaders: attempt.browserCompatibleHeaders,
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const observation = report.fit?.observation;
+  return {
+    version: report.version,
+    status: report.status,
+    confidence: report.confidence,
+    canonicalUrl: normalizedCanonicalUrl(report.canonicalUrl),
+    attempts,
+    usableSignals: normalizedEvidenceList(report.usableSignals),
+    explanation: normalizedEvidenceText(report.explanation),
+    ownershipDecision: report.ownershipDecision ?? "",
+    identityEvidence: normalizedEvidenceList(report.identityEvidence),
+    fit: report.fit ? {
+      disposition: report.fit.disposition,
+      reason: normalizedEvidenceText(report.fit.reason),
+      supportingEvidence: normalizedEvidenceList(report.fit.supportingEvidence),
+      confidence: report.fit.confidence,
+      analysisOrigin: report.fit.analysisOrigin,
+      observation: observation ? {
+        kind: observation.kind,
+        statement: normalizedEvidenceText(observation.statement),
+        rebuildSentence: normalizedEvidenceText(observation.rebuildSentence),
+        evidence: normalizedEvidenceList(observation.evidence),
+        demoChecklist: normalizedEvidenceList(observation.demoChecklist),
+      } : null,
+    } : null,
+  };
+}
+
+function websiteVerificationForExclusion(report: Prospect["websiteVerification"]) {
+  if (!report) return undefined;
+  const websiteVerification = structuredClone(report);
+  delete websiteVerification.freshness;
+  return websiteVerification;
+}
+
+function websiteExclusionRepairTarget(before: Prospect, verified: Prospect) {
+  const canonicalWebsite = verified.websiteVerification?.canonicalUrl || verified.website;
+  const verifiedWebsiteReport = websiteVerificationForExclusion(verified.websiteVerification);
+  const websiteChanged = normalizedCanonicalUrl(before.website) !== normalizedCanonicalUrl(canonicalWebsite);
+  const statusChanged = before.websiteStatus !== verified.websiteStatus;
+  const verificationChanged = JSON.stringify(canonicalWebsiteVerificationForExclusion(before.websiteVerification))
+    !== JSON.stringify(canonicalWebsiteVerificationForExclusion(verifiedWebsiteReport));
+  const verifiedDisposition = normalizeWebsiteFitDisposition(verified);
+  const dispositionChanged = before.fitDisposition !== verifiedDisposition;
+  const legacyTransientDetail = transientLegacyEvidence.test(before.websiteStatusDetail)
+    && (before.websiteVerification?.version !== "website-verification-v2" || before.websiteVerification.status !== "usable");
+  const detailRequiresRepair = !before.websiteStatusDetail.trim()
+    || legacyTransientDetail
+    || statusChanged
+    || before.websiteVerification?.version !== "website-verification-v2";
+  const detailChanged = detailRequiresRepair
+    && normalizedEvidenceText(before.websiteStatusDetail) !== normalizedEvidenceText(verified.websiteStatusDetail);
+  if (!websiteChanged && !statusChanged && !verificationChanged && !dispositionChanged && !detailChanged) return before;
+  return {
+    ...before,
+    website: websiteChanged ? canonicalWebsite : before.website,
+    websiteStatus: statusChanged ? verified.websiteStatus : before.websiteStatus,
+    websiteStatusDetail: detailChanged ? verified.websiteStatusDetail : before.websiteStatusDetail,
+    websiteVerification: verificationChanged ? verifiedWebsiteReport : before.websiteVerification,
+    fitDisposition: dispositionChanged ? verifiedDisposition : before.fitDisposition,
+  } satisfies Prospect;
+}
+
+function currentWebsiteExclusionConclusion(prospect: Prospect) {
+  const disposition = normalizeWebsiteFitDisposition(prospect);
+  const report = prospect.websiteVerification;
+  return ["adequate_existing_website", "strong_existing_website"].includes(disposition)
+    && report?.version === "website-verification-v2"
+    && report.status === "usable"
+    && report.ownershipDecision === "owned"
+    && Boolean(report.identityEvidence?.length)
+    && report.fit?.disposition === disposition;
+}
+
+function authoritativeCurrentWebsiteExclusion(prospect: Prospect) {
+  const disposition = normalizeWebsiteFitDisposition(prospect);
+  const report = prospect.websiteVerification;
+  const canonicalWebsite = normalizedCanonicalUrl(report?.canonicalUrl ?? "");
+  return currentWebsiteExclusionConclusion(prospect)
+    && prospect.fitDisposition === disposition
+    && prospect.websiteStatus === "usable"
+    && report?.confidence === "high"
+    && Boolean(canonicalWebsite)
+    && normalizedCanonicalUrl(prospect.website) === canonicalWebsite
+    && Boolean(prospect.websiteStatusDetail.trim())
+    && Boolean(report.identityEvidence?.length)
+    && report.fit?.confidence === "high";
 }
 
 function structuralWebsiteSignature(signals: string[] = []) {
@@ -629,6 +780,7 @@ async function inspectExistingWebsiteRepairCandidate(
     return {
       prospect,
       verified: null,
+      proposedProspect: null,
       record: {
         prospectId: prospect.id,
         businessName: prospect.businessName,
@@ -647,6 +799,7 @@ async function inspectExistingWebsiteRepairCandidate(
         newlyFoundContactPaths: [],
         ...decision,
         productionMutationRequired: false,
+        alreadyCurrent: false,
         selectionEligible: false,
         highConfidenceExclusionEligible: false,
       } satisfies ExistingWebsiteRepairRecord,
@@ -658,7 +811,11 @@ async function inspectExistingWebsiteRepairCandidate(
     dependencies.now?.() ?? new Date(),
   );
   const decision = legacyAuditDecision(prospect, verified.prospect, "", queueItems);
-  const changedFields = changedProspectFields(prospect, verified.prospect);
+  const proposedProspect = decision.proposedOutcome === "exclude_from_rebuild_outreach"
+    ? websiteExclusionRepairTarget(prospect, verified.prospect)
+    : verified.prospect;
+  const changedFields = changedProspectFields(prospect, proposedProspect);
+  const alreadyCurrent = decision.proposedOutcome === "exclude_from_rebuild_outreach" && changedFields.length === 0;
   const selectionEligible = changedFields.length > 0;
   const highConfidenceExclusionEligible = selectionEligible
     && decision.proposedOutcome === "exclude_from_rebuild_outreach"
@@ -672,6 +829,7 @@ async function inspectExistingWebsiteRepairCandidate(
   return {
     prospect,
     verified,
+    proposedProspect,
     record: {
       prospectId: prospect.id,
       businessName: prospect.businessName,
@@ -680,16 +838,17 @@ async function inspectExistingWebsiteRepairCandidate(
       currentDisposition: prospect.fitDisposition,
       proposedDisposition: normalizeWebsiteFitDisposition(verified.prospect),
       oldStatus: prospect.websiteStatus,
-      proposedStatus: verified.prospect.websiteStatus,
+      proposedStatus: proposedProspect.websiteStatus,
       oldEmail: prospect.email,
-      proposedEmail: verified.prospect.email,
+      proposedEmail: proposedProspect.email,
       evidence: `Stored trigger: ${prospect.websiteStatus}${prospect.websiteStatusDetail ? ` (${prospect.websiteStatusDetail})` : ""}. Recheck: ${verified.report.explanation}`,
       changedFields,
-      fieldChanges: repairFieldChanges(prospect, verified.prospect),
+      fieldChanges: repairFieldChanges(prospect, proposedProspect),
       protectedReason: "",
       newlyFoundContactPaths: newContactPaths(prospect, verified.prospect),
       ...decision,
       productionMutationRequired: changedFields.length > 0,
+      alreadyCurrent,
       selectionEligible,
       highConfidenceExclusionEligible,
     } satisfies ExistingWebsiteRepairRecord,
@@ -782,12 +941,23 @@ type ExistingWebsiteRepairReviewSnapshot = {
     record: ExistingWebsiteRepairRecord;
     currentProspectDigest: string;
     currentQueueDigest: string;
+    postApplyProspectDigest: string;
     proposedPatch: ReviewedProspectPatch | null;
   }>;
 };
 
-function reviewedProspectPatch(before: Prospect, after: Prospect): ReviewedProspectPatch {
-  const allowedFields = new Set<string>(websiteRepairPatchFields);
+function reviewedProspectPatch(
+  before: Prospect,
+  after: Prospect,
+  proposedOutcome: ExistingWebsiteRepairRecord["proposedOutcome"],
+): ReviewedProspectPatch {
+  if (proposedOutcome === "exclude_from_rebuild_outreach") {
+    assertWebsiteExclusionPreservesContactState(before, after);
+  }
+  const patchFields = proposedOutcome === "exclude_from_rebuild_outreach"
+    ? websiteExclusionPatchFields
+    : websiteRepairPatchFields;
+  const allowedFields = new Set<string>(patchFields);
   const changedKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
   for (const key of changedKeys) {
     if (key === "activities" || JSON.stringify(before[key as keyof Prospect]) === JSON.stringify(after[key as keyof Prospect])) continue;
@@ -795,7 +965,7 @@ function reviewedProspectPatch(before: Prospect, after: Prospect): ReviewedProsp
       throw new Error(`Website verification proposed an unsupported ${key} change. Keep this record in manual review.`);
     }
   }
-  const entries = websiteRepairPatchFields.flatMap((field): WebsiteRepairPatchEntry[] => {
+  const entries = patchFields.flatMap((field): WebsiteRepairPatchEntry[] => {
     if (JSON.stringify(before[field]) === JSON.stringify(after[field])) return [];
     if (after[field] === undefined) return [{ field, unset: true }];
     return [{ field, unset: false, value: structuredClone(after[field]) }];
@@ -804,6 +974,7 @@ function reviewedProspectPatch(before: Prospect, after: Prospect): ReviewedProsp
   if (
     addedActivityCount < 0
     || JSON.stringify(after.activities.slice(addedActivityCount)) !== JSON.stringify(before.activities)
+    || (proposedOutcome === "exclude_from_rebuild_outreach" && addedActivityCount !== 0)
   ) {
     throw new Error("Website verification proposed an unsupported activity-history change. Keep this record in manual review.");
   }
@@ -813,8 +984,14 @@ function reviewedProspectPatch(before: Prospect, after: Prospect): ReviewedProsp
   };
 }
 
-function applyReviewedProspectPatch(prospect: Prospect, patch: ReviewedProspectPatch) {
-  const allowedFields = new Set<string>(websiteRepairPatchFields);
+function applyReviewedProspectPatch(
+  prospect: Prospect,
+  patch: ReviewedProspectPatch,
+  proposedOutcome: ExistingWebsiteRepairRecord["proposedOutcome"],
+) {
+  const allowedFields = new Set<string>(proposedOutcome === "exclude_from_rebuild_outreach"
+    ? websiteExclusionPatchFields
+    : websiteRepairPatchFields);
   const unsettableFields = new Set<string>(["analysis", "outreach", "preview"]);
   const seen = new Set<string>();
   const updated = structuredClone(prospect);
@@ -832,11 +1009,17 @@ function applyReviewedProspectPatch(prospect: Prospect, patch: ReviewedProspectP
   if (!Array.isArray(patch.addedActivities)) {
     throw new Error("The reviewed website-repair activity data is invalid. Run a fresh dry run.");
   }
+  if (proposedOutcome === "exclude_from_rebuild_outreach" && patch.addedActivities.length) {
+    throw new Error("Website exclusion repairs cannot modify prospect activity history. Run a fresh dry run.");
+  }
   const existingActivityIds = new Set(prospect.activities.map((item) => item.id));
   if (patch.addedActivities.some((item) => !item?.id || existingActivityIds.has(item.id))) {
     throw new Error("The reviewed website-repair activity data is stale or invalid. Run a fresh dry run.");
   }
   updated.activities = [...structuredClone(patch.addedActivities), ...prospect.activities];
+  if (proposedOutcome === "exclude_from_rebuild_outreach") {
+    assertWebsiteExclusionPreservesContactState(prospect, updated);
+  }
   return updated;
 }
 
@@ -913,6 +1096,7 @@ function verifiedRepairReviewSnapshot(token: string, secret: string, now: Date) 
       || candidate.record?.prospectId !== candidate.prospectId
       || !/^[a-f0-9]{64}$/.test(candidate.currentProspectDigest ?? "")
       || !/^[a-f0-9]{64}$/.test(candidate.currentQueueDigest ?? "")
+      || !/^[a-f0-9]{64}$/.test(candidate.postApplyProspectDigest ?? "")
       || (
         candidate.proposedPatch !== null
         && (
@@ -961,6 +1145,35 @@ function normalizedSelectedRepairProspectIds(values: string[] | undefined, apply
     throw new Error("Selected prospect IDs must be unique.");
   }
   return selected;
+}
+
+function reviewedRepairQueueReason(record: ExistingWebsiteRepairRecord) {
+  return record.proposedOutcome === "exclude_from_rebuild_outreach"
+    ? "Current verified website fit excludes this prospect from website-rebuild outreach. Any stale approval was removed and the record remains non-sendable."
+    : "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.";
+}
+
+async function queueAlreadyReflectsReviewedExclusion(
+  items: OutreachQueueItem[],
+  record: ExistingWebsiteRepairRecord,
+) {
+  if (record.proposedOutcome !== "exclude_from_rebuild_outreach") return false;
+  const reason = reviewedRepairQueueReason(record);
+  for (const item of items) {
+    if (
+      item.status !== "Needs Review"
+      || Boolean(item.queuedDate)
+      || Boolean(item.sentDate)
+      || Boolean(item.replyStatus)
+      || item.notes.includes("[auto-email-ambiguous]")
+      || item.notes.includes("[auto-email-approved]")
+      || item.recommendedNextAction !== "Needs Human Review"
+      || !item.blockedReason.includes(reason)
+      || !item.notes.includes(`Safe readiness repair: ${reason}. Approval removed when present. Nothing was sent.`)
+      || await outreachQueueItemHasPersistedApproval(item)
+    ) return false;
+  }
+  return true;
 }
 
 export async function auditExistingWebsiteRecords(input: {
@@ -1031,35 +1244,60 @@ export async function auditExistingWebsiteRecords(input: {
     for (const item of queue) {
       queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
     }
-    const mutations = selectedReviewed.map((candidate, index) => {
+    const mutations = [] as Parameters<typeof applySelectedWebsiteRepairsAtomically>[0]["mutations"];
+    for (const [index, candidate] of selectedReviewed.entries()) {
       const currentProspect = currentProspects[index];
-      if (!currentProspect || repairProspectStateDigest(currentProspect) !== candidate.currentProspectDigest) {
+      if (!currentProspect) {
         throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
       }
       const currentQueueItems = queueByProspect.get(candidate.prospectId) ?? [];
-      if (repairStateDigest(orderedRepairQueueSnapshot(currentQueueItems)) !== candidate.currentQueueDigest) {
-        throw new Error(`The selected outreach queue for ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
-      }
       const protectedReason = prospectProtectionReason(currentProspect, currentQueueItems);
       if (protectedReason) {
         throw new Error(`${candidate.record.businessName} is now protected. ${protectedReason} Run a fresh dry run.`);
       }
-      return {
+      const currentProspectDigest = repairProspectStateDigest(currentProspect);
+      const currentQueueDigest = repairStateDigest(orderedRepairQueueSnapshot(currentQueueItems));
+      const queueReason = reviewedRepairQueueReason(candidate.record);
+      if (
+        currentProspectDigest === candidate.postApplyProspectDigest
+        && await queueAlreadyReflectsReviewedExclusion(currentQueueItems, candidate.record)
+      ) {
+        mutations.push({
+          expectedProspect: currentProspect,
+          proposedProspect: currentProspect,
+          expectedQueueItems: currentQueueItems,
+          queueReason,
+          alreadyApplied: true,
+        });
+        continue;
+      }
+      if (currentProspectDigest !== candidate.currentProspectDigest) {
+        throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+      }
+      if (currentQueueDigest !== candidate.currentQueueDigest) {
+        throw new Error(`The selected outreach queue for ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+      }
+      const proposedProspect = withApprovalRevoked(
+        applyReviewedProspectPatch(currentProspect, candidate.proposedPatch!, candidate.record.proposedOutcome),
+        true,
+      );
+      if (repairProspectStateDigest(proposedProspect) !== candidate.postApplyProspectDigest) {
+        throw new Error("The reviewed website-repair proposal is invalid. Run a fresh dry run.");
+      }
+      mutations.push({
         expectedProspect: currentProspect,
-        proposedProspect: withApprovalRevoked(
-          applyReviewedProspectPatch(currentProspect, candidate.proposedPatch!),
-          true,
-        ),
+        proposedProspect,
         expectedQueueItems: currentQueueItems,
-        queueReason: candidate.record.proposedOutcome === "exclude_from_rebuild_outreach"
-          ? "Current verified website fit excludes this prospect from website-rebuild outreach. Any stale approval was removed and the record remains non-sendable."
-          : "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.",
-      };
-    });
+        queueReason,
+      });
+    }
     const atomicResult = await applySelectedWebsiteRepairsAtomically({ mutations, now });
+    const changedProspectIds = new Set(atomicResult.changedProspectIds);
     for (const candidate of selectedReviewed) {
       await safeRecordAudit({
-        action: "existing_website_record_repair",
+        action: changedProspectIds.has(candidate.prospectId)
+          ? "existing_website_record_repair"
+          : "existing_website_record_repair_noop",
         outcome: "success",
         subject: candidate.record.businessName,
         metadata: {
@@ -1068,6 +1306,7 @@ export async function auditExistingWebsiteRecords(input: {
           newStatus: candidate.record.proposedStatus,
           changedFields: candidate.record.changedFields,
           proposedOutcome: candidate.record.proposedOutcome,
+          changed: changedProspectIds.has(candidate.prospectId),
           sent: 0,
         },
       });
@@ -1189,14 +1428,26 @@ export async function auditExistingWebsiteRecords(input: {
     summary,
     records: inspected.map((candidate) => {
       const queueItems = queueByProspect.get(candidate.prospect.id) ?? [];
+      const proposedPatch = candidate.proposedProspect
+        ? reviewedProspectPatch(
+          candidate.prospect,
+          candidate.proposedProspect,
+          candidate.record.proposedOutcome,
+        )
+        : null;
+      const postApplyProspect = proposedPatch
+        ? withApprovalRevoked(
+          applyReviewedProspectPatch(candidate.prospect, proposedPatch, candidate.record.proposedOutcome),
+          true,
+        )
+        : candidate.prospect;
       return {
         prospectId: candidate.prospect.id,
         record: candidate.record,
         currentProspectDigest: repairProspectStateDigest(candidate.prospect),
         currentQueueDigest: repairStateDigest(orderedRepairQueueSnapshot(queueItems)),
-        proposedPatch: candidate.verified
-          ? reviewedProspectPatch(candidate.prospect, candidate.verified.prospect)
-          : null,
+        postApplyProspectDigest: repairProspectStateDigest(postApplyProspect),
+        proposedPatch,
       };
     }),
   };
