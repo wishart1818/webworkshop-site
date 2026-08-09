@@ -375,3 +375,37 @@ model AuditEvent {
   @@index([action, createdAt])
   @@index([outcome, createdAt])
 }
+
+model WebsiteRepairAuditRun {
+  id                        String   @id @default(cuid())
+  version                   Int      @default(1)
+  accessTokenHash           String
+  status                    String   @default("AUDITING")
+  candidateIds              Json     @default("[]")
+  reviewedItems             Json     @default("[]")
+  nextIndex                 Int      @default(0)
+  totalCandidates           Int      @default(0)
+  inspectedCount            Int      @default(0)
+  safeExclusionCount        Int      @default(0)
+  manualReviewCount         Int      @default(0)
+  protectedCount            Int      @default(0)
+  manualReasonCounts        Json     @default("{}")
+  leaseToken                String?
+  leaseUntil                DateTime?
+  expiresAt                 DateTime
+  completedAt               DateTime?
+  applyStatus               String   @default("NOT_STARTED")
+  applyNextIndex            Int      @default(0)
+  appliedCount              Int      @default(0)
+  remainingCandidatesBefore Int      @default(0)
+  remainingCandidatesAfter  Int?
+  applyStartedAt            DateTime?
+  applyCompletedAt          DateTime?
+  errorCode                 String?
+  errorMessage              String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([expiresAt])
+}

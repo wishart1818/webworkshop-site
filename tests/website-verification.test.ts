@@ -134,6 +134,33 @@ test("True Clean crawler-specific 508 is overridden by bounded usable-site and c
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
 });
 
+test("website identity requires one complete published phone instead of concatenated page digits", async () => {
+  const body = `
+    <!doctype html>
+    <html>
+      <head><title>True Clean Prowash | Exterior Cleaning in Columbus</title><meta name="viewport" content="width=device-width" /></head>
+      <body>
+        <nav><a href="/">Home</a><a href="/services">Services</a></nav>
+        <main>
+          <h1>True Clean Prowash</h1>
+          <p>Exterior cleaning and pressure washing for Columbus properties.</p>
+          <p>Project 614</p><p>Service code 555</p><p>Reference 0123</p>
+          <form><input name="name" /><button>Request an estimate</button></form>
+        </main>
+      </body>
+    </html>
+  `;
+  const result = await verifyProspectWebsite(
+    prospect({ phone: "+16145550123" }),
+    verificationDependencies((async () => htmlResponse(body)) as typeof fetch),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("prominent_business_name"), true);
+  assert.equal(result.report.identitySignals?.includes("stored_website_host_match"), true);
+});
+
 test("repeated transient failures remain temporary and never become a no-website prospect", async () => {
   const fetchImpl = (async () => htmlResponse("<html><title>Service unavailable</title><body>Service unavailable</body></html>", 503)) as typeof fetch;
   const result = await verifyProspectWebsite(prospect(), verificationDependencies(fetchImpl));

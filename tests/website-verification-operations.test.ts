@@ -30,8 +30,10 @@ import { enforceWebsiteRepairApplyRateLimit } from "../lib/website-repair-rate-l
 import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
+  inspectCandidatesBounded,
   recheckProspectWebsite,
   setProspectWebsiteFitDisposition,
+  websiteRepairConcurrency,
   websiteRepairReviewTokenMaxLength,
 } from "../lib/website-verification-operations";
 
@@ -2011,4 +2013,28 @@ test("an active provider attempt blocks fit mutation and remains untouched", asy
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
   }
+});
+
+test("website repair inspection bounds concurrent candidate verification", async () => {
+  const candidates = Array.from({ length: 8 }, (_, index) => legacyProspect({ id: `bounded-inspection-${index}` }));
+  const base = verificationDependencies();
+  let activeFetches = 0;
+  let peakFetches = 0;
+  const fetchImpl = base.fetch!;
+  const inspected = await inspectCandidatesBounded(candidates, {
+    ...base,
+    fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      activeFetches += 1;
+      peakFetches = Math.max(peakFetches, activeFetches);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await fetchImpl(input, init);
+      } finally {
+        activeFetches -= 1;
+      }
+    }) as typeof fetch,
+  }, new Map());
+  assert.equal(inspected.length, candidates.length);
+  assert.ok(peakFetches > 1);
+  assert.ok(peakFetches <= websiteRepairConcurrency);
 });

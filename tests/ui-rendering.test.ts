@@ -333,6 +333,13 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(testCenterSource, /Website exclusions persist only the reviewed website state/);
   assert.match(testCenterSource, /websiteAuditRequestInFlight = useRef\(false\)/);
   assert.match(testCenterSource, /if \(websiteAuditRequestInFlight\.current\) return;[\s\S]*websiteAuditRequestInFlight\.current = true;[\s\S]*fetch\("\/api\/engine\/website-verification"/);
+  assert.match(testCenterSource, /Run Full Legacy Cleanup/);
+  assert.match(testCenterSource, /Resume Full Legacy Cleanup/);
+  assert.match(testCenterSource, /fullLegacyCleanupRequestInFlight = useRef\(false\)/);
+  assert.match(testCenterSource, /fullLegacyCleanupMaximumClientSteps = 100/);
+  assert.match(testCenterSource, /if \(fullLegacyCleanupRequestInFlight\.current\) return;[\s\S]*fullLegacyCleanupRequestInFlight\.current = true/);
+  assert.match(testCenterSource, /Apply All Verified Exclusions/);
+  assert.match(testCenterSource, /Contact fields, notes, activities, suppression, and outreach history remain intact\. Nothing will be sent\./);
   assert.match(testCenterSource, /finally \{[\s\S]*websiteAuditRequestInFlight\.current = false;[\s\S]*setActionState\("idle"\)/);
   assert.match(testCenterSource, /aria-busy=\{busy\}[\s\S]*Apply Selected Repairs/);
   assert.match(testCenterSource, /disabled=\{busy \|\| !record\.selectionEligible\}/);

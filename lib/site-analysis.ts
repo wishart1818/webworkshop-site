@@ -1047,6 +1047,39 @@ function htmlProminentlyMatchesBusinessIdentity(html: string, businessName: stri
     .some((value) => value.includes(expected));
 }
 
+function normalizedIdentityText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function normalizedPhoneDigits(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.length > 10 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
+function pagePhoneNumbers(html: string) {
+  return (cleanHtmlText(html).match(/\+?\d[\d().\s-]{7,}\d/g) ?? [])
+    .map(normalizedPhoneDigits)
+    .filter((value) => value.length === 10);
+}
+
+function websiteIdentitySignals(
+  prospect: Prospect,
+  canonicalUrl: string,
+  pages: ContactDiscoveryPage[],
+) {
+  const html = pages.map((page) => page.html).join("\n");
+  const text = normalizedIdentityText(cleanHtmlText(html));
+  const city = normalizedIdentityText(prospect.city);
+  const phone = normalizedPhoneDigits(prospect.phone);
+  const publishedPhones = pagePhoneNumbers(html);
+  return [
+    htmlProminentlyMatchesBusinessIdentity(html, prospect.businessName) ? "prominent_business_name" as const : null,
+    equivalentOwnedHost(canonicalUrl, prospect.website) ? "stored_website_host_match" as const : null,
+    city.length >= 3 && text.includes(city) ? "market_location_match" as const : null,
+    phone.length === 10 && publishedPhones.includes(phone) ? "public_phone_match" as const : null,
+  ].filter((signal): signal is NonNullable<typeof signal> => Boolean(signal));
+}
+
 function rejectUnverifiedCrossDomainRedirect(
   result: VerificationAttemptResult,
   ownedWebsite: string,
@@ -1656,9 +1689,12 @@ export async function verifyProspectWebsite(
     }, contact.contactEvidence.filter((item) => item.kind === "email").map((item) => item.value));
     const analysis = analyzeWebsiteHtml(contactProspect, successful.html, finalUrl);
     const switchingFromPresenceGap = prospect.prospectType === "no_website_social_only";
+    const identitySignals = websiteIdentitySignals(prospect, canonicalUrl, pages);
     const identityEvidence = [
-      successful.usableSignals.includes("business name") ? "The business name appears prominently in the verified page title or primary heading." : "",
-      equivalentOwnedHost(canonicalUrl, prospect.website) ? "The canonical host matches the stored business website host." : "",
+      identitySignals.includes("prominent_business_name") ? "The business name appears prominently in the verified page title or primary heading." : "",
+      identitySignals.includes("stored_website_host_match") ? "The canonical host matches the stored business website host." : "",
+      identitySignals.includes("market_location_match") ? "The verified website names the prospect's stored city or market." : "",
+      identitySignals.includes("public_phone_match") ? "The verified website publishes the prospect's stored business phone number." : "",
     ].filter(Boolean);
     const ownershipDecision = successful.usableSignals.includes("business name") ? "owned" as const : "uncertain" as const;
     const fit = ownershipDecision === "owned"
@@ -1682,6 +1718,7 @@ export async function verifyProspectWebsite(
       checkedAt,
       ownershipDecision,
       identityEvidence,
+      identitySignals,
       fit,
     };
     report.freshness = {

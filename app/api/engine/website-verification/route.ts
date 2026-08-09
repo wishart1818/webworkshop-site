@@ -10,6 +10,13 @@ import {
   websiteRepairReviewTokenMaxLength,
 } from "@/lib/website-verification-operations";
 import { enforceWebsiteRepairApplyRateLimit } from "@/lib/website-repair-rate-limit";
+import {
+  beginFullLegacyWebsiteCleanupApply,
+  continueFullLegacyWebsiteCleanup,
+  continueFullLegacyWebsiteCleanupApply,
+  getFullLegacyWebsiteCleanup,
+  startFullLegacyWebsiteCleanup,
+} from "@/lib/full-legacy-website-cleanup";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +27,11 @@ const supportedActions = [
   "set_website_fit",
   "audit_existing_records",
   "apply_existing_record_repair",
+  "start_full_legacy_cleanup",
+  "continue_full_legacy_cleanup",
+  "get_full_legacy_cleanup",
+  "apply_full_legacy_cleanup",
+  "continue_full_legacy_cleanup_apply",
 ] as const;
 type WebsiteVerificationAction = (typeof supportedActions)[number];
 
@@ -59,10 +71,18 @@ function safeReviewToken(value: unknown) {
   return token;
 }
 
+function safeFullCleanupReference(input: Record<string, unknown>) {
+  const auditRunId = safeText(input.auditRunId, 100);
+  const accessToken = safeText(input.accessToken, 100);
+  if (!auditRunId || !accessToken) throw new Error("A valid Full Legacy Cleanup run reference is required.");
+  return { auditRunId, accessToken };
+}
+
 function rateLimitOperationLabel(action: string) {
   if (action === "apply_existing_record_repair") return "Website-record repair request";
   if (action === "audit_existing_records") return "Website-record audit request";
   if (action === "recheck_website") return "Website re-check request";
+  if (action.includes("full_legacy_cleanup")) return "Full Legacy Cleanup request";
   return "Website-verification request";
 }
 
@@ -94,6 +114,23 @@ export async function POST(request: Request) {
         reason: safeText(input.reason, 1_500),
         confirmed: input.confirmed === true,
       }));
+    }
+    if (action === "start_full_legacy_cleanup") {
+      return NextResponse.json(await startFullLegacyWebsiteCleanup());
+    }
+    if (action === "continue_full_legacy_cleanup") {
+      return NextResponse.json(await continueFullLegacyWebsiteCleanup(safeFullCleanupReference(input)));
+    }
+    if (action === "get_full_legacy_cleanup") {
+      return NextResponse.json(await getFullLegacyWebsiteCleanup(safeFullCleanupReference(input)));
+    }
+    if (action === "apply_full_legacy_cleanup") {
+      const reference = safeFullCleanupReference(input);
+      const confirmation = safeText(input.confirmation, 80);
+      return NextResponse.json(await beginFullLegacyWebsiteCleanupApply({ ...reference, confirmation }));
+    }
+    if (action === "continue_full_legacy_cleanup_apply") {
+      return NextResponse.json(await continueFullLegacyWebsiteCleanupApply(safeFullCleanupReference(input)));
     }
     if (action === "audit_existing_records") {
       const prospectId = safeText(input.prospectId, 100);
@@ -148,7 +185,7 @@ export async function POST(request: Request) {
       });
     }
     const message = error instanceof Error ? error.message : "Website verification failed safely.";
-    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|read-only|review|snapshot|evidence changed|signing is not configured|batch size|batch limit|audit offset|candidate range|prospect ID|selected record|selected prospect/i.test(message);
+    const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|read-only|review|snapshot|evidence changed|signing is not configured|batch size|batch limit|audit offset|candidate range|prospect ID|selected record|selected prospect|Full Legacy Cleanup|candidate snapshot|safety bound|lease changed|not ready|expired|invalid/i.test(message);
     if (!expected) console.error("[website-verification] Safe operation failed.", {
       action,
       errorName: error instanceof Error ? error.name : "UnknownError",

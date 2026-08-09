@@ -209,6 +209,7 @@ export type WebsiteVerificationReport = {
   checkedAt: string;
   ownershipDecision?: "owned" | "not_owned" | "uncertain";
   identityEvidence?: string[];
+  identitySignals?: Array<"prominent_business_name" | "stored_website_host_match" | "market_location_match" | "public_phone_match">;
   fit?: WebsiteFitAssessment;
   freshness?: ProspectFreshness;
 };
