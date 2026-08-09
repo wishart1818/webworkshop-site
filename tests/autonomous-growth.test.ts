@@ -2917,17 +2917,19 @@ test("Smart Growth summarizes existing qualified unsent prospects across queue i
     city: "Tampa, FL",
     outreachCopyVersion: "old_copy_v0",
   });
-  const socialProspect = withAnalysis({
-    ...structuredClone(seedProspects[2]),
+  const socialProspect = {
+    ...eligibleProspect(),
+    id: "current-social-first-landscaping",
     businessName: "Social First Landscaping",
     trade: "Landscaping",
     city: "Orlando",
     state: "FL",
     email: "",
+    contactEvidence: [],
     facebookUrl: "https://facebook.com/socialfirstlandscaping",
-    recommendedContactMethod: "message_on_facebook",
-    classification: "website_redesign",
-  } as Prospect);
+    recommendedContactMethod: "message_on_facebook" as const,
+    bestManualContactMethod: "facebook" as const,
+  } satisfies Prospect;
   const topResult = topProspectResultFixture(socialProspect, {
     id: "result-social-only",
     packageStatus: "PACKAGE_GENERATED",
@@ -3120,6 +3122,101 @@ test("legacy, inconclusive, and missing current prospect evidence fail conservat
   assert.equal(snapshot.existingQualifiedUnsent.queueCounts.badFitBlocked, 1);
   assert.match(snapshot.copySummaries.blockedReasons, /Current prospect evidence unavailable|Other \/ Not Currently Actionable/i);
   assert.doesNotMatch(snapshot.recommendation.nextBestMove, /Use existing qualified unsent|copy refresh/i);
+});
+
+test("Smart inventory requires current website-fit evidence before every written contact route", () => {
+  const base = eligibleProspect();
+  const manualBase = {
+    ...base,
+    email: "",
+    contactEvidence: [],
+    facebookUrl: "",
+    instagramUrl: "",
+    linkedinUrl: "",
+    profileUrl: "",
+    contactFormUrl: "",
+    quoteFormUrl: "",
+    contactFormDetected: false,
+    quoteFormDetected: false,
+    recommendedContactMethod: "verify_email_manually" as const,
+    bestManualContactMethod: "unknown" as const,
+  } satisfies Prospect;
+  const inconclusiveBase = {
+    ...manualBase,
+    fitDisposition: "inconclusive_requires_review" as const,
+    websiteStatus: "inconclusive" as const,
+    websiteVerification: {
+      ...manualBase.websiteVerification!,
+      status: "inconclusive" as const,
+      confidence: "low" as const,
+      ownershipDecision: "unresolved" as const,
+      fit: {
+        disposition: "inconclusive_requires_review" as const,
+        reason: "Current evidence is incomplete.",
+        supportingEvidence: [],
+        confidence: "low" as const,
+        analysisOrigin: "metadata" as const,
+        evaluatedAt: new Date().toISOString(),
+      },
+    },
+  } satisfies Prospect;
+  const blockedProspects: Prospect[] = [
+    { ...inconclusiveBase, id: "smart-inconclusive-facebook", facebookUrl: "https://facebook.com/inconclusive", recommendedContactMethod: "message_on_facebook" },
+    { ...inconclusiveBase, id: "smart-inconclusive-instagram", instagramUrl: "https://instagram.com/inconclusive", profileUrl: "https://instagram.com/inconclusive", recommendedContactMethod: "message_on_social" },
+    { ...inconclusiveBase, id: "smart-inconclusive-form", contactFormUrl: "https://example.com/contact", contactFormDetected: true, recommendedContactMethod: "submit_contact_form" },
+    { ...manualBase, id: "smart-legacy-form", websiteVerification: undefined, fitDisposition: "inconclusive_requires_review", contactFormUrl: "https://example.com/legacy-contact", contactFormDetected: true, recommendedContactMethod: "submit_contact_form" },
+  ];
+  const verifiedWeakFacebook = {
+    ...manualBase,
+    id: "smart-verified-weak-facebook",
+    facebookUrl: "https://facebook.com/verified-weak",
+    recommendedContactMethod: "message_on_facebook" as const,
+    bestManualContactMethod: "facebook" as const,
+  } satisfies Prospect;
+  const verifiedNoOwnedForm = {
+    ...manualBase,
+    id: "smart-verified-no-owned-form",
+    website: "",
+    websiteStatus: "no_owned_website" as const,
+    fitDisposition: "no_owned_website" as const,
+    contactFormUrl: "https://facebook.com/verified-business/contact",
+    contactFormDetected: true,
+    recommendedContactMethod: "submit_contact_form" as const,
+    bestManualContactMethod: "contact_form" as const,
+    websiteVerification: {
+      ...manualBase.websiteVerification!,
+      status: "no_owned_website" as const,
+      canonicalUrl: "",
+      ownershipDecision: "not_owned" as const,
+      fit: {
+        ...manualBase.websiteVerification!.fit!,
+        disposition: "no_owned_website" as const,
+      },
+    },
+  } satisfies Prospect;
+  const prospects = [...blockedProspects, verifiedWeakFacebook, verifiedNoOwnedForm];
+  const queue = [
+    queueItem({ id: "smart-inconclusive-facebook-item", prospectId: blockedProspects[0]!.id, contactSource: "Facebook", email: "" }),
+    queueItem({ id: "smart-inconclusive-instagram-item", prospectId: blockedProspects[1]!.id, contactSource: "Instagram", email: "" }),
+    queueItem({ id: "smart-inconclusive-form-item", prospectId: blockedProspects[2]!.id, contactSource: "Contact form", email: "" }),
+    queueItem({ id: "smart-legacy-form-item", prospectId: blockedProspects[3]!.id, contactSource: "Contact form", email: "" }),
+    queueItem({ id: "smart-verified-weak-facebook-item", prospectId: verifiedWeakFacebook.id, contactSource: "Facebook", email: "" }),
+    queueItem({ id: "smart-verified-no-owned-form-item", prospectId: verifiedNoOwnedForm.id, contactSource: "Contact form", email: "" }),
+  ];
+  const before = structuredClone({ prospects, queue });
+
+  const summary = summarizeExistingQualifiedUnsent(queue, [], new Date(), prospects);
+
+  assert.equal(summary.total, 2);
+  assert.equal(summary.readyForFacebookInstagramManualDm, 1);
+  assert.equal(summary.readyForContactFormManualResearch, 1);
+  assert.equal(summary.queueCounts.readyForFacebookDm, 1);
+  assert.equal(summary.queueCounts.readyForContactFormReview, 1);
+  assert.equal(summary.queueCounts.badFitBlocked, 4);
+  for (const prospect of blockedProspects) assert.equal(prospectCurrentBucket(prospect), "other_not_actionable");
+  assert.equal(prospectCurrentBucket(verifiedWeakFacebook), "ready_facebook");
+  assert.equal(prospectCurrentBucket(verifiedNoOwnedForm), "ready_contact_form");
+  assert.deepEqual({ prospects, queue }, before);
 });
 
 test("current prospect and queue protections can only make Smart inventory more restrictive", () => {

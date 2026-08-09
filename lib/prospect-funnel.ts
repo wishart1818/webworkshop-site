@@ -170,8 +170,14 @@ export function prospectIsUnsent(prospect: Prospect) {
   return !prospectIsContacted(prospect) && !prospectIsSuppressed(prospect);
 }
 
+export function prospectHasCurrentRebuildOpportunity(prospect: Prospect) {
+  return websiteFitAllowsAutonomousOutreach(prospect);
+}
+
 export function prospectIsQualifiedUnsent(prospect: Prospect) {
-  return prospectIsQualified(prospect) && prospectIsUnsent(prospect);
+  return prospectIsQualified(prospect)
+    && prospectIsUnsent(prospect)
+    && prospectHasCurrentRebuildOpportunity(prospect);
 }
 
 export function prospectAttributeMatches(prospect: Prospect, attribute: ProspectAttributeKey) {
@@ -197,11 +203,7 @@ export function prospectCurrentBucket(prospect: Prospect): ProspectExclusiveBuck
   if (prospectIsDuplicate(prospect)) return "duplicate";
   if (prospectIsBadFit(prospect)) return "bad_fit";
   if (prospectIsWebsiteAlreadyStrong(prospect)) return "website_already_strong";
-  if (
-    prospectIsQualifiedUnsent(prospect)
-    && websiteFitAllowsAutonomousOutreach(prospect)
-    && prospectHasUsablePublicEmail(prospect)
-  ) return "ready_email";
+  if (prospectIsQualifiedUnsent(prospect) && prospectHasUsablePublicEmail(prospect)) return "ready_email";
   if (prospectIsQualifiedUnsent(prospect) && prospectHasFacebookPath(prospect)) return "ready_facebook";
   if (prospectIsQualifiedUnsent(prospect) && prospectHasInstagramPath(prospect)) return "ready_instagram";
   if (prospectIsQualifiedUnsent(prospect) && (prospectHasContactFormPath(prospect) || prospectHasQuoteFormPath(prospect))) return "ready_contact_form";

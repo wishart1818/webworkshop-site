@@ -520,7 +520,7 @@ test("priority scoring accounts for broader service-area reach", () => {
 
 test("prospect funnel totals reconcile and bucket counts match filtered lists", () => {
   const emailReady = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
-  const facebookReady = withPresenceGapReview({ ...structuredClone(seedProspects[1]), email: "" }, "no_owned_website", "No owned website.");
+  const facebookReady = withVerifiedNoOwnedWebsite({ ...structuredClone(seedProspects[1]), email: "" });
   facebookReady.facebookUrl = "https://facebook.com/example";
   facebookReady.recommendedContactMethod = "message_on_facebook";
   facebookReady.bestManualContactMethod = "facebook";
@@ -562,6 +562,152 @@ test("prospect funnel totals reconcile and bucket counts match filtered lists", 
   assert.ok(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "duplicate")).length >= 1);
   assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "already_contacted")).length, 1);
   assert.equal(prospects.filter((prospect) => prospectMatchesFunnelFilter(prospect, "website_already_strong")).length, 1);
+});
+
+test("every actionable written route requires a current evidence-backed rebuild opportunity", () => {
+  const verifiedWeak = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
+  const manualBase = {
+    ...verifiedWeak,
+    email: "",
+    contactEvidence: [],
+    facebookUrl: "",
+    instagramUrl: "",
+    linkedinUrl: "",
+    profileUrl: "",
+    contactFormUrl: "",
+    quoteFormUrl: "",
+    contactFormDetected: false,
+    quoteFormDetected: false,
+    recommendedContactMethod: "verify_email_manually" as const,
+    bestManualContactMethod: "unknown" as const,
+  } satisfies Prospect;
+  const inconclusiveBase = {
+    ...manualBase,
+    fitDisposition: "inconclusive_requires_review" as const,
+    websiteStatus: "inconclusive" as const,
+    websiteVerification: {
+      ...manualBase.websiteVerification!,
+      status: "inconclusive" as const,
+      confidence: "low" as const,
+      ownershipDecision: "unresolved" as const,
+      fit: {
+        disposition: "inconclusive_requires_review" as const,
+        reason: "Current ownership and website-fit evidence is incomplete.",
+        supportingEvidence: [],
+        confidence: "low" as const,
+        analysisOrigin: "metadata" as const,
+        evaluatedAt: new Date().toISOString(),
+      },
+    },
+  } satisfies Prospect;
+  const inconclusiveRoutes: Prospect[] = [
+    { ...inconclusiveBase, id: "inconclusive-facebook", facebookUrl: "https://facebook.com/example", recommendedContactMethod: "message_on_facebook" },
+    { ...inconclusiveBase, id: "inconclusive-instagram", instagramUrl: "https://instagram.com/example", profileUrl: "https://instagram.com/example", recommendedContactMethod: "message_on_social" },
+    { ...inconclusiveBase, id: "inconclusive-contact-form", contactFormUrl: "https://example.com/contact", contactFormDetected: true, recommendedContactMethod: "submit_contact_form" },
+    { ...inconclusiveBase, id: "inconclusive-quote-form", quoteFormUrl: "https://example.com/quote", quoteFormDetected: true },
+  ];
+  const legacyRoutes: Prospect[] = [
+    { ...manualBase, id: "legacy-facebook", websiteVerification: undefined, fitDisposition: "inconclusive_requires_review", facebookUrl: "https://facebook.com/legacy", recommendedContactMethod: "message_on_facebook" },
+    { ...manualBase, id: "legacy-contact-form", websiteVerification: undefined, fitDisposition: "inconclusive_requires_review", contactFormUrl: "https://example.com/contact", contactFormDetected: true, recommendedContactMethod: "submit_contact_form" },
+  ];
+
+  for (const prospect of [...inconclusiveRoutes, ...legacyRoutes]) {
+    assert.equal(prospectCurrentBucket(prospect), "other_not_actionable", prospect.id);
+    assert.equal(prospectMatchesFunnelFilter(prospect, "qualified_unsent"), false, prospect.id);
+  }
+
+  for (const disposition of ["adequate_existing_website", "strong_existing_website"] as const) {
+    const prospect = {
+      ...manualBase,
+      id: `${disposition}-all-routes`,
+      email: "owner@example.com",
+      facebookUrl: "https://facebook.com/example",
+      instagramUrl: "https://instagram.com/example",
+      contactFormUrl: "https://example.com/contact",
+      fitDisposition: disposition,
+      websiteVerification: {
+        ...manualBase.websiteVerification!,
+        fit: {
+          ...manualBase.websiteVerification!.fit!,
+          disposition,
+        },
+      },
+    } satisfies Prospect;
+    assert.equal(prospectCurrentBucket(prospect), "website_already_strong");
+    assert.equal(prospectMatchesFunnelFilter(prospect, "qualified_unsent"), false);
+  }
+});
+
+test("verified rebuild opportunities may use manual routes while email keeps its stricter evidence gate", () => {
+  const verifiedWeak = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
+  const manualBase = {
+    ...verifiedWeak,
+    email: "",
+    contactEvidence: [],
+    facebookUrl: "",
+    instagramUrl: "",
+    linkedinUrl: "",
+    profileUrl: "",
+    contactFormUrl: "",
+    quoteFormUrl: "",
+    contactFormDetected: false,
+    quoteFormDetected: false,
+    recommendedContactMethod: "verify_email_manually" as const,
+    bestManualContactMethod: "unknown" as const,
+  } satisfies Prospect;
+  const verifiedWeakFacebook = {
+    ...manualBase,
+    id: "verified-weak-facebook",
+    facebookUrl: "https://facebook.com/verified-weak",
+    recommendedContactMethod: "message_on_facebook" as const,
+  } satisfies Prospect;
+  const verifiedBrokenInstagram = {
+    ...manualBase,
+    id: "verified-broken-instagram",
+    websiteStatus: "confirmed_broken" as const,
+    fitDisposition: "broken_or_inactive_website" as const,
+    instagramUrl: "https://instagram.com/verified-broken",
+    profileUrl: "https://instagram.com/verified-broken",
+    recommendedContactMethod: "message_on_social" as const,
+    websiteVerification: {
+      ...manualBase.websiteVerification!,
+      status: "confirmed_broken" as const,
+      fit: {
+        ...manualBase.websiteVerification!.fit!,
+        disposition: "broken_or_inactive_website" as const,
+      },
+    },
+  } satisfies Prospect;
+  const verifiedNoOwnedForm = {
+    ...withVerifiedNoOwnedWebsite(structuredClone(seedProspects[1])),
+    id: "verified-no-owned-form",
+    email: "",
+    contactEvidence: [],
+    facebookUrl: "",
+    instagramUrl: "",
+    profileUrl: "",
+    contactFormUrl: "https://facebook.com/verified-business/contact",
+    contactFormDetected: true,
+    quoteFormUrl: "",
+    quoteFormDetected: false,
+    status: "Reviewed" as const,
+    priorityScore: 72,
+    recommendedContactMethod: "submit_contact_form" as const,
+    bestManualContactMethod: "contact_form" as const,
+  } satisfies Prospect;
+  const unverifiedEmail = {
+    ...manualBase,
+    id: "verified-fit-unverified-email",
+    email: "owner@example.com",
+    recommendedContactMethod: "send_email" as const,
+    bestManualContactMethod: "email" as const,
+  } satisfies Prospect;
+
+  assert.equal(prospectCurrentBucket(verifiedWeakFacebook), "ready_facebook");
+  assert.equal(prospectCurrentBucket(verifiedBrokenInstagram), "ready_instagram");
+  assert.equal(prospectCurrentBucket(verifiedNoOwnedForm), "ready_contact_form");
+  assert.equal(prospectCurrentBucket(unverifiedEmail), "other_not_actionable");
+  assert.equal(prospectMatchesFunnelFilter(unverifiedEmail, "ready_email"), false);
 });
 
 test("Phone Only requires a phone and no usable written contact path", () => {
