@@ -61,6 +61,12 @@ import {
   persistProspectInTransaction,
   saveProspect,
 } from "@/lib/prospect-repository";
+import {
+  websiteRepairProspectChangedPaths,
+  websiteRepairProspectStateDigest,
+  websiteRepairStateChangedPaths,
+  websiteRepairStateDigest,
+} from "@/lib/website-repair-snapshot";
 import { getTopProspectJob, listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
@@ -3512,11 +3518,23 @@ function assertAtomicRepairSnapshot(
   currentQueueItems: OutreachQueueItem[],
 ) {
   if (!currentProspect) throw new Error("A selected prospect no longer exists. Run a fresh dry run.");
-  if (JSON.stringify(currentProspect) !== JSON.stringify(mutation.expectedProspect)) {
-    throw new Error("A selected prospect changed after review. Run a fresh dry run.");
+  if (websiteRepairProspectStateDigest(currentProspect) !== websiteRepairProspectStateDigest(mutation.expectedProspect)) {
+    console.error("[website-record-repair] Atomic Prospect snapshot mismatch.", {
+      prospectId: mutation.expectedProspect.id,
+      businessName: mutation.expectedProspect.businessName,
+      changedPaths: websiteRepairProspectChangedPaths(mutation.expectedProspect, currentProspect),
+    });
+    throw new Error(`The selected record ${mutation.expectedProspect.businessName} (${mutation.expectedProspect.id}) changed after review. Run a fresh dry run.`);
   }
-  if (JSON.stringify(orderedQueueSnapshot(currentQueueItems)) !== JSON.stringify(orderedQueueSnapshot(mutation.expectedQueueItems))) {
-    throw new Error("A selected outreach queue changed after review. Run a fresh dry run.");
+  const currentQueueSnapshot = orderedQueueSnapshot(currentQueueItems);
+  const expectedQueueSnapshot = orderedQueueSnapshot(mutation.expectedQueueItems);
+  if (websiteRepairStateDigest(currentQueueSnapshot) !== websiteRepairStateDigest(expectedQueueSnapshot)) {
+    console.error("[website-record-repair] Atomic queue snapshot mismatch.", {
+      prospectId: mutation.expectedProspect.id,
+      businessName: mutation.expectedProspect.businessName,
+      changedPaths: websiteRepairStateChangedPaths(expectedQueueSnapshot, currentQueueSnapshot),
+    });
+    throw new Error(`The selected outreach queue for ${mutation.expectedProspect.businessName} (${mutation.expectedProspect.id}) changed after review. Run a fresh dry run.`);
   }
   const protectedReason = atomicRepairProtectionReason(currentProspect, currentQueueItems);
   if (protectedReason) throw new Error(`${protectedReason} Run a fresh dry run.`);

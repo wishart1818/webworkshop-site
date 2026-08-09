@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
   applySelectedWebsiteRepairsAtomically,
@@ -20,6 +20,10 @@ import {
 import { getProspect, listProspects, saveProspect } from "@/lib/prospect-repository";
 import { safeRecordAudit } from "@/lib/operational-controls";
 import { verifyProspectWebsite, type WebsiteVerificationDependencies } from "@/lib/site-analysis";
+import {
+  websiteRepairProspectStateDigest,
+  websiteRepairStateDigest,
+} from "@/lib/website-repair-snapshot";
 
 const protectedProspectStatuses = new Set<Prospect["status"]>([
   "Contacted",
@@ -881,34 +885,6 @@ async function inspectCandidatesBounded(
   return inspected;
 }
 
-function canonicalRepairReviewValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalRepairReviewValue);
-  if (!value || typeof value !== "object") return value;
-  const record = value as Record<string, unknown>;
-  return Object.fromEntries(
-    Object.keys(record)
-      .sort()
-      .map((key) => [key, canonicalRepairReviewValue(record[key])]),
-  );
-}
-
-function repairStateDigest(value: unknown) {
-  return createHash("sha256")
-    .update(JSON.stringify(canonicalRepairReviewValue(value)))
-    .digest("hex");
-}
-
-function repairProspectStateDigest(prospect: Prospect) {
-  return repairStateDigest({
-    ...prospect,
-    notes: [...prospect.notes].sort(),
-    activities: [...prospect.activities].sort((left, right) => left.id.localeCompare(right.id)),
-    contactEvidence: [...prospect.contactEvidence].sort((left, right) => (
-      JSON.stringify(canonicalRepairReviewValue(left)).localeCompare(JSON.stringify(canonicalRepairReviewValue(right)))
-    )),
-  });
-}
-
 function orderedRepairQueueSnapshot(items: OutreachQueueItem[]) {
   return [...items].sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -1256,8 +1232,8 @@ export async function auditExistingWebsiteRecords(input: {
       if (protectedReason) {
         throw new Error(`${candidate.record.businessName} is now protected. ${protectedReason} Run a fresh dry run.`);
       }
-      const currentProspectDigest = repairProspectStateDigest(currentProspect);
-      const currentQueueDigest = repairStateDigest(orderedRepairQueueSnapshot(currentQueueItems));
+      const currentProspectDigest = websiteRepairProspectStateDigest(currentProspect);
+      const currentQueueDigest = websiteRepairStateDigest(orderedRepairQueueSnapshot(currentQueueItems));
       const queueReason = reviewedRepairQueueReason(candidate.record);
       if (
         currentProspectDigest === candidate.postApplyProspectDigest
@@ -1282,7 +1258,7 @@ export async function auditExistingWebsiteRecords(input: {
         applyReviewedProspectPatch(currentProspect, candidate.proposedPatch!, candidate.record.proposedOutcome),
         true,
       );
-      if (repairProspectStateDigest(proposedProspect) !== candidate.postApplyProspectDigest) {
+      if (websiteRepairProspectStateDigest(proposedProspect) !== candidate.postApplyProspectDigest) {
         throw new Error("The reviewed website-repair proposal is invalid. Run a fresh dry run.");
       }
       mutations.push({
@@ -1445,9 +1421,9 @@ export async function auditExistingWebsiteRecords(input: {
       return {
         prospectId: candidate.prospect.id,
         record: candidate.record,
-        currentProspectDigest: repairProspectStateDigest(candidate.prospect),
-        currentQueueDigest: repairStateDigest(orderedRepairQueueSnapshot(queueItems)),
-        postApplyProspectDigest: repairProspectStateDigest(postApplyProspect),
+        currentProspectDigest: websiteRepairProspectStateDigest(candidate.prospect),
+        currentQueueDigest: websiteRepairStateDigest(orderedRepairQueueSnapshot(queueItems)),
+        postApplyProspectDigest: websiteRepairProspectStateDigest(postApplyProspect),
         proposedPatch,
       };
     }),

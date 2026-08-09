@@ -1235,6 +1235,110 @@ test("two distinct reviewed batches can be applied in one bounded cleanup sessio
   }
 });
 
+test("a production-shaped nine-record exclusion batch applies atomically and leaves legacy scope", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospects = Array.from({ length: 9 }, (_, index) => {
+    const original = legacyProspect({
+      id: `production-shaped-exclusion-${index + 1}`,
+      notes: index % 2 === 0 ? [`Safe note B${index}.`, `Safe note A${index}.`] : [],
+      activities: index % 3 === 0 ? [
+        { id: `activity-b-${index}`, type: "analysis", label: "Second website review event.", at: now },
+        { id: `activity-a-${index}`, type: "analysis", label: "First website review event.", at: now },
+      ] : [],
+      contactEvidence: index % 2 === 0 ? [] : [{
+        kind: "phone",
+        value: `+16145550${String(index).padStart(3, "0")}`,
+        sourceUrl: "https://truecleanprowash.com/contact",
+        extractionMethod: "tel",
+        confidence: "medium",
+        domainMatchesBusiness: true,
+        discoveredAt: now,
+      }],
+    });
+    return index % 4 === 0
+      ? { ...original, outreach: { ...generateOutreach(original, "", postalEnvironment), approved: true } }
+      : original;
+  });
+  const queue = prospects.flatMap((prospect, index) => (
+    index % 3 === 0 ? [] : [queueItem(prospect, index % 3 === 1 ? "Needs Review" : "Queued")]
+  ));
+  const contactsBefore = new Map(prospects.map((prospect) => [prospect.id, contactState(prospect)]));
+  setProspectMemoryForTests(prospects);
+  setOutreachQueueMemoryForTests(queue);
+  try {
+    let applying = false;
+    let applyCrawlCalls = 0;
+    const base = verificationDependencies();
+    const fetchImpl = base.fetch!;
+    const dependencies = {
+      ...base,
+      fetch: (async (...args: Parameters<typeof fetch>) => {
+        if (applying) {
+          applyCrawlCalls += 1;
+          throw new Error("Atomic Apply must not crawl external websites.");
+        }
+        return fetchImpl(...args);
+      }) as typeof fetch,
+    };
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 20,
+    });
+    const selectedProspectIds = review.records
+      .filter((record) => record.highConfidenceExclusionEligible)
+      .map((record) => record.prospectId);
+    assert.equal(review.records.length, 9);
+    assert.equal(selectedProspectIds.length, 9);
+
+    applying = true;
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds,
+      snapshotSecret,
+      limit: 20,
+    });
+    assert.equal(result.mode, "applied");
+    assert.equal(result.selectedCount, 9);
+    assert.equal(result.changed, 9);
+    assert.equal(result.nothingSent, true);
+    assert.equal(applyCrawlCalls, 0);
+
+    const replay = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds,
+      snapshotSecret,
+      limit: 20,
+    });
+    assert.equal(replay.changed, 0);
+    assert.equal(applyCrawlCalls, 0);
+
+    applying = false;
+    const fresh = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret, limit: 20 });
+    assert.equal(fresh.candidates, 0);
+    for (const prospect of prospects) {
+      const saved = await getProspect(prospect.id);
+      assert.equal(saved?.websiteStatus, "usable");
+      assert.equal(saved?.fitDisposition, "adequate_existing_website");
+      assert.deepEqual(contactState(saved!), contactsBefore.get(prospect.id));
+    }
+    assert.equal(memoryAuditEventsForTests().some((event) => /provider.*send|outreach.*send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
 test("unselected external evidence changes do not invalidate a selected reviewed repair", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
@@ -1422,6 +1526,48 @@ test("multi-record selective apply fails before mutation when a later record bec
     );
     assert.deepEqual(await Promise.all([getProspect(first.id), getProspect(later.id)]), prospectsBefore);
     assert.deepEqual(outreachQueueMemoryForTests(), queueBeforeApply);
+    assert.equal(memoryAuditEventsForTests().some((event) => event.outcome === "success"), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("a nonterminal queue snapshot change still fails closed before website repair", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospect = legacyProspect({ id: "queue-snapshot-change" });
+  const queue = queueItem(prospect);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queue]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+    });
+    const changedQueue = {
+      ...queue,
+      notes: "A new review-only queue note was recorded.",
+      updatedAt: "2026-07-28T15:01:00.000Z",
+    };
+    setOutreachQueueMemoryForTests([changedQueue]);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: true,
+        confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+        dependencies,
+        reviewToken: review.reviewToken,
+        selectedProspectIds: [prospect.id],
+        snapshotSecret,
+      }),
+      /outreach queue.*changed after review/i,
+    );
+    assert.deepEqual(await getProspect(prospect.id), prospect);
+    assert.deepEqual(outreachQueueMemoryForTests(), [changedQueue]);
     assert.equal(memoryAuditEventsForTests().some((event) => event.outcome === "success"), false);
   } finally {
     resetProspectMemoryForTests();
