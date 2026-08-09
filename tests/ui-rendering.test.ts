@@ -309,7 +309,7 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(engineSource, /const prospectId = selected\.id[\s\S]*action: "recheck_website", prospectId/);
   assert.match(verificationRoute, /confirm_usable_not_fit/);
   assert.match(verificationRoute, /apply_existing_record_repair/);
-  assert.match(verificationRoute, /safeText\(input\.reviewToken, websiteRepairReviewTokenMaxLength\)/);
+  assert.match(verificationRoute, /safeReviewToken\(input\.reviewToken\)/);
   assert.match(testCenterSource, /Controlled Outreach Launch Readiness/);
   assert.match(testCenterSource, /Enable Controlled Email Pilot/);
   assert.match(testCenterSource, /lastAction\.controlledReadiness\.activationConfirmation/);
@@ -331,6 +331,10 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(testCenterSource, /not persisted by website exclusion repair/);
   assert.match(testCenterSource, /not required for website exclusion/);
   assert.match(testCenterSource, /Website exclusions persist only the reviewed website state/);
+  assert.match(testCenterSource, /websiteAuditRequestInFlight = useRef\(false\)/);
+  assert.match(testCenterSource, /if \(websiteAuditRequestInFlight\.current\) return;[\s\S]*websiteAuditRequestInFlight\.current = true;[\s\S]*fetch\("\/api\/engine\/website-verification"/);
+  assert.match(testCenterSource, /finally \{[\s\S]*websiteAuditRequestInFlight\.current = false;[\s\S]*setActionState\("idle"\)/);
+  assert.match(testCenterSource, /aria-busy=\{busy\}[\s\S]*Apply Selected Repairs/);
   assert.match(testCenterSource, /disabled=\{busy \|\| !record\.selectionEligible\}/);
   assert.match(testCenterSource, /Apply \{selectedWebsiteRepairRecords\.length\} selected website-record repair/);
   assert.match(verificationRoute, /website_record_audit_exact/);

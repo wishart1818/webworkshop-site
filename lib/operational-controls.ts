@@ -11,6 +11,21 @@ type MemoryBucket = { count: number; windowStart: number };
 type MemoryAudit = AuditInput & { id: string; createdAt: string };
 export type AuditEventView = AuditInput & { id: string; createdAt: string };
 
+export class OperationalRateLimitError extends Error {
+  readonly code = "RATE_LIMITED";
+  readonly retryAfterSeconds: number;
+  readonly resetsAt: string;
+  readonly limit: number;
+
+  constructor(input: { retryAfterSeconds: number; resetsAt: string; limit: number }) {
+    super("Rate limit reached. Please wait before trying again.");
+    this.name = "OperationalRateLimitError";
+    this.retryAfterSeconds = input.retryAfterSeconds;
+    this.resetsAt = input.resetsAt;
+    this.limit = input.limit;
+  }
+}
+
 const globalOperations = globalThis as typeof globalThis & {
   prisma?: PrismaClient;
   rateLimitBuckets?: Map<string, MemoryBucket>;
@@ -37,6 +52,7 @@ export async function enforceRateLimit(input: {
   windowMs: number;
 }) {
   const windowStart = bucketStart(input.windowMs);
+  const resetsAt = new Date(windowStart + input.windowMs).toISOString();
   let count: number;
 
   if (hasDatabase()) {
@@ -81,10 +97,14 @@ export async function enforceRateLimit(input: {
       subject: input.subject,
       metadata: { reason: "rate_limit", count, limit: input.limit },
     });
-    throw new Error("Rate limit reached. Please wait before trying again.");
+    throw new OperationalRateLimitError({
+      retryAfterSeconds: Math.max(1, Math.ceil((windowStart + input.windowMs - Date.now()) / 1000)),
+      resetsAt,
+      limit: input.limit,
+    });
   }
 
-  return { count, remaining: input.limit - count, resetsAt: new Date(windowStart + input.windowMs).toISOString() };
+  return { count, remaining: input.limit - count, resetsAt };
 }
 
 export async function recordAudit(input: AuditInput) {

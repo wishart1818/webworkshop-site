@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import type { OperatorActionResult, OperatorTestCenterPayload } from "@/lib/operator-test-center";
 
@@ -67,6 +67,7 @@ export function OperatorTestCenterWorkspace() {
   const [websiteRepairConfirmation, setWebsiteRepairConfirmation] = useState("");
   const [websiteAuditProspectId, setWebsiteAuditProspectId] = useState("");
   const [selectedWebsiteRepairProspectIds, setSelectedWebsiteRepairProspectIds] = useState<string[]>([]);
+  const websiteAuditRequestInFlight = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,6 +213,8 @@ export function OperatorTestCenterWorkspace() {
     offset?: number;
     prospectId?: string;
   } = {}) {
+    if (websiteAuditRequestInFlight.current) return;
+    websiteAuditRequestInFlight.current = true;
     const apply = options.apply === true;
     const reviewedBatch = lastAction?.websiteRepair;
     setActionState("running");
@@ -260,6 +263,7 @@ export function OperatorTestCenterWorkspace() {
     } catch (auditError) {
       setError(auditError instanceof Error ? auditError.message : "Website-record audit failed safely.");
     } finally {
+      websiteAuditRequestInFlight.current = false;
       setActionState("idle");
     }
   }
@@ -946,6 +950,7 @@ export function OperatorTestCenterWorkspace() {
               </label>
               <div className="engine-inline-actions">
                 <button
+                  aria-busy={busy}
                   className="engine-button engine-button--primary"
                   disabled={busy || selectedWebsiteRepairRecords.length === 0 || websiteRepairConfirmation !== "REPAIR VERIFIED WEBSITE RECORDS"}
                   onClick={() => void runWebsiteRecordAudit({ apply: true })}

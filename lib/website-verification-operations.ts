@@ -31,7 +31,7 @@ const protectedProspectStatuses = new Set<Prospect["status"]>([
 const transientLegacyEvidence = /\b(?:http\s*(?:403|408|429|500|502|503|504|508)|timeout|timed out|fetch failed|dns|enotfound|connection reset|econnreset|crawler|bot|waf|cloudflare|unreachable)\b/i;
 const websiteRepairReviewMaxAgeMs = 15 * 60 * 1000;
 const websiteRepairRequestBatchSize = 20;
-const websiteRepairRequestBatchLimit = 25;
+export const websiteRepairRequestBatchLimit = 25;
 const websiteRepairConcurrency = 3;
 const websiteRepairAttemptLimit = 3;
 const websiteRepairContactPageLimit = 2;
@@ -102,6 +102,7 @@ export type ExistingWebsiteRepairReport = {
 };
 
 export const websiteRepairReviewTokenMaxLength = 240_000;
+export const websiteRepairConfirmationText = "REPAIR VERIFIED WEBSITE RECORDS";
 const websiteRepairReviewPayloadMaxLength = 1_000_000;
 
 const websiteRepairReportedFields = [
@@ -1187,8 +1188,8 @@ export async function auditExistingWebsiteRecords(input: {
   selectedProspectIds?: string[];
   snapshotSecret?: string;
 }): Promise<ExistingWebsiteRepairReport> {
-  if (input.apply && input.confirmation !== "REPAIR VERIFIED WEBSITE RECORDS") {
-    throw new Error("Type REPAIR VERIFIED WEBSITE RECORDS to apply this audit.");
+  if (input.apply && input.confirmation !== websiteRepairConfirmationText) {
+    throw new Error(`Type ${websiteRepairConfirmationText} to apply this audit.`);
   }
   const exactProspectId = input.prospectId?.trim() ?? "";
   if (input.apply && exactProspectId) {
