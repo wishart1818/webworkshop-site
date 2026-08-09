@@ -24,8 +24,9 @@ import {
   resetProspectMemoryForTests,
   setProspectMemoryForTests,
 } from "../lib/prospect-repository";
-import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
+import { enforceRateLimit, memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
 import { verifyProspectWebsite } from "../lib/site-analysis";
+import { enforceWebsiteRepairApplyRateLimit } from "../lib/website-repair-rate-limit";
 import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
@@ -1157,6 +1158,76 @@ test("selective repair changes only the explicitly selected signed-snapshot reco
     assert.deepEqual(queueAfter.find((item) => item.id === unselectedQueue.id), unselectedQueueBefore);
     assert.equal(result.nothingSent, true);
     assert.equal(memoryAuditEventsForTests().some((event) => /send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("two distinct reviewed batches can be applied in one bounded cleanup session", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const first = legacyProspect({ id: "bounded-session-1" });
+  const second = legacyProspect({ id: "bounded-session-2" });
+  setProspectMemoryForTests([first, second]);
+  setOutreachQueueMemoryForTests([queueItem(first), queueItem(second)]);
+  try {
+    const dependencies = verificationDependencies();
+    let cleanupAttemptCount = 0;
+    const localEnforce: typeof enforceRateLimit = async (input) => {
+      cleanupAttemptCount += 1;
+      return {
+        count: cleanupAttemptCount,
+        remaining: input.limit - cleanupAttemptCount,
+        resetsAt: new Date(Date.parse(now) + input.windowMs).toISOString(),
+      };
+    };
+    const firstReview = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 1,
+      offset: 0,
+    });
+    const secondReview = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies,
+      snapshotSecret,
+      limit: 1,
+      offset: 1,
+    });
+    assert.notEqual(firstReview.records[0]?.prospectId, secondReview.records[0]?.prospectId);
+
+    const firstLimit = await enforceWebsiteRepairApplyRateLimit(localEnforce);
+    const firstResult = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: firstReview.reviewToken,
+      selectedProspectIds: [firstReview.records[0]!.prospectId],
+      snapshotSecret,
+      limit: 1,
+      offset: 0,
+    });
+    const secondLimit = await enforceWebsiteRepairApplyRateLimit(localEnforce);
+    const secondResult = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: secondReview.reviewToken,
+      selectedProspectIds: [secondReview.records[0]!.prospectId],
+      snapshotSecret,
+      limit: 1,
+      offset: 1,
+    });
+
+    assert.equal(firstLimit.count, 1);
+    assert.equal(secondLimit.count, 2);
+    assert.equal(firstResult.changed, 1);
+    assert.equal(secondResult.changed, 1);
+    assert.equal(memoryAuditEventsForTests().some((event) => /send|provider/i.test(event.action)), false);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();

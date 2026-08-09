@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
-import { enforceRateLimit, safeRecordAudit } from "@/lib/operational-controls";
+import { enforceRateLimit, OperationalRateLimitError, safeRecordAudit } from "@/lib/operational-controls";
 import {
   auditExistingWebsiteRecords,
   confirmUsableWebsiteNotFit,
   recheckProspectWebsite,
   setProspectWebsiteFitDisposition,
+  websiteRepairConfirmationText,
+  websiteRepairRequestBatchLimit,
   websiteRepairReviewTokenMaxLength,
 } from "@/lib/website-verification-operations";
+import { enforceWebsiteRepairApplyRateLimit } from "@/lib/website-repair-rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,13 +37,33 @@ function safeOptionalInteger(value: unknown, label: string) {
 
 function safeSelectedProspectIds(value: unknown) {
   if (!Array.isArray(value)) throw new Error("Select at least one reviewed website record before applying repairs.");
+  if (value.length === 0) throw new Error("Select at least one reviewed website record before applying repairs.");
   if (value.length > 25) throw new Error("The selected website-record set exceeds the reviewed batch limit.");
-  return value.map((prospectId) => {
+  const selected = value.map((prospectId) => {
     if (typeof prospectId !== "string") throw new Error("A selected prospect ID is invalid.");
     const normalized = prospectId.trim();
     if (!normalized || normalized.length > 100) throw new Error("A selected prospect ID is invalid.");
     return normalized;
   });
+  if (new Set(selected).size !== selected.length) throw new Error("Selected prospect IDs must be unique.");
+  return selected;
+}
+
+function safeReviewToken(value: unknown) {
+  if (typeof value !== "string") throw new Error("A fresh signed website-record review snapshot is required.");
+  const token = value.trim();
+  if (!token) throw new Error("A fresh signed website-record review snapshot is required.");
+  if (token.length > websiteRepairReviewTokenMaxLength) {
+    throw new Error("The signed website-record review snapshot exceeds the safe size limit.");
+  }
+  return token;
+}
+
+function rateLimitOperationLabel(action: string) {
+  if (action === "apply_existing_record_repair") return "Website-record repair request";
+  if (action === "audit_existing_records") return "Website-record audit request";
+  if (action === "recheck_website") return "Website re-check request";
+  return "Website-verification request";
 }
 
 export async function POST(request: Request) {
@@ -87,16 +110,43 @@ export async function POST(request: Request) {
         prospectId,
       }));
     }
-    await enforceRateLimit({ action: "website_record_repair", subject: "operator", limit: 1, windowMs: 60 * 60 * 1000 });
+    const confirmation = safeText(input.confirmation, 80);
+    const limit = safeOptionalInteger(input.limit, "Batch size");
+    const offset = safeOptionalInteger(input.offset, "Audit offset");
+    const reviewToken = safeReviewToken(input.reviewToken);
+    const selectedProspectIds = safeSelectedProspectIds(input.selectedProspectIds);
+    if (limit !== undefined && (limit < 1 || limit > websiteRepairRequestBatchLimit)) {
+      throw new Error(`Website-record audit batch size must be between 1 and ${websiteRepairRequestBatchLimit}.`);
+    }
+    if (offset !== undefined && offset < 0) {
+      throw new Error("Website-record audit offset must be a non-negative integer.");
+    }
+    if (confirmation !== websiteRepairConfirmationText) {
+      throw new Error(`Type ${websiteRepairConfirmationText} to apply this audit.`);
+    }
+    await enforceWebsiteRepairApplyRateLimit();
     return NextResponse.json(await auditExistingWebsiteRecords({
       apply: true,
-      confirmation: safeText(input.confirmation, 80),
-      limit: safeOptionalInteger(input.limit, "Batch size"),
-      offset: safeOptionalInteger(input.offset, "Audit offset"),
-      reviewToken: safeText(input.reviewToken, websiteRepairReviewTokenMaxLength),
-      selectedProspectIds: safeSelectedProspectIds(input.selectedProspectIds),
+      confirmation,
+      limit,
+      offset,
+      reviewToken,
+      selectedProspectIds,
     }));
   } catch (error) {
+    if (error instanceof OperationalRateLimitError) {
+      return NextResponse.json({
+        error: `${rateLimitOperationLabel(action)} limit reached. Try again in ${error.retryAfterSeconds} seconds. No records were changed and nothing was sent.`,
+        code: error.code,
+        retryAfterSeconds: error.retryAfterSeconds,
+        resetsAt: error.resetsAt,
+        changed: 0,
+        nothingSent: true,
+      }, {
+        status: 429,
+        headers: { "Retry-After": String(error.retryAfterSeconds) },
+      });
+    }
     const message = error instanceof Error ? error.message : "Website verification failed safely.";
     const expected = /required|supported|confirmation|not found|cannot be changed|currently verified|rate limit|provider attempt|awaiting reconciliation|dry run|read-only|review|snapshot|evidence changed|signing is not configured|batch size|batch limit|audit offset|candidate range|prospect ID|selected record|selected prospect/i.test(message);
     if (!expected) console.error("[website-verification] Safe operation failed.", {
