@@ -17,7 +17,8 @@ import {
   generateOutreach,
   type Prospect,
 } from "../lib/prospect-engine";
-import { prospectQualificationBlockReasons } from "../lib/prospect-qualification";
+import { prospectCurrentBucket } from "../lib/prospect-funnel";
+import { prospectQualificationBlockReasons, websiteFitAllowsAutonomousOutreach } from "../lib/prospect-qualification";
 import {
   getProspect,
   resetProspectMemoryForTests,
@@ -143,10 +144,10 @@ function userAgent(init?: RequestInit) {
   return new Headers(init?.headers).get("user-agent") ?? "";
 }
 
-function verificationDependencies(contactEmail = "info@truecleanprowash.com") {
+function verificationDependencies(contactEmail = "info@truecleanprowash.com", businessName = "True Clean Prowash") {
   const homepage = `
     <!doctype html><html><head>
-      <title>True Clean Prowash | Exterior Cleaning in Columbus</title>
+      <title>${businessName} | Exterior Cleaning in Columbus</title>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <link rel="canonical" href="https://truecleanprowash.com/" />
     </head><body>
@@ -214,6 +215,74 @@ function inconclusiveWebsiteDependencies() {
   };
 }
 
+function contactEnrichmentDependencies() {
+  const base = verificationDependencies("new-contact@truecleanprowash.com");
+  const baseFetch = base.fetch!;
+  return {
+    ...base,
+    fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (new URL(requestUrl(input)).pathname === "/contact") {
+        return new Response(`
+    <!doctype html><html><head><title>Contact True Clean Prowash</title></head><body>
+            <h1>Request an exterior cleaning estimate</h1>
+            <a href="mailto:new-contact@truecleanprowash.com">new-contact@truecleanprowash.com</a>
+            <a href="https://www.facebook.com/truecleanprowash">Facebook</a>
+            <a href="https://www.instagram.com/accounts/login">Instagram</a>
+            <a href="https://www.linkedin.com/company/truecleanprowash">LinkedIn</a>
+            <form action="/free-estimate"><input name="email" /><button>Request estimate</button></form>
+          </body></html>
+        `, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch,
+  };
+}
+
+function noEmailEvidenceDependencies() {
+  const base = verificationDependencies();
+  const baseFetch = base.fetch!;
+  return {
+    ...base,
+    fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (new URL(requestUrl(input)).pathname === "/contact") {
+        return new Response(`
+          <!doctype html><html><head><title>Contact True Clean Prowash</title></head><body>
+            <h1>Request an exterior cleaning estimate</h1>
+            <form action="/quote"><input name="phone" /><button>Request estimate</button></form>
+          </body></html>
+        `, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch,
+  };
+}
+
+const preservedContactFields = [
+  "email",
+  "phone",
+  "contactPageUrl",
+  "contactFormUrl",
+  "quoteFormUrl",
+  "contactFormDetected",
+  "quoteFormDetected",
+  "facebookUrl",
+  "instagramUrl",
+  "linkedinUrl",
+  "xUrl",
+  "youtubeUrl",
+  "contactPersonName",
+  "contactConfidence",
+  "contactEvidence",
+  "contactDiscoveryNotes",
+  "recommendedContactMethod",
+  "bestManualContactMethod",
+  "address",
+] as const satisfies readonly (keyof Prospect)[];
+
+function contactState(prospect: Prospect) {
+  return Object.fromEntries(preservedContactFields.map((field) => [field, structuredClone(prospect[field])]));
+}
+
 function tamperReviewedProposal(token: string, value: string) {
   const [encodedPayload, signature] = token.split(".");
   const payload = JSON.parse(inflateRawSync(Buffer.from(encodedPayload!, "base64url")).toString("utf8")) as {
@@ -221,9 +290,9 @@ function tamperReviewedProposal(token: string, value: string) {
       proposedPatch: { entries: Array<{ field: string; unset: boolean; value?: unknown }> } | null;
     }>;
   };
-  const emailEntry = payload.records[0]?.proposedPatch?.entries.find((entry) => entry.field === "email");
-  assert.ok(emailEntry);
-  emailEntry.value = value;
+  const websiteStatusEntry = payload.records[0]?.proposedPatch?.entries.find((entry) => entry.field === "websiteStatus");
+  assert.ok(websiteStatusEntry);
+  websiteStatusEntry.value = value;
   return `${deflateRawSync(Buffer.from(JSON.stringify(payload)), { level: 9 }).toString("base64url")}.${signature}`;
 }
 
@@ -268,10 +337,8 @@ test("existing-record audit is dry-run only until exact confirmation is supplied
     assert.equal(dryRun.records[0]?.highConfidenceExclusionEligible, true);
     assert.match(dryRun.records[0]?.exactReason ?? "", /regardless of business score/i);
     assert.match(dryRun.records[0]?.evidence ?? "", /Stored trigger: unreachable_website.*HTTP 508/i);
-    assert.deepEqual(
-      dryRun.records[0]?.fieldChanges.find((change) => change.field === "email"),
-      { field: "email", oldValue: "not recorded", proposedValue: "info@truecleanprowash.com" },
-    );
+    assert.equal(dryRun.records[0]?.fieldChanges.some((change) => change.field === "email"), false);
+    assert.match(dryRun.records[0]?.newlyFoundContactPaths.join(" ") ?? "", /info@truecleanprowash\.com/i);
     assert.ok(dryRun.reviewToken.length > 40);
     assert.equal((await getProspect(prospect.id))?.websiteStatus, "unreachable_website");
     assert.equal(outreachQueueMemoryForTests()[0]?.status, "Queued");
@@ -334,7 +401,7 @@ test("confirmed repair preserves history, revokes stale approval, and returns th
     assert.equal(result.mode, "applied");
     assert.equal(result.changed, 1);
     assert.equal(saved?.websiteStatus, "usable");
-    assert.equal(saved?.email, "info@truecleanprowash.com");
+    assert.equal(saved?.email, prospect.email);
     assert.ok(saved?.notes.includes("Original operator note."));
     assert.ok(saved?.activities.some((item) => item.id === "activity-original"));
     assert.equal(saved?.outreach?.approved, false);
@@ -390,13 +457,400 @@ test("repair apply uses the signed reviewed proposal without another website cra
     assert.equal(result.changed, 1);
     assert.equal(saved?.websiteStatus, review.records[0]?.proposedStatus);
     assert.equal(saved?.fitDisposition, review.records[0]?.proposedDisposition);
-    assert.equal(saved?.email, "info@truecleanprowash.com");
-    assert.deepEqual(saved?.email, reviewedPatchValue(review.reviewToken, "email"));
+    assert.equal(saved?.email, prospect.email);
     assert.deepEqual(saved?.websiteVerification, reviewedPatchValue(review.reviewToken, "websiteVerification"));
-    assert.deepEqual(saved?.analysis, reviewedPatchValue(review.reviewToken, "analysis"));
+    assert.deepEqual(saved?.analysis, prospect.analysis);
     assert.equal(applyCrawlCalls, 0);
     assert.equal(result.nothingSent, true);
     assert.equal(memoryAuditEventsForTests().some((event) => /send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("adequate-site exclusion persists only website state and preserves all discovered and stored contact data", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospect = legacyProspect({
+    id: "website-only-adequate",
+    email: "stored-contact@example.net",
+    contactPageUrl: "",
+    contactFormUrl: "https://example.net/form",
+    quoteFormUrl: "https://example.net/quote",
+    contactFormDetected: true,
+    quoteFormDetected: true,
+    facebookUrl: "",
+    instagramUrl: "https://instagram.com/stored-business",
+    linkedinUrl: "https://linkedin.com/company/stored-business",
+    xUrl: "https://x.com/stored-business",
+    youtubeUrl: "https://youtube.com/@stored-business",
+    contactPersonName: "Verified Contact",
+    contactConfidence: "medium",
+    contactEvidence: [{
+      kind: "email",
+      value: "stored-contact@example.net",
+      sourceUrl: "https://example.net/contact",
+      extractionMethod: "visible_text",
+      confidence: "medium",
+      domainMatchesBusiness: false,
+      discoveredAt: "2026-07-01T12:00:00.000Z",
+      sourceType: "provider",
+      firstParty: false,
+      decision: "manual_review_required",
+      decisionReason: "Stored legacy contact evidence requires separate review.",
+    }],
+    contactDiscoveryNotes: ["Existing contact research note."],
+    recommendedContactMethod: "verify_email_manually",
+    bestManualContactMethod: "facebook",
+    address: "123 Existing Contact Ave, Columbus, OH",
+  });
+  const queue = queueItem(prospect);
+  const contactBefore = contactState(prospect);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queue]);
+  try {
+    const dependencies = contactEnrichmentDependencies();
+    const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
+    const record = review.records[0]!;
+    assert.equal(record.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.equal(record.highConfidenceExclusionEligible, true);
+    assert.equal(record.contactEvidenceSufficient, true);
+    assert.equal(record.changedFields.every((field) => [
+      "website",
+      "websiteStatus",
+      "websiteStatusDetail",
+      "websiteVerification",
+      "fitDisposition",
+    ].includes(field)), true);
+    assert.equal(record.changedFields.some((field) => preservedContactFields.includes(field as typeof preservedContactFields[number])), false);
+    assert.equal(record.proposedEmail, prospect.email);
+    assert.match(record.newlyFoundContactPaths.join(" "), /contact page: https:\/\/truecleanprowash\.com\/contact/i);
+    assert.match(record.newlyFoundContactPaths.join(" "), /facebook\.com\/truecleanprowash/i);
+
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    const saved = await getProspect(prospect.id);
+    assert.equal(result.changed, 1);
+    assert.ok(saved);
+    assert.deepEqual(contactState(saved!), contactBefore);
+    assert.equal(saved?.instagramUrl, "https://instagram.com/stored-business");
+    assert.equal(saved?.classification, prospect.classification);
+    assert.equal(saved?.prospectType, prospect.prospectType);
+    assert.deepEqual(saved?.notes, prospect.notes);
+    assert.deepEqual(saved?.activities, prospect.activities);
+    assert.equal(saved?.websiteStatus, "usable");
+    assert.equal(saved?.fitDisposition, "adequate_existing_website");
+    assert.equal(saved?.websiteVerification?.version, "website-verification-v2");
+    assert.equal(saved?.websiteVerification?.freshness, undefined);
+    assert.equal(result.nothingSent, true);
+    assert.equal(memoryAuditEventsForTests().some((event) => /provider.*send|outreach.*send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("strong-site exclusion uses the same website-only allowlist", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const dependencies = contactEnrichmentDependencies();
+  const baseline = await verifyProspectWebsite(legacyProspect({ id: "strong-baseline" }), dependencies);
+  const prospect = legacyProspect({
+    id: "website-only-strong",
+    websiteStatus: "usable",
+    websiteStatusDetail: "Legacy strong-site review requires v2 migration.",
+    fitDisposition: "strong_existing_website",
+    websiteVerification: {
+      ...baseline.report,
+      version: "website-verification-v1",
+      fit: {
+        disposition: "strong_existing_website",
+        reason: "A rendered operator review confirmed a complete existing website.",
+        supportingEvidence: ["The current site has complete branding, services, and customer contact paths."],
+        confidence: "high",
+        analysisOrigin: "rendered_review",
+        evaluatedAt: now,
+      },
+    },
+    email: "stored@example.net",
+    instagramUrl: "https://instagram.com/stored-strong-site",
+    contactEvidence: [],
+    recommendedContactMethod: "verify_email_manually",
+    bestManualContactMethod: "instagram",
+  });
+  const contactBefore = contactState(prospect);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect, "Needs Review")]);
+  try {
+    const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
+    assert.equal(review.records[0]?.proposedDisposition, "strong_existing_website");
+    assert.equal(review.records[0]?.highConfidenceExclusionEligible, true);
+    assert.equal(review.records[0]?.changedFields.some((field) => preservedContactFields.includes(field as typeof preservedContactFields[number])), false);
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    const saved = await getProspect(prospect.id);
+    assert.equal(result.changed, 1);
+    assert.ok(saved);
+    assert.equal(saved?.fitDisposition, "strong_existing_website");
+    assert.equal(saved?.websiteVerification?.version, "website-verification-v2");
+    assert.deepEqual(contactState(saved!), contactBefore);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("contact evidence is irrelevant to a valid high-confidence website exclusion", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({ id: "exclusion-without-contact-evidence", phone: "", email: "", contactEvidence: [] });
+  const contactBefore = contactState(prospect);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect, "Needs Review")]);
+  try {
+    const dependencies = noEmailEvidenceDependencies();
+    const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
+    assert.equal(review.records[0]?.contactEvidenceSufficient, false);
+    assert.equal(review.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.equal(review.records[0]?.highConfidenceExclusionEligible, true);
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    const saved = await getProspect(prospect.id);
+    assert.equal(result.changed, 1);
+    assert.ok(saved);
+    assert.deepEqual(contactState(saved!), contactBefore);
+    assert.equal(saved?.fitDisposition, "adequate_existing_website");
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("website-only exclusion persists a genuine owned canonical correction", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const prospect = legacyProspect({
+    id: "website-canonical-correction",
+    website: "http://truecleanprowash.com/legacy",
+  });
+  const contactBefore = contactState(prospect);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([queueItem(prospect, "Needs Review")]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
+    assert.equal(review.records[0]?.changedFields.includes("website"), true);
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    const saved = await getProspect(prospect.id);
+    assert.equal(result.changed, 1);
+    assert.equal(saved?.website, "https://truecleanprowash.com/");
+    assert.deepEqual(contactState(saved!), contactBefore);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("current v2 exclusion with inconsistent persisted website status remains repairable", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const baseline = await verifyProspectWebsite(legacyProspect({ id: "current-v2-status-baseline" }), verificationDependencies());
+  const prospect = {
+    ...baseline.prospect,
+    id: "current-v2-inconsistent-status",
+    status: "Reviewed" as const,
+    websiteStatus: "unreachable_website" as const,
+    websiteStatusDetail: "Website verification failed after one HTTP 508 response.",
+    fitDisposition: "adequate_existing_website" as const,
+    websiteVerification: {
+      ...baseline.report,
+      fit: {
+        ...baseline.report.fit!,
+        disposition: "adequate_existing_website" as const,
+        confidence: "high" as const,
+      },
+    },
+  } satisfies Prospect;
+  const contactBefore = contactState(prospect);
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([{ ...queueItem(prospect, "Needs Review"), outreachCopyVersion: "legacy_copy_v1" }]);
+  try {
+    const dependencies = verificationDependencies();
+    const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
+    assert.equal(review.candidates, 1);
+    assert.equal(review.records[0]?.highConfidenceExclusionEligible, true);
+    assert.equal(review.records[0]?.changedFields.includes("websiteStatus"), true);
+    assert.equal(review.records[0]?.changedFields.includes("websiteStatusDetail"), true);
+    const result = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    const saved = await getProspect(prospect.id);
+    assert.equal(result.changed, 1);
+    assert.equal(saved?.websiteStatus, "usable");
+    assert.doesNotMatch(saved?.websiteStatusDetail ?? "", /508|failed/i);
+    assert.deepEqual(contactState(saved!), contactBefore);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("American Dream-style completed exclusions replay as no-op and leave legacy candidate scope", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospect = legacyProspect({
+    id: "american-dream-pressure-clean",
+    businessName: "American Dream Pressure Clean",
+  });
+  const oldQueue = { ...queueItem(prospect), outreachCopyVersion: "legacy_copy_v1" };
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([oldQueue]);
+  try {
+    const dependencies = verificationDependencies("info@truecleanprowash.com", prospect.businessName);
+    const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
+    const first = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies,
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    const prospectAfterFirst = await getProspect(prospect.id);
+    const queueAfterFirst = structuredClone(outreachQueueMemoryForTests());
+    assert.equal(first.changed, 1);
+    assert.equal(websiteFitAllowsAutonomousOutreach(prospectAfterFirst!), false);
+    assert.equal(prospectCurrentBucket(prospectAfterFirst!), "website_already_strong");
+    assert.match(prospectQualificationBlockReasons(prospectAfterFirst!).join(" "), /website fit|adequate|strong/i);
+    assert.equal(queueAfterFirst[0]?.status, "Needs Review");
+    assert.equal(queueAfterFirst[0]?.queuedDate, "");
+    assert.doesNotMatch(queueAfterFirst[0]?.notes ?? "", /\[auto-email-approved\]/);
+    assert.equal(await outreachQueueItemHasPersistedApproval(queueAfterFirst[0]!), false);
+    assert.match(queueAfterFirst[0]?.blockedReason ?? "", /current verified website fit excludes this prospect/i);
+    assert.match(queueAfterFirst[0]?.notes ?? "", /safe readiness repair: current verified website fit excludes this prospect/i);
+    const [encodedReview] = review.reviewToken.split(".");
+    const reviewedPayload = JSON.parse(inflateRawSync(Buffer.from(encodedReview!, "base64url")).toString("utf8")) as {
+      records: Array<{ proposedPatch: { entries: Array<{ field: keyof Prospect; unset: boolean; value?: unknown }> } }>;
+    };
+    const expectedAfterFirst = structuredClone(prospect) as Prospect & Record<string, unknown>;
+    for (const entry of reviewedPayload.records[0]!.proposedPatch.entries) {
+      expectedAfterFirst[entry.field] = entry.unset ? undefined : structuredClone(entry.value);
+    }
+    if (expectedAfterFirst.outreach?.approved) {
+      expectedAfterFirst.outreach = { ...expectedAfterFirst.outreach, approved: false };
+    }
+    assert.deepEqual(prospectAfterFirst, expectedAfterFirst);
+
+    const repeated = await auditExistingWebsiteRecords({
+      apply: true,
+      confirmation: "REPAIR VERIFIED WEBSITE RECORDS",
+      dependencies: {
+        ...dependencies,
+        fetch: async () => { throw new Error("Repeated apply must not crawl."); },
+      },
+      reviewToken: review.reviewToken,
+      selectedProspectIds: [prospect.id],
+      snapshotSecret,
+    });
+    assert.equal(repeated.changed, 0);
+    assert.deepEqual(await getProspect(prospect.id), prospectAfterFirst);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueAfterFirst);
+
+    let auditCrawlCalls = 0;
+    const current = structuredClone(prospectAfterFirst!);
+    current.websiteVerification = {
+      ...current.websiteVerification!,
+      checkedAt: "2026-07-28T15:05:00.000Z",
+      attempts: [...current.websiteVerification!.attempts].reverse(),
+      usableSignals: [...current.websiteVerification!.usableSignals].reverse(),
+      identityEvidence: [...(current.websiteVerification!.identityEvidence ?? [])].reverse(),
+      fit: {
+        ...current.websiteVerification!.fit!,
+        evaluatedAt: "2026-07-28T15:05:00.000Z",
+        supportingEvidence: [...(current.websiteVerification!.fit?.supportingEvidence ?? [])].reverse(),
+      },
+    };
+    current.contactEvidence = [{
+      kind: "email",
+      value: "read-only-change@truecleanprowash.com",
+      sourceUrl: "https://truecleanprowash.com/contact",
+      extractionMethod: "visible_text",
+      confidence: "high",
+      domainMatchesBusiness: true,
+      discoveredAt: "2026-07-28T15:05:00.000Z",
+    }];
+    assert.equal(current.websiteStatus, "usable");
+    assert.equal(current.websiteVerification?.version, "website-verification-v2");
+    assert.equal(current.websiteVerification?.status, "usable");
+    assert.equal(current.websiteVerification?.confidence, "high");
+    assert.equal(current.websiteVerification?.ownershipDecision, "owned");
+    assert.equal(current.website, current.websiteVerification?.canonicalUrl.replace(/\/$/, ""));
+    assert.ok(current.websiteStatusDetail.trim());
+    assert.match(current.websiteStatusDetail, /meaningful public business website was verified/i);
+    assert.ok(current.websiteVerification?.identityEvidence?.length);
+    assert.equal(current.websiteVerification?.fit?.disposition, current.fitDisposition);
+    assert.equal(current.websiteVerification?.fit?.confidence, "high");
+    setProspectMemoryForTests([current]);
+    setOutreachQueueMemoryForTests([{ ...queueAfterFirst[0]!, outreachCopyVersion: "legacy_copy_v1" }]);
+    const freshAudit = await auditExistingWebsiteRecords({
+      apply: false,
+      dependencies: {
+        ...dependencies,
+        fetch: async () => {
+          auditCrawlCalls += 1;
+          throw new Error("Already-current exclusions must leave website-repair candidate scope.");
+        },
+      },
+      snapshotSecret,
+    });
+    assert.equal(freshAudit.candidates, 0);
+    assert.equal(freshAudit.inspected, 0);
+    assert.equal(auditCrawlCalls, 0);
+    await assert.rejects(
+      auditExistingWebsiteRecords({
+        apply: false,
+        dependencies,
+        prospectId: prospect.id,
+        snapshotSecret,
+      }),
+      /not part of the current legacy website audit inventory/i,
+    );
+    assert.equal(memoryAuditEventsForTests().some((event) => /provider.*send|outreach.*send/i.test(event.action)), false);
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
@@ -714,7 +1168,7 @@ test("unselected external evidence changes do not invalidate a selected reviewed
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   resetOperationalMemoryForTests();
-  const selected = legacyProspect({ id: "stable-review-selected", businessName: "American Dream Pressure Clean" });
+  const selected = legacyProspect({ id: "stable-review-selected" });
   const unselected = legacyProspect({ id: "stable-review-unselected", businessName: "Another Pressure Cleaner" });
   const unselectedBefore = structuredClone(unselected);
   setProspectMemoryForTests([selected, unselected]);
@@ -751,7 +1205,7 @@ test("unselected external evidence changes do not invalidate a selected reviewed
       limit: 2,
     });
     assert.equal(result.changed, 1);
-    assert.equal((await getProspect(selected.id))?.email, "info@truecleanprowash.com");
+    assert.equal((await getProspect(selected.id))?.email, selected.email);
     assert.deepEqual(await getProspect(unselected.id), unselectedBefore);
     assert.equal(applyCrawlCalls, 0);
     assert.equal(result.nothingSent, true);
@@ -1208,7 +1662,7 @@ test("inconclusive legacy website remains manual review and source-less email is
   }
 });
 
-test("fresh rendered weak-site evidence becomes only a potential candidate when contact evidence also passes", async () => {
+test("current rendered weak-site evidence stays actionable without re-entering website repair for old copy", async () => {
   resetProspectMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const dependencies = verificationDependencies();
@@ -1245,19 +1699,23 @@ test("fresh rendered weak-site evidence becomes only a potential candidate when 
   setProspectMemoryForTests([prospect]);
   setOutreachQueueMemoryForTests([needsReview]);
   try {
+    let crawlCalls = 0;
     const result = await auditExistingWebsiteRecords({
       apply: false,
-      dependencies,
+      dependencies: {
+        ...dependencies,
+        fetch: async () => {
+          crawlCalls += 1;
+          throw new Error("Current weak-site evidence must not be re-crawled only because outreach copy is old.");
+        },
+      },
       snapshotSecret,
     });
-    const record = result.records[0]!;
-    assert.equal(record.proposedDisposition, "clearly_weak_or_outdated_website");
-    assert.equal(record.websiteEvidenceSufficient, true);
-    assert.equal(record.contactEvidenceSufficient, true);
-    assert.equal(record.proposedOutcome, "potential_candidate");
-    assert.equal(record.autonomouslyEligible, true);
-    assert.equal(record.highConfidenceExclusionEligible, false);
-    assert.match(record.exactReason, /deliberate human approval/i);
+    assert.equal(result.candidates, 0);
+    assert.equal(result.inspected, 0);
+    assert.equal(crawlCalls, 0);
+    assert.equal(websiteFitAllowsAutonomousOutreach(prospect), true);
+    assert.equal(prospectCurrentBucket(prospect), "ready_email");
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();

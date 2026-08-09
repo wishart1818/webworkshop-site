@@ -326,6 +326,11 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(testCenterSource, /selectedProspectIds: selectedWebsiteRepairProspectIds/);
   assert.match(testCenterSource, /Select high-confidence exclusions/);
   assert.match(testCenterSource, /record\.selectionEligible && record\.highConfidenceExclusionEligible/);
+  assert.match(testCenterSource, /Already current \/ no repair required/);
+  assert.match(testCenterSource, /Read-only contact discoveries/);
+  assert.match(testCenterSource, /not persisted by website exclusion repair/);
+  assert.match(testCenterSource, /not required for website exclusion/);
+  assert.match(testCenterSource, /Website exclusions persist only the reviewed website state/);
   assert.match(testCenterSource, /disabled=\{busy \|\| !record\.selectionEligible\}/);
   assert.match(testCenterSource, /Apply \{selectedWebsiteRepairRecords\.length\} selected website-record repair/);
   assert.match(verificationRoute, /website_record_audit_exact/);

@@ -928,7 +928,7 @@ export function OperatorTestCenterWorkspace() {
           {websiteRepairConfirmationOpen && lastAction.websiteRepair.scope === "batch" ? (
             <section aria-labelledby="website-repair-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
               <b id="website-repair-confirmation-title">Apply {selectedWebsiteRepairRecords.length} selected website-record repair(s)?</b>
-              <p>Only the records listed below will be submitted against this exact signed snapshot. Activities and notes stay intact, stale approval is revoked, and nothing is sent.</p>
+              <p>Only the records listed below will be submitted against this exact signed snapshot. Website exclusions persist only the reviewed website state; contact fields, activities, and notes stay intact. Stale approval is revoked and nothing is sent.</p>
               <ul>
                 {selectedWebsiteRepairRecords.map((record) => (
                   <li key={record.prospectId}>
@@ -964,7 +964,13 @@ export function OperatorTestCenterWorkspace() {
                   <h3>{record.businessName}</h3>
                   {lastAction.websiteRepair?.scope === "batch" && lastAction.websiteRepair.mode === "dry_run" ? (
                     <label className="engine-field">
-                      <span>{record.selectionEligible ? "Select record" : record.protectedReason ? "Protected" : "No mutable change"}</span>
+                      <span>{record.selectionEligible
+                        ? "Select record"
+                        : record.protectedReason
+                          ? "Protected"
+                          : record.alreadyCurrent
+                            ? "Already current / no repair required"
+                            : "No mutable change"}</span>
                       <input
                         aria-label={`Select ${record.businessName} for website-record repair`}
                         checked={selectedWebsiteRepairProspectIds.includes(record.prospectId)}
@@ -986,7 +992,7 @@ export function OperatorTestCenterWorkspace() {
                 <p>{record.evidence}</p>
                 <p><b>Business identity sufficient:</b> {record.businessIdentitySufficient ? "Yes" : "No"}</p>
                 <p><b>Website evidence:</b> {record.websiteEvidenceSufficient ? "Sufficient" : "Incomplete"} ({record.websiteEvidenceConfidence} confidence)</p>
-                <p><b>Contact evidence sufficient:</b> {record.contactEvidenceSufficient ? "Yes" : "No"}</p>
+                <p><b>Diagnostic contact evidence sufficient:</b> {record.contactEvidenceSufficient ? "Yes" : "No"} (not required for website exclusion)</p>
                 <p><b>Proposed outcome:</b> {statusLabel(record.proposedOutcome)}</p>
                 {record.highConfidenceExclusionEligible ? <p><b>Shortcut eligibility:</b> High-confidence exclusion</p> : null}
                 <p><b>Reason:</b> {record.exactReason}</p>
@@ -1002,12 +1008,12 @@ export function OperatorTestCenterWorkspace() {
                   </details>
                 ) : null}
                 {record.changedFields.length ? <p><b>Proposed fields:</b> {record.changedFields.join(", ")}</p> : null}
-                {record.newlyFoundContactPaths.length ? <p><b>New contact paths:</b> {record.newlyFoundContactPaths.join(", ")}</p> : null}
+                {record.newlyFoundContactPaths.length ? <p><b>Read-only contact discoveries:</b> {record.newlyFoundContactPaths.join(", ")} (not persisted by website exclusion repair)</p> : null}
                 {record.protectedReason ? <p><b>Left unchanged:</b> {record.protectedReason}</p> : null}
               </article>
             ))}
           </div>
-          <p><b>Safety:</b> No outreach was sent. Applied repairs revoke stale approval and return changed records to human review.</p>
+          <p><b>Safety:</b> No outreach was sent. Website exclusions preserve contact state, revoke stale approval, and return changed queue records to human review.</p>
         </section>
       ) : null}
 
