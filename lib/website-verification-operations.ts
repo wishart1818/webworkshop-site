@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
   applySelectedWebsiteRepairsAtomically,
   listOutreachQueueItemsForBackfill,
@@ -98,6 +99,59 @@ export type ExistingWebsiteRepairReport = {
   nothingSent: true;
 };
 
+export const websiteRepairReviewTokenMaxLength = 240_000;
+const websiteRepairReviewPayloadMaxLength = 1_000_000;
+
+const websiteRepairReportedFields = [
+  "website",
+  "websiteStatus",
+  "websiteStatusDetail",
+  "email",
+  "phone",
+  "contactPageUrl",
+  "contactFormUrl",
+  "quoteFormUrl",
+  "contactFormDetected",
+  "quoteFormDetected",
+  "contactConfidence",
+  "contactEvidence",
+  "facebookUrl",
+  "instagramUrl",
+  "linkedinUrl",
+  "recommendedContactMethod",
+  "bestManualContactMethod",
+  "classification",
+  "prospectType",
+  "inactive",
+  "websiteVerification",
+  "fitDisposition",
+] as const satisfies readonly (keyof Prospect)[];
+
+const websiteRepairPatchFields = [
+  ...websiteRepairReportedFields,
+  "xUrl",
+  "youtubeUrl",
+  "contactDiscoveryNotes",
+  "address",
+  "websiteAnalysisAttemptedAt",
+  "analysis",
+  "outreach",
+  "preview",
+  "priorityScore",
+  "status",
+] as const satisfies readonly (keyof Prospect)[];
+
+type WebsiteRepairPatchField = (typeof websiteRepairPatchFields)[number];
+type WebsiteRepairPatchEntry = {
+  field: WebsiteRepairPatchField;
+  unset: boolean;
+  value?: unknown;
+};
+type ReviewedProspectPatch = {
+  entries: WebsiteRepairPatchEntry[];
+  addedActivities: Prospect["activities"];
+};
+
 function prospectProtectionReason(prospect: Prospect, queueItems: OutreachQueueItem[] = []) {
   if (protectedProspectStatuses.has(prospect.status)) return `Prospect status ${prospect.status} is protected.`;
   const history = [...prospect.notes, ...prospect.activities.map((item) => item.label)].join("\n");
@@ -112,31 +166,9 @@ function prospectProtectionReason(prospect: Prospect, queueItems: OutreachQueueI
 }
 
 function changedProspectFields(before: Prospect, after: Prospect) {
-  const fields: Array<keyof Prospect> = [
-    "website",
-    "websiteStatus",
-    "websiteStatusDetail",
-    "email",
-    "phone",
-    "contactPageUrl",
-    "contactFormUrl",
-    "quoteFormUrl",
-    "contactFormDetected",
-    "quoteFormDetected",
-    "contactConfidence",
-    "contactEvidence",
-    "facebookUrl",
-    "instagramUrl",
-    "linkedinUrl",
-    "recommendedContactMethod",
-    "bestManualContactMethod",
-    "classification",
-    "prospectType",
-    "inactive",
-    "websiteVerification",
-    "fitDisposition",
-  ];
-  return fields.filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field])).map(String);
+  return websiteRepairReportedFields
+    .filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]))
+    .map(String);
 }
 
 function newContactPaths(before: Prospect, after: Prospect) {
@@ -689,54 +721,36 @@ async function inspectCandidatesBounded(
   return inspected;
 }
 
-const volatileRepairReviewKeys = new Set([
-  "analyzedAt",
-  "checkedAt",
-  "discoveredAt",
-  "durationMs",
-  "foundAt",
-  "timestamp",
-  "updatedAt",
-  "websiteAnalysisAttemptedAt",
-]);
-
 function canonicalRepairReviewValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalRepairReviewValue);
   if (!value || typeof value !== "object") return value;
   const record = value as Record<string, unknown>;
   return Object.fromEntries(
     Object.keys(record)
-      .filter((key) => !volatileRepairReviewKeys.has(key))
       .sort()
       .map((key) => [key, canonicalRepairReviewValue(record[key])]),
   );
 }
 
-function proposedProspectReviewValue(prospect: Prospect) {
-  return Object.fromEntries(
-    Object.entries(prospect).filter(([key]) => key !== "activities"),
-  );
+function repairStateDigest(value: unknown) {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalRepairReviewValue(value)))
+    .digest("hex");
 }
 
-function repairReviewDigest(
-  inspected: Array<Awaited<ReturnType<typeof inspectExistingWebsiteRepairCandidate>>>,
-  queue: OutreachQueueItem[],
-  selection: ExistingWebsiteRepairSelection,
-) {
-  const snapshot = {
-    selection,
-    records: inspected.map((candidate) => ({
-      record: candidate.record,
-      currentProspect: candidate.prospect,
-      proposedProspect: candidate.verified
-        ? proposedProspectReviewValue(candidate.verified.prospect)
-        : null,
-      queueItems: queue.filter((item) => item.prospectId === candidate.prospect.id),
-    })),
-  };
-  return createHash("sha256")
-    .update(JSON.stringify(canonicalRepairReviewValue(snapshot)))
-    .digest("hex");
+function repairProspectStateDigest(prospect: Prospect) {
+  return repairStateDigest({
+    ...prospect,
+    notes: [...prospect.notes].sort(),
+    activities: [...prospect.activities].sort((left, right) => left.id.localeCompare(right.id)),
+    contactEvidence: [...prospect.contactEvidence].sort((left, right) => (
+      JSON.stringify(canonicalRepairReviewValue(left)).localeCompare(JSON.stringify(canonicalRepairReviewValue(right)))
+    )),
+  });
+}
+
+function orderedRepairQueueSnapshot(items: OutreachQueueItem[]) {
+  return [...items].sort((left, right) => left.id.localeCompare(right.id));
 }
 
 type ExistingWebsiteRepairSelection = {
@@ -746,23 +760,104 @@ type ExistingWebsiteRepairSelection = {
   prospectId: string;
 };
 
-function repairReviewToken(
-  digest: string,
-  secret: string,
-  issuedAt: Date,
-  selection: ExistingWebsiteRepairSelection,
-) {
-  const encodedPayload = Buffer.from(JSON.stringify({
-    version: 2,
-    digest,
-    issuedAt: issuedAt.toISOString(),
-    selection,
-  })).toString("base64url");
+type ExistingWebsiteRepairReviewSnapshot = {
+  version: 3;
+  issuedAt: string;
+  selection: ExistingWebsiteRepairSelection;
+  summary: {
+    inspected: number;
+    candidates: number;
+    remainingCandidates: number;
+    rangeStart: number;
+    rangeEnd: number;
+    currentPage: number;
+    totalPages: number;
+    previousOffset: number | null;
+    nextOffset: number | null;
+    exactProspectId: string;
+    skippedProtected: number;
+  };
+  records: Array<{
+    prospectId: string;
+    record: ExistingWebsiteRepairRecord;
+    currentProspectDigest: string;
+    currentQueueDigest: string;
+    proposedPatch: ReviewedProspectPatch | null;
+  }>;
+};
+
+function reviewedProspectPatch(before: Prospect, after: Prospect): ReviewedProspectPatch {
+  const allowedFields = new Set<string>(websiteRepairPatchFields);
+  const changedKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of changedKeys) {
+    if (key === "activities" || JSON.stringify(before[key as keyof Prospect]) === JSON.stringify(after[key as keyof Prospect])) continue;
+    if (!allowedFields.has(key)) {
+      throw new Error(`Website verification proposed an unsupported ${key} change. Keep this record in manual review.`);
+    }
+  }
+  const entries = websiteRepairPatchFields.flatMap((field): WebsiteRepairPatchEntry[] => {
+    if (JSON.stringify(before[field]) === JSON.stringify(after[field])) return [];
+    if (after[field] === undefined) return [{ field, unset: true }];
+    return [{ field, unset: false, value: structuredClone(after[field]) }];
+  });
+  const addedActivityCount = after.activities.length - before.activities.length;
+  if (
+    addedActivityCount < 0
+    || JSON.stringify(after.activities.slice(addedActivityCount)) !== JSON.stringify(before.activities)
+  ) {
+    throw new Error("Website verification proposed an unsupported activity-history change. Keep this record in manual review.");
+  }
+  return {
+    entries,
+    addedActivities: structuredClone(after.activities.slice(0, addedActivityCount)),
+  };
+}
+
+function applyReviewedProspectPatch(prospect: Prospect, patch: ReviewedProspectPatch) {
+  const allowedFields = new Set<string>(websiteRepairPatchFields);
+  const unsettableFields = new Set<string>(["analysis", "outreach", "preview"]);
+  const seen = new Set<string>();
+  const updated = structuredClone(prospect);
+  const writable = updated as unknown as Record<string, unknown>;
+  for (const entry of patch.entries) {
+    if (!entry || !allowedFields.has(entry.field) || seen.has(entry.field)) {
+      throw new Error("The reviewed website-repair proposal is invalid. Run a fresh dry run.");
+    }
+    if (entry.unset && !unsettableFields.has(entry.field)) {
+      throw new Error("The reviewed website-repair proposal contains an invalid unset operation. Run a fresh dry run.");
+    }
+    seen.add(entry.field);
+    writable[entry.field] = entry.unset ? undefined : structuredClone(entry.value);
+  }
+  if (!Array.isArray(patch.addedActivities)) {
+    throw new Error("The reviewed website-repair activity data is invalid. Run a fresh dry run.");
+  }
+  const existingActivityIds = new Set(prospect.activities.map((item) => item.id));
+  if (patch.addedActivities.some((item) => !item?.id || existingActivityIds.has(item.id))) {
+    throw new Error("The reviewed website-repair activity data is stale or invalid. Run a fresh dry run.");
+  }
+  updated.activities = [...structuredClone(patch.addedActivities), ...prospect.activities];
+  return updated;
+}
+
+function repairReviewToken(snapshot: ExistingWebsiteRepairReviewSnapshot, secret: string) {
+  const payload = Buffer.from(JSON.stringify(snapshot));
+  if (payload.length > websiteRepairReviewPayloadMaxLength) {
+    throw new Error("The reviewed website-record snapshot is too large. Run a smaller dry-run batch.");
+  }
+  const encodedPayload = deflateRawSync(payload, { level: 9 }).toString("base64url");
   const signature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
-  return `${encodedPayload}.${signature}`;
+  const token = `${encodedPayload}.${signature}`;
+  if (token.length > websiteRepairReviewTokenMaxLength) {
+    throw new Error("The reviewed website-record snapshot is too large. Run a smaller dry-run batch.");
+  }
+  return token;
 }
 
 function verifiedRepairReviewSnapshot(token: string, secret: string, now: Date) {
+  if (!token || token.length > websiteRepairReviewTokenMaxLength) {
+    throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
+  }
   const [encodedPayload, suppliedSignature, extra] = token.split(".");
   if (!encodedPayload || !suppliedSignature || extra) {
     throw new Error("Run a fresh website-record dry run before applying repairs.");
@@ -777,21 +872,18 @@ function verifiedRepairReviewSnapshot(token: string, secret: string, now: Date) 
   if (supplied.length !== expectedSignature.length || !timingSafeEqual(supplied, expectedSignature)) {
     throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
   }
-  let payload: {
-    version?: number;
-    digest?: string;
-    issuedAt?: string;
-    selection?: ExistingWebsiteRepairSelection;
-  };
+  let payload: Partial<ExistingWebsiteRepairReviewSnapshot>;
   try {
-    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as typeof payload;
+    const decodedPayload = inflateRawSync(Buffer.from(encodedPayload, "base64url"), {
+      maxOutputLength: websiteRepairReviewPayloadMaxLength,
+    });
+    payload = JSON.parse(decodedPayload.toString("utf8")) as Partial<ExistingWebsiteRepairReviewSnapshot>;
   } catch {
     throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
   }
   const issuedAt = Date.parse(payload.issuedAt ?? "");
   if (
-    payload.version !== 2
-    || !/^[a-f0-9]{64}$/.test(payload.digest ?? "")
+    payload.version !== 3
     || !payload.selection
     || !["batch", "exact_prospect"].includes(payload.selection.scope)
     || !Number.isInteger(payload.selection.offset)
@@ -803,10 +895,38 @@ function verifiedRepairReviewSnapshot(token: string, secret: string, now: Date) 
     || !Number.isFinite(issuedAt)
     || issuedAt > now.getTime() + 60_000
     || now.getTime() - issuedAt > websiteRepairReviewMaxAgeMs
+    || !payload.summary
+    || !Array.isArray(payload.records)
+    || payload.records.length < 1
+    || payload.records.length > websiteRepairRequestBatchLimit
   ) {
     throw new Error("The reviewed website-repair snapshot expired or is invalid. Run the dry run again.");
   }
-  return { digest: payload.digest!, selection: payload.selection };
+  const prospectIds = new Set<string>();
+  for (const candidate of payload.records) {
+    if (
+      !candidate
+      || typeof candidate.prospectId !== "string"
+      || !candidate.prospectId
+      || candidate.prospectId.length > 100
+      || prospectIds.has(candidate.prospectId)
+      || candidate.record?.prospectId !== candidate.prospectId
+      || !/^[a-f0-9]{64}$/.test(candidate.currentProspectDigest ?? "")
+      || !/^[a-f0-9]{64}$/.test(candidate.currentQueueDigest ?? "")
+      || (
+        candidate.proposedPatch !== null
+        && (
+          typeof candidate.proposedPatch !== "object"
+          || !Array.isArray(candidate.proposedPatch.entries)
+          || !Array.isArray(candidate.proposedPatch.addedActivities)
+        )
+      )
+    ) {
+      throw new Error("The reviewed website-repair snapshot is invalid. Run the dry run again.");
+    }
+    prospectIds.add(candidate.prospectId);
+  }
+  return payload as ExistingWebsiteRepairReviewSnapshot;
 }
 
 function boundedRepairLimit(value: number | undefined) {
@@ -875,6 +995,121 @@ export async function auditExistingWebsiteRecords(input: {
     throw new Error("Website-repair review signing is not configured.");
   }
   const now = input.dependencies?.now?.() ?? new Date();
+
+  if (input.apply) {
+    const reviewed = verifiedRepairReviewSnapshot(input.reviewToken ?? "", snapshotSecret, now);
+    const requestedSelection: ExistingWebsiteRepairSelection = {
+      scope: "batch",
+      offset: requestedOffset,
+      limit,
+      prospectId: "",
+    };
+    if (
+      reviewed.selection.scope !== "batch"
+      || JSON.stringify(reviewed.selection) !== JSON.stringify(requestedSelection)
+    ) {
+      throw new Error("The reviewed website-repair snapshot belongs to a different page or scope. Run that dry run again.");
+    }
+    const reviewedById = new Map(reviewed.records.map((candidate) => [candidate.prospectId, candidate]));
+    for (const selectedProspectId of requestedSelectedProspectIds) {
+      const candidate = reviewedById.get(selectedProspectId);
+      if (!candidate) {
+        throw new Error("A selected prospect is outside the signed reviewed website-record snapshot.");
+      }
+      if (!candidate.record.selectionEligible || candidate.record.protectedReason || !candidate.proposedPatch) {
+        throw new Error(`The selected record ${candidate.record.businessName} is protected or has no reviewed mutable change.`);
+      }
+    }
+    const requestedSelectionIds = new Set(requestedSelectedProspectIds);
+    const selectedReviewed = reviewed.records.filter((candidate) => requestedSelectionIds.has(candidate.prospectId));
+    const selectedProspectIds = selectedReviewed.map((candidate) => candidate.prospectId);
+    const [currentProspects, queue] = await Promise.all([
+      Promise.all(selectedReviewed.map((candidate) => getProspect(candidate.prospectId))),
+      listOutreachQueueItemsForBackfill(),
+    ]);
+    const queueByProspect = new Map<string, OutreachQueueItem[]>();
+    for (const item of queue) {
+      queueByProspect.set(item.prospectId, [...(queueByProspect.get(item.prospectId) ?? []), item]);
+    }
+    const mutations = selectedReviewed.map((candidate, index) => {
+      const currentProspect = currentProspects[index];
+      if (!currentProspect || repairProspectStateDigest(currentProspect) !== candidate.currentProspectDigest) {
+        throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+      }
+      const currentQueueItems = queueByProspect.get(candidate.prospectId) ?? [];
+      if (repairStateDigest(orderedRepairQueueSnapshot(currentQueueItems)) !== candidate.currentQueueDigest) {
+        throw new Error(`The selected outreach queue for ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
+      }
+      const protectedReason = prospectProtectionReason(currentProspect, currentQueueItems);
+      if (protectedReason) {
+        throw new Error(`${candidate.record.businessName} is now protected. ${protectedReason} Run a fresh dry run.`);
+      }
+      return {
+        expectedProspect: currentProspect,
+        proposedProspect: withApprovalRevoked(
+          applyReviewedProspectPatch(currentProspect, candidate.proposedPatch!),
+          true,
+        ),
+        expectedQueueItems: currentQueueItems,
+        queueReason: candidate.record.proposedOutcome === "exclude_from_rebuild_outreach"
+          ? "Current verified website fit excludes this prospect from website-rebuild outreach. Any stale approval was removed and the record remains non-sendable."
+          : "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.",
+      };
+    });
+    const atomicResult = await applySelectedWebsiteRepairsAtomically({ mutations, now });
+    for (const candidate of selectedReviewed) {
+      await safeRecordAudit({
+        action: "existing_website_record_repair",
+        outcome: "success",
+        subject: candidate.record.businessName,
+        metadata: {
+          prospectId: candidate.prospectId,
+          oldStatus: candidate.record.oldStatus,
+          newStatus: candidate.record.proposedStatus,
+          changedFields: candidate.record.changedFields,
+          proposedOutcome: candidate.record.proposedOutcome,
+          sent: 0,
+        },
+      });
+    }
+    await safeRecordAudit({
+      action: "existing_website_record_audit",
+      outcome: "success",
+      subject: "confirmed repair",
+      metadata: {
+        inspected: reviewed.summary.inspected,
+        selectedCount: selectedProspectIds.length,
+        selectedProspectIds,
+        changed: atomicResult.changedProspectIds.length,
+        skippedProtected: reviewed.summary.skippedProtected,
+        sent: 0,
+      },
+    });
+    return {
+      mode: "applied",
+      scope: reviewed.selection.scope,
+      inspected: reviewed.summary.inspected,
+      candidates: reviewed.summary.candidates,
+      remainingCandidates: reviewed.summary.remainingCandidates,
+      offset: reviewed.selection.offset,
+      batchSize: reviewed.selection.limit,
+      rangeStart: reviewed.summary.rangeStart,
+      rangeEnd: reviewed.summary.rangeEnd,
+      currentPage: reviewed.summary.currentPage,
+      totalPages: reviewed.summary.totalPages,
+      previousOffset: reviewed.summary.previousOffset,
+      nextOffset: reviewed.summary.nextOffset,
+      exactProspectId: reviewed.summary.exactProspectId,
+      selectedCount: selectedProspectIds.length,
+      selectedProspectIds,
+      changed: atomicResult.changedProspectIds.length,
+      skippedProtected: reviewed.summary.skippedProtected,
+      records: reviewed.records.map((candidate) => candidate.record),
+      reviewToken: "",
+      nothingSent: true,
+    };
+  }
+
   const [prospects, queue] = await Promise.all([
     listProspects(),
     listOutreachQueueItemsForBackfill(),
@@ -929,91 +1164,13 @@ export async function auditExistingWebsiteRecords(input: {
     ),
   };
   const inspected = await inspectCandidatesBounded(candidates, boundedDependencies, queueByProspect);
-  const currentDigest = repairReviewDigest(inspected, queue, selection);
-  let selectedCandidates: typeof inspected = [];
-  let selectedProspectIds: string[] = [];
-  if (input.apply) {
-    const reviewed = verifiedRepairReviewSnapshot(
-      input.reviewToken ?? "",
-      snapshotSecret,
-      now,
-    );
-    if (
-      reviewed.digest !== currentDigest
-      || JSON.stringify(reviewed.selection) !== JSON.stringify(selection)
-    ) {
-      throw new Error("Website or contact evidence changed since the reviewed dry run. Run a fresh dry run before applying repairs.");
-    }
-    const inspectedById = new Map(inspected.map((candidate) => [candidate.prospect.id, candidate]));
-    for (const selectedProspectId of requestedSelectedProspectIds) {
-      const candidate = inspectedById.get(selectedProspectId);
-      if (!candidate) {
-        throw new Error("A selected prospect is outside the signed reviewed website-record snapshot.");
-      }
-      if (!candidate.record.selectionEligible || candidate.record.protectedReason || !candidate.verified) {
-        throw new Error(`The selected record ${candidate.record.businessName} is protected or has no reviewed mutable change.`);
-      }
-    }
-    const requestedSelection = new Set(requestedSelectedProspectIds);
-    selectedCandidates = inspected.filter((candidate) => requestedSelection.has(candidate.prospect.id));
-    selectedProspectIds = selectedCandidates.map((candidate) => candidate.prospect.id);
-  }
-  let changed = 0;
   const skippedProtected = inspected.filter((candidate) => Boolean(candidate.record.protectedReason)).length;
-  if (input.apply) {
-    const atomicResult = await applySelectedWebsiteRepairsAtomically({
-      mutations: selectedCandidates.map((candidate) => ({
-        expectedProspect: candidate.prospect,
-        proposedProspect: withApprovalRevoked(candidate.verified!.prospect, true),
-        expectedQueueItems: queueByProspect.get(candidate.prospect.id) ?? [],
-        queueReason: candidate.record.proposedOutcome === "exclude_from_rebuild_outreach"
-          ? "Current verified website fit excludes this prospect from website-rebuild outreach. Any stale approval was removed and the record remains non-sendable."
-          : "Existing website/contact verification changed. Any stale approval was removed and the record returned to human review.",
-      })),
-      now,
-    });
-    changed = atomicResult.changedProspectIds.length;
-    for (const candidate of selectedCandidates) {
-      await safeRecordAudit({
-        action: "existing_website_record_repair",
-        outcome: "success",
-        subject: candidate.record.businessName,
-        metadata: {
-          prospectId: candidate.prospect.id,
-          oldStatus: candidate.record.oldStatus,
-          newStatus: candidate.record.proposedStatus,
-          changedFields: candidate.record.changedFields,
-          proposedOutcome: candidate.record.proposedOutcome,
-          sent: 0,
-        },
-      });
-    }
-  }
-  if (input.apply) {
-    await safeRecordAudit({
-      action: "existing_website_record_audit",
-      outcome: "success",
-      subject: "confirmed repair",
-      metadata: {
-        inspected: inspected.length,
-        selectedCount: selectedProspectIds.length,
-        selectedProspectIds,
-        changed,
-        skippedProtected,
-        sent: 0,
-      },
-    });
-  }
-  return {
-    mode: input.apply ? "applied" : "dry_run",
-    scope: selection.scope,
+  const summary: ExistingWebsiteRepairReviewSnapshot["summary"] = {
     inspected: inspected.length,
     candidates: allCandidates.length,
     remainingCandidates: selection.scope === "batch"
       ? Math.max(0, allCandidates.length - (offset + inspected.length))
       : 0,
-    offset,
-    batchSize: limit,
     rangeStart: inspected.length ? offset + 1 : 0,
     rangeEnd: offset + inspected.length,
     currentPage: selection.scope === "batch" ? Math.floor(offset / limit) + 1 : 1,
@@ -1023,12 +1180,47 @@ export async function auditExistingWebsiteRecords(input: {
       ? offset + inspected.length
       : null,
     exactProspectId,
-    selectedCount: selectedProspectIds.length,
-    selectedProspectIds,
-    changed,
+    skippedProtected,
+  };
+  const reviewedSnapshot: ExistingWebsiteRepairReviewSnapshot = {
+    version: 3,
+    issuedAt: now.toISOString(),
+    selection,
+    summary,
+    records: inspected.map((candidate) => {
+      const queueItems = queueByProspect.get(candidate.prospect.id) ?? [];
+      return {
+        prospectId: candidate.prospect.id,
+        record: candidate.record,
+        currentProspectDigest: repairProspectStateDigest(candidate.prospect),
+        currentQueueDigest: repairStateDigest(orderedRepairQueueSnapshot(queueItems)),
+        proposedPatch: candidate.verified
+          ? reviewedProspectPatch(candidate.prospect, candidate.verified.prospect)
+          : null,
+      };
+    }),
+  };
+  return {
+    mode: "dry_run",
+    scope: selection.scope,
+    inspected: summary.inspected,
+    candidates: summary.candidates,
+    remainingCandidates: summary.remainingCandidates,
+    offset,
+    batchSize: limit,
+    rangeStart: summary.rangeStart,
+    rangeEnd: summary.rangeEnd,
+    currentPage: summary.currentPage,
+    totalPages: summary.totalPages,
+    previousOffset: summary.previousOffset,
+    nextOffset: summary.nextOffset,
+    exactProspectId,
+    selectedCount: 0,
+    selectedProspectIds: [],
+    changed: 0,
     skippedProtected,
     records: inspected.map((candidate) => candidate.record),
-    reviewToken: input.apply ? "" : repairReviewToken(currentDigest, snapshotSecret, now, selection),
+    reviewToken: repairReviewToken(reviewedSnapshot, snapshotSecret),
     nothingSent: true,
   };
 }

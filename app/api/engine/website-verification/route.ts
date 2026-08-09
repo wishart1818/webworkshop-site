@@ -5,6 +5,7 @@ import {
   confirmUsableWebsiteNotFit,
   recheckProspectWebsite,
   setProspectWebsiteFitDisposition,
+  websiteRepairReviewTokenMaxLength,
 } from "@/lib/website-verification-operations";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
       confirmation: safeText(input.confirmation, 80),
       limit: safeOptionalInteger(input.limit, "Batch size"),
       offset: safeOptionalInteger(input.offset, "Audit offset"),
-      reviewToken: safeText(input.reviewToken, 2_000),
+      reviewToken: safeText(input.reviewToken, websiteRepairReviewTokenMaxLength),
       selectedProspectIds: safeSelectedProspectIds(input.selectedProspectIds),
     }));
   } catch (error) {
