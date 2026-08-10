@@ -86,6 +86,7 @@ export function normalizedCompletePhone(value: string) {
 export function normalizedStreetAddress(value: string) {
   return value
     .toLowerCase()
+    .replace(/(?:,\s*)?(?:united states(?: of america)?|usa)\s*$/i, " ")
     .replace(/\b(?:street|st\.?|avenue|ave\.?|road|rd\.?|boulevard|blvd\.?|drive|dr\.?|lane|ln\.?|court|ct\.?|suite|ste|unit)\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
