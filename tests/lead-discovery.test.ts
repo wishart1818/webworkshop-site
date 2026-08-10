@@ -324,7 +324,7 @@ test("configured licensed sources enrich OSM discovery without becoming required
       assert.equal(url, "https://places.googleapis.com/v1/places:searchText");
       assert.equal(init?.method, "POST");
       assert.equal((init?.headers as Record<string, string>)["X-Goog-Api-Key"], "google-test-key");
-      assert.equal((init?.headers as Record<string, string>)["X-Goog-FieldMask"], "places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount");
+      assert.equal((init?.headers as Record<string, string>)["X-Goog-FieldMask"], "places.displayName,places.formattedAddress,places.addressComponents,places.location,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.rating,places.userRatingCount");
       const body = JSON.parse(String(init?.body));
       assert.equal(body.textQuery, "Roofing near Toledo, OH");
       assert.equal(body.maxResultCount, 20);

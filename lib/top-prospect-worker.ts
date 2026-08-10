@@ -305,7 +305,7 @@ export function combineTradeDiscoveryResults(input: {
   const tradeDiagnostics = [...(input.previousTradeDiagnostics ?? [])]
     .filter((previous) => !newTradeDiagnostics.some((current) => current.trade === previous.trade))
     .concat(newTradeDiagnostics);
-  const qualificationBreakdown = combineQualificationBreakdowns(input.results);
+  const qualificationBreakdown = combineQualificationBreakdowns(input.results.map((item) => item.result));
   const preQualificationMergedCount = qualificationBreakdown?.mergedCandidates ?? allLeads.length;
   const diagnostics: DiscoveryDiagnostics = {
     rawProviderCount: tradeDiagnostics.reduce((total, item) => total + item.rawProviderCount, 0),
@@ -394,7 +394,7 @@ export function combineCityDiscoveryResults(input: {
         : {}),
     };
   });
-  const qualificationBreakdown = combineQualificationBreakdowns(input.results);
+  const qualificationBreakdown = combineQualificationBreakdowns(input.results.map((item) => item.result));
   const preQualificationMergedCount = qualificationBreakdown?.mergedCandidates
     ?? input.results.reduce((total, item) => total + item.result.diagnostics.afterDuplicateFilteringCount, 0);
   const diagnostics: DiscoveryDiagnostics = {
