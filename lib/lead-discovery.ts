@@ -1328,7 +1328,15 @@ function parseBingLocal(value: unknown): DiscoveryCandidate[] {
     results?: Array<{
       poi?: { name?: string; phone?: string; url?: string };
       position?: { lat?: number; lon?: number };
-      address?: { municipality?: string; countrySubdivisionCode?: string };
+      address?: {
+        freeformAddress?: string;
+        streetNumber?: string;
+        streetName?: string;
+        localName?: string;
+        municipality?: string;
+        countrySubdivisionCode?: string;
+        postalCode?: string;
+      };
     }>;
   };
   const bing = (payload.resourceSets ?? []).flatMap((set) => set.resources ?? []).flatMap((record) => {
@@ -1346,17 +1354,25 @@ function parseBingLocal(value: unknown): DiscoveryCandidate[] {
       source: "bing" as const,
     }];
   });
-  const azure = (payload.results ?? []).flatMap((record) => record.poi?.name?.trim() ? [{
-    businessName: record.poi.name.trim(),
-    website: record.poi.url,
-    phone: record.poi.phone,
-    address: [record.address?.municipality, record.address?.countrySubdivisionCode].filter(Boolean).join(", "),
-    city: record.address?.municipality,
-    state: record.address?.countrySubdivisionCode,
-    latitude: finiteNumber(record.position?.lat),
-    longitude: finiteNumber(record.position?.lon),
-    source: "bing" as const,
-  }] : []);
+  const azure = (payload.results ?? []).flatMap((record) => {
+    const businessName = record.poi?.name?.trim();
+    if (!businessName) return [];
+    const address = record.address;
+    const city = address?.localName || address?.municipality;
+    const formattedAddress = address?.freeformAddress
+      || [address?.streetNumber, address?.streetName, city, address?.countrySubdivisionCode, address?.postalCode].filter(Boolean).join(" ");
+    return [{
+      businessName,
+      website: record.poi?.url,
+      phone: record.poi?.phone,
+      address: formattedAddress,
+      city,
+      state: address?.countrySubdivisionCode,
+      latitude: finiteNumber(record.position?.lat),
+      longitude: finiteNumber(record.position?.lon),
+      source: "bing" as const,
+    }];
+  });
   return [...bing, ...azure];
 }
 
