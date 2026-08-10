@@ -38,7 +38,8 @@ const now = "2026-08-09T14:00:00.000Z";
 
 test("persisted cleanup runs retain their stored version for fail-closed validation", () => {
   const source = readFileSync(new URL("../lib/website-repair-audit-repository.ts", import.meta.url), "utf8");
-  assert.match(source, /version: row\.version as 1/);
+  assert.match(source, /version: row\.version as WebsiteRepairAuditRun\["version"\]/);
+  assert.match(source, /run\.version !== expectedVersion/);
   assert.doesNotMatch(source, /\.\.\.row,[\s\S]{0,80}version: 1,/);
 });
 
@@ -630,6 +631,17 @@ test("audit work keeps one owner beyond 45 seconds, reclaims only after the boun
   assert.equal(await claimWebsiteRepairAuditWork({ id: report.auditRunId, accessToken: report.accessToken, now: afterOldLease }), null);
 
   const afterBoundedLease = new Date(new Date(now).getTime() + websiteRepairAuditLeaseMs + 1);
+  await assert.rejects(() => completeWebsiteRepairAuditChunk({
+    id: report.auditRunId,
+    leaseToken: first.leaseToken,
+    expectedNextIndex: 0,
+    reviewedItems: [],
+    safeExclusionCount: 0,
+    manualReviewCount: 0,
+    protectedCount: 0,
+    manualReasonCounts: {},
+    now: afterBoundedLease,
+  }), /lease changed/i);
   const reclaimed = await claimWebsiteRepairAuditWork({
     id: report.auditRunId,
     accessToken: report.accessToken,
@@ -707,6 +719,15 @@ test("Apply work keeps one owner beyond 45 seconds, reclaims expired work, and r
   assert.equal(await claimWebsiteRepairApplyWork({ id: report.auditRunId, accessToken: report.accessToken, now: afterOldLease }), null);
 
   const afterBoundedLease = new Date(new Date(now).getTime() + websiteRepairApplyLeaseMs + 1);
+  await assert.rejects(() => completeWebsiteRepairApplyGroup({
+    id: report.auditRunId,
+    leaseToken: first.leaseToken,
+    expectedApplyNextIndex: 0,
+    processedCount: 1,
+    changedCount: 1,
+    done: true,
+    now: afterBoundedLease,
+  }), /lease changed/i);
   const reclaimed = await claimWebsiteRepairApplyWork({
     id: report.auditRunId,
     accessToken: report.accessToken,

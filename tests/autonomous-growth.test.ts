@@ -3393,7 +3393,7 @@ test("routine no-send audit notes do not move an eligible email record into cont
   assert.equal(smartQueueKeyForItem(item), "readyForEmailReview");
 });
 
-test("Market Scout dry run stays bounded and recommends a market without provider calls or sends", () => {
+test("Market Scout dry run stays bounded and refuses to invent a recommendation without evidence", () => {
   const scout = buildMarketScoutDryRun({
     marketsToTest: ["Tampa, FL", "Orlando, FL", "Dallas, TX"],
     tradesToTest: ["Pressure Washing", "Landscaping", "HVAC"],
@@ -3404,9 +3404,33 @@ test("Market Scout dry run stays bounded and recommends a market without provide
   assert.equal(scout.bounded, true);
   assert.equal(scout.totalEstimatedRecords <= 30, true);
   assert.ok(scout.results.length > 0);
-  assert.ok(scout.bestResult);
-  assert.match(scout.bestResult?.recommendationReason ?? "", /dry run and made no provider calls/i);
+  assert.equal(scout.bestResult, null);
+  assert.match(scout.message, /INSUFFICIENT DATA \/ NO SAFE RECOMMENDATION/i);
+  assert.equal(scout.results.every((result) => result.evidenceStatus === "estimate_only"), true);
+  assert.match(scout.results[0]?.recommendationReason ?? "", /planning estimates only.*no provider calls/i);
   assert.doesNotMatch(JSON.stringify(scout), /DATABASE_URL|GOOGLE_PLACES_API_KEY|RESEND_API_KEY|secret-/i);
+});
+
+test("Market Scout recommends only from matching saved prospect evidence", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings);
+  const prospect = eligibleProspect();
+  const job = topProspectJobFixture(campaign, {
+    results: [topProspectResultFixture(prospect)],
+    reviewedNotRecommended: [],
+  });
+  const market = `${job.input.city}, ${job.input.state}`;
+  const scout = buildMarketScoutDryRun({
+    marketsToTest: [market, "Orlando, FL"],
+    tradesToTest: [job.input.trade as "Pressure Washing"],
+    scoutSampleSizePerMarketTrade: 10,
+    maxTotalScoutRecords: 20,
+  }, [job], new Date(41));
+
+  assert.equal(scout.bestResult?.market, market);
+  assert.equal(scout.bestResult?.trade, job.input.trade);
+  assert.equal(scout.bestResult?.evidenceStatus, "historical_evidence");
+  assert.match(scout.bestResult?.recommendationReason ?? "", /1 saved result.*no provider calls/i);
+  assert.equal(scout.results.find((result) => result.market === "Orlando, FL")?.evidenceStatus, "estimate_only");
 });
 
 function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueItem {

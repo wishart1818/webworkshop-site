@@ -18,6 +18,15 @@ import {
   websiteBusinessMismatch,
 } from "@/lib/top-prospects";
 import { TopProspectStageError } from "@/lib/top-prospect-diagnostics";
+import {
+  discoveryIdentityEvidenceSignal,
+  discoverySameNameAmbiguitySignal,
+  isCredibleOwnedWebsiteCandidate,
+  normalizedBusinessIdentityName,
+  normalizedCompletePhone,
+  normalizedStreetAddress,
+  type DiscoveryIdentityEvidence,
+} from "@/lib/prospect-identity-evidence";
 
 export type DiscoveredLead = {
   businessName: string;
@@ -39,6 +48,7 @@ export type DiscoveredLead = {
   reviewCount?: number;
   recentReviewCount?: number;
   activitySignals?: string[];
+  providerIdentityEvidence?: DiscoveryIdentityEvidence[];
   originCity?: string;
   matchedCities?: string[];
   lastFoundAt?: string;
@@ -134,6 +144,23 @@ export type CityDiscoveryDiagnostic = {
   safeReason?: string;
 };
 
+export type UnresolvedTopProspectRecord = {
+  prospectId: string;
+  businessName: string;
+  trade: string;
+  city: string;
+  state: string;
+  providerSources: DiscoverySource[];
+  websiteCandidate: string;
+  websiteVerificationState: string;
+  websiteFitState: string;
+  unresolvedReasonCode: string;
+  evidenceSummary: string;
+  persistedAsProspect: true;
+  preventedQualification: string;
+  recommendedNextAction: string;
+};
+
 export type DiscoveryDiagnostics = {
   rawProviderCount: number;
   afterDistanceFilteringCount: number;
@@ -150,6 +177,7 @@ export type DiscoveryDiagnostics = {
   cityTargets?: Array<{ city: string; state: string; label: string }>;
   excludePreviouslyReviewed?: boolean;
   nextRunRecommendations?: string[];
+  unresolvedRecords?: UnresolvedTopProspectRecord[];
 };
 
 export type DiscoveryResult = {
@@ -184,6 +212,11 @@ export type DiscoveryCandidate = {
   recentReviewCount?: number;
   activitySignals?: string[];
   inactive?: boolean;
+};
+
+type MergedDiscoveryCandidate = DiscoveryCandidate & {
+  sources: DiscoverySource[];
+  providerIdentityEvidence: DiscoveryIdentityEvidence[];
 };
 
 export type OverpassElement = {
@@ -537,14 +570,6 @@ function providerUrl(value: string | undefined, fallback?: string) {
   }
 }
 
-function nameKey(value: string) {
-  return value.toLowerCase().replace(/\b(llc|inc|company|co|corp|corporation|services?)\b/g, "").replace(/[^a-z0-9]/g, "");
-}
-
-function phoneKey(value: string) {
-  return value.replace(/\D/g, "").slice(-10);
-}
-
 function emptySourceCounts(): DiscoverySourceCounts {
   return { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 };
 }
@@ -845,33 +870,52 @@ export function mergeDiscoveryCandidates(input: {
     );
   }
 
-  const merged: Array<DiscoveryCandidate & { sources: DiscoverySource[] }> = [];
+  const merged: MergedDiscoveryCandidate[] = [];
+  const candidateEvidence = (candidate: DiscoveryCandidate): DiscoveryIdentityEvidence => ({
+    source: candidate.source,
+    businessName: candidate.businessName,
+    website: candidate.website ?? "",
+    profileUrl: candidate.profileUrl ?? "",
+    phone: candidate.phone ?? "",
+    address: candidate.address ?? "",
+    city: candidate.city ?? input.city,
+    state: candidate.state ?? input.state,
+    latitude: Number.isFinite(candidate.latitude) ? Number(candidate.latitude) : null,
+    longitude: Number.isFinite(candidate.longitude) ? Number(candidate.longitude) : null,
+  });
+  const coordinatesClose = (left: DiscoveryCandidate, right: DiscoveryCandidate) => (
+    Number.isFinite(left.latitude)
+    && Number.isFinite(left.longitude)
+    && Number.isFinite(right.latitude)
+    && Number.isFinite(right.longitude)
+    && distanceKm(Number(left.latitude), Number(left.longitude), Number(right.latitude), Number(right.longitude)) <= 0.35
+  );
+  const candidatesMatch = (left: DiscoveryCandidate, right: DiscoveryCandidate) => {
+    const leftName = normalizedBusinessIdentityName(left.businessName);
+    const rightName = normalizedBusinessIdentityName(right.businessName);
+    if (!leftName || leftName !== rightName) return false;
+    const leftDomain = isCredibleOwnedWebsiteCandidate(left.website ?? "") ? websiteKey(left.website!) : "";
+    const rightDomain = isCredibleOwnedWebsiteCandidate(right.website ?? "") ? websiteKey(right.website!) : "";
+    const leftPhone = normalizedCompletePhone(left.phone ?? "");
+    const rightPhone = normalizedCompletePhone(right.phone ?? "");
+    const leftAddress = normalizedStreetAddress(left.address ?? "");
+    const rightAddress = normalizedStreetAddress(right.address ?? "");
+    if (leftDomain && rightDomain && leftDomain !== rightDomain) return false;
+    if (leftPhone && rightPhone && leftPhone !== rightPhone) return false;
+    if (leftDomain && leftDomain === rightDomain) return true;
+    if (leftPhone && leftPhone === rightPhone) return true;
+    if (leftAddress && leftAddress === rightAddress) return true;
+    return coordinatesClose(left, right);
+  };
   for (const candidate of withinRadius) {
     if (candidate.inactive || !candidate.businessName.trim()) continue;
-    let domain = "";
-    try {
-      if (candidate.website) domain = websiteKey(candidate.website);
-    } catch {
-      // Malformed websites can still enrich a matching record by name or phone.
-    }
-    const normalizedName = nameKey(candidate.businessName);
-    const normalizedPhone = phoneKey(candidate.phone ?? "");
-    const existing = merged.find((record) => {
-      let recordDomain = "";
-      try {
-        if (record.website) recordDomain = websiteKey(record.website);
-      } catch {
-        // Ignore malformed website matches.
-      }
-      return Boolean(domain && recordDomain === domain)
-        || Boolean(normalizedPhone && normalizedPhone === phoneKey(record.phone ?? ""))
-        || Boolean(normalizedName && normalizedName === nameKey(record.businessName));
-    });
+    const existing = merged.find((record) => candidatesMatch(record, candidate));
     if (!existing) {
-      merged.push({ ...candidate, sources: [candidate.source] });
+      merged.push({ ...candidate, sources: [candidate.source], providerIdentityEvidence: [candidateEvidence(candidate)] });
       continue;
     }
     if (!existing.sources.includes(candidate.source)) existing.sources.push(candidate.source);
+    existing.providerIdentityEvidence.push(candidateEvidence(candidate));
     if (!isUsableBusinessWebsite(existing.website) && isUsableBusinessWebsite(candidate.website)) existing.website = candidate.website;
     existing.profileUrl ||= candidate.profileUrl || (isSocialOrBusinessProfileUrl(candidate.website) || isThirdPartyDirectoryUrl(candidate.website) ? candidate.website : undefined);
     existing.phone ||= candidate.phone;
@@ -889,6 +933,12 @@ export function mergeDiscoveryCandidates(input: {
     existing.inactive ||= candidate.inactive;
   }
 
+  const sameNameCounts = new Map<string, number>();
+  for (const candidate of merged) {
+    const key = normalizedBusinessIdentityName(candidate.businessName);
+    if (key) sameNameCounts.set(key, (sameNameCounts.get(key) ?? 0) + 1);
+  }
+
   const qualified = merged.flatMap((candidate): DiscoveredLead[] => {
     const requestedType = input.prospectType ?? "redesign";
     const trade = normalizeTradeCategory(input.trade) ?? input.trade;
@@ -903,13 +953,17 @@ export function mergeDiscoveryCandidates(input: {
       ...(profileUrl ? ["public_profile"] : []),
       ...(isThirdPartyDirectoryUrl(candidate.website) || isThirdPartyDirectoryUrl(profileUrl) ? ["third_party_listing_only"] : []),
       ...(candidate.sources.length > 1 ? ["multiple_public_sources"] : []),
+      ...candidate.providerIdentityEvidence.map(discoveryIdentityEvidenceSignal),
+      ...((sameNameCounts.get(normalizedBusinessIdentityName(candidate.businessName)) ?? 0) > 1
+        ? [discoverySameNameAmbiguitySignal()]
+        : []),
     ];
     const hasActivity = (candidate.reviewCount ?? 0) > 0
       || (candidate.recentReviewCount ?? 0) > 0
       || (candidate.rating ?? 0) > 0
       || Boolean(profileUrl)
       || candidate.sources.length > 1
-      || activitySignals.length > 0;
+      || (candidate.activitySignals ?? []).length > 0;
     if (requestedType === "redesign" && prospectType !== "redesign") return [];
     if (requestedType === "no_website_social_only" && prospectType !== "no_website_social_only") return [];
     if (prospectType === "no_website_social_only" && !hasActivity) return [];
@@ -962,6 +1016,7 @@ export function mergeDiscoveryCandidates(input: {
           ...activitySignals,
           ...candidate.sources.map((source) => `discovery_source:${source}`),
         ])],
+        providerIdentityEvidence: structuredClone(candidate.providerIdentityEvidence),
         originCity: `${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`,
         matchedCities: [`${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`],
         recommendedContactMethod,
@@ -1091,6 +1146,45 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
         ...(typeof candidate.excludePreviouslyReviewed === "boolean" ? { excludePreviouslyReviewed: candidate.excludePreviouslyReviewed } : {}),
         ...(Array.isArray(candidate.nextRunRecommendations)
           ? { nextRunRecommendations: candidate.nextRunRecommendations.filter((item): item is string => typeof item === "string").slice(0, 4) }
+          : {}),
+        ...(Array.isArray(candidate.unresolvedRecords)
+          ? {
+              unresolvedRecords: candidate.unresolvedRecords.flatMap((item): UnresolvedTopProspectRecord[] => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+                const record = item as Partial<UnresolvedTopProspectRecord>;
+                if (
+                  typeof record.prospectId !== "string"
+                  || typeof record.businessName !== "string"
+                  || typeof record.trade !== "string"
+                  || typeof record.city !== "string"
+                  || typeof record.state !== "string"
+                  || !Array.isArray(record.providerSources)
+                  || typeof record.websiteCandidate !== "string"
+                  || typeof record.websiteVerificationState !== "string"
+                  || typeof record.websiteFitState !== "string"
+                  || typeof record.unresolvedReasonCode !== "string"
+                  || typeof record.evidenceSummary !== "string"
+                  || typeof record.preventedQualification !== "string"
+                  || typeof record.recommendedNextAction !== "string"
+                ) return [];
+                return [{
+                  prospectId: record.prospectId.slice(0, 100),
+                  businessName: record.businessName.slice(0, 180),
+                  trade: record.trade.slice(0, 100),
+                  city: record.city.slice(0, 100),
+                  state: record.state.slice(0, 10),
+                  providerSources: record.providerSources.filter((source): source is DiscoverySource => discoverySources.includes(source as DiscoverySource)),
+                  websiteCandidate: record.websiteCandidate.slice(0, 500),
+                  websiteVerificationState: record.websiteVerificationState.slice(0, 100),
+                  websiteFitState: record.websiteFitState.slice(0, 100),
+                  unresolvedReasonCode: record.unresolvedReasonCode.slice(0, 100),
+                  evidenceSummary: record.evidenceSummary.slice(0, 1_500),
+                  persistedAsProspect: true,
+                  preventedQualification: record.preventedQualification.slice(0, 1_000),
+                  recommendedNextAction: record.recommendedNextAction.slice(0, 500),
+                }];
+              }).slice(0, 250),
+            }
           : {}),
       } as DiscoveryDiagnostics;
       })()

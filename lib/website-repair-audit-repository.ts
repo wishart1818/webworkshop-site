@@ -13,7 +13,7 @@ export type WebsiteRepairAuditRunStatus = "AUDITING" | "READY" | "AUDIT_FAILED" 
 
 export type WebsiteRepairAuditRun = {
   id: string;
-  version: 1;
+  version: 1 | 2;
   accessTokenHash: string;
   status: WebsiteRepairAuditRunStatus;
   candidateIds: string[];
@@ -102,7 +102,7 @@ function rowToRun(row: {
 }): WebsiteRepairAuditRun {
   return {
     ...row,
-    version: row.version as 1,
+    version: row.version as WebsiteRepairAuditRun["version"],
     status: row.status as WebsiteRepairAuditRunStatus,
     candidateIds: jsonArray<string>(row.candidateIds),
     reviewedItems: jsonArray<ExistingWebsiteRepairReviewedItem>(row.reviewedItems),
@@ -121,9 +121,19 @@ function rowToRun(row: {
   };
 }
 
-function assertRunAccess(run: WebsiteRepairAuditRun | null, accessToken: string, now: Date) {
+function runLabel(version: WebsiteRepairAuditRun["version"]) {
+  return version === 2 ? "Manual Review Triage" : "Full Legacy Cleanup";
+}
+
+function assertRunAccess(
+  run: WebsiteRepairAuditRun | null,
+  accessToken: string,
+  now: Date,
+  expectedVersion: WebsiteRepairAuditRun["version"],
+) {
+  const label = runLabel(expectedVersion);
   if (!run || !accessToken || !tokenMatches(accessToken, run.accessTokenHash)) {
-    throw new Error("The Full Legacy Cleanup run reference is invalid.");
+    throw new Error(`The ${label} run reference is invalid.`);
   }
   const validStatuses: WebsiteRepairAuditRunStatus[] = ["AUDITING", "READY", "AUDIT_FAILED", "APPLYING", "APPLIED", "PARTIAL_NEEDS_REVIEW", "APPLY_FAILED"];
   const validApplyStatuses: WebsiteRepairAuditRun["applyStatus"][] = ["NOT_STARTED", "APPLYING", "COMPLETED", "FAILED", "PARTIAL_NEEDS_REVIEW"];
@@ -141,7 +151,7 @@ function assertRunAccess(run: WebsiteRepairAuditRun | null, accessToken: string,
   const candidateIds = new Set(run.candidateIds);
   const expiresAt = Date.parse(run.expiresAt);
   if (
-    run.version !== 1
+    run.version !== expectedVersion
     || !validStatuses.includes(run.status)
     || !validApplyStatuses.includes(run.applyStatus)
     || countValues.some((value) => !Number.isSafeInteger(value) || value < 0)
@@ -160,10 +170,10 @@ function assertRunAccess(run: WebsiteRepairAuditRun | null, accessToken: string,
     || !Number.isFinite(expiresAt)
     || run.reviewedItems.some((item, index) => item?.prospectId !== run.candidateIds[index] || item.record?.prospectId !== item.prospectId)
   ) {
-    throw new Error("The Full Legacy Cleanup persisted run state is invalid.");
+    throw new Error(`The ${label} persisted run state is invalid.`);
   }
   if (expiresAt <= now.getTime()) {
-    throw new Error("The Full Legacy Cleanup review expired. Run a fresh audit.");
+    throw new Error(`The ${label} review expired. Run a fresh audit.`);
   }
   return run;
 }
@@ -182,15 +192,17 @@ export async function createWebsiteRepairAuditRun(input: {
   candidateIds: string[];
   expiresAt: Date;
   now?: Date;
+  version?: WebsiteRepairAuditRun["version"];
 }) {
   const now = input.now ?? new Date();
+  const version = input.version ?? 1;
   if (!input.accessToken || input.candidateIds.length > 1_000 || new Set(input.candidateIds).size !== input.candidateIds.length) {
     throw new Error("The Full Legacy Cleanup candidate snapshot is invalid.");
   }
   if (persistenceMode() === "memory") {
     const run: WebsiteRepairAuditRun = {
-      id: `website-repair-${randomUUID()}`,
-      version: 1,
+      id: `${version === 2 ? "manual-triage" : "website-repair"}-${randomUUID()}`,
+      version,
       accessTokenHash: tokenHash(input.accessToken),
       status: input.candidateIds.length ? "AUDITING" : "READY",
       candidateIds: structuredClone(input.candidateIds),
@@ -224,7 +236,7 @@ export async function createWebsiteRepairAuditRun(input: {
   await ensureTopProspectSchema();
   const row = await getProspectDatabase().websiteRepairAuditRun.create({
     data: {
-      version: 1,
+      version,
       accessTokenHash: tokenHash(input.accessToken),
       status: input.candidateIds.length ? "AUDITING" : "READY",
       candidateIds: input.candidateIds,
@@ -238,8 +250,13 @@ export async function createWebsiteRepairAuditRun(input: {
   return rowToRun(row);
 }
 
-export async function getAuthorizedWebsiteRepairAuditRun(id: string, accessToken: string, now = new Date()) {
-  return assertRunAccess(await rawRun(id), accessToken, now);
+export async function getAuthorizedWebsiteRepairAuditRun(
+  id: string,
+  accessToken: string,
+  now = new Date(),
+  expectedVersion: WebsiteRepairAuditRun["version"] = 1,
+) {
+  return assertRunAccess(await rawRun(id), accessToken, now, expectedVersion);
 }
 
 export async function claimWebsiteRepairAuditWork(input: {
@@ -247,9 +264,11 @@ export async function claimWebsiteRepairAuditWork(input: {
   accessToken: string;
   now?: Date;
   leaseMs?: number;
+  expectedVersion?: WebsiteRepairAuditRun["version"];
 }) {
   const now = input.now ?? new Date();
-  await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now);
+  const expectedVersion = input.expectedVersion ?? 1;
+  await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now, expectedVersion);
   const leaseToken = randomUUID();
   const leaseUntil = new Date(now.getTime() + (input.leaseMs ?? websiteRepairAuditLeaseMs));
   if (persistenceMode() === "memory") {
@@ -264,6 +283,7 @@ export async function claimWebsiteRepairAuditWork(input: {
   const claimed = await database.websiteRepairAuditRun.updateMany({
     where: {
       id: input.id,
+      version: expectedVersion,
       status: "AUDITING",
       expiresAt: { gt: now },
       OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
@@ -285,11 +305,22 @@ export async function completeWebsiteRepairAuditChunk(input: {
   protectedCount: number;
   manualReasonCounts: Record<string, number>;
   now?: Date;
+  expectedVersion?: WebsiteRepairAuditRun["version"];
 }) {
   const now = input.now ?? new Date();
+  const expectedVersion = input.expectedVersion ?? 1;
   if (persistenceMode() === "memory") {
     const run = memoryRuns().find((candidate) => candidate.id === input.id);
-    if (!run || run.leaseToken !== input.leaseToken || run.nextIndex !== input.expectedNextIndex) {
+    if (
+      !run
+      || run.version !== expectedVersion
+      || run.status !== "AUDITING"
+      || run.leaseToken !== input.leaseToken
+      || run.nextIndex !== input.expectedNextIndex
+      || !run.leaseUntil
+      || Date.parse(run.leaseUntil) <= now.getTime()
+      || Date.parse(run.expiresAt) <= now.getTime()
+    ) {
       throw new Error("The Full Legacy Cleanup audit lease changed. Resume the run.");
     }
     run.reviewedItems.push(...structuredClone(input.reviewedItems));
@@ -312,7 +343,15 @@ export async function completeWebsiteRepairAuditChunk(input: {
   const database = getProspectDatabase();
   return database.$transaction(async (transaction) => {
     const row = await transaction.websiteRepairAuditRun.findUniqueOrThrow({ where: { id: input.id } });
-    if (row.leaseToken !== input.leaseToken || row.nextIndex !== input.expectedNextIndex || row.status !== "AUDITING") {
+    if (
+      row.version !== expectedVersion
+      || row.leaseToken !== input.leaseToken
+      || row.nextIndex !== input.expectedNextIndex
+      || row.status !== "AUDITING"
+      || !row.leaseUntil
+      || row.leaseUntil <= now
+      || row.expiresAt <= now
+    ) {
       throw new Error("The Full Legacy Cleanup audit lease changed. Resume the run.");
     }
     const reviewedItems = [...jsonArray<ExistingWebsiteRepairReviewedItem>(row.reviewedItems), ...input.reviewedItems];
@@ -369,9 +408,11 @@ export async function beginWebsiteRepairAuditApply(input: {
   id: string;
   accessToken: string;
   now?: Date;
+  expectedVersion?: WebsiteRepairAuditRun["version"];
 }) {
   const now = input.now ?? new Date();
-  const authorized = await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now);
+  const expectedVersion = input.expectedVersion ?? 1;
+  const authorized = await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now, expectedVersion);
   if (authorized.status === "APPLIED") return authorized;
   if (authorized.status !== "READY" || authorized.applyStatus !== "NOT_STARTED") {
     throw new Error("This Full Legacy Cleanup run is not ready to Apply.");
@@ -385,7 +426,7 @@ export async function beginWebsiteRepairAuditApply(input: {
     return structuredClone(run);
   }
   const updated = await getProspectDatabase().websiteRepairAuditRun.updateMany({
-    where: { id: input.id, status: "READY", applyStatus: "NOT_STARTED", expiresAt: { gt: now } },
+    where: { id: input.id, version: expectedVersion, status: "READY", applyStatus: "NOT_STARTED", expiresAt: { gt: now } },
     data: { status: "APPLYING", applyStatus: "APPLYING", applyStartedAt: now, errorCode: null, errorMessage: null },
   });
   if (updated.count !== 1) throw new Error("This Full Legacy Cleanup run changed before Apply. Reload the run.");
@@ -397,9 +438,11 @@ export async function claimWebsiteRepairApplyWork(input: {
   accessToken: string;
   now?: Date;
   leaseMs?: number;
+  expectedVersion?: WebsiteRepairAuditRun["version"];
 }) {
   const now = input.now ?? new Date();
-  const authorized = await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now);
+  const expectedVersion = input.expectedVersion ?? 1;
+  const authorized = await getAuthorizedWebsiteRepairAuditRun(input.id, input.accessToken, now, expectedVersion);
   if (authorized.status === "APPLIED") return { run: authorized, leaseToken: "" };
   const leaseToken = randomUUID();
   const leaseUntil = new Date(now.getTime() + (input.leaseMs ?? websiteRepairApplyLeaseMs));
@@ -412,7 +455,7 @@ export async function claimWebsiteRepairApplyWork(input: {
   }
   const database = getProspectDatabase();
   const claimed = await database.websiteRepairAuditRun.updateMany({
-    where: { id: input.id, status: "APPLYING", expiresAt: { gt: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] },
+    where: { id: input.id, version: expectedVersion, status: "APPLYING", expiresAt: { gt: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] },
     data: { leaseToken, leaseUntil },
   });
   if (claimed.count !== 1) return null;
@@ -431,11 +474,22 @@ export async function completeWebsiteRepairApplyGroup(input: {
   remainingCandidatesAfter?: number;
   done: boolean;
   now?: Date;
+  expectedVersion?: WebsiteRepairAuditRun["version"];
 }) {
   const now = input.now ?? new Date();
+  const expectedVersion = input.expectedVersion ?? 1;
   if (persistenceMode() === "memory") {
     const run = memoryRuns().find((candidate) => candidate.id === input.id);
-    if (!run || run.leaseToken !== input.leaseToken || run.applyNextIndex !== input.expectedApplyNextIndex) {
+    if (
+      !run
+      || run.version !== expectedVersion
+      || run.status !== "APPLYING"
+      || run.leaseToken !== input.leaseToken
+      || run.applyNextIndex !== input.expectedApplyNextIndex
+      || !run.leaseUntil
+      || Date.parse(run.leaseUntil) <= now.getTime()
+      || Date.parse(run.expiresAt) <= now.getTime()
+    ) {
       throw new Error("The Full Legacy Cleanup Apply lease changed. Resume the run.");
     }
     run.applyNextIndex += input.processedCount;
@@ -451,7 +505,15 @@ export async function completeWebsiteRepairApplyGroup(input: {
   }
   const database = getProspectDatabase();
   const updated = await database.websiteRepairAuditRun.updateMany({
-    where: { id: input.id, leaseToken: input.leaseToken, applyNextIndex: input.expectedApplyNextIndex, status: "APPLYING" },
+    where: {
+      id: input.id,
+      version: expectedVersion,
+      leaseToken: input.leaseToken,
+      leaseUntil: { gt: now },
+      expiresAt: { gt: now },
+      applyNextIndex: input.expectedApplyNextIndex,
+      status: "APPLYING",
+    },
     data: {
       applyNextIndex: { increment: input.processedCount },
       appliedCount: { increment: input.changedCount },

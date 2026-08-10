@@ -137,7 +137,7 @@ test("multi-source discovery merges business identity and prioritizes enriched l
     limit: 50,
     sourceCounts: { osm: 2, google: 1, bing: 1, yelp: 2, yellowPages: 1 },
     candidates: [
-      { source: "osm", businessName: "North Coast Roofing LLC", website: "northcoastroofing.example", latitude: 41.65, longitude: -83.54 },
+      { source: "osm", businessName: "North Coast Roofing LLC", website: "northcoastroofing.example", phone: "419-555-0100", latitude: 41.65, longitude: -83.54 },
       { source: "google", businessName: "North Coast Roofing", phone: "(419) 555-0100", rating: 4.8, reviewCount: 87, recentReviewCount: 4 },
       { source: "yelp", businessName: "North Coast Roofing", phone: "419-555-0100", rating: 4.5, reviewCount: 61 },
       { source: "bing", businessName: "Maumee Roof Repair", website: "https://maumeeroof.example", phone: "419-555-0200" },
@@ -335,7 +335,7 @@ test("configured licensed sources enrich OSM discovery without becoming required
       assert.match(url, /subscription-key=azure-test-key/);
       return new Response(JSON.stringify({ results: [{ poi: { name: "Bing Roofing", url: "bingroofing.example" }, position: { lat: 41.65, lon: -83.54 } }] }), { status: 200 });
     }
-    if (url.includes("yelp")) return new Response(JSON.stringify({ businesses: [{ name: "Enriched Roofing", review_count: 90, rating: 4.7 }] }), { status: 200 });
+    if (url.includes("yelp")) return new Response(JSON.stringify({ businesses: [{ name: "Enriched Roofing", display_phone: "419-555-0100", coordinates: { latitude: 41.65, longitude: -83.54 }, review_count: 90, rating: 4.7 }] }), { status: 200 });
     if (url.includes("directory.example")) return new Response(JSON.stringify({ results: [{ name: "Directory Roofing", website: "directoryroofing.example", email: "hello@directoryroofing.example" }] }), { status: 200 });
     return new Response("unavailable", { status: 503 });
   };

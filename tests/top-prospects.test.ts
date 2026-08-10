@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleTopProspectList, topProspectBuildVersion } from "../lib/top-prospect-list-route";
+import { topProspectJobPersistenceData } from "../lib/top-prospect-repository";
+import { topProspectExecutionSettings } from "../lib/top-prospect-worker";
 import {
   assessOpportunity,
   assessNoWebsiteOpportunity,
@@ -50,7 +52,14 @@ import {
 } from "../lib/prospect-engine";
 import { inactivePublicRecord } from "../lib/lead-discovery";
 import { createPublicPreviewToken } from "../lib/public-preview-token";
-import { combineCityDiscoveryResults, combineTradeDiscoveryResults, recoverableTopProspect, tradeFailureDiscoveryResult } from "../lib/top-prospect-worker";
+import { websiteFitAllowsAutonomousOutreach } from "../lib/prospect-qualification";
+import {
+  combineCityDiscoveryResults,
+  combineTradeDiscoveryResults,
+  existingProspectRequiresWebsiteResolution,
+  recoverableTopProspect,
+  tradeFailureDiscoveryResult,
+} from "../lib/top-prospect-worker";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
 process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= testPostalAddress;
@@ -867,6 +876,99 @@ test("thin Azure-only discovery recommends Google Places before larger runs", ()
   assert.match(joined, /Configure Google Places before increasing scan count/);
   assert.doesNotMatch(joined, /Increase scan count/i);
   assert.doesNotMatch(joined, /Florida or Texas Suburbs/i);
+});
+
+test("Pinnacle-style current strong sites bypass deeper resolution while inconclusive evidence remains resolvable", () => {
+  const strong = markWebsiteVerified(structuredClone(seedProspects[0]));
+  strong.fitDisposition = "strong_existing_website";
+  strong.websiteVerification!.fit!.disposition = "strong_existing_website";
+  strong.websiteVerification!.fit!.reason = "Rendered review confirmed a strong professional website.";
+  const inconclusive = structuredClone(strong);
+  inconclusive.fitDisposition = "inconclusive_requires_review";
+  inconclusive.websiteVerification!.fit!.disposition = "inconclusive_requires_review";
+  inconclusive.websiteVerification!.fit!.confidence = "low";
+
+  assert.equal(existingProspectRequiresWebsiteResolution(strong), false);
+  assert.equal(websiteFitAllowsAutonomousOutreach(strong), false);
+  assert.equal(existingProspectRequiresWebsiteResolution(inconclusive), true);
+});
+
+test("accepted Top Prospects settings persist and execute without changing operator choices", () => {
+  const validation = validateTopProspectInput({
+    trade: "Cleaning",
+    city: "McKinney",
+    state: "TX",
+    radiusKm: 25,
+    businessesToScan: 20,
+    finalProspectsWanted: 3,
+    prospectType: "no_website_social_only",
+    mode: "growth",
+    workflowType: "search",
+    outreachPreference: "written_only",
+    excludePreviouslyReviewed: true,
+  });
+  assert.equal(validation.ok, true);
+  if (!validation.ok) return;
+
+  const persisted = topProspectJobPersistenceData(validation.value);
+  const executed = topProspectExecutionSettings(persisted);
+  assert.deepEqual(executed, {
+    trade: "Cleaning",
+    city: "Mckinney",
+    state: "TX",
+    radiusKm: 25,
+    businessesToScan: 20,
+    finalProspectsWanted: 3,
+    mode: "growth",
+    prospectType: "no_website_social_only",
+    workflowType: "search",
+    outreachPreference: "written_only",
+    excludePreviouslyReviewed: true,
+  });
+});
+
+test("OSM failure is reported as partial when Azure and Google supplied discovery candidates", () => {
+  const recommendations = topProspectNextRunRecommendations({
+    job: {
+      input: {
+        trade: "Landscaping",
+        city: "Toledo",
+        state: "OH",
+        radiusKm: 25,
+        businessesToScan: 20,
+        finalProspectsWanted: 3,
+        prospectType: "all",
+        mode: "growth",
+        workflowType: "search",
+        outreachPreference: "written_only",
+        excludePreviouslyReviewed: true,
+      },
+      results: [],
+      reviewedNotRecommended: [],
+      skipSummary: { website_fit_requires_review: 12 },
+      discoveryDiagnostics: {
+        rawProviderCount: 39,
+        afterDistanceFilteringCount: 35,
+        afterDuplicateFilteringCount: 20,
+        afterQualificationFilteringCount: 0,
+        returnedCount: 0,
+        radiusKm: 25,
+        categorySignals: [],
+        sourceCounts: { osm: 0, google: 19, bing: 20, yelp: 0, yellowPages: 0 },
+        providerDiagnostics: {
+          osm: { configured: true, queryExecuted: true, status: "timed_out", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0, httpStatus: 504 },
+          azureMaps: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 20, withinRadiusCount: 18, afterDeduplicationCount: 15, usableWebsiteCount: 8 },
+          googlePlaces: { configured: true, queryExecuted: true, status: "succeeded", returnedCount: 19, withinRadiusCount: 17, afterDeduplicationCount: 14, usableWebsiteCount: 9 },
+          yelp: { configured: false, queryExecuted: false, status: "not_configured", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+        finalMergedCount: 20,
+      },
+    },
+  });
+  const joined = recommendations.join(" ");
+
+  assert.match(joined, /returned candidates from 2 providers.*not a total discovery failure/i);
+  assert.doesNotMatch(joined, /All attempted discovery providers failed/i);
 });
 
 test("Top Prospects build version safely identifies the deployed commit", () => {

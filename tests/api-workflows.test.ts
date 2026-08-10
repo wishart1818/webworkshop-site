@@ -532,6 +532,7 @@ test("invalid prospect, discovery, and analysis requests are rejected", async ()
 });
 
 test("manual no-website analysis returns a persisted Presence Gap state", async () => {
+  const checkedAt = new Date().toISOString();
   const prospect = {
     ...structuredClone(seedProspects[3]),
     id: "manual-no-website",
@@ -548,7 +549,7 @@ test("manual no-website analysis returns a persisted Presence Gap state", async 
       attempts: [],
       usableSignals: [],
       explanation: "Verified public research found no owned business website.",
-      checkedAt: "2026-07-28T12:00:00.000Z",
+      checkedAt,
       ownershipDecision: "not_owned" as const,
       identityEvidence: ["Two independent provider records matched the business and had no owned website."],
       fit: {
@@ -557,7 +558,7 @@ test("manual no-website analysis returns a persisted Presence Gap state", async 
         supportingEvidence: ["Two independent provider records matched the business and had no owned website."],
         confidence: "high" as const,
         analysisOrigin: "manual" as const,
-        evaluatedAt: "2026-07-28T12:00:00.000Z",
+        evaluatedAt: checkedAt,
       },
     },
     analysis: undefined,
