@@ -669,7 +669,7 @@ function normalizeProviderDiagnostics(value: unknown, sourceCounts: DiscoverySou
       ...(typeof item?.query === "string" && item.query ? { query: item.query } : {}),
       ...(typeof item?.attemptedAt === "string" && item.attemptedAt ? { attemptedAt: item.attemptedAt } : {}),
       ...(typeof item?.finishedAt === "string" && item.finishedAt ? { finishedAt: item.finishedAt } : {}),
-      ...(finiteNumber(item?.durationMs) ? { durationMs: finiteNumber(item.durationMs) } : {}),
+      ...(finiteNumber(item?.durationMs) ? { durationMs: finiteNumber(item?.durationMs) } : {}),
       ...(item?.failureType && ["not_configured", "timeout", "rate_limit", "auth_failure", "network_error", "http_error", "parse_error", "query_error"].includes(item.failureType)
         ? { failureType: item.failureType as DiscoveryProviderFailureType }
         : {}),
