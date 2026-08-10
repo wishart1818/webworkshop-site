@@ -47,15 +47,33 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
   const providerNames = (providers: string[] | undefined) => providers?.length
     ? providers.map((provider) => providerLabels[provider as DiscoveryProvider] ?? provider).join(", ")
     : "Not attempted";
+  const qualificationBreakdown = diagnostics.qualificationBreakdown;
   return (
     <section className="engine-discovery-diagnostics" aria-label="Discovery diagnostics">
       <div className="engine-discovery-funnel">
         <span><b>{diagnostics.rawProviderCount}</b> total provider records</span>
         <span><b>{diagnostics.afterDistanceFilteringCount}</b> within {diagnostics.radiusKm} km</span>
-        <span><b>{diagnostics.finalMergedCount}</b> final merged records</span>
+        <span><b>{diagnostics.finalMergedCount}</b> unique merged businesses</span>
         <span><b>{diagnostics.afterQualificationFilteringCount}</b> {qualificationLabel}</span>
         <span><b>{diagnostics.returnedCount}</b> returned for review</span>
       </div>
+      {qualificationBreakdown ? (
+        <div className="engine-trade-diagnostics" aria-label="Discovery qualification funnel">
+          <h3>Discovery Qualification Funnel</h3>
+          <div role="table" aria-label="Discovery qualification reason counts">
+            <div role="row"><span>Merged</span><span>Owned-site candidates</span><span>No-site candidates</span><span>Wrong requested type</span><span>No activity evidence</span><span>Bad fit / inactive</span><span>Eligible for analysis</span></div>
+            <div role="row">
+              <strong>{qualificationBreakdown.mergedCandidates}</strong>
+              <span>{qualificationBreakdown.ownedWebsiteCandidates}</span>
+              <span>{qualificationBreakdown.noOwnedWebsiteCandidates}</span>
+              <span>{qualificationBreakdown.requestedTypeMismatch}</span>
+              <span>{qualificationBreakdown.noActivityEvidence}</span>
+              <span>{qualificationBreakdown.badFitOrInactive}</span>
+              <span>{qualificationBreakdown.eligibleLeads}</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="engine-provider-diagnostics" aria-label="Provider query diagnostics">
         <h3>Provider Diagnostics</h3>
         {(Object.keys(providerLabels) as DiscoveryProvider[]).map((provider) => {
