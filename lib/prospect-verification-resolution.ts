@@ -15,6 +15,8 @@ import {
 } from "@/lib/site-analysis";
 
 export const manualReviewTriageReasonCodes = [
+  "SAFE_VERIFIED_WEBSITE_EXCLUSION",
+  "VERIFIED_REBUILD_OPPORTUNITY",
   "CRAWLER_BLOCKED",
   "CRAWLER_TIMEOUT_OR_TRANSIENT_FAILURE",
   "WEBSITE_VERIFICATION_INCONCLUSIVE",
@@ -104,6 +106,13 @@ function resolutionOutcome(result: ProspectWebsiteVerificationResult): SharedPro
   return "still_manual";
 }
 
+function resolutionReasonCode(result: ProspectWebsiteVerificationResult): ManualReviewTriageReasonCode {
+  const outcome = resolutionOutcome(result);
+  if (outcome === "safe_exclusion") return "SAFE_VERIFIED_WEBSITE_EXCLUSION";
+  if (outcome === "reviewable_rebuild_opportunity") return "VERIFIED_REBUILD_OPPORTUNITY";
+  return unresolvedWebsiteReason(result.prospect);
+}
+
 export function unresolvedWebsiteReason(prospect: Prospect): ManualReviewTriageReasonCode {
   if (prospect.activitySignals.includes("discovery_identity_conflict:same_name")) return "SAME_NAME_AMBIGUOUS";
   const report = prospect.websiteVerification;
@@ -148,7 +157,7 @@ export async function verifyProspectWebsiteWithSecondPass(
       initialResult,
       secondPassAttempted: false,
       candidateUrlsConsidered: prospect.website ? [prospect.website] : [],
-      reasonCode: unresolvedWebsiteReason(initialResult.prospect),
+      reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
     };
@@ -180,7 +189,7 @@ export async function verifyProspectWebsiteWithSecondPass(
       initialResult,
       secondPassAttempted: false,
       candidateUrlsConsidered: [],
-      reasonCode: unresolvedWebsiteReason(initialResult.prospect),
+      reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
     };
@@ -204,7 +213,7 @@ export async function verifyProspectWebsiteWithSecondPass(
     initialResult,
     secondPassAttempted: true,
     candidateUrlsConsidered: candidates,
-    reasonCode: unresolvedWebsiteReason(best.prospect),
+    reasonCode: resolutionReasonCode(best),
     outcome: resolutionOutcome(best),
     explanation: resultExplanation(best, true),
   };
