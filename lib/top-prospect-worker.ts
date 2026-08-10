@@ -6,6 +6,7 @@ import {
   discoveryLeadsFromJson,
   type DiscoveredLead,
   type DiscoveryDiagnostics,
+  type DiscoveryQualificationBreakdown,
   type CityDiscoveryDiagnostic,
   type DiscoveryProviderDiagnostic,
   type DiscoveryProviderDiagnostics,
@@ -174,6 +175,28 @@ function combineSourceCounts(results: DiscoveryResult[]): DiscoverySourceCounts 
   }, emptySourceCounts());
 }
 
+function combineQualificationBreakdowns(results: DiscoveryResult[]): DiscoveryQualificationBreakdown | undefined {
+  const values = results.map((result) => result.diagnostics.qualificationBreakdown).filter(Boolean) as DiscoveryQualificationBreakdown[];
+  if (!values.length) return undefined;
+  return values.reduce<DiscoveryQualificationBreakdown>((combined, current) => ({
+    mergedCandidates: combined.mergedCandidates + current.mergedCandidates,
+    ownedWebsiteCandidates: combined.ownedWebsiteCandidates + current.ownedWebsiteCandidates,
+    noOwnedWebsiteCandidates: combined.noOwnedWebsiteCandidates + current.noOwnedWebsiteCandidates,
+    requestedTypeMismatch: combined.requestedTypeMismatch + current.requestedTypeMismatch,
+    noActivityEvidence: combined.noActivityEvidence + current.noActivityEvidence,
+    badFitOrInactive: combined.badFitOrInactive + current.badFitOrInactive,
+    eligibleLeads: combined.eligibleLeads + current.eligibleLeads,
+  }), {
+    mergedCandidates: 0,
+    ownedWebsiteCandidates: 0,
+    noOwnedWebsiteCandidates: 0,
+    requestedTypeMismatch: 0,
+    noActivityEvidence: 0,
+    badFitOrInactive: 0,
+    eligibleLeads: 0,
+  });
+}
+
 function leadDomain(value: string) {
   try {
     return new URL(value).hostname.replace(/^www\./, "").toLowerCase();
@@ -243,13 +266,9 @@ export function combineTradeDiscoveryResults(input: {
     const existing = strongKey ? merged.get(key) : undefined;
     merged.set(key, existing ? mergeLeadForAllTrades(existing, lead) : lead);
   };
-  for (const lead of input.initialLeads ?? []) {
-    saveLead(lead);
-  }
+  for (const lead of input.initialLeads ?? []) saveLead(lead);
   for (const { result } of input.results) {
-    for (const lead of result.leads) {
-      saveLead(lead);
-    }
+    for (const lead of result.leads) saveLead(lead);
   }
   const allLeads = [...merged.values()].sort((left, right) =>
     (right.sourceConfidence ?? 0) - (left.sourceConfidence ?? 0)
@@ -267,33 +286,39 @@ export function combineTradeDiscoveryResults(input: {
     const retryCount = providerItems.reduce((total, [, diagnostic]) => total + (diagnostic.retryCount ?? 0), 0);
     const hasProviderProblem = providerItems.some(([, diagnostic]) => ["rate_limited", "failed", "timed_out"].includes(diagnostic.status));
     return {
-    trade,
-    status: result.leads.length ? hasProviderProblem ? "partial" as const : "completed" as const : hasProviderProblem ? "skipped" as const : "completed" as const,
-    rawProviderCount: result.diagnostics.rawProviderCount,
-    withinRadiusCount: result.diagnostics.afterDistanceFilteringCount,
-    afterDeduplicationCount: result.diagnostics.afterDuplicateFilteringCount,
-    usableWebsiteCount: result.diagnostics.afterQualificationFilteringCount,
-    returnedCount: result.diagnostics.returnedCount,
-    providerDiagnostics: result.diagnostics.providerDiagnostics,
-    ...(rateLimitedProviders.length ? { rateLimitedProviders } : {}),
-    ...(retryCount ? { retryCount } : {}),
-    ...(result.leads.length === 0 && hasProviderProblem ? { skippedReason: "Provider unavailable or rate limited." } : {}),
-  };
+      trade,
+      status: result.leads.length ? hasProviderProblem ? "partial" as const : "completed" as const : hasProviderProblem ? "skipped" as const : "completed" as const,
+      rawProviderCount: result.diagnostics.rawProviderCount,
+      withinRadiusCount: result.diagnostics.afterDistanceFilteringCount,
+      afterDeduplicationCount: result.diagnostics.afterDuplicateFilteringCount,
+      usableWebsiteCount: result.diagnostics.providerDiagnostics.googlePlaces.usableWebsiteCount
+        + result.diagnostics.providerDiagnostics.azureMaps.usableWebsiteCount
+        + result.diagnostics.providerDiagnostics.osm.usableWebsiteCount
+        + result.diagnostics.providerDiagnostics.yelp.usableWebsiteCount,
+      returnedCount: result.diagnostics.returnedCount,
+      providerDiagnostics: result.diagnostics.providerDiagnostics,
+      ...(rateLimitedProviders.length ? { rateLimitedProviders } : {}),
+      ...(retryCount ? { retryCount } : {}),
+      ...(result.leads.length === 0 && hasProviderProblem ? { skippedReason: "One or more providers were unavailable while no eligible leads were returned." } : {}),
+    };
   });
   const tradeDiagnostics = [...(input.previousTradeDiagnostics ?? [])]
     .filter((previous) => !newTradeDiagnostics.some((current) => current.trade === previous.trade))
     .concat(newTradeDiagnostics);
+  const qualificationBreakdown = combineQualificationBreakdowns(input.results);
+  const preQualificationMergedCount = qualificationBreakdown?.mergedCandidates ?? allLeads.length;
   const diagnostics: DiscoveryDiagnostics = {
     rawProviderCount: tradeDiagnostics.reduce((total, item) => total + item.rawProviderCount, 0),
     afterDistanceFilteringCount: tradeDiagnostics.reduce((total, item) => total + item.withinRadiusCount, 0),
-    afterDuplicateFilteringCount: allLeads.length,
+    afterDuplicateFilteringCount: preQualificationMergedCount,
     afterQualificationFilteringCount: allLeads.length,
     returnedCount: leads.length,
     radiusKm: input.radiusKm,
     categorySignals: input.results.flatMap((item) => item.result.diagnostics.categorySignals),
     sourceCounts: combineSourceCounts(input.results.map((item) => item.result)),
     providerDiagnostics: combineProviderDiagnosticsFromTradeDiagnostics(tradeDiagnostics),
-    finalMergedCount: allLeads.length,
+    finalMergedCount: preQualificationMergedCount,
+    ...(qualificationBreakdown ? { qualificationBreakdown } : {}),
     tradeDiagnostics,
   };
   return { leads, diagnostics };
@@ -332,38 +357,58 @@ export function combineCityDiscoveryResults(input: {
   const cityDiagnostics: CityDiscoveryDiagnostic[] = input.results.map(({ target, requestedCount, result }) => {
     const providerItems = Object.entries(result.diagnostics.providerDiagnostics);
     const hasProviderProblem = providerItems.some(([, diagnostic]) => ["rate_limited", "failed", "timed_out"].includes(diagnostic.status));
+    const providerSucceededWithRecords = providerItems.some(([, diagnostic]) => diagnostic.status === "succeeded" && diagnostic.returnedCount > 0);
+    const noEligibleMatches = result.leads.length === 0 && providerSucceededWithRecords;
     return {
       city: target.city,
       state: target.state,
       label: target.label,
-      status: result.leads.length ? hasProviderProblem ? "partial" : "completed" : hasProviderProblem ? "failed" : "completed",
+      status: result.leads.length
+        ? hasProviderProblem ? "partial" : "completed"
+        : noEligibleMatches
+          ? hasProviderProblem ? "partial" : "completed"
+          : hasProviderProblem ? "failed" : "completed",
       requestedCount,
       rawProviderCount: result.diagnostics.rawProviderCount,
       withinRadiusCount: result.diagnostics.afterDistanceFilteringCount,
       afterDeduplicationCount: result.diagnostics.afterDuplicateFilteringCount,
-      usableWebsiteCount: result.diagnostics.afterQualificationFilteringCount,
+      usableWebsiteCount: providerItems.reduce((total, [, diagnostic]) => total + diagnostic.usableWebsiteCount, 0),
       returnedCount: result.diagnostics.returnedCount,
       providerDiagnostics: result.diagnostics.providerDiagnostics,
-      providersAttempted: Object.entries(result.diagnostics.providerDiagnostics).filter(([, diagnostic]) => diagnostic.queryExecuted).map(([provider]) => provider),
+      providersAttempted: providerItems.filter(([, diagnostic]) => diagnostic.queryExecuted).map(([provider]) => provider),
       skippedCount: Math.max(0, result.diagnostics.afterDuplicateFilteringCount - result.diagnostics.returnedCount),
       qualifiedCount: result.diagnostics.returnedCount,
       mainSkipReasons: result.leads.length === 0
-        ? (hasProviderProblem ? ["Provider unavailable or timed out"] : ["No usable records returned"])
+        ? noEligibleMatches
+          ? ["No eligible records after the requested prospect-type and safety filters"]
+          : hasProviderProblem ? ["Provider unavailable or timed out"] : ["No usable records returned"]
         : [],
-      ...(result.leads.length === 0 && hasProviderProblem ? { safeReason: "Provider unavailable, timed out, or returned no eligible records for this city." } : {}),
+      ...(result.leads.length === 0
+        ? {
+            safeReason: noEligibleMatches
+              ? "Providers returned business records, but none matched the requested prospect type and safety filters."
+              : hasProviderProblem
+                ? "Provider unavailable or timed out before eligible records were available for this city."
+                : "No eligible business records were returned for this city.",
+          }
+        : {}),
     };
   });
+  const qualificationBreakdown = combineQualificationBreakdowns(input.results);
+  const preQualificationMergedCount = qualificationBreakdown?.mergedCandidates
+    ?? input.results.reduce((total, item) => total + item.result.diagnostics.afterDuplicateFilteringCount, 0);
   const diagnostics: DiscoveryDiagnostics = {
     rawProviderCount: cityDiagnostics.reduce((total, item) => total + item.rawProviderCount, 0),
     afterDistanceFilteringCount: cityDiagnostics.reduce((total, item) => total + item.withinRadiusCount, 0),
-    afterDuplicateFilteringCount: allLeads.length,
+    afterDuplicateFilteringCount: preQualificationMergedCount,
     afterQualificationFilteringCount: allLeads.length,
     returnedCount: leads.length,
     radiusKm: input.radiusKm,
     categorySignals: input.results.flatMap((item) => item.result.diagnostics.categorySignals),
     sourceCounts: combineSourceCounts(input.results.map((item) => item.result)),
     providerDiagnostics: combineProviderDiagnosticsFromCityDiagnostics(cityDiagnostics),
-    finalMergedCount: allLeads.length,
+    finalMergedCount: preQualificationMergedCount,
+    ...(qualificationBreakdown ? { qualificationBreakdown } : {}),
     tradeDiagnostics: input.results.flatMap((item) => item.result.diagnostics.tradeDiagnostics ?? []),
     cityDiagnostics,
     cityTargets: input.cityTargets,
@@ -384,8 +429,18 @@ function discoveryHasPartialIssues(diagnostics: DiscoveryDiagnostics | null | un
   );
 }
 
-function waitingStatusForDiscovery(discovery: DiscoveryResult) {
-  if (discovery.leads.length === 0) return "FAILED_AFTER_DISCOVERY";
+export function discoveryHasSuccessfulProviderRecords(diagnostics: DiscoveryDiagnostics | null | undefined) {
+  return Boolean(Object.values(diagnostics?.providerDiagnostics ?? {})
+    .some((provider) => provider.status === "succeeded" && provider.returnedCount > 0));
+}
+
+export function waitingStatusForDiscovery(discovery: DiscoveryResult) {
+  if (discovery.leads.length === 0) {
+    if (discoveryHasSuccessfulProviderRecords(discovery.diagnostics)) {
+      return discoveryHasPartialIssues(discovery.diagnostics) ? "COMPLETED_WITH_PARTIAL_RESULTS" : "COMPLETED";
+    }
+    return "FAILED_AFTER_DISCOVERY";
+  }
   return discoveryHasPartialIssues(discovery.diagnostics) ? "PARTIAL_RESULTS_READY" : "NEEDS_NEXT_BATCH";
 }
 
@@ -538,12 +593,7 @@ async function discoverTopProspectLeads(input: {
         const providerError = safeTopProspectJobFailure(error);
         if (!(error instanceof TopProspectStageError) || providerError.classification !== "discovery_provider_error") throw error;
         const rateLimited = /HTTP 429|rate.?limit/i.test(providerError.reason);
-        result = tradeFailureDiscoveryResult({
-          trade,
-          radiusKm: input.radiusKm,
-          rateLimited,
-          safeReason: providerError.reason,
-        });
+        result = tradeFailureDiscoveryResult({ trade, radiusKm: input.radiusKm, rateLimited, safeReason: providerError.reason });
       }
       results.push({ trade, result });
     }
@@ -976,20 +1026,26 @@ export async function processTopProspectJob(jobId: string) {
       });
       console.info("[top-prospects] Discovery completed.", { jobId: job.id, ...discovery.diagnostics });
       const status = waitingStatusForDiscovery(discovery);
+      const completedWithoutEligibleLeads = discovery.leads.length === 0
+        && (status === "COMPLETED" || status === "COMPLETED_WITH_PARTIAL_RESULTS");
       await getProspectDatabase().topProspectJob.update({
         where: { id: job.id },
         data: {
           discoveredLeads: discovery as unknown as Prisma.InputJsonValue,
-          stage: discovery.leads.length ? "ANALYZE" : "DISCOVER",
+          stage: discovery.leads.length ? "ANALYZE" : completedWithoutEligibleLeads ? "COMPLETE" : "DISCOVER",
           status,
+          completedAt: completedWithoutEligibleLeads ? new Date() : null,
           errorMessage: status === "FAILED_AFTER_DISCOVERY"
-            ? encodeTopProspectJobFailure("discovery_provider_error", "Discovery completed with no eligible prospects. Review provider diagnostics and adjust the search.")
+            ? encodeTopProspectJobFailure("discovery_provider_error", "Discovery providers did not produce usable business records. Review provider diagnostics before retrying.")
             : null,
           leaseToken: null,
           leaseUntil: null,
         },
       });
-      return { status: status.toLowerCase() as "needs_next_batch" | "partial_results_ready" | "failed_after_discovery", shouldContinue: discovery.leads.length > 0 };
+      return {
+        status: status.toLowerCase() as "needs_next_batch" | "partial_results_ready" | "failed_after_discovery" | "completed" | "completed_with_partial_results",
+        shouldContinue: discovery.leads.length > 0,
+      };
     }
 
     const leads = discoveryLeadsFromJson(job.discoveredLeads);
