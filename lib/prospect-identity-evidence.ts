@@ -107,6 +107,44 @@ export function isSpecificBusinessSocialProfileUrl(value: string) {
   }
 }
 
+function isSpecificGoogleBusinessProfileUrl(value: string) {
+  try {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "maps.app.goo.gl" || host.endsWith(".maps.app.goo.gl") || host === "g.page" || host.endsWith(".g.page")) {
+      return url.pathname.split("/").filter(Boolean).length >= 1;
+    }
+    if (!(host === "google.com" || host.endsWith(".google.com"))) return false;
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    return /\/maps\/(?:place|search|dir)\//i.test(path)
+      || /\/maps$/i.test(path) && Boolean(url.searchParams.get("cid") || url.searchParams.get("q") || url.searchParams.get("query_place_id"));
+  } catch {
+    return false;
+  }
+}
+
+function isSpecificYelpBusinessProfileUrl(value: string) {
+  try {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    return (host === "yelp.com" || host.endsWith(".yelp.com"))
+      && /^\/biz\/[A-Za-z0-9_-]+/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function isSpecificProviderBusinessProfileEvidence(evidence: DiscoveryIdentityEvidence) {
+  if (isSpecificBusinessSocialProfileUrl(evidence.profileUrl)) return true;
+  if (evidence.source === "google" && isSpecificGoogleBusinessProfileUrl(evidence.profileUrl)) return true;
+  if (evidence.source === "yelp" && isSpecificYelpBusinessProfileUrl(evidence.profileUrl)) return true;
+  return false;
+}
+
 export function isCredibleOwnedWebsiteCandidate(value: string) {
   const host = normalizedHost(value);
   return Boolean(host && !hostMatches(host, [...socialHosts, ...knownDirectoryHosts]));
@@ -249,23 +287,20 @@ export function authoritativeNoOwnedWebsiteEvidence(prospect: Prospect, now = ne
       explanation: "No-site evidence needs two independent provider identities, including an authoritative source, tied by a complete phone, exact address, or close location.",
     };
   }
-  const profiles = new Set([
-    ...consistent.map((item) => item.profileUrl),
-    ...consistent.map((item) => isSpecificBusinessSocialProfileUrl(item.website) ? item.website : ""),
-  ].filter(Boolean));
-  if (![...profiles].some(isSpecificBusinessSocialProfileUrl)) {
+  const publicProfileEvidence = consistent.filter(isSpecificProviderBusinessProfileEvidence);
+  if (publicProfileEvidence.length === 0) {
     return {
       verified: false,
       sources,
       reasonCode: "public_presence_incomplete",
-      explanation: "The provider identities do not include a specific public business social profile, so owned-site absence remains inconclusive.",
+      explanation: "The provider identities do not include a specific provider-attested public business profile, so owned-site absence remains inconclusive.",
     };
   }
   return {
     verified: true,
     sources: [...independentSources].sort(),
     reasonCode: "verified_provider_social_absence",
-    explanation: "Independent provider identities agree on the business and show only a specific public social presence, with no credible owned-domain candidate.",
+    explanation: "Independent provider identities agree on the business and show a specific provider-attested public business profile, with no credible owned-domain candidate.",
   };
 }
 

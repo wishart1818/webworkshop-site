@@ -161,6 +161,16 @@ export type UnresolvedTopProspectRecord = {
   recommendedNextAction: string;
 };
 
+export type DiscoveryQualificationBreakdown = {
+  mergedCandidates: number;
+  ownedWebsiteCandidates: number;
+  noOwnedWebsiteCandidates: number;
+  requestedTypeMismatch: number;
+  noActivityEvidence: number;
+  badFitOrInactive: number;
+  eligibleLeads: number;
+};
+
 export type DiscoveryDiagnostics = {
   rawProviderCount: number;
   afterDistanceFilteringCount: number;
@@ -172,6 +182,7 @@ export type DiscoveryDiagnostics = {
   sourceCounts: DiscoverySourceCounts;
   providerDiagnostics: DiscoveryProviderDiagnostics;
   finalMergedCount: number;
+  qualificationBreakdown?: DiscoveryQualificationBreakdown;
   tradeDiagnostics?: TradeDiscoveryDiagnostic[];
   cityDiagnostics?: CityDiscoveryDiagnostic[];
   cityTargets?: Array<{ city: string; state: string; label: string }>;
@@ -290,7 +301,7 @@ const discoveryProviderDefinitions: Record<DiscoveryProvider, {
 
 const googlePlacesNewEndpoint = "https://places.googleapis.com/v1/places:searchText";
 const googlePlacesLegacyTextSearchPattern = /\/maps\/api\/place\/textsearch\/json(?:$|[?#])/i;
-const googlePlacesFieldMask = "places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount";
+const googlePlacesFieldMask = "places.displayName,places.formattedAddress,places.addressComponents,places.location,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.rating,places.userRatingCount";
 
 function googlePlacesEndpoint(env: NodeJS.ProcessEnv = process.env): { url: string; version: GooglePlacesEndpointVersion } {
   const configuredUrl = env.GOOGLE_PLACES_API_URL?.trim();
@@ -722,6 +733,22 @@ function normalizeCityDiagnostics(value: unknown): CityDiscoveryDiagnostic[] {
   });
 }
 
+function normalizeQualificationBreakdown(value: unknown): DiscoveryQualificationBreakdown | undefined {
+  if (!value || Array.isArray(value) || typeof value !== "object") return undefined;
+  const candidate = value as Partial<DiscoveryQualificationBreakdown>;
+  const values = {
+    mergedCandidates: finiteNumber(candidate.mergedCandidates),
+    ownedWebsiteCandidates: finiteNumber(candidate.ownedWebsiteCandidates),
+    noOwnedWebsiteCandidates: finiteNumber(candidate.noOwnedWebsiteCandidates),
+    requestedTypeMismatch: finiteNumber(candidate.requestedTypeMismatch),
+    noActivityEvidence: finiteNumber(candidate.noActivityEvidence),
+    badFitOrInactive: finiteNumber(candidate.badFitOrInactive),
+    eligibleLeads: finiteNumber(candidate.eligibleLeads),
+  };
+  if (Object.values(values).some((item) => item === undefined)) return undefined;
+  return values as DiscoveryQualificationBreakdown;
+}
+
 const providerSources: Record<DiscoveryProvider, DiscoverySource> = {
   osm: "osm",
   azureMaps: "bing",
@@ -939,6 +966,10 @@ export function mergeDiscoveryCandidates(input: {
     if (key) sameNameCounts.set(key, (sameNameCounts.get(key) ?? 0) + 1);
   }
 
+  const ownedWebsiteCandidates = merged.filter((candidate) => isUsableBusinessWebsite(candidate.website)).length;
+  let requestedTypeMismatch = 0;
+  let noActivityEvidence = 0;
+  let badFitOrInactive = 0;
   const qualified = merged.flatMap((candidate): DiscoveredLead[] => {
     const requestedType = input.prospectType ?? "redesign";
     const trade = normalizeTradeCategory(input.trade) ?? input.trade;
@@ -964,9 +995,18 @@ export function mergeDiscoveryCandidates(input: {
       || Boolean(profileUrl)
       || candidate.sources.length > 1
       || (candidate.activitySignals ?? []).length > 0;
-    if (requestedType === "redesign" && prospectType !== "redesign") return [];
-    if (requestedType === "no_website_social_only" && prospectType !== "no_website_social_only") return [];
-    if (prospectType === "no_website_social_only" && !hasActivity) return [];
+    if (requestedType === "redesign" && prospectType !== "redesign") {
+      requestedTypeMismatch += 1;
+      return [];
+    }
+    if (requestedType === "no_website_social_only" && prospectType !== "no_website_social_only") {
+      requestedTypeMismatch += 1;
+      return [];
+    }
+    if (prospectType === "no_website_social_only" && !hasActivity) {
+      noActivityEvidence += 1;
+      return [];
+    }
     try {
       const website = ownedWebsite ? normalizeWebsite(ownedWebsite) : "";
       const normalizedProfileUrl = profileUrl && validWebsite(profileUrl) ? normalizeWebsite(profileUrl) : "";
@@ -976,6 +1016,7 @@ export function mergeDiscoveryCandidates(input: {
         || likelySupplierOrDistributor(fitProbe)
         || websiteBusinessMismatch(fitProbe)
         || !hasClearLocalServiceIntent(fitProbe);
+      if (candidate.inactive || badFit) badFitOrInactive += 1;
       const classification = candidate.inactive || badFit
         ? "duplicate_bad_fit" as const
         : classifyProspectPresence({
@@ -1042,7 +1083,7 @@ export function mergeDiscoveryCandidates(input: {
       const source = providerSources[provider];
       diagnostic.withinRadiusCount = withinRadius.filter((candidate) => candidate.source === source).length;
       diagnostic.afterDeduplicationCount = merged.filter((candidate) => candidate.sources.includes(source)).length;
-      diagnostic.usableWebsiteCount = qualified.filter((lead) => lead.website && lead.sources?.includes(source)).length;
+      diagnostic.usableWebsiteCount = merged.filter((candidate) => candidate.sources.includes(source) && isUsableBusinessWebsite(candidate.website)).length;
     }
     input.logger?.("provider_diagnostics", {
       provider,
@@ -1082,6 +1123,15 @@ export function mergeDiscoveryCandidates(input: {
       sourceCounts: input.sourceCounts ?? emptySourceCounts(),
       providerDiagnostics,
       finalMergedCount: merged.length,
+      qualificationBreakdown: {
+        mergedCandidates: merged.length,
+        ownedWebsiteCandidates,
+        noOwnedWebsiteCandidates: Math.max(0, merged.length - ownedWebsiteCandidates),
+        requestedTypeMismatch,
+        noActivityEvidence,
+        badFitOrInactive,
+        eligibleLeads: qualified.length,
+      },
     },
   };
 }
@@ -1127,6 +1177,7 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
     ? (() => {
         const tradeDiagnostics = normalizeTradeDiagnostics(candidate.tradeDiagnostics);
         const cityDiagnostics = normalizeCityDiagnostics(candidate.cityDiagnostics);
+        const qualificationBreakdown = normalizeQualificationBreakdown(candidate.qualificationBreakdown);
         const cityTargets = Array.isArray(candidate.cityTargets)
           ? candidate.cityTargets.flatMap((target): Array<{ city: string; state: string; label: string }> => {
               if (!target || Array.isArray(target) || typeof target !== "object") return [];
@@ -1140,6 +1191,7 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
         sourceCounts: normalizeSourceCounts(candidate.sourceCounts),
         providerDiagnostics: normalizeProviderDiagnostics(candidate.providerDiagnostics, normalizeSourceCounts(candidate.sourceCounts)),
         finalMergedCount: candidate.finalMergedCount ?? candidate.afterDuplicateFilteringCount,
+        ...(qualificationBreakdown ? { qualificationBreakdown } : {}),
         ...(tradeDiagnostics.length ? { tradeDiagnostics } : {}),
         ...(cityDiagnostics.length ? { cityDiagnostics } : {}),
         ...(cityTargets.length ? { cityTargets } : {}),
@@ -1297,8 +1349,8 @@ function parseBingLocal(value: unknown): DiscoveryCandidate[] {
   const azure = (payload.results ?? []).flatMap((record) => record.poi?.name?.trim() ? [{
     businessName: record.poi.name.trim(),
     website: record.poi.url,
-      phone: record.poi.phone,
-      address: [record.address?.municipality, record.address?.countrySubdivisionCode].filter(Boolean).join(", "),
+    phone: record.poi.phone,
+    address: [record.address?.municipality, record.address?.countrySubdivisionCode].filter(Boolean).join(", "),
     city: record.address?.municipality,
     state: record.address?.countrySubdivisionCode,
     latitude: finiteNumber(record.position?.lat),
