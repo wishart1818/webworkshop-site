@@ -35,6 +35,7 @@ import {
   resetProspectMemoryForTests,
   setProspectMemoryForTests,
 } from "../lib/prospect-repository";
+import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
 import {
   extractContactDiscoveryFromPages,
   revalidateProspectPublicEmailSource,
@@ -167,7 +168,7 @@ function htmlResponse(body: string, status = 200) {
 }
 
 test("Pinnacle-style modern website is adequate and cannot enter redesign outreach despite a high business score", async () => {
-  const html = `<!doctype html><html><head><title>Pinnacle Pressure Washing of Toledo</title><meta name="viewport" content="width=device-width"><script type="application/ld+json">{"@type":"LocalBusiness"}</script></head><body><header><nav>Home Services Projects Reviews Contact</nav></header><main><h1>Pinnacle Pressure Washing of Toledo</h1><p>Residential pressure washing, house washing, concrete cleaning, and exterior cleaning for Toledo homeowners. Browse service details and recent project information before requesting an estimate.</p><a href="tel:+14195550123">Call</a><a href="mailto:info@pinnacle419.com">Email</a><form><input name="email"><textarea name="project"></textarea><button>Request quote</button></form><img src="/project.jpg" alt="Exterior cleaning project"></main></body></html>`;
+  const html = `<!doctype html><html><head><title>Pinnacle Pressure Washing of Toledo</title><meta name="viewport" content="width=device-width"><script type="application/ld+json">{"@type":"LocalBusiness"}</script></head><body><header><nav><a href="/">Home</a><a href="/services">Services</a><a href="/projects">Projects</a><a href="/contact">Contact</a></nav></header><main><h1>Pinnacle Pressure Washing of Toledo</h1><p>Residential pressure washing, house washing, concrete cleaning, and exterior cleaning for Toledo homeowners. Browse service details and recent project information before requesting an estimate.</p><a href="tel:+14195550123">(419) 555-0123</a><a href="mailto:info@pinnacle419.com">Email</a><form><input name="email"><textarea name="project"></textarea><button>Request quote</button></form><img src="/project.jpg" alt="Exterior cleaning project"></main></body></html>`;
   const prospect = baseProspect({ rating: 4.9, reviewCount: 240, sourceConfidence: 98 });
   const result = await verifyProspectWebsite(prospect, safeDependencies(async () => htmlResponse(html)));
   const assessment = assessOpportunity(result.prospect);
@@ -186,7 +187,7 @@ test("Pinnacle-style modern website is adequate and cannot enter redesign outrea
 });
 
 test("incomplete raw HTML remains inconclusive instead of inventing a visual redesign defect", async () => {
-  const html = `<!doctype html><html><head><title>Pinnacle Pressure Washing of Toledo</title><meta name="viewport" content="width=device-width"></head><body><header><nav>Home About</nav></header><main><h1>Pinnacle Pressure Washing of Toledo</h1><p>${"Local property information and company background. ".repeat(12)}</p></main></body></html>`;
+  const html = `<!doctype html><html><head><title>Pinnacle Pressure Washing of Toledo</title><meta name="viewport" content="width=device-width"></head><body><header><nav><a href="/">Home</a><a href="/contact">Contact</a></nav></header><main><h1>Pinnacle Pressure Washing of Toledo</h1><p>${"Local property information and company background. ".repeat(12)}</p><a href="tel:+14195550123">(419) 555-0123</a></main></body></html>`;
   const result = await verifyProspectWebsite(baseProspect(), safeDependencies(async () => htmlResponse(html)));
   assert.equal(result.report.status, "usable");
   assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
@@ -207,22 +208,28 @@ test("clearly weak owned website retains one grounded issue and a directly match
 });
 
 test("verified no-owned-website state uses cautious language and remains distinct from crawler failure", async () => {
+  const checkedAt = new Date().toISOString();
+  const facebookUrl = "https://facebook.com/pinnaclepressurewashing";
   const prospect = baseProspect({
     website: "",
     email: "",
     prospectType: "no_website_social_only",
-    profileUrl: "https://facebook.com/pinnaclepressurewashing",
-    facebookUrl: "https://facebook.com/pinnaclepressurewashing",
-    activitySignals: ["discovery_source:google"],
+    profileUrl: facebookUrl,
+    facebookUrl,
+    createdAt: checkedAt,
+    activitySignals: [
+      discoveryIdentityEvidenceSignal({ source: "google", businessName: "Pinnacle Pressure Washing of Toledo", website: "", profileUrl: facebookUrl, phone: "+14195550123", address: "100 Main Street, Toledo, OH", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 }),
+      discoveryIdentityEvidenceSignal({ source: "osm", businessName: "Pinnacle Pressure Washing of Toledo", website: facebookUrl, profileUrl: facebookUrl, phone: "(419) 555-0123", address: "100 Main St, Toledo, Ohio", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 }),
+    ],
     sourceConfidence: 50,
     contactEvidence: [{
       kind: "facebook",
-      value: "https://facebook.com/pinnaclepressurewashing",
-      sourceUrl: "https://facebook.com/pinnaclepressurewashing",
+      value: facebookUrl,
+      sourceUrl: facebookUrl,
       extractionMethod: "visible_text",
       confidence: "high",
       domainMatchesBusiness: false,
-      discoveredAt: new Date().toISOString(),
+      discoveredAt: checkedAt,
       sourceType: "official_social",
       firstParty: true,
       decisionReason: "The official profile was manually verified for this business.",

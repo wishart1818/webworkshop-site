@@ -348,6 +348,23 @@ test("website re-check and controlled-pilot controls retain guarded progress and
   assert.match(verificationRoute, /prospectId,/);
   assert.match(verificationRoute, /safeSelectedProspectIds\(input\.selectedProspectIds\)/);
   assert.match(testCenterSource, /Activation sends nothing/);
+  assert.match(testCenterSource, /Run Manual Review Triage/);
+  assert.match(testCenterSource, /Resume Manual Review Triage/);
+  assert.match(testCenterSource, /Safe exclusions/);
+  assert.match(testCenterSource, /Reviewable rebuild/);
+  assert.match(testCenterSource, /Still manual/);
+  assert.match(testCenterSource, /Protected/);
+  assert.match(testCenterSource, /record\.businessName/);
+  assert.match(testCenterSource, /record\.reasonCode/);
+  assert.match(testCenterSource, /record\.firstPartyEvidence/);
+  assert.match(testCenterSource, /APPLY REVIEWED TRIAGE RESULTS/);
+  assert.match(testCenterSource, /Nothing was changed or sent/);
+  assert.match(verificationRoute, /start_manual_review_triage/);
+  assert.match(verificationRoute, /continue_manual_review_triage/);
+  assert.match(verificationRoute, /apply_manual_review_triage/);
+  assert.match(verificationRoute, /continue_manual_review_triage_apply/);
+  assert.match(verificationRoute, /manualReviewTriageConfirmationText/);
+  assert.doesNotMatch(verificationRoute, /input\.(?:proposedPatch|proposedProspect|mutationPatch)/);
 });
 
 test("unapproved outreach renders compliance review and disabled copy controls", () => {

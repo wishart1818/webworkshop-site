@@ -155,7 +155,7 @@ function verificationDependencies(contactEmail = "info@truecleanprowash.com", bu
       <link rel="canonical" href="https://truecleanprowash.com/" />
     </head><body>
       <nav><a href="/">Home</a><a href="/services">Services</a><a href="/contact">Contact</a></nav>
-      <h1>True Clean Prowash</h1>
+      <h1>${businessName}</h1>
       <p>Residential pressure washing, house washing, and concrete cleaning for homeowners in Columbus.</p>
       <p>Request exterior cleaning for siding, patios, walkways, and driveways.</p>
       <a href="tel:+16145550123">Call (614) 555-0123</a>
@@ -630,9 +630,9 @@ test("a branded site without an independent published phone or domain email rema
     const dependencies = noEmailEvidenceDependencies();
     const review = await auditExistingWebsiteRecords({ apply: false, dependencies, snapshotSecret });
     assert.equal(review.records[0]?.contactEvidenceSufficient, false);
-    assert.equal(review.records[0]?.proposedOutcome, "exclude_from_rebuild_outreach");
+    assert.equal(review.records[0]?.proposedOutcome, "manual_review");
     assert.equal(review.records[0]?.highConfidenceExclusionEligible, false);
-    assert.equal(review.records[0]?.safeExclusionReasonCode, "ambiguous_same_name");
+    assert.equal(review.records[0]?.identitySafetyResult, "manual_review");
     const saved = await getProspect(prospect.id);
     assert.ok(saved);
     assert.deepEqual(contactState(saved!), contactBefore);
@@ -731,7 +731,6 @@ test("American Dream-style completed exclusions replay as no-op and leave legacy
   resetOperationalMemoryForTests();
   const prospect = legacyProspect({
     id: "american-dream-pressure-clean",
-    businessName: "American Dream Pressure Clean",
   });
   const oldQueue = { ...queueItem(prospect), outreachCopyVersion: "legacy_copy_v1" };
   setProspectMemoryForTests([prospect]);

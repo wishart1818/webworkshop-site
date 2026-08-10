@@ -1,4 +1,4 @@
-import type { DiscoveredLead, DiscoveryDiagnostics } from "@/lib/lead-discovery";
+import type { DiscoveredLead, DiscoveryDiagnostics, UnresolvedTopProspectRecord } from "@/lib/lead-discovery";
 import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
 import {
   normalizeWebsiteFitDisposition,
@@ -213,6 +213,7 @@ export type TopProspectJob = {
   reviewedNotRecommended: TopProspectResult[];
   reviewableLowerPriority?: TopProspectResult[];
   blockedProspects?: TopProspectResult[];
+  unresolvedProspects?: UnresolvedTopProspectRecord[];
   failureClassification: TopProspectJobFailureClassification | null;
   errorMessage: string;
   nextRunRecommendations: string[];
@@ -1427,7 +1428,11 @@ export function topProspectNextRunRecommendations(input: {
   if (!weakProviderCoverage && configuredProviders.length > 1 && successfulProviders.length === 1) recommendations.push("Only one configured provider returned records. Configure or repair the other providers before broadening scan count.");
   if (phoneBlocked > Math.max(2, job.results.length)) recommendations.push("Try Landscaping, Pressure Washing, Cleaning, Painting, or Concrete next because this run had too many phone-only leads.");
   if (badFit > Math.max(2, job.results.length)) recommendations.push(`This market returned mostly suppliers, directories, or mismatched websites. Try Cleaning or Painting instead.`);
-  if (!weakProviderCoverage && providerFailures > 0 && job.results.length === 0) recommendations.push(`Provider coverage was weak for ${cityLabel}. Check provider diagnostics, then try a larger preset, reduce cities, or lower scan count before retrying.`);
+  if (!weakProviderCoverage && providerFailures > 0 && job.results.length === 0) {
+    recommendations.push(successfulProviders.length > 0
+      ? `Discovery returned candidates from ${successfulProviders.length} provider${successfulProviders.length === 1 ? "" : "s"} while another provider failed for ${cityLabel}. Review qualification reasons before changing scan size; the run was not a total discovery failure.`
+      : `Provider coverage was weak for ${cityLabel}. Check provider diagnostics, then try a larger preset, reduce cities, or lower scan count before retrying.`);
+  }
   if (weakContact > Math.max(2, job.results.length)) recommendations.push("Too few leads had a written contact path. Use the Facebook Manual DM workflow or try a broader market before email outreach.");
   if (!weakProviderCoverage && (job.results.length + job.reviewedNotRecommended.length) < Math.max(3, job.input.finalProspectsWanted / 2)) recommendations.push("Try Florida or Texas Suburbs next with Growth Mode for a broader written-outreach pool.");
   if (!recommendations.length) recommendations.push(`Best next run: keep ${displayTradeCategory(job.input.trade)} focused, then test one starter trade in the strongest city from ${cityLabel}.`);

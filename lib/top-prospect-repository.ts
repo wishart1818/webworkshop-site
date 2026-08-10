@@ -175,6 +175,7 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     reviewedNotRecommended,
     reviewableLowerPriority,
     blockedProspects,
+    unresolvedProspects: diagnostics?.unresolvedRecords ?? [],
     failureClassification: failure.classification,
     errorMessage: failure.reason,
     nextRunRecommendations: [],
@@ -195,42 +196,7 @@ export async function createTopProspectJob(input: TopProspectInput) {
     Object.assign(error, { activeJobId: active.id, activeJobStatus: active.status });
     throw error;
   }
-  const job = await database.topProspectJob.create({
-    data: {
-      tradeCategory: input.trade === "All Core Service Trades" ? input.trade : normalizeTradeCategory(input.trade) ?? "General Contractor",
-      city: titleCaseLocation(input.city),
-      state: displayStateCode(input.state),
-      radiusKm: input.radiusKm,
-      businessesToScan: input.businessesToScan,
-      finalProspectsWanted: input.finalProspectsWanted,
-      prospectMode: input.mode,
-      prospectType: input.prospectType,
-      workflowType: input.workflowType,
-      outreachPreference: input.outreachPreference,
-      discoveredLeads: {
-        leads: [],
-        diagnostics: {
-          rawProviderCount: 0,
-          afterDistanceFilteringCount: 0,
-          afterDuplicateFilteringCount: 0,
-          afterQualificationFilteringCount: 0,
-          returnedCount: 0,
-          radiusKm: input.radiusKm,
-          categorySignals: [],
-          sourceCounts: { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
-          providerDiagnostics: {
-            osm: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-            azureMaps: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-            googlePlaces: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-            yelp: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
-          },
-          finalMergedCount: 0,
-          cityTargets: input.cityTargets ?? parseTopProspectCityTargets(input.city, input.state),
-          excludePreviouslyReviewed: input.excludePreviouslyReviewed,
-        },
-      },
-    },
-  });
+  const job = await database.topProspectJob.create({ data: topProspectJobPersistenceData(input) });
   console.info("[top-prospects] Job created.", {
     jobId: job.id,
     trade: job.tradeCategory,
@@ -245,6 +211,43 @@ export async function createTopProspectJob(input: TopProspectInput) {
     outreachPreference: job.outreachPreference,
   });
   return job;
+}
+
+export function topProspectJobPersistenceData(input: TopProspectInput) {
+  return {
+    tradeCategory: input.trade === "All Core Service Trades" ? input.trade : normalizeTradeCategory(input.trade) ?? "General Contractor",
+    city: titleCaseLocation(input.city),
+    state: displayStateCode(input.state),
+    radiusKm: input.radiusKm,
+    businessesToScan: input.businessesToScan,
+    finalProspectsWanted: input.finalProspectsWanted,
+    prospectMode: input.mode,
+    prospectType: input.prospectType,
+    workflowType: input.workflowType,
+    outreachPreference: input.outreachPreference,
+    discoveredLeads: {
+      leads: [],
+      diagnostics: {
+        rawProviderCount: 0,
+        afterDistanceFilteringCount: 0,
+        afterDuplicateFilteringCount: 0,
+        afterQualificationFilteringCount: 0,
+        returnedCount: 0,
+        radiusKm: input.radiusKm,
+        categorySignals: [],
+        sourceCounts: { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 },
+        providerDiagnostics: {
+          osm: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          azureMaps: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          googlePlaces: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+          yelp: { configured: null, queryExecuted: null, status: "not_recorded", returnedCount: 0, withinRadiusCount: 0, afterDeduplicationCount: 0, usableWebsiteCount: 0 },
+        },
+        finalMergedCount: 0,
+        cityTargets: input.cityTargets ?? parseTopProspectCityTargets(input.city, input.state),
+        excludePreviouslyReviewed: input.excludePreviouslyReviewed,
+      },
+    },
+  };
 }
 
 export async function getActiveTopProspectJobSummary() {

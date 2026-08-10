@@ -842,6 +842,35 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         </section>
       ) : null}
 
+      {latestJob && (latestJob.unresolvedProspects?.length ?? 0) > 0 ? (
+        <section className="engine-panel engine-top-results" aria-label="Unresolved Top Prospects">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Unresolved prospects needing triage</h2>
+              <p>These businesses were saved individually, but current website identity or fit evidence did not reach the shared qualification standard. No package was generated and nothing was sent.</p>
+            </div>
+            <span>{latestJob.unresolvedProspects?.length ?? 0} unresolved</span>
+          </div>
+          <div className="engine-operator-summary-grid">
+            {latestJob.unresolvedProspects?.map((record) => (
+              <article key={record.prospectId}>
+                <span>{record.unresolvedReasonCode.replaceAll("_", " ")}</span>
+                <h3>{record.businessName}</h3>
+                <p>{record.trade} in {record.city}, {record.state}</p>
+                <p><b>Website candidate:</b> {record.websiteCandidate || "None verified"}</p>
+                <p><b>Verification:</b> {record.websiteVerificationState.replaceAll("_", " ")} · <b>Fit:</b> {record.websiteFitState.replaceAll("_", " ")}</p>
+                <p>{record.evidenceSummary}</p>
+                <p><b>Sources:</b> {record.providerSources.join(", ") || "Stored prospect evidence"}</p>
+                <div className="engine-inline-actions">
+                  <button className="engine-button" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>
+                  <span>{record.recommendedNextAction}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {latestJob && queuedResults.length > 0 && (
         <section className="engine-panel engine-auto-queue">
           <div className="engine-panel__head"><div><h2>Auto Prospect Queue</h2><p>Complete Outreach Packages are stored for review. Sending remains manual and requires human approval.</p></div><span>{preparedArtifacts} prepared</span></div>

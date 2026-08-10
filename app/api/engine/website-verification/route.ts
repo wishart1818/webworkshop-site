@@ -17,6 +17,14 @@ import {
   getFullLegacyWebsiteCleanup,
   startFullLegacyWebsiteCleanup,
 } from "@/lib/full-legacy-website-cleanup";
+import {
+  beginManualReviewTriageApply,
+  continueManualReviewTriage,
+  continueManualReviewTriageApply,
+  getManualReviewTriage,
+  manualReviewTriageConfirmationText,
+  startManualReviewTriage,
+} from "@/lib/manual-review-triage";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,6 +40,11 @@ const supportedActions = [
   "get_full_legacy_cleanup",
   "apply_full_legacy_cleanup",
   "continue_full_legacy_cleanup_apply",
+  "start_manual_review_triage",
+  "continue_manual_review_triage",
+  "get_manual_review_triage",
+  "apply_manual_review_triage",
+  "continue_manual_review_triage_apply",
 ] as const;
 type WebsiteVerificationAction = (typeof supportedActions)[number];
 
@@ -71,10 +84,10 @@ function safeReviewToken(value: unknown) {
   return token;
 }
 
-function safeFullCleanupReference(input: Record<string, unknown>) {
+function safePersistedAuditReference(input: Record<string, unknown>) {
   const auditRunId = safeText(input.auditRunId, 100);
   const accessToken = safeText(input.accessToken, 100);
-  if (!auditRunId || !accessToken) throw new Error("A valid Full Legacy Cleanup run reference is required.");
+  if (!auditRunId || !accessToken) throw new Error("A valid persisted audit run reference is required.");
   return { auditRunId, accessToken };
 }
 
@@ -83,6 +96,7 @@ function rateLimitOperationLabel(action: string) {
   if (action === "audit_existing_records") return "Website-record audit request";
   if (action === "recheck_website") return "Website re-check request";
   if (action.includes("full_legacy_cleanup")) return "Full Legacy Cleanup request";
+  if (action.includes("manual_review_triage")) return "Manual Review Triage request";
   return "Website-verification request";
 }
 
@@ -119,18 +133,38 @@ export async function POST(request: Request) {
       return NextResponse.json(await startFullLegacyWebsiteCleanup());
     }
     if (action === "continue_full_legacy_cleanup") {
-      return NextResponse.json(await continueFullLegacyWebsiteCleanup(safeFullCleanupReference(input)));
+      return NextResponse.json(await continueFullLegacyWebsiteCleanup(safePersistedAuditReference(input)));
     }
     if (action === "get_full_legacy_cleanup") {
-      return NextResponse.json(await getFullLegacyWebsiteCleanup(safeFullCleanupReference(input)));
+      return NextResponse.json(await getFullLegacyWebsiteCleanup(safePersistedAuditReference(input)));
     }
     if (action === "apply_full_legacy_cleanup") {
-      const reference = safeFullCleanupReference(input);
+      const reference = safePersistedAuditReference(input);
       const confirmation = safeText(input.confirmation, 80);
       return NextResponse.json(await beginFullLegacyWebsiteCleanupApply({ ...reference, confirmation }));
     }
     if (action === "continue_full_legacy_cleanup_apply") {
-      return NextResponse.json(await continueFullLegacyWebsiteCleanupApply(safeFullCleanupReference(input)));
+      return NextResponse.json(await continueFullLegacyWebsiteCleanupApply(safePersistedAuditReference(input)));
+    }
+    if (action === "start_manual_review_triage") {
+      return NextResponse.json(await startManualReviewTriage());
+    }
+    if (action === "continue_manual_review_triage") {
+      return NextResponse.json(await continueManualReviewTriage(safePersistedAuditReference(input)));
+    }
+    if (action === "get_manual_review_triage") {
+      return NextResponse.json(await getManualReviewTriage(safePersistedAuditReference(input)));
+    }
+    if (action === "apply_manual_review_triage") {
+      const reference = safePersistedAuditReference(input);
+      const confirmation = safeText(input.confirmation, 80);
+      if (confirmation !== manualReviewTriageConfirmationText) {
+        throw new Error(`Type ${manualReviewTriageConfirmationText} to Apply the reviewed triage results.`);
+      }
+      return NextResponse.json(await beginManualReviewTriageApply({ ...reference, confirmation }));
+    }
+    if (action === "continue_manual_review_triage_apply") {
+      return NextResponse.json(await continueManualReviewTriageApply(safePersistedAuditReference(input)));
     }
     if (action === "audit_existing_records") {
       const prospectId = safeText(input.prospectId, 100);

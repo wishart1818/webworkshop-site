@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState, LoadingState } from "@/components/engine/EngineStates";
 import type { OperatorActionResult, OperatorTestCenterPayload } from "@/lib/operator-test-center";
 import type { FullLegacyCleanupReport } from "@/lib/full-legacy-website-cleanup";
+import type { ManualReviewTriageReport } from "@/lib/manual-review-triage";
 
 type ActionState = "idle" | "running";
 type TestCenterView = "readiness" | "safeTests" | "results" | "diagnostics";
@@ -26,6 +27,7 @@ function apiError(payload: { error?: string; message?: string }, fallback: strin
 
 const fullLegacyCleanupStorageKey = "webworkshop-full-legacy-cleanup-run";
 const fullLegacyCleanupMaximumClientSteps = 100;
+const manualReviewTriageStorageKey = "webworkshop-manual-review-triage-run";
 
 async function fullLegacyCleanupRequest(
   action: string,
@@ -39,6 +41,21 @@ async function fullLegacyCleanupRequest(
   });
   const body = await response.json() as FullLegacyCleanupReport & { error?: string };
   if (!response.ok || !body.auditRunId) throw new Error(apiError(body, "Full Legacy Cleanup failed safely."));
+  return body;
+}
+
+async function manualReviewTriageRequest(
+  action: string,
+  reference: Partial<Pick<ManualReviewTriageReport, "auditRunId" | "accessToken">> = {},
+  confirmation = "",
+) {
+  const response = await fetch("/api/engine/website-verification", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...reference, ...(confirmation ? { confirmation } : {}) }),
+  });
+  const body = await response.json() as ManualReviewTriageReport & { error?: string };
+  if (!response.ok || !body.auditRunId) throw new Error(apiError(body, "Manual Review Triage failed safely."));
   return body;
 }
 
@@ -95,6 +112,10 @@ export function OperatorTestCenterWorkspace() {
   const [fullLegacyCleanupConfirmationOpen, setFullLegacyCleanupConfirmationOpen] = useState(false);
   const [fullLegacyCleanupConfirmation, setFullLegacyCleanupConfirmation] = useState("");
   const fullLegacyCleanupRequestInFlight = useRef(false);
+  const [manualReviewTriage, setManualReviewTriage] = useState<ManualReviewTriageReport | null>(null);
+  const [manualReviewTriageConfirmationOpen, setManualReviewTriageConfirmationOpen] = useState(false);
+  const [manualReviewTriageConfirmation, setManualReviewTriageConfirmation] = useState("");
+  const manualReviewTriageRequestInFlight = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -218,6 +239,101 @@ export function OperatorTestCenterWorkspace() {
       setError(cleanupError instanceof Error ? cleanupError.message : "Full Legacy Cleanup failed safely.");
     } finally {
       fullLegacyCleanupRequestInFlight.current = false;
+      setActionState("idle");
+    }
+  }
+
+  const rememberManualReviewTriage = useCallback((report: ManualReviewTriageReport) => {
+    setManualReviewTriage(report);
+    window.localStorage.setItem(manualReviewTriageStorageKey, JSON.stringify({
+      auditRunId: report.auditRunId,
+      accessToken: report.accessToken,
+    }));
+  }, []);
+
+  const driveManualReviewTriage = useCallback(async (initial: ManualReviewTriageReport) => {
+    let current = initial;
+    let steps = 0;
+    while (current.status === "AUDITING" || current.status === "APPLYING") {
+      steps += 1;
+      if (steps > fullLegacyCleanupMaximumClientSteps) {
+        throw new Error("Manual Review Triage paused at the client safety limit. Resume the persisted run to continue safely.");
+      }
+      const previousProgress = current.status === "AUDITING" ? current.inspectedCount : current.appliedCount;
+      current = await manualReviewTriageRequest(
+        current.status === "AUDITING" ? "continue_manual_review_triage" : "continue_manual_review_triage_apply",
+        current,
+      );
+      rememberManualReviewTriage(current);
+      const nextProgress = current.status === "AUDITING" ? current.inspectedCount : current.appliedCount;
+      if (current.status === "AUDITING" || current.status === "APPLYING") {
+        await wait(nextProgress === previousProgress ? 500 : 80);
+      }
+    }
+    return current;
+  }, [rememberManualReviewTriage]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(manualReviewTriageStorageKey);
+    if (!saved || manualReviewTriageRequestInFlight.current) return;
+    let reference: { auditRunId: string; accessToken: string };
+    try {
+      reference = JSON.parse(saved) as { auditRunId: string; accessToken: string };
+    } catch {
+      window.localStorage.removeItem(manualReviewTriageStorageKey);
+      return;
+    }
+    if (!reference.auditRunId || !reference.accessToken) return;
+    manualReviewTriageRequestInFlight.current = true;
+    setActionState("running");
+    setActiveView("results");
+    void manualReviewTriageRequest("get_manual_review_triage", reference)
+      .then((report) => {
+        rememberManualReviewTriage(report);
+        return driveManualReviewTriage(report);
+      })
+      .catch((resumeError) => {
+        const message = resumeError instanceof Error ? resumeError.message : "Unable to resume Manual Review Triage safely.";
+        if (/invalid|expired/i.test(message)) window.localStorage.removeItem(manualReviewTriageStorageKey);
+        setError(message);
+      })
+      .finally(() => {
+        manualReviewTriageRequestInFlight.current = false;
+        setActionState("idle");
+      });
+  }, [driveManualReviewTriage, rememberManualReviewTriage]);
+
+  async function runManualReviewTriage(options: { apply?: boolean } = {}) {
+    if (manualReviewTriageRequestInFlight.current) return;
+    manualReviewTriageRequestInFlight.current = true;
+    setActionState("running");
+    setActiveView("results");
+    setError("");
+    setNotice("");
+    try {
+      const resumable = manualReviewTriage
+        && (manualReviewTriage.status === "AUDITING" || manualReviewTriage.status === "APPLYING");
+      const initial = options.apply
+        ? await manualReviewTriageRequest(
+          "apply_manual_review_triage",
+          manualReviewTriage ?? {},
+          manualReviewTriageConfirmation,
+        )
+        : resumable
+          ? await manualReviewTriageRequest("get_manual_review_triage", manualReviewTriage)
+          : await manualReviewTriageRequest("start_manual_review_triage");
+      rememberManualReviewTriage(initial);
+      const completed = await driveManualReviewTriage(initial);
+      setManualReviewTriageConfirmationOpen(false);
+      setManualReviewTriageConfirmation("");
+      setNotice(completed.status === "APPLIED"
+        ? `${completed.appliedCount} reviewed website-only triage result(s) applied. Nothing was sent.`
+        : `Manual Review Triage inspected ${completed.inspectedCount} unresolved prospect(s). Nothing was changed or sent.`);
+      await load();
+    } catch (triageError) {
+      setError(triageError instanceof Error ? triageError.message : "Manual Review Triage failed safely.");
+    } finally {
+      manualReviewTriageRequestInFlight.current = false;
       setActionState("idle");
     }
   }
@@ -597,6 +713,29 @@ export function OperatorTestCenterWorkspace() {
               : fullLegacyCleanup?.status === "AUDITING" || fullLegacyCleanup?.status === "APPLYING"
                 ? "Resume Full Legacy Cleanup"
                 : "Run Full Legacy Cleanup"}
+          </button>
+        </section>
+        <section className="engine-operator-safety-note" aria-labelledby="manual-review-triage-title">
+          <div className="engine-panel__head">
+            <div>
+              <b id="manual-review-triage-title">Manual Review Triage</b>
+              <p>Run one persisted, resumable deeper-evidence pass for current unresolved prospects. The audit changes nothing, creates no package, grants no approval, and sends nothing.</p>
+            </div>
+            <span>{manualReviewTriage?.status ? statusLabel(manualReviewTriage.status) : "Ready"}</span>
+          </div>
+          <button
+            aria-busy={busy && manualReviewTriageRequestInFlight.current}
+            className="engine-button engine-button--primary"
+            disabled={busy}
+            onClick={() => void runManualReviewTriage()}
+            type="button"
+          >
+            {busy && manualReviewTriageRequestInFlight.current ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
+            {busy && manualReviewTriageRequestInFlight.current
+              ? "Triaging unresolved prospects..."
+              : manualReviewTriage?.status === "AUDITING" || manualReviewTriage?.status === "APPLYING"
+                ? "Resume Manual Review Triage"
+                : "Run Manual Review Triage"}
           </button>
         </section>
         <div className="engine-operator-safety-note">
@@ -1005,6 +1144,120 @@ export function OperatorTestCenterWorkspace() {
               <b>Full auto disabled: {lastAction.postSendValidation.fullAutonomousSendingDisabled ? "Yes" : "No"}</b>
             </div>
           </div>
+        </section>
+      ) : null}
+
+      {activeView === "results" && manualReviewTriage ? (
+        <section className="engine-panel engine-operator-package-check" aria-label="Manual Review Triage">
+          <div className="engine-panel__head">
+            <div>
+              <span>Manual Review Triage</span>
+              <h2>{manualReviewTriage.status === "AUDITING"
+                ? `Inspecting ${manualReviewTriage.inspectedCount} / ${manualReviewTriage.totalCandidates} unresolved prospects...`
+                : manualReviewTriage.status === "APPLYING"
+                  ? `Applying ${manualReviewTriage.appliedCount} / ${manualReviewTriage.applicableCount} reviewed results...`
+                  : manualReviewTriage.status === "READY"
+                    ? "Evidence review ready"
+                    : manualReviewTriage.status === "APPLIED" ? "Reviewed triage results applied" : statusLabel(manualReviewTriage.status)}</h2>
+              <p>Every result uses the shared website-identity and fit rules. Reviewable means human review only; it never means approved or send-ready.</p>
+            </div>
+            <span>Nothing sent</span>
+          </div>
+          <progress
+            aria-label={manualReviewTriage.status === "APPLYING" ? "Manual Review Triage Apply progress" : "Manual Review Triage progress"}
+            max={manualReviewTriage.status === "APPLYING" ? Math.max(1, manualReviewTriage.applicableCount) : Math.max(1, manualReviewTriage.totalCandidates)}
+            value={manualReviewTriage.status === "APPLYING" ? manualReviewTriage.appliedCount : manualReviewTriage.inspectedCount}
+          />
+          <dl className="engine-operator-check-grid">
+            <div><dt>Inspected</dt><dd>{manualReviewTriage.inspectedCount} / {manualReviewTriage.totalCandidates}</dd></div>
+            <div><dt>Safe exclusions</dt><dd>{manualReviewTriage.safeExclusionCount}</dd></div>
+            <div><dt>Reviewable rebuild</dt><dd>{manualReviewTriage.reviewableRebuildCount}</dd></div>
+            <div><dt>Still manual</dt><dd>{manualReviewTriage.stillManualCount}</dd></div>
+            <div><dt>Protected</dt><dd>{manualReviewTriage.protectedCount}</dd></div>
+            <div><dt>Applied</dt><dd>{manualReviewTriage.appliedCount}</dd></div>
+          </dl>
+          {manualReviewTriage.status === "READY" ? (
+            <div className="engine-inline-actions">
+              <button
+                className="engine-button engine-button--primary"
+                disabled={busy || manualReviewTriage.applicableCount === 0}
+                onClick={() => setManualReviewTriageConfirmationOpen(true)}
+                type="button"
+              >
+                Review {manualReviewTriage.applicableCount} applicable result(s)
+              </button>
+              <span>{manualReviewTriage.applicableCount === 0
+                ? "No authoritative website-only changes are available."
+                : "Apply rechecks current Prospect, queue, suppression, reply, and provider protections without crawling."}</span>
+            </div>
+          ) : null}
+          {manualReviewTriageConfirmationOpen && manualReviewTriage.status === "READY" ? (
+            <section aria-labelledby="manual-review-triage-confirmation-title" className="engine-operator-safety-note" role="alertdialog">
+              <b id="manual-review-triage-confirmation-title">Apply {manualReviewTriage.applicableCount} reviewed website-only result(s)?</b>
+              <p>Only the named server-side reviewed website fields may change. Contact data and history are preserved; stale approval is removed where required. No package is created and nothing is sent.</p>
+              <ul>
+                {manualReviewTriage.records.filter((record) => record.selectionEligible).map((record) => (
+                  <li key={record.prospectId}><b>{record.businessName}</b>: {statusLabel(record.triageOutcome)}. {record.humanExplanation}</li>
+                ))}
+              </ul>
+              <label className="engine-field">
+                <span>Type APPLY REVIEWED TRIAGE RESULTS</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setManualReviewTriageConfirmation(event.target.value)}
+                  value={manualReviewTriageConfirmation}
+                />
+              </label>
+              <div className="engine-inline-actions">
+                <button
+                  aria-busy={busy}
+                  className="engine-button engine-button--primary"
+                  disabled={busy || manualReviewTriageConfirmation !== "APPLY REVIEWED TRIAGE RESULTS"}
+                  onClick={() => void runManualReviewTriage({ apply: true })}
+                  type="button"
+                >
+                  {busy ? <span aria-hidden="true" className="engine-button__spinner" /> : null}
+                  {busy ? "Applying reviewed results..." : "Apply Reviewed Results"}
+                </button>
+                <button className="engine-button" disabled={busy} onClick={() => setManualReviewTriageConfirmationOpen(false)} type="button">Cancel</button>
+              </div>
+            </section>
+          ) : null}
+          {(["safe_exclusion", "reviewable_rebuild_opportunity", "still_manual", "protected_ineligible"] as const).map((outcome) => {
+            const records = manualReviewTriage.records.filter((record) => record.triageOutcome === outcome);
+            if (!records.length) return null;
+            return (
+              <details key={outcome} open={outcome === "safe_exclusion" || outcome === "reviewable_rebuild_opportunity"}>
+                <summary>{records.length} {statusLabel(outcome)} record(s)</summary>
+                <div className="engine-operator-summary-grid">
+                  {records.map((record) => (
+                    <article key={record.prospectId}>
+                      <h3>{record.businessName}</h3>
+                      <p><b>Location:</b> {[record.city, record.state].filter(Boolean).join(", ") || "Not recorded"} · {record.trade}</p>
+                      <p><b>Stored website:</b> {record.storedWebsite || "None"}</p>
+                      <p><b>Candidate/canonical:</b> {record.candidateWebsite || "Not established"}</p>
+                      <p><b>Fit:</b> {statusLabel(record.currentDisposition)} {"->"} {statusLabel(record.proposedDisposition)}</p>
+                      <p><b>Reason:</b> {statusLabel(record.reasonCode)}</p>
+                      <p>{record.humanExplanation}</p>
+                      <p><b>Identity:</b> {record.websiteIdentityConfidence}. <b>Fit confidence:</b> {record.fitConfidence}.</p>
+                      <p><b>Contact paths:</b> {record.contactPathState}</p>
+                      {record.firstPartyEvidence.length ? <p><b>First-party evidence:</b> {record.firstPartyEvidence.join("; ")}</p> : null}
+                      {record.evidenceSummary.length ? <p><b>Evidence:</b> {record.evidenceSummary.join("; ")}</p> : null}
+                      <p><b>Next action:</b> {record.recommendedOperatorAction}</p>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
+          {Object.keys(manualReviewTriage.reasonCounts).length ? (
+            <details>
+              <summary>Reason counts</summary>
+              <ul>{Object.entries(manualReviewTriage.reasonCounts).map(([reason, count]) => <li key={reason}><b>{statusLabel(reason)}:</b> {count}</li>)}</ul>
+            </details>
+          ) : null}
+          {manualReviewTriage.errorMessage ? <div className="engine-error-banner" role="alert"><div><b>Triage needs review</b><p>{manualReviewTriage.errorMessage}</p></div></div> : null}
+          {manualReviewTriage.partialApplyRequiresReview ? <p><b>Partial completion:</b> Earlier bounded atomic groups committed safely; remaining records require a fresh triage audit.</p> : null}
         </section>
       ) : null}
 

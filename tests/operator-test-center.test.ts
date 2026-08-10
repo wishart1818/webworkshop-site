@@ -750,7 +750,7 @@ test("Operator Test Center smart dry runs render summaries and send nothing", as
     assert.match(result.smartGrowth?.summary.summaryText ?? "", /No emails sent|No DMs sent|No contact forms submitted|No calls placed|No Looms/i);
     assert.doesNotMatch(JSON.stringify(result), /DATABASE_URL|RESEND_API_KEY|TWILIO_AUTH_TOKEN|GOOGLE_PLACES_API_KEY|secret-/i);
   }
-  assert.match(scout.smartGrowth?.summary.bestMarketTradeRecommendation ?? "", /Pressure Washing|Landscaping|Cleaning|Painting|Concrete|Roofing|HVAC|Plumbing/);
+  assert.match(scout.smartGrowth?.summary.bestMarketTradeRecommendation ?? "", /INSUFFICIENT DATA|NO SAFE RECOMMENDATION/i);
 });
 
 test("Simulate Next 24 Hours is a no-send dry run with operator queue counts", async () => {

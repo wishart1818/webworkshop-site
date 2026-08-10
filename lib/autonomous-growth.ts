@@ -395,6 +395,7 @@ export type MarketScoutResult = {
   averageOpportunityScore: number;
   averageContactabilityScore: number;
   providerCoverageQuality: string;
+  evidenceStatus: "historical_evidence" | "estimate_only";
   score: number;
   recommendationReason: string;
 };
@@ -934,6 +935,7 @@ export function buildMarketScoutDryRun(
       const withSocial = historicalResults.filter((result) => result.prospect.facebookUrl || result.prospect.instagramUrl || result.prospect.linkedinUrl);
       const phoneOnly = historicalResults.filter((result) => result.rejectionReason === "Phone-only / written outreach blocked");
       const blocked = historical.flatMap((job) => job.blockedProspects ?? []).length;
+      const hasHistoricalEvidence = historicalResults.length > 0;
       const baseScore = 45 + marketStateBonus(market) + tradeBonus(trade);
       const qualifiedProspectRate = historicalResults.length ? Math.round((qualified.length / historicalResults.length) * 100) : Math.min(82, baseScore + 8);
       const usableWrittenContactRate = historicalResults.length ? Math.round((withWritten.length / historicalResults.length) * 100) : Math.min(78, baseScore + (settings.preferSocialFirstLeads ? 8 : 3));
@@ -972,13 +974,16 @@ export function buildMarketScoutDryRun(
         averageOpportunityScore,
         averageContactabilityScore,
         providerCoverageQuality,
+        evidenceStatus: hasHistoricalEvidence ? "historical_evidence" : "estimate_only",
         score,
-        recommendationReason: `${trade} near ${market} scored ${score}/100 from contactability, expected opportunity, and historical provider signals. This is a dry run and made no provider calls.`,
+        recommendationReason: hasHistoricalEvidence
+          ? `${trade} near ${market} scored ${score}/100 from ${historicalResults.length} saved result${historicalResults.length === 1 ? "" : "s"}, contactability, opportunity, and recorded provider health. This is a dry run and made no provider calls.`
+          : `Insufficient matching historical evidence for a safe ${trade} recommendation near ${market}. The displayed rates are planning estimates only; this dry run made no provider calls.`,
       });
     }
   }
   const sorted = results.toSorted((left, right) => right.score - left.score);
-  const bestResult = sorted[0] ?? null;
+  const bestResult = sorted.find((result) => result.evidenceStatus === "historical_evidence") ?? null;
   return {
     settings,
     bounded: true,
@@ -987,7 +992,9 @@ export function buildMarketScoutDryRun(
     bestResult,
     message: bestResult
       ? `Best dry-run scout target: ${bestResult.trade} near ${bestResult.market}.`
-      : "No market scout targets were available.",
+      : results.length
+        ? "INSUFFICIENT DATA / NO SAFE RECOMMENDATION. No matching historical prospect results support ranking these market/trade options yet."
+        : "No market scout targets were available.",
     lastRunAt: now.toISOString(),
   };
 }
@@ -1033,22 +1040,31 @@ export function smartRecommendationForGrowth(input: {
     };
   }
   if (env.emailKillSwitchEnabled) {
+    if (input.scout.bestResult) {
+      return {
+        nextBestMove: `Review a small Top Prospects test: ${input.scout.bestResult.trade} near ${input.scout.bestResult.market}.`,
+        why: `${input.scout.bestResult.recommendationReason} Prospect email sending remains blocked by OUTREACH_EMAIL_DISABLED.`,
+        whatItWillDo: ["Use the evidence-backed bounded market/trade recommendation.", "Keep the next search small.", "Keep all outreach disabled."],
+        whatItWillNotDo,
+        recommendedAction: "start_small_top_prospects_test",
+      };
+    }
     return {
-      nextBestMove: "Run Market Scout before any full Autopilot run.",
-      why: "Prospect email sending is still blocked by OUTREACH_EMAIL_DISABLED, so the safest useful next action is a dry-run market recommendation.",
-      whatItWillDo: ["Compare small bounded market/trade samples.", "Recommend the next Top Prospects run.", "Avoid provider-heavy nationwide scans."],
+      nextBestMove: "No safe Market Scout recommendation yet.",
+      why: `${input.scout.message} Prospect email sending remains blocked by OUTREACH_EMAIL_DISABLED.`,
+      whatItWillDo: ["Show which market/trade options lack historical evidence.", "Keep future discovery bounded.", "Keep all outreach disabled."],
       whatItWillNotDo,
-      recommendedAction: "run_market_scout_dry_run",
+      recommendedAction: "review_manual_queue",
     };
   }
   return {
     nextBestMove: input.scout.bestResult
       ? `Run a small Top Prospects test: ${input.scout.bestResult.trade} near ${input.scout.bestResult.market}.`
-      : "Run Market Scout before new discovery.",
-    why: input.scout.bestResult?.recommendationReason ?? "There is no existing qualified unsent inventory yet.",
+      : "No safe Market Scout recommendation yet.",
+    why: input.scout.bestResult?.recommendationReason ?? input.scout.message,
     whatItWillDo: ["Use the best bounded market/trade recommendation.", "Keep the first run small.", "Send nothing automatically."],
     whatItWillNotDo,
-    recommendedAction: input.scout.bestResult ? "start_small_top_prospects_test" : "run_market_scout_dry_run",
+    recommendedAction: input.scout.bestResult ? "start_small_top_prospects_test" : "review_manual_queue",
   };
 }
 
@@ -1117,7 +1133,9 @@ export function buildSmartRunSummary(input: {
     missingPackagesGeneratedCount: input.existing.generatedMissingPackages,
     packagesGeneratedCount: input.existing.generatedMissingPackages,
     marketScoutResults,
-    bestMarketTradeRecommendation: input.scout.bestResult ? `${input.scout.bestResult.trade} near ${input.scout.bestResult.market}` : "Run Market Scout first.",
+    bestMarketTradeRecommendation: input.scout.bestResult
+      ? `${input.scout.bestResult.trade} near ${input.scout.bestResult.market}`
+      : input.scout.message,
     queuesUpdated,
     blockedReasons: input.existing.blockedSkippedReasons,
     safetyGates,

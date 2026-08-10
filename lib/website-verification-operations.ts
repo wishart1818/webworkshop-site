@@ -206,7 +206,7 @@ function assertWebsiteExclusionPreservesContactState(before: Prospect, after: Pr
   }
 }
 
-function prospectProtectionReason(prospect: Prospect, queueItems: OutreachQueueItem[] = []) {
+export function websiteRepairProtectionReason(prospect: Prospect, queueItems: OutreachQueueItem[] = []) {
   if (protectedProspectStatuses.has(prospect.status)) return `Prospect status ${prospect.status} is protected.`;
   const history = [...prospect.notes, ...prospect.activities.map((item) => item.label)].join("\n");
   if (outreachHistoryTextIndicatesProtectedContact(history)) {
@@ -327,7 +327,7 @@ async function ensureProspectWebsiteMutationIsSafe(prospect: Prospect) {
   if (queue.some((item) => item.status === "Sending" || item.notes.includes("[auto-email-ambiguous]"))) {
     throw new Error("Website/contact changes are blocked while an email provider attempt is in progress or awaiting reconciliation.");
   }
-  if (prospectProtectionReason(prospect, queue)) {
+  if (websiteRepairProtectionReason(prospect, queue)) {
     throw new Error("Website/contact changes are blocked because protected outreach or contact history exists.");
   }
 }
@@ -789,7 +789,7 @@ export async function inspectExistingWebsiteRepairCandidate(
   dependencies: WebsiteVerificationDependencies,
   queueItems: OutreachQueueItem[],
 ) {
-  const protectedReason = prospectProtectionReason(prospect, queueItems);
+  const protectedReason = websiteRepairProtectionReason(prospect, queueItems);
   if (protectedReason) {
     const decision = legacyAuditDecision(prospect, prospect, protectedReason, queueItems);
     const exclusionDecision = safeHighConfidenceWebsiteExclusion({
@@ -1029,7 +1029,11 @@ function applyReviewedProspectPatch(
 }
 
 export function buildExistingWebsiteRepairReviewedItem(
-  candidate: Awaited<ReturnType<typeof inspectExistingWebsiteRepairCandidate>>,
+  candidate: {
+    prospect: Prospect;
+    proposedProspect: Prospect | null;
+    record: ExistingWebsiteRepairRecord;
+  },
   queueItems: OutreachQueueItem[],
 ): ExistingWebsiteRepairReviewedItem {
   const proposedPatch = candidate.proposedProspect
@@ -1220,8 +1224,8 @@ export async function listExistingWebsiteRepairCandidatePopulation() {
   const candidates = prospects
     .filter((prospect) => existingRecordNeedsWebsiteAudit(prospect, queueByProspect.get(prospect.id) ?? []))
     .sort((left, right) => {
-      const leftProtected = Boolean(prospectProtectionReason(left, queueByProspect.get(left.id) ?? []));
-      const rightProtected = Boolean(prospectProtectionReason(right, queueByProspect.get(right.id) ?? []));
+      const leftProtected = Boolean(websiteRepairProtectionReason(left, queueByProspect.get(left.id) ?? []));
+      const rightProtected = Boolean(websiteRepairProtectionReason(right, queueByProspect.get(right.id) ?? []));
       return Number(leftProtected) - Number(rightProtected)
         || left.businessName.localeCompare(right.businessName)
         || left.id.localeCompare(right.id);
@@ -1248,7 +1252,7 @@ async function prepareReviewedWebsiteRepairMutations(reviewedItems: ExistingWebs
       throw new Error(`The selected record ${candidate.record.businessName} changed after review. Run a fresh dry run.`);
     }
     const currentQueueItems = queueByProspect.get(candidate.prospectId) ?? [];
-    const protectedReason = prospectProtectionReason(currentProspect, currentQueueItems);
+    const protectedReason = websiteRepairProtectionReason(currentProspect, currentQueueItems);
     if (protectedReason) {
       throw new Error(`${candidate.record.businessName} is now protected. ${protectedReason} Run a fresh dry run.`);
     }

@@ -26,6 +26,10 @@ import {
   verifiedContactFirstNameForProspect,
   verifiedEmailEvidenceForProspect,
 } from "@/lib/prospect-qualification";
+import {
+  affirmativeFirstPartyIdentity,
+  authoritativeNoOwnedWebsiteEvidence,
+} from "@/lib/prospect-identity-evidence";
 
 const userAgent = "WebWorkshopProspectEngine/1.0 (+https://webworkshop.dev)";
 const browserCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
@@ -1523,80 +1527,21 @@ function fitDispositionForVerifiedWebsite(
   };
 }
 
-const discoveryAbsenceSources = new Set(["osm", "google", "bing", "yelp", "yellowPages"]);
-const authoritativeAbsenceSources = new Set(["google", "bing", "yelp"]);
-
-function officialSocialProfileStored(prospect: Prospect) {
-  const values: Array<{ kind: ContactRouteEvidence["kind"]; value: string }> = [
-    ...(/facebook\.com/i.test(prospect.profileUrl) ? [{ kind: "facebook" as const, value: prospect.profileUrl }] : []),
-    ...(/instagram\.com/i.test(prospect.profileUrl) ? [{ kind: "instagram" as const, value: prospect.profileUrl }] : []),
-    ...(/linkedin\.com/i.test(prospect.profileUrl) ? [{ kind: "linkedin" as const, value: prospect.profileUrl }] : []),
-    { kind: "facebook" as const, value: prospect.facebookUrl },
-    { kind: "instagram" as const, value: prospect.instagramUrl },
-    { kind: "linkedin" as const, value: prospect.linkedinUrl },
-  ].filter((candidate) => Boolean(candidate.value));
-  return values.some(({ kind, value }) => {
-    try {
-      const host = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
-      const supportedHost = [
-        "facebook.com",
-        "instagram.com",
-        "linkedin.com",
-        "x.com",
-        "twitter.com",
-        "youtube.com",
-      ].some((domain) => host === domain || host.endsWith(`.${domain}`));
-      if (!supportedHost) return false;
-      const normalizedValue = normalizedComparableUrl(value);
-      return prospect.contactEvidence.some((evidence) => (
-        evidence.kind === kind
-        && evidence.firstParty === true
-        && evidence.confidence === "high"
-        && ["owned_website", "official_social"].includes(evidence.sourceType ?? "")
-        && [evidence.value, evidence.sourceUrl].some((candidate) => normalizedComparableUrl(candidate) === normalizedValue)
-      ));
-    } catch {
-      return false;
-    }
-  });
-}
-
-function boundedNoOwnedWebsiteEvidence(prospect: Prospect) {
-  if (prospect.website.trim() || prospect.prospectType !== "no_website_social_only" || prospect.inactive) return [];
-  const sources = [...new Set(prospect.activitySignals
-    .filter((signal) => signal.startsWith("discovery_source:"))
-    .map((signal) => signal.slice("discovery_source:".length))
-    .filter((source) => discoveryAbsenceSources.has(source)))];
-  const hasGroundedIdentity = Boolean(
-    prospect.businessName.trim()
-    && prospect.city.trim()
-    && (prospect.phone.trim() || prospect.email.trim() || prospect.profileUrl.trim()),
-  );
-  if (!hasGroundedIdentity) return [];
-  const multipleIndependentListings = sources.length >= 2 && prospect.sourceConfidence >= 36;
-  const authoritativeListingAndSocial = sources.some((source) => authoritativeAbsenceSources.has(source))
-    && officialSocialProfileStored(prospect)
-    && prospect.sourceConfidence >= 22;
-  return multipleIndependentListings || authoritativeListingAndSocial ? sources : [];
-}
-
 function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDependencies): WebsiteVerificationReport {
-  const currentCheckAt = verificationNow(dependencies).toISOString();
-  const priorVerifiedAbsence = prospect.websiteVerification?.version === "website-verification-v2"
-    && prospect.websiteVerification?.status === "no_owned_website"
-    && prospect.websiteVerification?.confidence === "high"
-    && prospect.websiteVerification?.ownershipDecision === "not_owned"
-    && prospect.websiteVerification?.fit?.disposition === "no_owned_website";
+  const now = verificationNow(dependencies);
+  const currentCheckAt = now.toISOString();
+  const absenceDecision = authoritativeNoOwnedWebsiteEvidence(prospect, now);
+  const priorVerifiedAbsence = absenceDecision.reasonCode === "stored_verified_absence";
   const checkedAt = priorVerifiedAbsence
     ? prospect.websiteVerification!.checkedAt
     : currentCheckAt;
   const fitEvaluatedAt = priorVerifiedAbsence
     ? prospect.websiteVerification!.fit!.evaluatedAt
     : currentCheckAt;
-  const boundedEvidence = boundedNoOwnedWebsiteEvidence(prospect);
-  const verifiedAbsence = priorVerifiedAbsence || boundedEvidence.length > 0;
+  const boundedEvidence = absenceDecision.sources;
+  const verifiedAbsence = absenceDecision.verified;
   const evidenceDetail = boundedEvidence.length
-    ? ` Independent provider evidence: ${boundedEvidence.join(", ")}.`
+    ? ` Independent provider identity evidence: ${boundedEvidence.join(", ")}.`
     : "";
   const disposition = verifiedAbsence ? "no_owned_website" as const : "inconclusive_requires_review" as const;
   const report: WebsiteVerificationReport = {
@@ -1608,7 +1553,7 @@ function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDe
     usableSignals: [],
     explanation: verifiedAbsence
       ? `Verified bounded public research found no owned business website.${evidenceDetail}`.trim()
-      : "No owned website URL is stored, but absence has not been independently verified.",
+      : `No owned website URL is stored, but absence has not been independently verified. ${absenceDecision.explanation}`.trim(),
     checkedAt,
     ownershipDecision: verifiedAbsence ? "not_owned" : "uncertain",
     identityEvidence: boundedEvidence.map((source) => `Provider identity and website-absence evidence: ${source}.`),
@@ -1616,7 +1561,7 @@ function noWebsiteReport(prospect: Prospect, dependencies: WebsiteVerificationDe
       disposition,
       reason: verifiedAbsence
         ? "Independent bounded public sources and an official profile did not identify an owned website."
-        : "Owned-website absence has not been independently established.",
+        : absenceDecision.explanation,
       supportingEvidence: boundedEvidence.map((source) => `No owned website was supplied by ${source}.`),
       confidence: verifiedAbsence ? "high" : "low",
       analysisOrigin: "not_applicable",
@@ -1762,7 +1707,7 @@ export async function verifyProspectWebsite(
       identitySignals.includes("first_party_site_structure") ? "The branded root links to same-origin business detail or contact pages." : "",
       identitySignals.includes("business_domain_email_match") ? "The verified website publishes an email on its own business domain." : "",
     ].filter(Boolean);
-    const ownershipDecision = successful.usableSignals.includes("business name") ? "owned" as const : "uncertain" as const;
+    const ownershipDecision = affirmativeFirstPartyIdentity(identitySignals) ? "owned" as const : "uncertain" as const;
     const fit = ownershipDecision === "owned"
       ? fitDispositionForVerifiedWebsite(analysis, contactProspect, successful.usableSignals, checkedAt)
       : {

@@ -10,6 +10,7 @@ import {
   verifyProspectWebsite,
   type WebsiteVerificationDependencies,
 } from "../lib/site-analysis";
+import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
 
 const fixedNow = new Date("2026-07-28T12:00:00.000Z");
 
@@ -306,7 +307,34 @@ test("bounded provider and official social evidence preserves a discovered no-we
     website: "",
     prospectType: "no_website_social_only",
     profileUrl: "https://www.facebook.com/truecleanprowash",
-    activitySignals: ["discovery_source:google", "public_profile"],
+    activitySignals: [
+      "discovery_source:google",
+      "public_profile",
+      discoveryIdentityEvidenceSignal({
+        source: "google",
+        businessName: "True Clean Prowash",
+        website: "",
+        profileUrl: "https://www.facebook.com/truecleanprowash",
+        phone: "614-555-0123",
+        address: "123 Clean Way, Columbus, OH",
+        city: "Columbus",
+        state: "OH",
+        latitude: 39.9612,
+        longitude: -82.9988,
+      }),
+      discoveryIdentityEvidenceSignal({
+        source: "osm",
+        businessName: "True Clean Prowash",
+        website: "https://www.facebook.com/truecleanprowash",
+        profileUrl: "https://www.facebook.com/truecleanprowash",
+        phone: "+1 (614) 555-0123",
+        address: "123 Clean Way Columbus Ohio",
+        city: "Columbus",
+        state: "OH",
+        latitude: 39.9612,
+        longitude: -82.9988,
+      }),
+    ],
     sourceConfidence: 42,
     contactEvidence: [{
       kind: "facebook",
