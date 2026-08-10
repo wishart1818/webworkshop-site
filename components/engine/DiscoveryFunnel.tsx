@@ -53,7 +53,7 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
       <div className="engine-discovery-funnel">
         <span><b>{diagnostics.rawProviderCount}</b> total provider records</span>
         <span><b>{diagnostics.afterDistanceFilteringCount}</b> within {diagnostics.radiusKm} km</span>
-        <span><b>{diagnostics.finalMergedCount}</b> unique merged businesses</span>
+        <span><b>{diagnostics.finalMergedCount}</b> final merged records <small>(unique businesses before prospect-type filtering)</small></span>
         <span><b>{diagnostics.afterQualificationFilteringCount}</b> {qualificationLabel}</span>
         <span><b>{diagnostics.returnedCount}</b> returned for review</span>
       </div>
