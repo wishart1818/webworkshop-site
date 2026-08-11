@@ -347,7 +347,7 @@ export async function discoverIndependentNoSiteIdentityEvidence(
       url.searchParams.set("query", query);
       url.searchParams.set("limit", "5");
       const anchor = bindings.evidence.find((item) => item.latitude !== null && item.longitude !== null);
-      if (anchor?.latitude !== null && anchor?.longitude !== null) {
+      if (anchor && anchor.latitude !== null && anchor.longitude !== null) {
         url.searchParams.set("lat", String(anchor.latitude));
         url.searchParams.set("lon", String(anchor.longitude));
         url.searchParams.set("radius", "10000");
