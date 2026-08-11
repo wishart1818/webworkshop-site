@@ -5,6 +5,7 @@ import {
 } from "@/lib/prospect-qualification";
 import {
   affirmativeFirstPartyIdentity,
+  discoveryIdentityEvidenceSignal,
   isCredibleOwnedWebsiteCandidate,
   providerOwnedWebsiteCandidates,
 } from "@/lib/prospect-identity-evidence";
@@ -12,7 +13,10 @@ import {
   authoritativeProviderBoundWebsiteIdentity,
   verifiedCustomerFacingWebsiteStructure,
 } from "@/lib/provider-bound-website-exclusion";
-import { discoverGoogleOwnedWebsiteCandidates } from "@/lib/no-site-owned-website-recovery";
+import {
+  discoverGoogleOwnedWebsiteCandidates,
+  discoverIndependentNoSiteIdentityEvidence,
+} from "@/lib/no-site-owned-website-recovery";
 import {
   verifyProspectWebsite,
   type ProspectWebsiteVerificationResult,
@@ -55,6 +59,11 @@ export type SharedProspectVerificationResolution = {
   explanation: string;
 };
 
+export type SharedProspectVerificationDependencies = WebsiteVerificationDependencies & {
+  googlePlacesApiKey?: string;
+  azureMapsApiKey?: string;
+};
+
 export function mergeResolvedWebsiteEvidence(
   existing: Prospect,
   resolved: Prospect,
@@ -73,6 +82,7 @@ export function mergeResolvedWebsiteEvidence(
     priorityScore: resolved.priorityScore,
     outreach: resolved.outreach ? structuredClone(resolved.outreach) : resolved.outreach,
     preview: resolved.preview ? structuredClone(resolved.preview) : resolved.preview,
+    activitySignals: [...new Set([...existing.activitySignals, ...resolved.activitySignals])],
     activities: structuredClone(resolved.activities),
   };
 }
@@ -125,12 +135,12 @@ function providerBoundAdequateExclusion(
       ? { ...result.report.freshness, humanReviewRequired: false, staleReason: "" }
       : result.report.freshness,
   };
-  const prospect = {
+  const resolvedProspect = {
     ...result.prospect,
     websiteVerification: report,
     fitDisposition: "adequate_existing_website" as const,
   };
-  return { ...result, prospect, report };
+  return { ...result, prospect: resolvedProspect, report };
 }
 
 function safelyResolved(result: ProspectWebsiteVerificationResult) {
@@ -197,7 +207,7 @@ function resultExplanation(result: ProspectWebsiteVerificationResult, secondPass
   return `${result.report.explanation}${secondPassAttempted ? " A bounded second pass did not establish a safer automatic conclusion." : ""}`;
 }
 
-function secondPassDependencies(input: WebsiteVerificationDependencies): WebsiteVerificationDependencies {
+function secondPassDependencies(input: SharedProspectVerificationDependencies): WebsiteVerificationDependencies {
   return {
     ...input,
     maxVerificationAttempts: Math.min(4, Math.max(1, input.maxVerificationAttempts ?? 4)),
@@ -208,23 +218,51 @@ function secondPassDependencies(input: WebsiteVerificationDependencies): Website
 
 export async function verifyProspectWebsiteWithSecondPass(
   prospect: Prospect,
-  dependencies: WebsiteVerificationDependencies = {},
+  dependencies: SharedProspectVerificationDependencies = {},
 ): Promise<SharedProspectVerificationResolution> {
-  const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(prospect, dependencies));
-  if (safelyResolved(initialResult)) {
+  const recoveryTimeoutMs = Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000));
+  const corroboratingEvidence = await discoverIndependentNoSiteIdentityEvidence(prospect, {
+    fetch: dependencies.fetch,
+    timeoutMs: recoveryTimeoutMs,
+    googlePlacesApiKey: dependencies.googlePlacesApiKey,
+    azureMapsApiKey: dependencies.azureMapsApiKey,
+  });
+  const workingProspect = corroboratingEvidence.length
+    ? {
+        ...prospect,
+        activitySignals: [...new Set([
+          ...prospect.activitySignals,
+          ...corroboratingEvidence.map(discoveryIdentityEvidenceSignal),
+          ...corroboratingEvidence.map((item) => `discovery_source:${item.source}`),
+        ])],
+      }
+    : prospect;
+
+  const providerCandidates = providerOwnedWebsiteCandidates(workingProspect);
+  const recoveredCandidates = !workingProspect.website.trim() && providerCandidates.length === 0
+    ? await discoverGoogleOwnedWebsiteCandidates(workingProspect, {
+      fetch: dependencies.fetch,
+      timeoutMs: recoveryTimeoutMs,
+      googlePlacesApiKey: dependencies.googlePlacesApiKey,
+    })
+    : [];
+
+  const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(workingProspect, dependencies));
+  const initialDisposition = normalizeWebsiteFitDisposition(initialResult.prospect);
+  const recoveredOwnedSiteMustBeChecked = initialDisposition === "no_owned_website" && recoveredCandidates.length > 0;
+  if (safelyResolved(initialResult) && !recoveredOwnedSiteMustBeChecked) {
     return {
       result: initialResult,
       initialResult,
       secondPassAttempted: false,
-      candidateUrlsConsidered: prospect.website ? [prospect.website] : [],
+      candidateUrlsConsidered: workingProspect.website ? [workingProspect.website] : [],
       reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
     };
   }
 
-  const storedHost = normalizedHost(prospect.website);
-  const providerCandidates = providerOwnedWebsiteCandidates(prospect);
+  const storedHost = normalizedHost(workingProspect.website);
   const providerHosts = new Set(providerCandidates.map(normalizedHost).filter(Boolean));
   if (storedHost) providerHosts.add(storedHost);
   if (providerHosts.size > 1) {
@@ -239,19 +277,12 @@ export async function verifyProspectWebsiteWithSecondPass(
     };
   }
 
-  const recoveredCandidates = !prospect.website.trim() && providerCandidates.length === 0
-    ? await discoverGoogleOwnedWebsiteCandidates(prospect, {
-      fetch: dependencies.fetch,
-      timeoutMs: Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000)),
-    })
-    : [];
-
   const candidates = [...new Set([
-    prospect.website,
+    workingProspect.website,
     ...providerCandidates,
     ...recoveredCandidates,
   ].filter((value) => value && isCredibleOwnedWebsiteCandidate(value)))].slice(0, 3);
-  if (!candidates.length && !prospect.website.trim()) {
+  if (!candidates.length && !workingProspect.website.trim()) {
     return {
       result: initialResult,
       initialResult,
@@ -263,26 +294,28 @@ export async function verifyProspectWebsiteWithSecondPass(
     };
   }
 
-  let best = initialResult;
+  let best: ProspectWebsiteVerificationResult | null = recoveredOwnedSiteMustBeChecked ? null : initialResult;
   for (const candidate of candidates) {
     const candidateResult = providerBoundAdequateExclusion(await verifyProspectWebsite(
-      { ...prospect, website: candidate },
+      { ...workingProspect, website: candidate },
       secondPassDependencies(dependencies),
     ));
     if (safelyResolved(candidateResult)) {
       best = candidateResult;
       break;
     }
-    const bestReport: WebsiteVerificationReport = best.report;
-    if (bestReport.status !== "usable" && candidateResult.report.status === "usable") best = candidateResult;
+    if (!best || (best.report.status !== "usable" && candidateResult.report.status === "usable")) {
+      best = candidateResult;
+    }
   }
+  const finalResult = best ?? initialResult;
   return {
-    result: best,
+    result: finalResult,
     initialResult,
     secondPassAttempted: true,
     candidateUrlsConsidered: candidates,
-    reasonCode: resolutionReasonCode(best),
-    outcome: resolutionOutcome(best),
-    explanation: resultExplanation(best, true),
+    reasonCode: resolutionReasonCode(finalResult),
+    outcome: resolutionOutcome(finalResult),
+    explanation: resultExplanation(finalResult, true),
   };
 }
