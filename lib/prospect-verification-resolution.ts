@@ -59,6 +59,11 @@ export type SharedProspectVerificationResolution = {
   explanation: string;
 };
 
+export type SharedProspectVerificationDependencies = WebsiteVerificationDependencies & {
+  googlePlacesApiKey?: string;
+  azureMapsApiKey?: string;
+};
+
 export function mergeResolvedWebsiteEvidence(
   existing: Prospect,
   resolved: Prospect,
@@ -202,7 +207,7 @@ function resultExplanation(result: ProspectWebsiteVerificationResult, secondPass
   return `${result.report.explanation}${secondPassAttempted ? " A bounded second pass did not establish a safer automatic conclusion." : ""}`;
 }
 
-function secondPassDependencies(input: WebsiteVerificationDependencies): WebsiteVerificationDependencies {
+function secondPassDependencies(input: SharedProspectVerificationDependencies): WebsiteVerificationDependencies {
   return {
     ...input,
     maxVerificationAttempts: Math.min(4, Math.max(1, input.maxVerificationAttempts ?? 4)),
@@ -213,11 +218,14 @@ function secondPassDependencies(input: WebsiteVerificationDependencies): Website
 
 export async function verifyProspectWebsiteWithSecondPass(
   prospect: Prospect,
-  dependencies: WebsiteVerificationDependencies = {},
+  dependencies: SharedProspectVerificationDependencies = {},
 ): Promise<SharedProspectVerificationResolution> {
+  const recoveryTimeoutMs = Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000));
   const corroboratingEvidence = await discoverIndependentNoSiteIdentityEvidence(prospect, {
     fetch: dependencies.fetch,
-    timeoutMs: Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000)),
+    timeoutMs: recoveryTimeoutMs,
+    googlePlacesApiKey: dependencies.googlePlacesApiKey,
+    azureMapsApiKey: dependencies.azureMapsApiKey,
   });
   const workingProspect = corroboratingEvidence.length
     ? {
@@ -230,8 +238,19 @@ export async function verifyProspectWebsiteWithSecondPass(
       }
     : prospect;
 
+  const providerCandidates = providerOwnedWebsiteCandidates(workingProspect);
+  const recoveredCandidates = !workingProspect.website.trim() && providerCandidates.length === 0
+    ? await discoverGoogleOwnedWebsiteCandidates(workingProspect, {
+      fetch: dependencies.fetch,
+      timeoutMs: recoveryTimeoutMs,
+      googlePlacesApiKey: dependencies.googlePlacesApiKey,
+    })
+    : [];
+
   const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(workingProspect, dependencies));
-  if (safelyResolved(initialResult)) {
+  const initialDisposition = normalizeWebsiteFitDisposition(initialResult.prospect);
+  const recoveredOwnedSiteMustBeChecked = initialDisposition === "no_owned_website" && recoveredCandidates.length > 0;
+  if (safelyResolved(initialResult) && !recoveredOwnedSiteMustBeChecked) {
     return {
       result: initialResult,
       initialResult,
@@ -244,7 +263,6 @@ export async function verifyProspectWebsiteWithSecondPass(
   }
 
   const storedHost = normalizedHost(workingProspect.website);
-  const providerCandidates = providerOwnedWebsiteCandidates(workingProspect);
   const providerHosts = new Set(providerCandidates.map(normalizedHost).filter(Boolean));
   if (storedHost) providerHosts.add(storedHost);
   if (providerHosts.size > 1) {
@@ -258,13 +276,6 @@ export async function verifyProspectWebsiteWithSecondPass(
       explanation: "Provider website candidates conflict with the stored domain. No candidate was promoted automatically.",
     };
   }
-
-  const recoveredCandidates = !workingProspect.website.trim() && providerCandidates.length === 0
-    ? await discoverGoogleOwnedWebsiteCandidates(workingProspect, {
-      fetch: dependencies.fetch,
-      timeoutMs: Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000)),
-    })
-    : [];
 
   const candidates = [...new Set([
     workingProspect.website,
