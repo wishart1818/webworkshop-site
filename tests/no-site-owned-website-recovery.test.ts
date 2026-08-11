@@ -2,22 +2,31 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Prospect } from "../lib/prospect-engine";
 import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
-import { discoverGoogleOwnedWebsiteCandidates } from "../lib/no-site-owned-website-recovery";
+import {
+  deterministicOwnedWebsiteCandidates,
+  discoverGoogleOwnedWebsiteCandidates,
+} from "../lib/no-site-owned-website-recovery";
 
 const businessName = "Rees Parking Lot Striping & Powerwashing";
 const phone = "214-755-9736";
 const address = "3813 Atlas Dr, Denton, TX 76209";
 
-function googleEvidence() {
+function googleEvidence(overrides: Partial<{
+  businessName: string;
+  phone: string;
+  address: string;
+  city: string;
+  state: string;
+}> = {}) {
   return discoveryIdentityEvidenceSignal({
     source: "google",
-    businessName,
+    businessName: overrides.businessName ?? businessName,
     website: "",
-    profileUrl: "https://www.google.com/maps/place/rees-example",
-    phone,
-    address,
-    city: "Denton",
-    state: "TX",
+    profileUrl: "https://www.google.com/maps/place/example",
+    phone: overrides.phone ?? phone,
+    address: overrides.address ?? address,
+    city: overrides.city ?? "Denton",
+    state: overrides.state ?? "TX",
     latitude: 33.2148,
     longitude: -97.1331,
   });
@@ -66,6 +75,49 @@ test("exact Google Places recovery can restore a missing owned website only with
   });
 
   assert.deepEqual(result, ["https://reesstriping.com/"]);
+});
+
+test("matching Google listing without a website returns bounded deterministic candidates for normal first-party verification", async () => {
+  const result = await discoverGoogleOwnedWebsiteCandidates(prospect(), {
+    apiKey: "test-key",
+    fetch: googleResponse([{
+      displayName: { text: "Rees Parking Lot Striping and Power Washing LLC" },
+      formattedAddress: "3813 Atlas Dr, Denton, TX 76209, USA",
+      nationalPhoneNumber: "(214) 755-9736",
+      googleMapsUri: "https://www.google.com/maps/place/example",
+    }]),
+  });
+
+  assert.ok(result.includes("https://reesstriping.com/"));
+  assert.ok(result.length <= 5);
+});
+
+test("deterministic candidates cover short-brand state-suffix domains without producing a bare generic service host", () => {
+  const fourB = prospect({
+    businessName: "4B Services",
+    phone: "940-206-3824",
+    address: "2500 Mingo Rd, Denton, TX 76208",
+    activitySignals: [googleEvidence({
+      businessName: "4B Services",
+      phone: "940-206-3824",
+      address: "2500 Mingo Rd, Denton, TX 76208",
+    })],
+  });
+  const candidates = deterministicOwnedWebsiteCandidates(fourB);
+
+  assert.deepEqual(candidates.slice(0, 3), [
+    "https://4bservices.com/",
+    "https://4bservicestx.com/",
+    "https://4bservicesdenton.com/",
+  ]);
+  assert.equal(candidates.some((candidate) => candidate === "https://services.com/"), false);
+});
+
+test("generic service-only names do not generate speculative website candidates", () => {
+  const candidates = deterministicOwnedWebsiteCandidates(prospect({
+    businessName: "Pressure Washing Services LLC",
+  }));
+  assert.deepEqual(candidates, []);
 });
 
 test("same-name Google result with a different phone and address is not promoted", async () => {
