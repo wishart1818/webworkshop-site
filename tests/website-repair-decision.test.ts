@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProspect, type Prospect, type WebsiteAvailabilityStatus, type WebsiteFitDisposition } from "../lib/prospect-engine";
+import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
 import { parseWebsiteVerificationReport } from "../lib/prospect-validation";
 import { safeHighConfidenceWebsiteExclusion } from "../lib/website-repair-decision";
 
@@ -219,6 +220,79 @@ test("an abbreviated first-party domain can pass with strong independent evidenc
     ],
   });
   assert.equal(decision(abbreviated, abbreviated).eligible, true);
+});
+
+test("authoritative provider binding can safely exclude a complete site without strict root-brand signals", () => {
+  const website = "https://johnlocke.example";
+  const phone = "+14195550123";
+  const address = "100 Main Street, Toledo, OH 43604";
+  const candidate = verifiedProspect({
+    businessName: "John Locke Painting, Inc",
+    website,
+    canonicalUrl: `${website}/`,
+    phone,
+    signals: ["stored_website_host_match", "market_location_match", "public_phone_match"],
+  });
+  candidate.address = address;
+  candidate.activitySignals = [discoveryIdentityEvidenceSignal({
+    source: "google",
+    businessName: "John Locke Painting",
+    website,
+    profileUrl: "https://www.google.com/maps/place/John+Locke+Painting",
+    phone,
+    address,
+    city: "Toledo",
+    state: "OH",
+    latitude: 41.65,
+    longitude: -83.54,
+  })];
+  candidate.websiteVerification!.usableSignals = [
+    "meaningful page title",
+    "navigation",
+    "service content",
+    "mobile viewport",
+    "business imagery",
+  ];
+
+  const result = decision(candidate, candidate);
+  assert.equal(result.eligible, true);
+  assert.equal(result.identitySafe, true);
+  assert.match(result.identitySummary, /authoritative provider/i);
+});
+
+test("provider-bound exclusion still fails closed on a mismatched authoritative phone and address", () => {
+  const website = "https://johnlocke.example";
+  const candidate = verifiedProspect({
+    businessName: "John Locke Painting, Inc",
+    website,
+    canonicalUrl: `${website}/`,
+    phone: "+14195550123",
+    signals: ["stored_website_host_match", "market_location_match", "public_phone_match"],
+  });
+  candidate.address = "100 Main Street, Toledo, OH 43604";
+  candidate.activitySignals = [discoveryIdentityEvidenceSignal({
+    source: "google",
+    businessName: "John Locke Painting",
+    website,
+    profileUrl: "https://www.google.com/maps/place/John+Locke+Painting",
+    phone: "+14195559999",
+    address: "999 Other Street, Toledo, OH 43604",
+    city: "Toledo",
+    state: "OH",
+    latitude: 41.65,
+    longitude: -83.54,
+  })];
+  candidate.websiteVerification!.usableSignals = [
+    "meaningful page title",
+    "navigation",
+    "service content",
+    "mobile viewport",
+    "business imagery",
+  ];
+
+  const result = decision(candidate, candidate);
+  assert.equal(result.eligible, false);
+  assert.equal(result.identitySafe, false);
 });
 
 test("identity signals survive saved website-report validation", () => {
