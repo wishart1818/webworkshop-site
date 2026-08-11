@@ -1,18 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Prospect } from "../lib/prospect-engine";
+import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
 import { discoverGoogleOwnedWebsiteCandidates } from "../lib/no-site-owned-website-recovery";
+
+const businessName = "Rees Parking Lot Striping & Powerwashing";
+const phone = "214-755-9736";
+const address = "3813 Atlas Dr, Denton, TX 76209";
+
+function googleEvidence() {
+  return discoveryIdentityEvidenceSignal({
+    source: "google",
+    businessName,
+    website: "",
+    profileUrl: "https://www.google.com/maps/place/rees-example",
+    phone,
+    address,
+    city: "Denton",
+    state: "TX",
+    latitude: 33.2148,
+    longitude: -97.1331,
+  });
+}
 
 function prospect(overrides: Partial<Prospect> = {}) {
   return {
-    businessName: "Rees Parking Lot Striping & Powerwashing",
+    businessName,
     website: "",
-    phone: "214-755-9736",
-    address: "3813 Atlas Dr, Denton, TX 76209",
+    prospectType: "no_website_social_only",
+    phone,
+    address,
     city: "Denton",
     state: "TX",
     inactive: false,
-    activitySignals: [],
+    activitySignals: [googleEvidence()],
+    createdAt: new Date().toISOString(),
     ...overrides,
   } as Prospect;
 }
@@ -80,6 +102,32 @@ test("conflicting owned website hosts for the same bound identity fail closed", 
   });
 
   assert.deepEqual(result, []);
+});
+
+test("stale or non-Google no-site records do not trigger recovery queries", async () => {
+  let called = false;
+  const fetchImpl: typeof fetch = async () => {
+    called = true;
+    throw new Error("should not be called");
+  };
+
+  const stale = await discoverGoogleOwnedWebsiteCandidates(prospect({
+    createdAt: "2026-01-01T00:00:00.000Z",
+  }), {
+    apiKey: "test-key",
+    fetch: fetchImpl,
+    now: () => new Date("2026-08-11T00:00:00.000Z"),
+  });
+  const noGoogleEvidence = await discoverGoogleOwnedWebsiteCandidates(prospect({
+    activitySignals: [],
+  }), {
+    apiKey: "test-key",
+    fetch: fetchImpl,
+  });
+
+  assert.deepEqual(stale, []);
+  assert.deepEqual(noGoogleEvidence, []);
+  assert.equal(called, false);
 });
 
 test("missing API key performs no recovery network request", async () => {
