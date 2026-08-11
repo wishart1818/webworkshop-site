@@ -75,7 +75,7 @@ function providerResponseFetch(websiteResponse: () => Response): typeof fetch {
         googleMapsUri: "https://www.google.com/maps/place/MJR+Concrete+LLC",
       }] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url.hostname === "mjrconcretellc.example") return websiteResponse();
+    if (url.hostname.replace(/^www\./, "") === "mjrconcretellc.example") return websiteResponse();
     throw new Error(`Unexpected test URL: ${url.href}`);
   };
 }
