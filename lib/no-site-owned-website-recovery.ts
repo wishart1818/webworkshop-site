@@ -158,6 +158,12 @@ function safeSlug(value: string) {
   return compact;
 }
 
+function locationSuffix(value: string) {
+  const compact = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (compact.length < 2 || compact.length > 24 || !/[a-z]/.test(compact)) return "";
+  return compact;
+}
+
 /**
  * Produce a very small set of plausible .com hosts when a fresh Google listing omitted its
  * website field. These are candidates only. They still pass through the normal website verifier,
@@ -174,8 +180,8 @@ export function deterministicOwnedWebsiteCandidates(prospect: Prospect) {
   const brandBase = safeSlug(brandTokens.slice(0, 2).join(""));
   const preferredService = preferredServiceTokens.find((token) => tokens.includes(token)) ?? "";
   const brandServiceBase = safeSlug(`${brandBase}${preferredService}`);
-  const state = safeSlug(prospect.state);
-  const city = safeSlug(prospect.city);
+  const state = locationSuffix(prospect.state);
+  const city = locationSuffix(prospect.city);
 
   const slugs = [
     brandServiceBase && brandServiceBase !== fullBase ? brandServiceBase : "",
