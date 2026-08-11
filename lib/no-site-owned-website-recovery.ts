@@ -26,6 +26,77 @@ export type OwnedWebsiteRecoveryDependencies = {
   now?: () => Date;
 };
 
+const legalSuffixTokens = new Set([
+  "llc",
+  "inc",
+  "incorporated",
+  "corp",
+  "corporation",
+  "company",
+  "co",
+  "ltd",
+  "limited",
+]);
+
+const genericServiceTokens = new Set([
+  "service",
+  "services",
+  "parking",
+  "lot",
+  "pressure",
+  "power",
+  "washing",
+  "wash",
+  "powerwashing",
+  "pressurewashing",
+  "softwashing",
+  "softwash",
+  "striping",
+  "roofing",
+  "roof",
+  "plumbing",
+  "plumber",
+  "electrical",
+  "electric",
+  "landscaping",
+  "landscape",
+  "cleaning",
+  "clean",
+  "painting",
+  "paint",
+  "concrete",
+  "fencing",
+  "fence",
+  "flooring",
+  "floor",
+  "remodeling",
+  "remodel",
+  "tree",
+  "trees",
+  "hvac",
+  "contractor",
+  "contracting",
+]);
+
+const preferredServiceTokens = [
+  "striping",
+  "roofing",
+  "plumbing",
+  "electrical",
+  "landscaping",
+  "cleaning",
+  "painting",
+  "concrete",
+  "fencing",
+  "flooring",
+  "remodeling",
+  "powerwashing",
+  "pressurewashing",
+  "softwashing",
+  "softwash",
+  "hvac",
+] as const;
+
 function normalizedHost(value: string) {
   try {
     const url = new URL(value.trim());
@@ -76,14 +147,68 @@ function placeMatchesProspect(
   return phoneMatch || addressMatch;
 }
 
+function domainTokens(value: string) {
+  return (value.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .filter((token) => !legalSuffixTokens.has(token));
+}
+
+function compactSlug(value: string) {
+  const compact = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!compact || compact.length > 48 || !/[a-z]/.test(compact)) return "";
+  return compact;
+}
+
+function safeSlug(value: string) {
+  const compact = compactSlug(value);
+  if (compact.length < 6) return "";
+  return compact;
+}
+
+function locationSuffix(value: string) {
+  const compact = compactSlug(value);
+  if (compact.length < 2 || compact.length > 24) return "";
+  return compact;
+}
+
+/**
+ * Produce a very small set of plausible .com hosts when a fresh Google listing omitted its
+ * website field. These are candidates only. They still pass through the normal website verifier,
+ * which must prove first-party identity before any website fit can be accepted.
+ */
+export function deterministicOwnedWebsiteCandidates(prospect: Prospect) {
+  const tokens = domainTokens(prospect.businessName);
+  if (!tokens.length) return [];
+
+  const brandTokens = tokens.filter((token) => !genericServiceTokens.has(token));
+  if (!brandTokens.length) return [];
+
+  const fullBase = safeSlug(tokens.join(""));
+  const brandBase = compactSlug(brandTokens.slice(0, 2).join(""));
+  const preferredService = preferredServiceTokens.find((token) => tokens.includes(token)) ?? "";
+  const brandServiceBase = preferredService ? safeSlug(`${brandBase}${preferredService}`) : "";
+  const state = locationSuffix(prospect.state);
+  const city = locationSuffix(prospect.city);
+
+  const slugs = [
+    brandServiceBase && brandServiceBase !== fullBase ? brandServiceBase : "",
+    fullBase,
+    fullBase && state ? safeSlug(`${fullBase}${state}`) : "",
+    fullBase && city ? safeSlug(`${fullBase}${city}`) : "",
+    brandServiceBase && state && brandServiceBase !== fullBase ? safeSlug(`${brandServiceBase}${state}`) : "",
+  ].filter(Boolean);
+
+  return [...new Set(slugs)].slice(0, 5).map((slug) => `https://${slug}.com/`);
+}
+
 /**
  * Bounded recovery for a fresh Google discovery record that arrived without an owned website.
  *
  * An exact Google Places re-query may contribute a website candidate only when the normalized
  * business name matches and either a complete phone number or the full normalized address
- * matches evidence already stored on the prospect. Multiple conflicting candidate hosts fail
- * closed. Recovery never establishes website ownership by itself; the normal website verifier
- * still has to prove first-party identity and website fit.
+ * matches evidence already stored on the prospect. If that exact matching Google record still
+ * omits its website, a tiny deterministic .com candidate set is returned for normal first-party
+ * verification. Conflicting Google-owned hosts fail closed. Recovery never establishes website
+ * ownership by itself.
  */
 export async function discoverGoogleOwnedWebsiteCandidates(
   prospect: Prospect,
@@ -124,14 +249,19 @@ export async function discoverGoogleOwnedWebsiteCandidates(
     if (!response.ok) return [];
 
     const payload = await response.json() as GooglePlacesSearchResponse;
-    const candidates = [...new Set((payload.places ?? [])
-      .filter((place) => placeMatchesProspect(prospect, place, bindings))
+    const matchingPlaces = (payload.places ?? []).filter((place) => placeMatchesProspect(prospect, place, bindings));
+    const candidates = [...new Set(matchingPlaces
       .map((place) => place.websiteUri?.trim() ?? "")
       .filter((value) => value && isCredibleOwnedWebsiteCandidate(value)))];
 
-    const hosts = new Set(candidates.map(normalizedHost).filter(Boolean));
-    if (hosts.size !== 1) return [];
-    return candidates.slice(0, 3);
+    if (candidates.length) {
+      const hosts = new Set(candidates.map(normalizedHost).filter(Boolean));
+      if (hosts.size !== 1) return [];
+      return candidates.slice(0, 3);
+    }
+
+    if (!matchingPlaces.length) return [];
+    return deterministicOwnedWebsiteCandidates(prospect);
   } catch {
     return [];
   }
