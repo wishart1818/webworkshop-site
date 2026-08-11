@@ -8,6 +8,7 @@ import {
   isCredibleOwnedWebsiteCandidate,
   providerOwnedWebsiteCandidates,
 } from "@/lib/prospect-identity-evidence";
+import { discoverGoogleOwnedWebsiteCandidates } from "@/lib/no-site-owned-website-recovery";
 import {
   verifyProspectWebsite,
   type ProspectWebsiteVerificationResult,
@@ -179,9 +180,17 @@ export async function verifyProspectWebsiteWithSecondPass(
     };
   }
 
+  const recoveredCandidates = !prospect.website.trim() && providerCandidates.length === 0
+    ? await discoverGoogleOwnedWebsiteCandidates(prospect, {
+      fetch: dependencies.fetch,
+      timeoutMs: Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000)),
+    })
+    : [];
+
   const candidates = [...new Set([
     prospect.website,
     ...providerCandidates,
+    ...recoveredCandidates,
   ].filter((value) => value && isCredibleOwnedWebsiteCandidate(value)))].slice(0, 3);
   if (!candidates.length && !prospect.website.trim()) {
     return {
