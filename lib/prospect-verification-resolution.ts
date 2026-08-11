@@ -135,12 +135,12 @@ function providerBoundAdequateExclusion(
       ? { ...result.report.freshness, humanReviewRequired: false, staleReason: "" }
       : result.report.freshness,
   };
-  const prospect = {
+  const resolvedProspect = {
     ...result.prospect,
     websiteVerification: report,
     fitDisposition: "adequate_existing_website" as const,
   };
-  return { ...result, prospect, report };
+  return { ...result, prospect: resolvedProspect, report };
 }
 
 function safelyResolved(result: ProspectWebsiteVerificationResult) {
@@ -294,7 +294,7 @@ export async function verifyProspectWebsiteWithSecondPass(
     };
   }
 
-  let best = initialResult;
+  let best: ProspectWebsiteVerificationResult | null = recoveredOwnedSiteMustBeChecked ? null : initialResult;
   for (const candidate of candidates) {
     const candidateResult = providerBoundAdequateExclusion(await verifyProspectWebsite(
       { ...workingProspect, website: candidate },
@@ -304,16 +304,18 @@ export async function verifyProspectWebsiteWithSecondPass(
       best = candidateResult;
       break;
     }
-    const bestReport: WebsiteVerificationReport = best.report;
-    if (bestReport.status !== "usable" && candidateResult.report.status === "usable") best = candidateResult;
+    if (!best || (best.report.status !== "usable" && candidateResult.report.status === "usable")) {
+      best = candidateResult;
+    }
   }
+  const finalResult = best ?? initialResult;
   return {
-    result: best,
+    result: finalResult,
     initialResult,
     secondPassAttempted: true,
     candidateUrlsConsidered: candidates,
-    reasonCode: resolutionReasonCode(best),
-    outcome: resolutionOutcome(best),
-    explanation: resultExplanation(best, true),
+    reasonCode: resolutionReasonCode(finalResult),
+    outcome: resolutionOutcome(finalResult),
+    explanation: resultExplanation(finalResult, true),
   };
 }
