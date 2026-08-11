@@ -23,6 +23,7 @@ export type OwnedWebsiteRecoveryDependencies = {
   fetch?: typeof fetch;
   apiKey?: string;
   timeoutMs?: number;
+  now?: () => Date;
 };
 
 function normalizedHost(value: string) {
@@ -32,6 +33,10 @@ function normalizedHost(value: string) {
   } catch {
     return "";
   }
+}
+
+function identityNameKey(value: string) {
+  return normalizedBusinessIdentityName(value).replace(/\s+/g, "");
 }
 
 function boundedQuery(prospect: Prospect) {
@@ -52,7 +57,7 @@ function knownIdentityBindings(prospect: Prospect) {
     normalizedStreetAddress(prospect.address),
     ...evidence.map((item) => normalizedStreetAddress(item.address)),
   ].filter(Boolean));
-  return { phones, addresses };
+  return { evidence, phones, addresses };
 }
 
 function placeMatchesProspect(
@@ -60,8 +65,8 @@ function placeMatchesProspect(
   place: GooglePlaceCandidate,
   bindings: ReturnType<typeof knownIdentityBindings>,
 ) {
-  const placeName = normalizedBusinessIdentityName(place.displayName?.text ?? "");
-  const expectedName = normalizedBusinessIdentityName(prospect.businessName);
+  const placeName = identityNameKey(place.displayName?.text ?? "");
+  const expectedName = identityNameKey(prospect.businessName);
   if (!placeName || !expectedName || placeName !== expectedName) return false;
 
   const placePhone = normalizedCompletePhone(place.nationalPhoneNumber ?? "");
@@ -72,18 +77,31 @@ function placeMatchesProspect(
 }
 
 /**
- * Bounded recovery for a discovery provider record that arrived without an owned website.
+ * Bounded recovery for a fresh Google discovery record that arrived without an owned website.
  *
- * This is intentionally conservative: an exact Google Places re-query may contribute a
- * website candidate only when the normalized business name matches and either a complete
- * phone number or the full normalized address matches evidence already stored on the
- * prospect. Multiple conflicting candidate hosts fail closed.
+ * An exact Google Places re-query may contribute a website candidate only when the normalized
+ * business name matches and either a complete phone number or the full normalized address
+ * matches evidence already stored on the prospect. Multiple conflicting candidate hosts fail
+ * closed. Recovery never establishes website ownership by itself; the normal website verifier
+ * still has to prove first-party identity and website fit.
  */
 export async function discoverGoogleOwnedWebsiteCandidates(
   prospect: Prospect,
   dependencies: OwnedWebsiteRecoveryDependencies = {},
 ) {
-  if (prospect.website.trim() || prospect.inactive) return [];
+  if (prospect.website.trim() || prospect.inactive || prospect.prospectType !== "no_website_social_only") return [];
+
+  const now = dependencies.now?.() ?? new Date();
+  const createdAt = Date.parse(prospect.createdAt);
+  if (!Number.isFinite(createdAt) || now.getTime() - createdAt > 7 * 24 * 60 * 60 * 1_000) return [];
+
+  const bindings = knownIdentityBindings(prospect);
+  const expectedName = identityNameKey(prospect.businessName);
+  const hasMatchingGoogleEvidence = bindings.evidence.some((item) => (
+    item.source === "google" && identityNameKey(item.businessName) === expectedName
+  ));
+  if (!hasMatchingGoogleEvidence || (bindings.phones.size === 0 && bindings.addresses.size === 0)) return [];
+
   const apiKey = (dependencies.apiKey ?? process.env.GOOGLE_PLACES_API_KEY ?? "").trim();
   if (!apiKey) return [];
 
@@ -106,9 +124,6 @@ export async function discoverGoogleOwnedWebsiteCandidates(
     if (!response.ok) return [];
 
     const payload = await response.json() as GooglePlacesSearchResponse;
-    const bindings = knownIdentityBindings(prospect);
-    if (bindings.phones.size === 0 && bindings.addresses.size === 0) return [];
-
     const candidates = [...new Set((payload.places ?? [])
       .filter((place) => placeMatchesProspect(prospect, place, bindings))
       .map((place) => place.websiteUri?.trim() ?? "")
