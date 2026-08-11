@@ -154,6 +154,23 @@ function knownIdentityBindings(prospect: Prospect) {
   return { evidence, phones, addresses };
 }
 
+function corroborationQueries(
+  prospect: Prospect,
+  bindings: ReturnType<typeof knownIdentityBindings>,
+) {
+  const compact = (parts: string[]) => parts
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 500);
+  const phone = [...bindings.phones][0] ?? "";
+  return [...new Set([
+    boundedQuery(prospect),
+    compact([prospect.businessName, prospect.city, prospect.state]),
+    phone ? compact([prospect.businessName, phone]) : "",
+  ].filter(Boolean))].slice(0, 3);
+}
+
 function placeMatchesProspect(
   prospect: Prospect,
   place: GooglePlaceCandidate,
@@ -314,6 +331,11 @@ export function deterministicOwnedWebsiteCandidates(prospect: Prospect) {
  * it only contributes a second provider signal when the normalized business name and a complete
  * phone or exact street address agree with evidence already stored on the prospect.
  *
+ * Retrieval uses a tiny bounded set of identity-preserving queries so a provider does not have to
+ * index the exact same address-heavy search string as the first provider. Every returned result
+ * still has to pass the same exact name + phone/address binding, and multiple distinct exact
+ * matches fail closed.
+ *
  * Any website returned by the corroborating provider is preserved in the evidence so the normal
  * owned-site recovery and verification path can block a false no-site conclusion.
  */
@@ -333,41 +355,41 @@ export async function discoverIndependentNoSiteIdentityEvidence(
   if (sources.size === 0 || sources.size >= 2 || (bindings.phones.size === 0 && bindings.addresses.size === 0)) return [];
   if (bindings.evidence.some((item) => isCredibleOwnedWebsiteCandidate(item.website))) return [];
 
-  const query = boundedQuery(prospect);
-  if (!query) return [];
+  const queries = corroborationQueries(prospect, bindings);
+  if (!queries.length) return [];
   const fetchImpl = dependencies.fetch ?? fetch;
   const timeoutMs = Math.min(6_000, Math.max(750, dependencies.timeoutMs ?? 5_000));
 
   const azureMapsKey = (dependencies.azureMapsApiKey ?? process.env.AZURE_MAPS_API_KEY ?? "").trim();
   if (!sources.has("bing") && azureMapsKey) {
-    try {
-      const url = new URL(process.env.AZURE_MAPS_POI_API_URL?.trim() || "https://atlas.microsoft.com/search/poi/json");
-      url.searchParams.set("api-version", "1.0");
-      url.searchParams.set("subscription-key", azureMapsKey);
-      url.searchParams.set("query", query);
-      url.searchParams.set("limit", "5");
-      const anchor = bindings.evidence.find((item) => item.latitude !== null && item.longitude !== null);
-      if (anchor && anchor.latitude !== null && anchor.longitude !== null) {
-        url.searchParams.set("lat", String(anchor.latitude));
-        url.searchParams.set("lon", String(anchor.longitude));
-        url.searchParams.set("radius", "10000");
-      }
-      const response = await fetchImpl(url, {
-        headers: { Accept: "application/json", "User-Agent": "WebWorkshopProspectEngine/1.0 (+https://webworkshop.dev)" },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (response.ok) {
+    const anchor = bindings.evidence.find((item) => item.latitude !== null && item.longitude !== null);
+    const batches = await Promise.all(queries.map(async (query): Promise<DiscoveryIdentityEvidence[]> => {
+      try {
+        const url = new URL(process.env.AZURE_MAPS_POI_API_URL?.trim() || "https://atlas.microsoft.com/search/poi/json");
+        url.searchParams.set("api-version", "1.0");
+        url.searchParams.set("subscription-key", azureMapsKey);
+        url.searchParams.set("query", query);
+        url.searchParams.set("limit", "5");
+        if (anchor && anchor.latitude !== null && anchor.longitude !== null) {
+          url.searchParams.set("lat", String(anchor.latitude));
+          url.searchParams.set("lon", String(anchor.longitude));
+          url.searchParams.set("radius", "10000");
+        }
+        const response = await fetchImpl(url, {
+          headers: { Accept: "application/json", "User-Agent": "WebWorkshopProspectEngine/1.0 (+https://webworkshop.dev)" },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) return [];
         const payload = await response.json() as AzureMapsSearchResponse;
-        const evidence = uniqueExactEvidence(
-          prospect,
-          (payload.results ?? []).map(azurePlaceEvidence).filter((item): item is DiscoveryIdentityEvidence => Boolean(item)),
-          bindings,
-        );
-        if (evidence.length) return evidence;
+        return (payload.results ?? [])
+          .map(azurePlaceEvidence)
+          .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
+      } catch {
+        return [];
       }
-    } catch {
-      // Corroboration is optional and fails closed.
-    }
+    }));
+    const evidence = uniqueExactEvidence(prospect, batches.flat(), bindings);
+    if (evidence.length) return evidence;
   }
 
   const googlePlacesApiKey = (
@@ -377,28 +399,28 @@ export async function discoverIndependentNoSiteIdentityEvidence(
     ?? ""
   ).trim();
   if (!sources.has("google") && googlePlacesApiKey) {
-    try {
-      const response = await fetchImpl("https://places.googleapis.com/v1/places:searchText", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Goog-Api-Key": googlePlacesApiKey,
-          "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.location,places.addressComponents",
-        },
-        body: JSON.stringify({ textQuery: query, maxResultCount: 5 }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (response.ok) {
+    const batches = await Promise.all(queries.map(async (query): Promise<DiscoveryIdentityEvidence[]> => {
+      try {
+        const response = await fetchImpl("https://places.googleapis.com/v1/places:searchText", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": googlePlacesApiKey,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.location,places.addressComponents",
+          },
+          body: JSON.stringify({ textQuery: query, maxResultCount: 5 }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) return [];
         const payload = await response.json() as GooglePlacesSearchResponse;
-        return uniqueExactEvidence(
-          prospect,
-          (payload.places ?? []).map(googlePlaceEvidence).filter((item): item is DiscoveryIdentityEvidence => Boolean(item)),
-          bindings,
-        );
+        return (payload.places ?? [])
+          .map(googlePlaceEvidence)
+          .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
+      } catch {
+        return [];
       }
-    } catch {
-      // Corroboration is optional and fails closed.
-    }
+    }));
+    return uniqueExactEvidence(prospect, batches.flat(), bindings);
   }
 
   return [];
