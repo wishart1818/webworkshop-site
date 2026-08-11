@@ -5,6 +5,7 @@ import {
 } from "@/lib/prospect-qualification";
 import {
   affirmativeFirstPartyIdentity,
+  discoveryIdentityEvidenceSignal,
   isCredibleOwnedWebsiteCandidate,
   providerOwnedWebsiteCandidates,
 } from "@/lib/prospect-identity-evidence";
@@ -12,7 +13,10 @@ import {
   authoritativeProviderBoundWebsiteIdentity,
   verifiedCustomerFacingWebsiteStructure,
 } from "@/lib/provider-bound-website-exclusion";
-import { discoverGoogleOwnedWebsiteCandidates } from "@/lib/no-site-owned-website-recovery";
+import {
+  discoverGoogleOwnedWebsiteCandidates,
+  discoverIndependentNoSiteIdentityEvidence,
+} from "@/lib/no-site-owned-website-recovery";
 import {
   verifyProspectWebsite,
   type ProspectWebsiteVerificationResult,
@@ -73,6 +77,7 @@ export function mergeResolvedWebsiteEvidence(
     priorityScore: resolved.priorityScore,
     outreach: resolved.outreach ? structuredClone(resolved.outreach) : resolved.outreach,
     preview: resolved.preview ? structuredClone(resolved.preview) : resolved.preview,
+    activitySignals: [...new Set([...existing.activitySignals, ...resolved.activitySignals])],
     activities: structuredClone(resolved.activities),
   };
 }
@@ -210,21 +215,36 @@ export async function verifyProspectWebsiteWithSecondPass(
   prospect: Prospect,
   dependencies: WebsiteVerificationDependencies = {},
 ): Promise<SharedProspectVerificationResolution> {
-  const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(prospect, dependencies));
+  const corroboratingEvidence = await discoverIndependentNoSiteIdentityEvidence(prospect, {
+    fetch: dependencies.fetch,
+    timeoutMs: Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000)),
+  });
+  const workingProspect = corroboratingEvidence.length
+    ? {
+        ...prospect,
+        activitySignals: [...new Set([
+          ...prospect.activitySignals,
+          ...corroboratingEvidence.map(discoveryIdentityEvidenceSignal),
+          ...corroboratingEvidence.map((item) => `discovery_source:${item.source}`),
+        ])],
+      }
+    : prospect;
+
+  const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(workingProspect, dependencies));
   if (safelyResolved(initialResult)) {
     return {
       result: initialResult,
       initialResult,
       secondPassAttempted: false,
-      candidateUrlsConsidered: prospect.website ? [prospect.website] : [],
+      candidateUrlsConsidered: workingProspect.website ? [workingProspect.website] : [],
       reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
     };
   }
 
-  const storedHost = normalizedHost(prospect.website);
-  const providerCandidates = providerOwnedWebsiteCandidates(prospect);
+  const storedHost = normalizedHost(workingProspect.website);
+  const providerCandidates = providerOwnedWebsiteCandidates(workingProspect);
   const providerHosts = new Set(providerCandidates.map(normalizedHost).filter(Boolean));
   if (storedHost) providerHosts.add(storedHost);
   if (providerHosts.size > 1) {
@@ -239,19 +259,19 @@ export async function verifyProspectWebsiteWithSecondPass(
     };
   }
 
-  const recoveredCandidates = !prospect.website.trim() && providerCandidates.length === 0
-    ? await discoverGoogleOwnedWebsiteCandidates(prospect, {
+  const recoveredCandidates = !workingProspect.website.trim() && providerCandidates.length === 0
+    ? await discoverGoogleOwnedWebsiteCandidates(workingProspect, {
       fetch: dependencies.fetch,
       timeoutMs: Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000)),
     })
     : [];
 
   const candidates = [...new Set([
-    prospect.website,
+    workingProspect.website,
     ...providerCandidates,
     ...recoveredCandidates,
   ].filter((value) => value && isCredibleOwnedWebsiteCandidate(value)))].slice(0, 3);
-  if (!candidates.length && !prospect.website.trim()) {
+  if (!candidates.length && !workingProspect.website.trim()) {
     return {
       result: initialResult,
       initialResult,
@@ -266,7 +286,7 @@ export async function verifyProspectWebsiteWithSecondPass(
   let best = initialResult;
   for (const candidate of candidates) {
     const candidateResult = providerBoundAdequateExclusion(await verifyProspectWebsite(
-      { ...prospect, website: candidate },
+      { ...workingProspect, website: candidate },
       secondPassDependencies(dependencies),
     ));
     if (safelyResolved(candidateResult)) {
