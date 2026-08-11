@@ -118,6 +118,103 @@ test("shared second pass keeps missing website data manual when no-site evidence
   assert.equal(calls, 0);
 });
 
+test("authoritative provider binding safely excludes a complete site when strict root branding is incomplete", async () => {
+  const website = "https://johnlocke.example";
+  const phone = "419-555-0144";
+  const address = "100 Main Street, Toledo, OH 43604";
+  const value = prospect({
+    businessName: "John Locke Painting, Inc",
+    website,
+    phone,
+    address,
+    city: "Toledo",
+    trade: "Painting",
+    activitySignals: [discoveryIdentityEvidenceSignal({
+      source: "google",
+      businessName: "John Locke Painting",
+      website,
+      profileUrl: "https://www.google.com/maps/place/John+Locke+Painting",
+      phone,
+      address,
+      city: "Toledo",
+      state: "OH",
+      latitude: 41.65,
+      longitude: -83.54,
+    })],
+  });
+  const fetchImpl = (async () => new Response(`<!doctype html><html><head>
+      <title>Home - John Locke Painting</title><meta name="viewport" content="width=device-width" />
+    </head><body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav>
+      <h1>Painting Services</h1><p>John Locke Painting provides residential and commercial painting services throughout Toledo and nearby communities. Our experienced team handles interior painting, exterior painting, preparation, and project cleanup for homes and businesses.</p>
+      <a href="tel:+14195550144">(419) 555-0144</a><form><button>Request an appointment</button></form>
+      <img src="/crew.jpg" alt="Painting crew completing a local project" /></body></html>`, {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  })) as typeof fetch;
+
+  const result = await verifyProspectWebsiteWithSecondPass(value, {
+    fetch: fetchImpl,
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
+    now: () => now,
+    maxContactPages: 1,
+  });
+
+  assert.equal(result.secondPassAttempted, false);
+  assert.equal(result.outcome, "safe_exclusion");
+  assert.equal(result.result.report.ownershipDecision, "owned");
+  assert.equal(result.result.report.fit?.disposition, "adequate_existing_website");
+  assert.equal(result.result.report.fit?.confidence, "high");
+  assert.equal(result.result.prospect.fitDisposition, "adequate_existing_website");
+  assert.match(result.result.report.identityEvidence?.join(" ") ?? "", /authoritative provider website binding/i);
+  assert.equal(result.result.report.identitySignals?.includes("canonical_root_business_identity"), false);
+});
+
+test("provider-bound exclusion fails closed when the authoritative identity does not match phone or address", async () => {
+  const website = "https://johnlocke.example";
+  const value = prospect({
+    businessName: "John Locke Painting, Inc",
+    website,
+    phone: "419-555-0144",
+    address: "100 Main Street, Toledo, OH 43604",
+    city: "Toledo",
+    trade: "Painting",
+    activitySignals: [discoveryIdentityEvidenceSignal({
+      source: "google",
+      businessName: "John Locke Painting",
+      website,
+      profileUrl: "https://www.google.com/maps/place/John+Locke+Painting",
+      phone: "419-555-9999",
+      address: "999 Other Street, Toledo, OH 43604",
+      city: "Toledo",
+      state: "OH",
+      latitude: 41.65,
+      longitude: -83.54,
+    })],
+  });
+  const fetchImpl = (async () => new Response(`<!doctype html><html><head>
+      <title>Home - John Locke Painting</title><meta name="viewport" content="width=device-width" />
+    </head><body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav>
+      <h1>Painting Services</h1><p>John Locke Painting provides residential and commercial painting services throughout Toledo and nearby communities. Our experienced team handles interior painting, exterior painting, preparation, and project cleanup for homes and businesses.</p>
+      <a href="tel:+14195550144">(419) 555-0144</a><form><button>Request an appointment</button></form>
+      <img src="/crew.jpg" alt="Painting crew completing a local project" /></body></html>`, {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  })) as typeof fetch;
+
+  const result = await verifyProspectWebsiteWithSecondPass(value, {
+    fetch: fetchImpl,
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
+    now: () => now,
+    maxContactPages: 1,
+  });
+
+  assert.equal(result.outcome, "still_manual");
+  assert.equal(result.result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.notEqual(result.result.report.ownershipDecision, "owned");
+});
+
 test("an existing prospect accepts resolved website evidence without overwriting contact identity", () => {
   const existing = prospect({
     email: "office@perfectgreen.example",

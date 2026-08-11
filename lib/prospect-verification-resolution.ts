@@ -8,6 +8,10 @@ import {
   isCredibleOwnedWebsiteCandidate,
   providerOwnedWebsiteCandidates,
 } from "@/lib/prospect-identity-evidence";
+import {
+  authoritativeProviderBoundWebsiteIdentity,
+  verifiedCustomerFacingWebsiteStructure,
+} from "@/lib/provider-bound-website-exclusion";
 import { discoverGoogleOwnedWebsiteCandidates } from "@/lib/no-site-owned-website-recovery";
 import {
   verifyProspectWebsite,
@@ -81,14 +85,69 @@ function normalizedHost(value: string) {
   }
 }
 
+function providerBoundAdequateExclusion(
+  result: ProspectWebsiteVerificationResult,
+): ProspectWebsiteVerificationResult {
+  const disposition = normalizeWebsiteFitDisposition(result.prospect);
+  if (disposition !== "inconclusive_requires_review") return result;
+  if (!authoritativeProviderBoundWebsiteIdentity(result.prospect, result.report)) return result;
+  if (!verifiedCustomerFacingWebsiteStructure(result.prospect, result.report)) return result;
+
+  const supportingEvidence = [
+    result.report.usableSignals.includes("meaningful page title") ? "A meaningful page title is present." : "",
+    result.report.usableSignals.includes("navigation") ? "Customer navigation is present." : "",
+    result.report.usableSignals.includes("service content") ? "Meaningful service content is present." : "",
+    result.report.usableSignals.includes("mobile viewport") ? "Mobile viewport markup is present." : "",
+    result.prospect.contactFormDetected || result.prospect.quoteFormDetected || result.prospect.email || result.prospect.phone
+      ? "A public phone, email, or form contact path is present."
+      : "",
+    result.report.usableSignals.includes("business imagery") || result.report.usableSignals.includes("structured business data")
+      ? "Business imagery or structured business data is present."
+      : "",
+    "An authoritative provider supplied the same website host for the same normalized business identity and matched a complete business phone or street address.",
+  ].filter(Boolean);
+  const providerBindingEvidence = "Authoritative provider website binding independently corroborated the stored business website host and business identity.";
+  const fit = {
+    disposition: "adequate_existing_website" as const,
+    reason: "The current site has a complete customer-facing structure, and an authoritative provider independently binds this exact website host to the prospect. It is safe to exclude from rebuild outreach.",
+    supportingEvidence,
+    confidence: "high" as const,
+    analysisOrigin: "automated_html" as const,
+    evaluatedAt: result.report.checkedAt,
+  };
+  const report: WebsiteVerificationReport = {
+    ...result.report,
+    confidence: "high",
+    ownershipDecision: "owned",
+    identityEvidence: [...new Set([...(result.report.identityEvidence ?? []), providerBindingEvidence])],
+    fit,
+    freshness: result.report.freshness
+      ? { ...result.report.freshness, humanReviewRequired: false, staleReason: "" }
+      : result.report.freshness,
+  };
+  const prospect = {
+    ...result.prospect,
+    websiteVerification: report,
+    fitDisposition: "adequate_existing_website" as const,
+  };
+  return { ...result, prospect, report };
+}
+
 function safelyResolved(result: ProspectWebsiteVerificationResult) {
   const disposition = normalizeWebsiteFitDisposition(result.prospect);
   if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) {
     return result.report.version === "website-verification-v2"
       && result.report.status === "usable"
       && result.report.confidence === "high"
+      && result.report.ownershipDecision === "owned"
       && result.report.fit?.confidence === "high"
-      && affirmativeFirstPartyIdentity(result.report.identitySignals);
+      && (
+        affirmativeFirstPartyIdentity(result.report.identitySignals)
+        || (
+          authoritativeProviderBoundWebsiteIdentity(result.prospect, result.report)
+          && verifiedCustomerFacingWebsiteStructure(result.prospect, result.report)
+        )
+      );
   }
   if (disposition === "no_owned_website") {
     return result.report.status === "no_owned_website"
@@ -151,7 +210,7 @@ export async function verifyProspectWebsiteWithSecondPass(
   prospect: Prospect,
   dependencies: WebsiteVerificationDependencies = {},
 ): Promise<SharedProspectVerificationResolution> {
-  const initialResult = await verifyProspectWebsite(prospect, dependencies);
+  const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(prospect, dependencies));
   if (safelyResolved(initialResult)) {
     return {
       result: initialResult,
@@ -206,10 +265,10 @@ export async function verifyProspectWebsiteWithSecondPass(
 
   let best = initialResult;
   for (const candidate of candidates) {
-    const candidateResult = await verifyProspectWebsite(
+    const candidateResult = providerBoundAdequateExclusion(await verifyProspectWebsite(
       { ...prospect, website: candidate },
       secondPassDependencies(dependencies),
-    );
+    ));
     if (safelyResolved(candidateResult)) {
       best = candidateResult;
       break;
