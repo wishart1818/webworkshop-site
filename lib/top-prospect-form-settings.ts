@@ -1,6 +1,5 @@
-import { prospectSearchTypes, tradeCategories, type ProspectSearchType } from "@/lib/prospect-engine";
+import { allCoreServiceTradesOption, prospectSearchTypes, tradeCategories, type ProspectSearchType } from "@/lib/prospect-engine";
 import {
-  allCoreServiceTradesOption,
   type OutreachPreference,
   type ProspectMode,
   type TopProspectJob,
