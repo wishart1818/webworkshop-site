@@ -152,15 +152,21 @@ function domainTokens(value: string) {
     .filter((token) => !legalSuffixTokens.has(token));
 }
 
-function safeSlug(value: string) {
+function compactSlug(value: string) {
   const compact = value.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (compact.length < 6 || compact.length > 48 || !/[a-z]/.test(compact)) return "";
+  if (!compact || compact.length > 48 || !/[a-z]/.test(compact)) return "";
+  return compact;
+}
+
+function safeSlug(value: string) {
+  const compact = compactSlug(value);
+  if (compact.length < 6) return "";
   return compact;
 }
 
 function locationSuffix(value: string) {
-  const compact = value.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (compact.length < 2 || compact.length > 24 || !/[a-z]/.test(compact)) return "";
+  const compact = compactSlug(value);
+  if (compact.length < 2 || compact.length > 24) return "";
   return compact;
 }
 
@@ -177,9 +183,9 @@ export function deterministicOwnedWebsiteCandidates(prospect: Prospect) {
   if (!brandTokens.length) return [];
 
   const fullBase = safeSlug(tokens.join(""));
-  const brandBase = safeSlug(brandTokens.slice(0, 2).join(""));
+  const brandBase = compactSlug(brandTokens.slice(0, 2).join(""));
   const preferredService = preferredServiceTokens.find((token) => tokens.includes(token)) ?? "";
-  const brandServiceBase = safeSlug(`${brandBase}${preferredService}`);
+  const brandServiceBase = preferredService ? safeSlug(`${brandBase}${preferredService}`) : "";
   const state = locationSuffix(prospect.state);
   const city = locationSuffix(prospect.city);
 
