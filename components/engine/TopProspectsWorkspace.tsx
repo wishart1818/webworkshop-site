@@ -6,6 +6,7 @@ import { DiscoveryFunnel } from "@/components/engine/DiscoveryFunnel";
 import { shouldShowLimitedProviderCoverageWarning, type DiscoveryDiagnostics, type DiscoveryProvider, type DiscoveryProviderCoverageStatus, type DiscoveryProviderDiagnostic, type DiscoveryProviderStatus } from "@/lib/lead-discovery";
 import { casualDmPlaybook } from "@/lib/autonomous-growth";
 import { autopilotCampaignDraftStorageKey, autopilotDraftFromRecommendedMarket, topProspectsAutopilotPrefillStorageKey, type AutopilotTopProspectsPrefill } from "@/lib/autopilot-campaign";
+import { parseTopProspectFormSettings, topProspectSearchSettingsStorageKey } from "@/lib/top-prospect-form-settings";
 import {
   allCoreServiceTradesOption,
   displayStateCode,
@@ -438,6 +439,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [marketApplied, setMarketApplied] = useState("");
   const searchFormRef = useRef<HTMLFormElement | null>(null);
   const cityInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsHydratedRef = useRef(false);
   const activeJob = jobs.find((job) => jobIsActive(job.status));
   const latestJob = activeJob ?? jobs[0];
   const best = latestJob && latestJob.scannedCount > 0 ? latestJob.results[0] : null;
@@ -525,6 +527,61 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     return () => {
       ignore = true;
     };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsHydratedRef.current) return;
+    try {
+      window.localStorage.setItem(topProspectSearchSettingsStorageKey, JSON.stringify({
+        prospectType: selectedProspectType,
+        mode: selectedMode,
+        workflowType: selectedWorkflow,
+        outreachPreference: selectedOutreachPreference,
+        trade: selectedTrade,
+        city: cityInput,
+        state: stateInput,
+        radiusKm: selectedRadiusKm,
+        businessesToScan,
+        finalProspectsWanted,
+        excludePreviouslyReviewed,
+      }));
+    } catch {
+      // The search form remains usable when browser storage is unavailable.
+    }
+  }, [
+    businessesToScan,
+    cityInput,
+    excludePreviouslyReviewed,
+    finalProspectsWanted,
+    selectedMode,
+    selectedOutreachPreference,
+    selectedProspectType,
+    selectedRadiusKm,
+    selectedTrade,
+    selectedWorkflow,
+    stateInput,
+  ]);
+
+  useEffect(() => {
+    try {
+      const saved = parseTopProspectFormSettings(window.localStorage.getItem(topProspectSearchSettingsStorageKey));
+      if (!saved) return;
+      if (saved.prospectType) setSelectedProspectType(saved.prospectType);
+      if (saved.mode) setSelectedMode(saved.mode);
+      if (saved.workflowType) setSelectedWorkflow(saved.workflowType);
+      if (saved.outreachPreference) setSelectedOutreachPreference(saved.outreachPreference);
+      if (saved.trade) setSelectedTrade(saved.trade);
+      if (typeof saved.city === "string") setCityInput(saved.city);
+      if (saved.state) setStateInput(saved.state);
+      if (saved.radiusKm) setSelectedRadiusKm(saved.radiusKm);
+      if (saved.businessesToScan) setBusinessesToScan(saved.businessesToScan);
+      if (saved.finalProspectsWanted) setFinalProspectsWanted(saved.finalProspectsWanted);
+      if (typeof saved.excludePreviouslyReviewed === "boolean") setExcludePreviouslyReviewed(saved.excludePreviouslyReviewed);
+    } catch {
+      // Ignore malformed or unavailable local saved settings.
+    } finally {
+      settingsHydratedRef.current = true;
+    }
   }, []);
 
   useEffect(() => {
