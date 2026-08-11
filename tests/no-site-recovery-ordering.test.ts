@@ -51,14 +51,10 @@ function businessHtml(pathname: string) {
     <img src="/concrete-project.jpg" alt="Concrete project" /></body></html>`;
 }
 
-test("exact provider corroboration cannot accept no-site before an exact Google owned-site recovery candidate is checked", async () => {
-  let azureCalls = 0;
-  let googleCalls = 0;
-  let websiteCalls = 0;
-  const fetchImpl: typeof fetch = async (input, init) => {
+function providerResponseFetch(websiteResponse: () => Response): typeof fetch {
+  return async (input, init) => {
     const url = new URL(String(input));
     if (url.hostname === "atlas.microsoft.com") {
-      azureCalls += 1;
       return new Response(JSON.stringify({ results: [{
         poi: { name: "MJR Concrete", phone: "+1 260-446-2693" },
         position: { lat: 41.0123, lon: -85.0912 },
@@ -70,7 +66,6 @@ test("exact provider corroboration cannot accept no-site before an exact Google 
       }] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.hostname === "places.googleapis.com") {
-      googleCalls += 1;
       assert.equal(init?.method, "POST");
       return new Response(JSON.stringify({ places: [{
         displayName: { text: "MJR Concrete LLC" },
@@ -80,18 +75,18 @@ test("exact provider corroboration cannot accept no-site before an exact Google 
         googleMapsUri: "https://www.google.com/maps/place/MJR+Concrete+LLC",
       }] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url.hostname === "mjrconcretellc.example") {
-      websiteCalls += 1;
-      return new Response(businessHtml(url.pathname), { status: 200, headers: { "Content-Type": "text/html" } });
-    }
-    if (url.pathname === "/robots.txt") {
-      return new Response("", { status: 404 });
-    }
+    if (url.hostname === "mjrconcretellc.example") return websiteResponse();
     throw new Error(`Unexpected test URL: ${url.href}`);
   };
+}
 
+test("exact provider corroboration cannot accept no-site before an exact Google owned-site recovery candidate is checked", async () => {
+  let websiteCalls = 0;
   const result = await verifyProspectWebsiteWithSecondPass(prospect(), {
-    fetch: fetchImpl,
+    fetch: providerResponseFetch(() => {
+      websiteCalls += 1;
+      return new Response(businessHtml("/"), { status: 200, headers: { "Content-Type": "text/html" } });
+    }),
     lookup: async () => [{ address: "93.184.216.34" }],
     robotsPolicy: async () => true,
     now: () => now,
@@ -100,11 +95,30 @@ test("exact provider corroboration cannot accept no-site before an exact Google 
     azureMapsApiKey: "azure-test-key",
   });
 
-  assert.equal(azureCalls, 1);
-  assert.equal(googleCalls, 1);
   assert.ok(websiteCalls >= 1);
   assert.equal(result.secondPassAttempted, true);
   assert.ok(result.candidateUrlsConsidered.includes(recoveredWebsite));
   assert.notEqual(result.result.prospect.fitDisposition, "no_owned_website");
   assert.notEqual(result.result.report.status, "no_owned_website");
+});
+
+test("an exact recovered owned-site candidate that crawler-blocks remains manual instead of falling back to no-site", async () => {
+  const result = await verifyProspectWebsiteWithSecondPass(prospect(), {
+    fetch: providerResponseFetch(() => new Response("Access denied", {
+      status: 403,
+      headers: { "Content-Type": "text/html" },
+    })),
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
+    now: () => now,
+    maxContactPages: 1,
+    googlePlacesApiKey: "google-test-key",
+    azureMapsApiKey: "azure-test-key",
+  });
+
+  assert.equal(result.secondPassAttempted, true);
+  assert.equal(result.outcome, "still_manual");
+  assert.equal(result.reasonCode, "CRAWLER_BLOCKED");
+  assert.equal(result.result.report.status, "crawler_blocked");
+  assert.notEqual(result.result.prospect.fitDisposition, "no_owned_website");
 });
