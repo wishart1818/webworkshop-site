@@ -295,6 +295,17 @@ export function AutonomousGrowthWorkspace() {
   }, [activeView]);
 
   useEffect(() => {
+    function reviewAutopilotStatus() {
+      setActiveView("campaigns");
+      window.requestAnimationFrame(() => {
+        document.getElementById("autopilot-campaign-title")?.scrollIntoView({ block: "start" });
+      });
+    }
+    window.addEventListener("webworkshop:review-autopilot-status", reviewAutopilotStatus);
+    return () => window.removeEventListener("webworkshop:review-autopilot-status", reviewAutopilotStatus);
+  }, []);
+
+  useEffect(() => {
     if (!["running", "starting_top_prospects", "top_prospects_running"].includes(dashboard?.autopilot.activity.status ?? "")) return;
     const activityTimer = window.setInterval(() => {
       void loadDashboard();
@@ -1641,7 +1652,8 @@ function AutopilotCampaignPanel({
     autopilot.providerCoverage,
     autopilot.activity,
     campaign.latestRunReport,
-  ), [autopilot.activity, autopilot.providerCoverage, campaign.latestRunReport, settings]);
+    autopilot.providerSmokeReadiness,
+  ), [autopilot.activity, autopilot.providerCoverage, autopilot.providerSmokeReadiness, campaign.latestRunReport, settings]);
 
   useEffect(() => {
     setFormSettings(campaign.settings);
@@ -1753,7 +1765,7 @@ function AutopilotCampaignPanel({
       ) : null}
       {providerGuardrailWarnings.length ? (
         <div className="engine-autopilot-provider-warning" role="alert">
-          <b>Provider coverage is limited. Run Provider Smoke Test or a small Top Prospects test before starting Autopilot.</b>
+          <b>Autopilot preflight needs attention.</b>
           <ul>{providerGuardrailWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
         </div>
       ) : null}

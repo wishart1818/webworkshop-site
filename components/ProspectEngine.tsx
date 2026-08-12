@@ -315,7 +315,10 @@ export function ProspectEngine() {
     if (workspaceTab === "Top Prospects") return { label: "Run focused Top Prospects scan", action: () => undefined };
     if (workspaceTab === "Calls") return { label: pendingCalls > 0 ? `Call ${pendingCalls} pending lead${pendingCalls === 1 ? "" : "s"}` : "Review prospect queue", action: () => pendingCalls > 0 ? undefined : setWorkspaceTab("Prospects") };
     if (workspaceTab === "Pipeline") return { label: "Check follow-ups", action: () => setPipelineView("followups") };
-    if (workspaceTab === "Autonomous Growth") return { label: "Review Autopilot status", action: () => undefined };
+    if (workspaceTab === "Autonomous Growth") return {
+      label: "Review Autopilot status",
+      action: () => window.dispatchEvent(new CustomEvent("webworkshop:review-autopilot-status")),
+    };
     if (workspaceTab === "Operator Test Center") return { label: "Run readiness test", action: () => undefined };
     if (workspaceTab === "System") return { label: "Run provider smoke test", action: () => void runProviderSmokeTest() };
     if (workspaceTab === "Command Activity") return { label: "Review latest command", action: () => undefined };
