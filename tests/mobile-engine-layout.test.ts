@@ -336,7 +336,12 @@ test("Top Prospects exposes modes, background batch workflow, queue, and request
   assert.match(topProspectsWorkspace, /Analyze saved prospects/);
   assert.match(topProspectsWorkspace, /discovery complete, waiting to analyze/);
   assert.match(topProspectsWorkspace, /latestJob && latestJob\.scannedCount > 0 \? latestJob\.results\[0\] : null/);
-  assert.match(topProspectsWorkspace, /Website scan/);
+  assert.match(topProspectsWorkspace, /Candidate review/);
+  assert.match(topProspectsWorkspace, /Manual Opportunity Review/);
+  assert.match(topProspectsWorkspace, /MANUAL REVIEW - NOT AUTO-SEND READY/);
+  assert.match(topProspectsWorkspace, /No package was generated and nothing was sent/);
+  assert.match(topProspectsWorkspace, /strictly qualified/);
+  assert.match(topProspectsWorkspace, /manual review/);
   assert.match(topProspectsWorkspace, /Preview generation/);
   assert.match(topProspectsWorkspace, /Outreach packages/);
   assert.match(topProspectsWorkspace, /NEEDS_NEXT_BATCH/);

@@ -27,6 +27,7 @@ import {
 } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { normalizeWebsiteFitDisposition, websiteFitAllowsAutonomousOutreach } from "@/lib/prospect-qualification";
+import { prospectIsSuppressed } from "@/lib/prospect-funnel";
 import {
   mergeResolvedWebsiteEvidence,
   unresolvedWebsiteReason,
@@ -42,6 +43,7 @@ import {
   parseTopProspectCityTargets,
   citySearchBudgets,
   prepareTopProspectOutreachArtifacts,
+  assessManualTopProspectOpportunity,
   type CitySearchTarget,
   type OutreachPreference,
   type ProspectMode,
@@ -186,6 +188,7 @@ function combineQualificationBreakdowns(results: DiscoveryResult[]): DiscoveryQu
     noActivityEvidence: combined.noActivityEvidence + current.noActivityEvidence,
     badFitOrInactive: combined.badFitOrInactive + current.badFitOrInactive,
     eligibleLeads: combined.eligibleLeads + current.eligibleLeads,
+    manualOpportunityCandidates: (combined.manualOpportunityCandidates ?? 0) + (current.manualOpportunityCandidates ?? 0),
   }), {
     mergedCandidates: 0,
     ownedWebsiteCandidates: 0,
@@ -194,6 +197,7 @@ function combineQualificationBreakdowns(results: DiscoveryResult[]): DiscoveryQu
     noActivityEvidence: 0,
     badFitOrInactive: 0,
     eligibleLeads: 0,
+    manualOpportunityCandidates: 0,
   });
 }
 
@@ -377,7 +381,7 @@ export function combineCityDiscoveryResults(input: {
       providerDiagnostics: result.diagnostics.providerDiagnostics,
       providersAttempted: providerItems.filter(([, diagnostic]) => diagnostic.queryExecuted).map(([provider]) => provider),
       skippedCount: Math.max(0, result.diagnostics.afterDuplicateFilteringCount - result.diagnostics.returnedCount),
-      qualifiedCount: result.diagnostics.returnedCount,
+      qualifiedCount: result.diagnostics.qualificationBreakdown?.eligibleLeads ?? result.diagnostics.returnedCount,
       mainSkipReasons: result.leads.length === 0
         ? noEligibleMatches
           ? ["No eligible records after the requested prospect-type and safety filters"]
@@ -666,6 +670,7 @@ function unresolvedTopProspectRecord(
   resolution?: SharedProspectVerificationResolution,
 ): UnresolvedTopProspectRecord {
   const reasonCode = resolution?.reasonCode ?? unresolvedWebsiteReason(prospect);
+  const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);
   return {
     prospectId: prospect.id,
     businessName: prospect.businessName,
@@ -679,9 +684,28 @@ function unresolvedTopProspectRecord(
     unresolvedReasonCode: reasonCode,
     evidenceSummary: resolution?.explanation ?? (prospect.websiteStatusDetail || "Current structured evidence is incomplete."),
     persistedAsProspect: true,
-    preventedQualification: "Website identity, ownership, or fit did not reach the shared current-evidence standard.",
-    recommendedNextAction: "Review this record in Manual Review Triage. No package was generated and nothing was sent.",
+    preventedQualification: manualOpportunity?.strictRequirementFailed
+      ?? "Website identity, ownership, or fit did not reach the shared current-evidence standard.",
+    recommendedNextAction: manualOpportunity
+      ? "Inspect the business and current evidence manually. This record is not auto-send ready; no package was generated and nothing was sent."
+      : "Review this record in Manual Review Triage. No package was generated and nothing was sent.",
+    reviewBucket: manualOpportunity ? "manual_opportunity" : "unresolved",
+    ...(manualOpportunity
+      ? {
+          manualOpportunityKind: manualOpportunity.kind,
+          websiteObservations: manualOpportunity.websiteObservations,
+          evidenceSummary: manualOpportunity.surfacedReason,
+        }
+      : {}),
   };
+}
+
+function addUnresolvedSkip(
+  summary: Record<string, number>,
+  record: UnresolvedTopProspectRecord,
+  fallbackReason: string,
+) {
+  addSkip(summary, record.reviewBucket === "manual_opportunity" ? "manual_opportunity" : fallbackReason);
 }
 
 function discoveryWithUnresolvedRecords(
@@ -872,6 +896,10 @@ async function processLead(
       addSkip(summary, "already_contacted");
       return { qualified: false };
     }
+    if (prospectIsSuppressed(existing)) {
+      addSkip(summary, "suppressed_do_not_contact");
+      return { qualified: false };
+    }
     const previouslyReviewed = existing.status !== "New"
       || Boolean(existing.analysis)
       || Boolean(existing.outreach)
@@ -880,6 +908,12 @@ async function processLead(
     if (excludePreviouslyReviewed && previouslyReviewed) {
       addSkip(summary, "previously_reviewed");
       return { qualified: false };
+    }
+    const existingManualOpportunity = assessManualTopProspectOpportunity(existing, lead);
+    if (existingManualOpportunity) {
+      const unresolved = unresolvedTopProspectRecord(existing, lead);
+      addUnresolvedSkip(summary, unresolved, "manual_opportunity");
+      return { qualified: false, unresolved };
     }
     if (!websiteFitAllowsAutonomousOutreach(existing)) {
       if (!existingProspectRequiresWebsiteResolution(existing)) {
@@ -890,20 +924,21 @@ async function processLead(
       try {
         resolution = await verifyProspectWebsiteWithSecondPass(existing);
       } catch {
-        addSkip(summary, "website_verification_failed");
-        return { qualified: false, unresolved: unresolvedTopProspectRecord(existing, lead) };
+        const unresolved = unresolvedTopProspectRecord(existing, lead);
+        addUnresolvedSkip(summary, unresolved, "website_verification_failed");
+        return { qualified: false, unresolved };
       }
       existing = await saveProspect(mergeResolvedWebsiteEvidence(existing, resolution.result.prospect));
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
         const fit = normalizeWebsiteFitDisposition(existing);
-        addSkip(summary, fit === "adequate_existing_website" || fit === "strong_existing_website"
-          ? "confirmed_usable_website_not_fit"
-          : "website_fit_requires_review");
+        const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"
+          ? undefined
+          : unresolvedTopProspectRecord(existing, lead, resolution);
+        if (unresolved) addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
+        else addSkip(summary, "confirmed_usable_website_not_fit");
         return {
           qualified: false,
-          ...(fit === "adequate_existing_website" || fit === "strong_existing_website"
-            ? {}
-            : { unresolved: unresolvedTopProspectRecord(existing, lead, resolution) }),
+          ...(unresolved ? { unresolved } : {}),
         };
       }
       resolvedExistingNow = true;
@@ -915,10 +950,13 @@ async function processLead(
     ) {
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
         const fit = normalizeWebsiteFitDisposition(existing);
-        addSkip(summary, fit === "adequate_existing_website" || fit === "strong_existing_website"
-          ? "confirmed_usable_website_not_fit"
-          : "website_fit_requires_review");
-        return { qualified: false, unresolved: unresolvedTopProspectRecord(existing, lead) };
+        if (fit === "adequate_existing_website" || fit === "strong_existing_website") {
+          addSkip(summary, "confirmed_usable_website_not_fit");
+          return { qualified: false };
+        }
+        const unresolved = unresolvedTopProspectRecord(existing, lead);
+        addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
+        return { qualified: false, unresolved };
       }
       const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
@@ -934,8 +972,9 @@ async function processLead(
     prospect = verified.result.prospect;
     if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "invalid_website"].includes(prospect.websiteStatus)) {
       await saveProspect(prospect);
-      addSkip(summary, `website_${prospect.websiteStatus}`);
-      return { qualified: false, unresolved: unresolvedTopProspectRecord(prospect, lead, verified) };
+      const unresolved = unresolvedTopProspectRecord(prospect, lead, verified);
+      addUnresolvedSkip(summary, unresolved, `website_${prospect.websiteStatus}`);
+      return { qualified: false, unresolved };
     }
   } catch {
     prospect = await saveProspect({
@@ -944,20 +983,28 @@ async function processLead(
       websiteStatusDetail: "Website verification failed safely. Current ownership and fit require manual review.",
       fitDisposition: "inconclusive_requires_review",
     });
-    addSkip(summary, "website_verification_failed");
-    return { qualified: false, unresolved: unresolvedTopProspectRecord(prospect, lead) };
+    const unresolved = unresolvedTopProspectRecord(prospect, lead);
+    addUnresolvedSkip(summary, unresolved, "website_verification_failed");
+    return { qualified: false, unresolved };
+  }
+  const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);
+  if (manualOpportunity) {
+    prospect = await saveProspect(prospect);
+    const unresolved = unresolvedTopProspectRecord(prospect, lead);
+    addUnresolvedSkip(summary, unresolved, "manual_opportunity");
+    return { qualified: false, unresolved };
   }
   if (!websiteFitAllowsAutonomousOutreach(prospect)) {
     await saveProspect(prospect);
     const fit = normalizeWebsiteFitDisposition(prospect);
-    addSkip(summary, fit === "adequate_existing_website" || fit === "strong_existing_website"
-      ? "confirmed_usable_website_not_fit"
-      : "website_fit_requires_review");
+    const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"
+      ? undefined
+      : unresolvedTopProspectRecord(prospect, lead);
+    if (unresolved) addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
+    else addSkip(summary, "confirmed_usable_website_not_fit");
     return {
       qualified: false,
-      ...(fit === "adequate_existing_website" || fit === "strong_existing_website"
-        ? {}
-        : { unresolved: unresolvedTopProspectRecord(prospect, lead) }),
+      ...(unresolved ? { unresolved } : {}),
     };
   }
 

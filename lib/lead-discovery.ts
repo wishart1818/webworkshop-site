@@ -55,6 +55,9 @@ export type DiscoveredLead = {
   lastFoundRunId?: string;
   recommendedContactMethod: RecommendedContactMethod;
   inactive: boolean;
+  manualReviewOnly?: boolean;
+  manualOpportunityReason?: string;
+  strictRequirementFailed?: string;
 };
 
 export const discoverySources = ["osm", "google", "bing", "yelp", "yellowPages"] as const;
@@ -159,6 +162,9 @@ export type UnresolvedTopProspectRecord = {
   persistedAsProspect: true;
   preventedQualification: string;
   recommendedNextAction: string;
+  reviewBucket?: "manual_opportunity" | "unresolved";
+  manualOpportunityKind?: "probable_no_owned_website" | "existing_site_observation";
+  websiteObservations?: string[];
 };
 
 export type DiscoveryQualificationBreakdown = {
@@ -169,6 +175,7 @@ export type DiscoveryQualificationBreakdown = {
   noActivityEvidence: number;
   badFitOrInactive: number;
   eligibleLeads: number;
+  manualOpportunityCandidates?: number;
 };
 
 export type DiscoveryDiagnostics = {
@@ -746,7 +753,12 @@ function normalizeQualificationBreakdown(value: unknown): DiscoveryQualification
     eligibleLeads: finiteNumber(candidate.eligibleLeads),
   };
   if (Object.values(values).some((item) => item === undefined)) return undefined;
-  return values as DiscoveryQualificationBreakdown;
+  return {
+    ...values,
+    ...(finiteNumber(candidate.manualOpportunityCandidates) !== undefined
+      ? { manualOpportunityCandidates: finiteNumber(candidate.manualOpportunityCandidates) }
+      : {}),
+  } as DiscoveryQualificationBreakdown;
 }
 
 const providerSources: Record<DiscoveryProvider, DiscoverySource> = {
@@ -1003,10 +1015,8 @@ export function mergeDiscoveryCandidates(input: {
       requestedTypeMismatch += 1;
       return [];
     }
-    if (prospectType === "no_website_social_only" && !hasActivity) {
-      noActivityEvidence += 1;
-      return [];
-    }
+    const lacksNoSiteActivity = prospectType === "no_website_social_only" && !hasActivity;
+    if (lacksNoSiteActivity) noActivityEvidence += 1;
     try {
       const website = ownedWebsite ? normalizeWebsite(ownedWebsite) : "";
       const normalizedProfileUrl = profileUrl && validWebsite(profileUrl) ? normalizeWebsite(profileUrl) : "";
@@ -1017,6 +1027,11 @@ export function mergeDiscoveryCandidates(input: {
         || websiteBusinessMismatch(fitProbe)
         || !hasClearLocalServiceIntent(fitProbe);
       if (candidate.inactive || badFit) badFitOrInactive += 1;
+      const manualNoSiteCandidate = lacksNoSiteActivity
+        && !candidate.inactive
+        && !badFit
+        && Boolean(candidate.phone?.trim() || candidate.email?.trim() || candidate.address?.trim() || normalizedProfileUrl);
+      if (lacksNoSiteActivity && !manualNoSiteCandidate) return [];
       const classification = candidate.inactive || badFit
         ? "duplicate_bad_fit" as const
         : classifyProspectPresence({
@@ -1062,6 +1077,13 @@ export function mergeDiscoveryCandidates(input: {
         matchedCities: [`${titleCaseLocation(input.city.trim())}, ${displayStateCode(input.state)}`],
         recommendedContactMethod,
         inactive: candidate.inactive || badFit,
+        ...(manualNoSiteCandidate
+          ? {
+              manualReviewOnly: true,
+              manualOpportunityReason: "A public provider returned a plausible local service business with a contact or location signal, but independent activity evidence is insufficient for autonomous no-site qualification.",
+              strictRequirementFailed: "Independent activity and no-owned-website corroboration did not meet the autonomous qualification standard.",
+            }
+          : {}),
       }];
     } catch {
       return [];
@@ -1109,7 +1131,10 @@ export function mergeDiscoveryCandidates(input: {
     });
   }
 
-  const leads = qualified.slice(0, input.limit);
+  const strictCandidates = qualified.filter((lead) => !lead.manualReviewOnly);
+  const manualCandidates = qualified.filter((lead) => lead.manualReviewOnly);
+  const leads = [...strictCandidates, ...manualCandidates].slice(0, input.limit);
+  const manualOpportunityCandidates = manualCandidates.length;
   return {
     leads,
     diagnostics: {
@@ -1130,7 +1155,8 @@ export function mergeDiscoveryCandidates(input: {
         requestedTypeMismatch,
         noActivityEvidence,
         badFitOrInactive,
-        eligibleLeads: qualified.length,
+        eligibleLeads: qualified.length - manualOpportunityCandidates,
+        manualOpportunityCandidates,
       },
     },
   };
@@ -1234,6 +1260,15 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   persistedAsProspect: true,
                   preventedQualification: record.preventedQualification.slice(0, 1_000),
                   recommendedNextAction: record.recommendedNextAction.slice(0, 500),
+                  ...(record.reviewBucket === "manual_opportunity" || record.reviewBucket === "unresolved"
+                    ? { reviewBucket: record.reviewBucket }
+                    : {}),
+                  ...(record.manualOpportunityKind === "probable_no_owned_website" || record.manualOpportunityKind === "existing_site_observation"
+                    ? { manualOpportunityKind: record.manualOpportunityKind }
+                    : {}),
+                  ...(Array.isArray(record.websiteObservations)
+                    ? { websiteObservations: record.websiteObservations.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 500)).slice(0, 6) }
+                    : {}),
                 }];
               }).slice(0, 250),
             }

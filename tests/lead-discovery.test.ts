@@ -231,7 +231,7 @@ test("No Website / Social Only discovery keeps active businesses and classifies 
     prospectType: "no_website_social_only",
   });
 
-  assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Social Only Roofing", "Directory Only Roofing", "No Phone Roofing"]);
+  assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Social Only Roofing", "Directory Only Roofing", "No Phone Roofing", "No Activity Roofing"]);
   assert.ok(result.leads.every((lead) => lead.prospectType === "no_website_social_only" && lead.website === ""));
   assert.match(result.leads[0].profileUrl, /facebook/);
   assert.ok(result.leads[0].activitySignals?.includes("discovery_source:google"));
@@ -242,6 +242,9 @@ test("No Website / Social Only discovery keeps active businesses and classifies 
   assert.equal(result.leads[1].recommendedContactMethod, "needs_manual_contact_research");
   assert.equal(result.leads[2].classification, "not_enough_contact_info");
   assert.equal(result.leads[2].recommendedContactMethod, "do_not_contact");
+  assert.equal(result.leads[3].manualReviewOnly, true);
+  assert.match(result.leads[3].strictRequirementFailed ?? "", /autonomous qualification standard/i);
+  assert.equal(result.diagnostics.qualificationBreakdown?.manualOpportunityCandidates, 1);
 });
 
 test("third-party directory URLs are not treated as owned websites or send-ready contacts", () => {
