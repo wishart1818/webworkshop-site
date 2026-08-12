@@ -5,7 +5,7 @@ import {
   type DiscoveryProvider,
   type DiscoveryProviderDiagnostic,
 } from "@/lib/lead-discovery";
-import { listAuditEvents, safeRecordAudit, type AuditEventView } from "@/lib/operational-controls";
+import { findLatestAuditEvent, listAuditEvents, safeRecordAudit, type AuditEventView } from "@/lib/operational-controls";
 export {
   isProviderSmokeRecordFresh,
   providerSmokeHasUsableApprovedProvider,
@@ -176,6 +176,16 @@ export async function recordOperatorSafeTestResult(record: OperatorSafeTestRecor
   });
 }
 
+export async function latestProviderSmokeTestResult() {
+  try {
+    const event = await findLatestAuditEvent({ action: operatorTestAction, subject: "provider_smoke" });
+    const record = event ? fromEvent(event) : null;
+    return record?.testType === "provider_smoke" ? record : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function latestOperatorSafeTestResults() {
   const latest: Partial<Record<OperatorSafeTestType, OperatorSafeTestRecord>> = {};
   try {
@@ -185,8 +195,10 @@ export async function latestOperatorSafeTestResults() {
       if (record && !latest[record.testType]) latest[record.testType] = record;
     }
   } catch {
-    return latest;
+    // Targeted test history remains available when the broad activity list fails.
   }
+  const providerSmoke = await latestProviderSmokeTestResult();
+  if (providerSmoke) latest.provider_smoke = providerSmoke;
   return latest;
 }
 

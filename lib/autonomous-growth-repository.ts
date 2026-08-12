@@ -88,7 +88,7 @@ import {
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
-import { latestOperatorSafeTestResults } from "@/lib/operator-test-history";
+import { latestProviderSmokeTestResult } from "@/lib/operator-test-history";
 import { providerSmokeReadiness } from "@/lib/provider-smoke-readiness";
 import { webworkshopCleanBusinessName, webworkshopRecipientFirstName } from "@/lib/outreach-style-guide";
 import { sendInternalOperatorNotification, sendInternalOperatorSms, type InternalNotificationInput } from "@/lib/internal-notifications";
@@ -495,8 +495,7 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
 }
 
 async function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
-  const latestSafeTests = await latestOperatorSafeTestResults();
-  const providerSmoke = latestSafeTests.provider_smoke;
+  const providerSmoke = await latestProviderSmokeTestResult();
   return buildAutopilotDashboard(
     campaign,
     queue,

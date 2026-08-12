@@ -49,8 +49,10 @@ import {
   updateOutreachQueueStatus,
   upsertAutonomousQueueItemFromPackage,
 } from "../lib/autonomous-growth-repository";
-import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
+import { memoryAuditEventsForTests, resetOperationalMemoryForTests, safeRecordAudit } from "../lib/operational-controls";
 import {
+  latestOperatorSafeTestResults,
+  latestProviderSmokeTestResult,
   recordOperatorSafeTestResult,
   type OperatorProviderTestResult,
   type OperatorSafeTestRecord,
@@ -2460,7 +2462,7 @@ test("Campaign provider preflight rejects missing provider smoke history", () =>
   assert.equal(readiness.reason, "missing");
 });
 
-test("Autonomous Growth dashboard consumes the latest persisted provider smoke readiness", async () => {
+test("Autonomous Growth finds fresh provider smoke beyond 100 unrelated audit events", async () => {
   resetOperationalMemoryForTests();
   resetAutonomousGrowthMemoryForTests();
   const queueBefore = outreachQueueMemoryForTests();
@@ -2471,6 +2473,16 @@ test("Autonomous Growth dashboard consumes the latest persisted provider smoke r
       providerSmokeResult("googlePlaces", "success", 2),
       providerSmokeResult("yelp", "not_run", 0),
     ], { completedAt: new Date().toISOString() }));
+    for (let index = 0; index < 101; index += 1) {
+      await safeRecordAudit({
+        action: "unrelated_operator_activity",
+        outcome: "success",
+        subject: `unrelated-${index}`,
+        metadata: { index },
+      });
+    }
+    const persistedProviderSmoke = await latestProviderSmokeTestResult();
+    const latestSafeTests = await latestOperatorSafeTestResults();
     const dashboard = await getAutonomousGrowthDashboard();
     const warnings = autopilotProviderGuardrailWarnings(
       dashboard.autopilot.campaign.settings,
@@ -2479,6 +2491,8 @@ test("Autonomous Growth dashboard consumes the latest persisted provider smoke r
       null,
       dashboard.autopilot.providerSmokeReadiness,
     );
+    assert.equal(persistedProviderSmoke?.testType, "provider_smoke");
+    assert.equal(latestSafeTests.provider_smoke?.testType, "provider_smoke");
     assert.equal(dashboard.autopilot.providerSmokeReadiness.passed, true);
     assert.doesNotMatch(warnings.join(" "), /Provider Smoke Test|approved provider/i);
     assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
