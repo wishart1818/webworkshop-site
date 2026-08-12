@@ -48,20 +48,21 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
     ? providers.map((provider) => providerLabels[provider as DiscoveryProvider] ?? provider).join(", ")
     : "Not attempted";
   const qualificationBreakdown = diagnostics.qualificationBreakdown;
+  const manualOpportunityCandidates = qualificationBreakdown?.manualOpportunityCandidates ?? 0;
   return (
     <section className="engine-discovery-diagnostics" aria-label="Discovery diagnostics">
       <div className="engine-discovery-funnel">
         <span><b>{diagnostics.rawProviderCount}</b> total provider records</span>
         <span><b>{diagnostics.afterDistanceFilteringCount}</b> within {diagnostics.radiusKm} km</span>
         <span><b>{diagnostics.finalMergedCount}</b> final merged records <small>(unique businesses before prospect-type filtering)</small></span>
-        <span><b>{diagnostics.afterQualificationFilteringCount}</b> {qualificationLabel}</span>
+        <span><b>{diagnostics.afterQualificationFilteringCount}</b> {manualOpportunityCandidates ? "retained for strict or manual review" : qualificationLabel}</span>
         <span><b>{diagnostics.returnedCount}</b> returned for review</span>
       </div>
       {qualificationBreakdown ? (
         <div className="engine-trade-diagnostics" aria-label="Discovery qualification funnel">
           <h3>Discovery Qualification Funnel</h3>
           <div role="table" aria-label="Discovery qualification reason counts">
-            <div role="row"><span>Merged</span><span>Owned-site candidates</span><span>No-site candidates</span><span>Wrong requested type</span><span>No activity evidence</span><span>Bad fit / inactive</span><span>Eligible for analysis</span></div>
+            <div role="row"><span>Merged</span><span>Owned-site candidates</span><span>No-site candidates</span><span>Wrong requested type</span><span>No activity evidence</span><span>Bad fit / inactive</span><span>Strictly eligible</span></div>
             <div role="row">
               <strong>{qualificationBreakdown.mergedCandidates}</strong>
               <span>{qualificationBreakdown.ownedWebsiteCandidates}</span>
@@ -72,6 +73,7 @@ export function DiscoveryFunnel({ diagnostics, qualificationLabel = "usable webs
               <span>{qualificationBreakdown.eligibleLeads}</span>
             </div>
           </div>
+          {manualOpportunityCandidates > 0 ? <p><b>{manualOpportunityCandidates}</b> additional probable no-site candidate{manualOpportunityCandidates === 1 ? "" : "s"} retained for manual opportunity review only.</p> : null}
         </div>
       ) : null}
       <div className="engine-provider-diagnostics" aria-label="Provider query diagnostics">

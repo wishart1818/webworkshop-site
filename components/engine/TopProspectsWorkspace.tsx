@@ -26,6 +26,7 @@ import {
   applyRecommendedMarketPresetFields,
   recommendedMarketPresets,
   topProspectResultBucket,
+  topProspectOutcomeCounts,
   type RecommendedMarketPreset,
 } from "@/lib/top-prospects";
 import type {
@@ -265,7 +266,7 @@ function resultCardKeyDown(event: React.KeyboardEvent<HTMLElement>, result: TopP
 function mainSkippedBucketEntries(skipSummary: Record<string, number>) {
   return Object.entries(skipSummary)
     .filter(([, count]) => count > 0)
-    .filter(([reason]) => reason !== "previously_reviewed")
+    .filter(([reason]) => reason !== "previously_reviewed" && reason !== "manual_opportunity")
     .sort((left, right) => right[1] - left[1]);
 }
 
@@ -406,7 +407,7 @@ function StageProgress({ job, preparedArtifacts }: { job: TopProspectJob; prepar
   return (
     <div className="engine-stage-progress" aria-label="Top Prospects stage progress">
       <span><b>Discovery</b><i>{discovered ? "Complete" : job.stage === "DISCOVER" ? "Running" : "Waiting"}</i></span>
-      <span><b>Website scan</b><i>{job.scannedCount}/{scanTarget} scanned · {scanProgress}%</i></span>
+      <span><b>Candidate review</b><i>{job.scannedCount}/{scanTarget} processed · {scanProgress}%</i></span>
       <span><b>Preview generation</b><i>{preparedArtifacts}/{discovered || 0} generated · {artifactProgress}%</i></span>
       <span><b>Outreach packages</b><i>{preparedArtifacts}/{discovered || 0} generated · {artifactProgress}%</i></span>
     </div>
@@ -455,6 +456,11 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     ? latestJob.reviewedNotRecommended.filter((result) => bucketForResult(result) !== "reviewable_lower_priority" && bucketForResult(result) !== "blocked")
     : [];
   const previouslyReviewedCount = latestJob ? latestJob.skipSummary.previously_reviewed ?? 0 : 0;
+  const manualOpportunityProspects = latestJob?.manualOpportunityProspects ?? [];
+  const outcomeCounts = latestJob ? topProspectOutcomeCounts(latestJob) : null;
+  const manualReviewCount = outcomeCounts?.manualReview ?? 0;
+  const strictlyQualifiedCount = outcomeCounts?.strictlyQualified ?? 0;
+  const trueSkippedCount = outcomeCounts?.skipped ?? 0;
   const failedDiscoveryCount = latestJob ? failedDiscoveryIssueCount(latestJob) : 0;
   const failedProviders = latestJob ? failedProviderDiagnostics(latestJob.discoveryDiagnostics) : [];
   const failedCities = latestJob ? failedCityDiagnostics(latestJob.discoveryDiagnostics) : [];
@@ -719,7 +725,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   }
 
   const skipText = useMemo(
-    () => latestJob ? Object.entries(latestJob.skipSummary).map(([reason, count]) => `${count} ${skipReasonLabel(reason)}`).join(" / ") : "",
+    () => latestJob ? Object.entries(latestJob.skipSummary)
+      .filter(([reason]) => reason !== "manual_opportunity" && reason !== "previously_reviewed")
+      .map(([reason, count]) => `${count} ${skipReasonLabel(reason)}`).join(" / ") : "",
     [latestJob],
   );
 
@@ -811,9 +819,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <StageProgress job={latestJob} preparedArtifacts={preparedArtifacts} />
           <div className="engine-job-stats">
             <span><b>{latestJob.discoveredCount}</b> discovered</span>
-            <span><b>{latestJob.scannedCount}</b> scanned</span>
-            <span><b>{latestJob.qualifiedCount}</b> qualified</span>
-            <span><b>{latestJob.skippedCount}</b> skipped</span>
+            <span><b>{latestJob.scannedCount}</b> records processed</span>
+            <span><b>{strictlyQualifiedCount}</b> strictly qualified</span>
+            <span><b>{manualReviewCount}</b> manual review</span>
+            <span><b>{trueSkippedCount}</b> skipped</span>
             {jobIsActive(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">{jobNextActionLabel(latestJob)}</button>}
             {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
           </div>
@@ -828,12 +837,12 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <p className="engine-skip-summary">Run settings used: {latestJob.input.radiusKm} km radius, {latestJob.input.businessesToScan} businesses to scan total across selected cities and trades, {latestJob.input.finalProspectsWanted} final prospects wanted.</p>
           {partialDiscoverySummary(latestJob.discoveryDiagnostics) ? <p className="engine-skip-summary">{partialDiscoverySummary(latestJob.discoveryDiagnostics)}</p> : null}
           {skipText && <p className="engine-skip-summary">Skipped: {skipText}</p>}
-          {(previouslyReviewedCount > 0 || failedDiscoveryCount > 0) && (
-            <div className="engine-result-bucket-summary" aria-label="Skipped and failed prospect summary">
+          <div className="engine-result-bucket-summary" aria-label="Top Prospects outcome summary">
+              <span><b>{strictlyQualifiedCount}</b> strictly qualified prospects.</span>
+              <span><b>{manualReviewCount}</b> manual review opportunities; not auto-send ready.</span>
               {previouslyReviewedCount > 0 && <span><b>{previouslyReviewedCount}</b> previously reviewed prospects excluded from this run.</span>}
               {failedDiscoveryCount > 0 && <span><b>{failedDiscoveryCount}</b> provider or city issue{failedDiscoveryCount === 1 ? "" : "s"} need attention.</span>}
-            </div>
-          )}
+          </div>
           {latestJob.nextRunRecommendations.length ? (
             <div className="engine-next-run-recommendations">
               <h3>Best next run recommendation</h3>
@@ -843,13 +852,23 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         </section>
       )}
 
-      {latestJob && (previouslyReviewedCount > 0 || failedDiscoveryCount > 0 || skippedBucketEntries.length > 0) ? (
+      {latestJob ? (
         <section className="engine-panel engine-outcome-buckets" aria-label="Prospect outcome buckets">
           <div className="engine-panel__head">
             <div><h2>Prospect outcome buckets</h2><p>Run results are separated by what needs review, what was blocked, what was already handled, and what failed or timed out.</p></div>
-            <span>{latestJob.scannedCount} scanned</span>
+            <span>{latestJob.scannedCount} records processed</span>
           </div>
           <div className="engine-outcome-buckets__grid">
+            <article>
+              <h3>Strictly qualified</h3>
+              <b>{strictlyQualifiedCount}</b>
+              <p>Passed the existing current-evidence qualification path. Approval and send-readiness gates remain separate.</p>
+            </article>
+            <article>
+              <h3>Manual opportunity review</h3>
+              <b>{manualReviewCount}</b>
+              <p>Worth human inspection, but explicitly not auto-send ready.</p>
+            </article>
             <article>
               <h3>Previously reviewed prospects</h3>
               <b>{previouslyReviewedCount}</b>
@@ -861,8 +880,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <p>{failedDiscoveryCount > 0 ? "These city or provider issues need attention before scaling this market." : "No failed or timed-out providers/cities recorded."}</p>
             </article>
             <article>
-              <h3>Other skipped records</h3>
-              <b>{skippedBucketEntries.reduce((total, [, count]) => total + count, 0)}</b>
+              <h3>Skipped records</h3>
+              <b>{trueSkippedCount}</b>
               <p>{skippedBucketEntries.length ? "Records removed before review because they matched duplicate, contact, quality, or bad-fit rules." : "No additional skip buckets recorded."}</p>
             </article>
           </div>
@@ -896,6 +915,40 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <ul>{skippedBucketEntries.map(([reason, count]) => <li key={reason}><b>{count}</b><span>{skipReasonLabel(reason)}</span></li>)}</ul>
             </div>
           )}
+        </section>
+      ) : null}
+
+      {latestJob && manualOpportunityProspects.length > 0 ? (
+        <section className="engine-panel engine-top-results" aria-label="Manual Opportunity Review">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Manual Opportunity Review</h2>
+              <p>These businesses may be worth a human look, but they did not pass strict autonomous qualification. No package was generated and nothing was sent.</p>
+            </div>
+            <span>{manualOpportunityProspects.length} manual only</span>
+          </div>
+          <div className="engine-operator-summary-grid">
+            {manualOpportunityProspects.map((record) => (
+              <article key={record.prospectId}>
+                <span>MANUAL REVIEW - NOT AUTO-SEND READY</span>
+                <h3>{record.businessName}</h3>
+                <p>{record.trade} in {record.city}, {record.state}</p>
+                <p><b>Why it surfaced:</b> {record.evidenceSummary}</p>
+                <p><b>Strict requirement failed:</b> {record.preventedQualification}</p>
+                {record.websiteCandidate ? <p><b>Website:</b> {compactUrl(record.websiteCandidate)}</p> : <p><b>Website:</b> No owned website verified</p>}
+                {record.websiteObservations?.length ? (
+                  <div>
+                    <b>Observations to inspect</b>
+                    <ul>{record.websiteObservations.map((observation) => <li key={observation}>{observation}</li>)}</ul>
+                  </div>
+                ) : null}
+                <p><b>Sources:</b> {record.providerSources.join(", ") || "Stored prospect evidence"}</p>
+                <div className="engine-inline-actions">
+                  <button className="engine-button engine-button--primary" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
       ) : null}
 

@@ -4,6 +4,7 @@ import {
   normalizeWebsiteFitDisposition,
   outreachObservationSupported,
   verifiedEmailEvidenceForProspect,
+  websiteFitAllowsAutonomousOutreach,
 } from "@/lib/prospect-qualification";
 import { siteUrl } from "@/lib/site";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
@@ -31,6 +32,7 @@ import {
   type TradeCategory,
   webworkshopPostalAddress,
 } from "@/lib/prospect-engine";
+import { prospectIsBadFit, prospectIsContacted, prospectIsSuppressed } from "@/lib/prospect-funnel";
 
 export const topProspectJobStatuses = [
   "QUEUED",
@@ -168,6 +170,13 @@ export type TopProspectResult = OpportunityAssessment & {
   prospect: Prospect;
 };
 
+export type ManualTopProspectOpportunity = {
+  kind: "probable_no_owned_website" | "existing_site_observation";
+  surfacedReason: string;
+  strictRequirementFailed: string;
+  websiteObservations: string[];
+};
+
 export type OutreachEmailQualityCheck = {
   key: string;
   label: string;
@@ -213,6 +222,7 @@ export type TopProspectJob = {
   reviewedNotRecommended: TopProspectResult[];
   reviewableLowerPriority?: TopProspectResult[];
   blockedProspects?: TopProspectResult[];
+  manualOpportunityProspects?: UnresolvedTopProspectRecord[];
   unresolvedProspects?: UnresolvedTopProspectRecord[];
   failureClassification: TopProspectJobFailureClassification | null;
   errorMessage: string;
@@ -221,6 +231,96 @@ export type TopProspectJob = {
   createdAt: string;
   updatedAt: string;
 };
+
+export function topProspectOutcomeCounts(
+  job: Pick<TopProspectJob, "results" | "manualOpportunityProspects" | "skipSummary" | "skippedCount">,
+) {
+  const strictlyQualified = job.results.length;
+  const manualReview = job.manualOpportunityProspects?.length ?? 0;
+  const previouslyReviewed = job.skipSummary.previously_reviewed ?? 0;
+  return {
+    strictlyQualified,
+    manualReview,
+    previouslyReviewed,
+    skipped: Math.max(0, job.skippedCount - manualReview - previouslyReviewed),
+  };
+}
+
+function boundedManualWebsiteObservations(prospect: Prospect) {
+  const observation = prospect.websiteVerification?.fit?.observation;
+  if (observation?.statement.trim() && observation.evidence.some((item) => item.trim().length >= 8)) {
+    return [...new Set([observation.statement, ...observation.evidence])].slice(0, 4);
+  }
+
+  const scores = prospect.analysis?.scores;
+  if (!scores) return [];
+  const candidates: Array<[keyof Analysis["scores"], number, string]> = [
+    ["contactAccessibility", 60, "Contact-path signals"],
+    ["ctaStrength", 60, "Estimate-request calls to action"],
+    ["conversionReadiness", 55, "Quote-path readiness"],
+    ["portfolioQuality", 45, "Project or recent-work proof"],
+    ["trustSignals", 45, "Visible trust signals"],
+    ["technicalQuality", 50, "Technical page signals"],
+  ];
+  return candidates
+    .filter(([key, maximum]) => scores[key] <= maximum)
+    .map(([key, , label]) => `${label} scored ${scores[key]}/100 in bounded HTML analysis and merits visual inspection.`)
+    .slice(0, 3);
+}
+
+export function assessManualTopProspectOpportunity(
+  prospect: Prospect,
+  lead: Pick<DiscoveredLead, "manualReviewOnly" | "manualOpportunityReason" | "strictRequirementFailed" | "sources">,
+): ManualTopProspectOpportunity | null {
+  if (
+    prospectIsSuppressed(prospect)
+    || prospectIsContacted(prospect)
+    || prospectIsBadFit(prospect)
+  ) return null;
+
+  const disposition = normalizeWebsiteFitDisposition(prospect);
+  if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) return null;
+
+  if (prospect.prospectType === "no_website_social_only" && !prospect.website.trim()) {
+    const plausibleProviderIdentity = Boolean(
+      lead.manualReviewOnly
+      || lead.sources?.length
+      || prospect.phone.trim()
+      || prospect.email.trim()
+      || prospect.address.trim()
+      || prospect.profileUrl.trim(),
+    );
+    if (!plausibleProviderIdentity) return null;
+    return {
+      kind: "probable_no_owned_website",
+      surfacedReason: lead.manualOpportunityReason
+        || "Available public-provider evidence suggests a legitimate local business with no owned website found, but the absence is not corroborated strongly enough for autonomous qualification.",
+      strictRequirementFailed: lead.strictRequirementFailed
+        || "Independent identity, activity, and no-owned-website evidence did not meet the autonomous qualification standard.",
+      websiteObservations: [],
+    };
+  }
+
+  if (websiteFitAllowsAutonomousOutreach(prospect)) return null;
+
+  const observations = boundedManualWebsiteObservations(prospect);
+  if (
+    prospect.website.trim()
+    && prospect.websiteVerification?.status === "usable"
+    && prospect.websiteVerification.ownershipDecision === "owned"
+    && disposition === "inconclusive_requires_review"
+    && observations.length
+  ) {
+    return {
+      kind: "existing_site_observation",
+      surfacedReason: "The owned website has a concrete bounded-analysis observation worth human inspection, but current evidence does not prove a strict rebuild opportunity.",
+      strictRequirementFailed: "The website did not meet the current evidence standard for a clearly weak, broken, or inactive site.",
+      websiteObservations: observations,
+    };
+  }
+
+  return null;
+}
 
 const franchiseSignals = [
   "1-800",

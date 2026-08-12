@@ -145,6 +145,9 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
   const inferredScannedCount = Math.max(row.scannedCount, row.nextLeadIndex, allResults.length);
   const inferredSkippedCount = Math.max(row.skippedCount, inferredScannedCount - recommended.length);
   const diagnostics = discoveryDiagnosticsFromJson(row.discoveredLeads);
+  const unresolvedRecords = diagnostics?.unresolvedRecords ?? [];
+  const manualOpportunityProspects = unresolvedRecords.filter((record) => record.reviewBucket === "manual_opportunity");
+  const remainingUnresolvedProspects = unresolvedRecords.filter((record) => record.reviewBucket !== "manual_opportunity");
   const cityTargets = diagnostics?.cityTargets?.length ? diagnostics.cityTargets : parseTopProspectCityTargets(row.city, row.state);
   const job: TopProspectJob = {
     id: row.id,
@@ -175,7 +178,8 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     reviewedNotRecommended,
     reviewableLowerPriority,
     blockedProspects,
-    unresolvedProspects: diagnostics?.unresolvedRecords ?? [],
+    manualOpportunityProspects,
+    unresolvedProspects: remainingUnresolvedProspects,
     failureClassification: failure.classification,
     errorMessage: failure.reason,
     nextRunRecommendations: [],
