@@ -80,6 +80,14 @@ jobs:
             set_env OUTREACH_EMAIL_DISABLED true
           }
 
+          enable_discovery_only() {
+            set_env AUTOPILOT_DISABLED false
+            set_env OUTREACH_AUTO_SEND_ENABLED false
+            set_env OUTREACH_FULL_AUTO_SEND_ENABLED false
+            set_env OUTREACH_DAILY_CAP 1
+            set_env OUTREACH_EMAIL_DISABLED true
+          }
+
           enable_reviewed_pilot() {
             set_env AUTOPILOT_DISABLED false
             set_env OUTREACH_AUTO_SEND_ENABLED true
@@ -131,6 +139,13 @@ jobs:
               disable_outreach
               url="$(deploy_production)"
               comment "✅ Outreach was disabled and production was redeployed. Daily cap remains 1. Deployment: ${url}"
+              ;;
+
+            "/vercel discovery-only CONFIRM")
+              required_base_variables_present
+              enable_discovery_only
+              url="$(deploy_production)"
+              comment "✅ Real Autopilot discovery was enabled while prospect email sending remains disabled. Daily cap remains 1 and full-auto stays disabled. Production was redeployed: ${url}"
               ;;
 
             "/vercel pilot-test CONFIRM")
@@ -195,7 +210,7 @@ jobs:
               ;;
 
             *)
-              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, \`/vercel cron-health\`, and \`/vercel redeploy\`."
+              comment "❌ Command rejected. Allowed: \`/vercel status\`, \`/vercel pilot-off\`, \`/vercel discovery-only CONFIRM\`, \`/vercel pilot-test CONFIRM\`, \`/vercel health\`, \`/vercel cron-health\`, and \`/vercel redeploy\`."
               exit 1
               ;;
           esac
