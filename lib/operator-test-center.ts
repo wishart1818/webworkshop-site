@@ -39,13 +39,12 @@ import { topProspectBuildVersion } from "@/lib/top-prospect-list-route";
 import { safeRecordAudit } from "@/lib/operational-controls";
 import {
   formatOperatorSafeTestRecord,
-  isProviderSmokeRecordFresh,
   latestOperatorSafeTestResults,
   maskEmailAddress,
-  providerSmokeHasUsableApprovedProvider,
   recordOperatorSafeTestResult,
   type OperatorSafeTestRecord,
 } from "@/lib/operator-test-history";
+import { providerSmokeReadiness } from "@/lib/provider-smoke-readiness";
 import type {
   ControlledOutreachLaunchReadiness,
   ControlledPilotActivationResult,
@@ -1046,8 +1045,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const latestProviderDiagnostics = providerSmoke?.diagnostics?.providerDiagnostics ?? null;
   const providerCoverage = discoveryProviderCoverageStatus(latestProviderDiagnostics, environment);
   const providerHealth = discoveryProviderHealth(latestProviderDiagnostics, environment);
-  const providerSmokeFresh = isProviderSmokeRecordFresh(providerSmoke);
-  const providerSmokeUsable = providerSmokeHasUsableApprovedProvider(providerSmoke);
+  const providerReadiness = providerSmokeReadiness(providerSmoke);
   const database = await databaseHealth();
   const settings = await getAutonomousGrowthSettings();
   const dashboard = await getAutonomousGrowthDashboard().catch(() => null);
@@ -1166,18 +1164,18 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "postal-address", category: "Provider/env setup", label: "OUTREACH_POSTAL_ADDRESS configured", passed: env.hasPostalAddress, detail: env.hasPostalAddress ? "Postal address is configured for compliance-ready email drafts." : "Postal address is missing.", fix: "Add OUTREACH_POSTAL_ADDRESS." });
   check(checks, { key: "internal-notify", category: "Provider/env setup", label: "INTERNAL_NOTIFY_EMAIL configured", passed: internalEnv.configured, detail: internalEnv.configured ? "Internal email notifications are configured." : "Internal email notifications are missing or disabled.", fix: "Configure INTERNAL_NOTIFICATIONS_ENABLED, INTERNAL_NOTIFY_EMAIL, INTERNAL_NOTIFY_FROM_EMAIL, and RESEND_API_KEY." });
   const googleConfigured = Boolean(googleHealth?.enabled);
-  const providerCheckPassed = providerSmokeFresh && providerSmokeUsable;
-  const providerFix = !googleConfigured
-    ? "Add GOOGLE_PLACES_API_KEY and redeploy."
+  const providerCheckPassed = providerReadiness.passed;
+  const providerFix = providerCheckPassed
+    ? ""
+    : !googleConfigured
+    ? "Add GOOGLE_PLACES_API_KEY and redeploy, or configure another approved provider."
     : !providerSmoke
       ? "Run Provider Smoke Test."
-      : !providerSmokeFresh
+      : providerReadiness.reason === "stale"
         ? "Provider Smoke Test is stale. Rerun Provider Smoke Test."
-        : providerSmoke.outcome === "failed"
+        : providerReadiness.reason === "failed"
           ? providerSmoke.safeErrorMessage || "Review the latest provider-specific failure reason."
-          : providerSmoke.outcome === "no_results"
-            ? "Provider Smoke Test returned zero usable samples. Check provider query/results before scaling."
-            : "Run Provider Smoke Test.";
+          : "Provider Smoke Test returned no usable samples from an approved provider. Check Azure Maps, Google Places, or Yelp before scaling.";
   const providerDetail = providerSmoke
     ? `${providerSmoke.summary} Latest test: ${providerSmoke.completedAt}. Coverage: ${providerCoverage.label}.`
     : googleConfigured

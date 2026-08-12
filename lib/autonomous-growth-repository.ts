@@ -88,6 +88,8 @@ import {
   type AutopilotSmokeTestResult,
 } from "@/lib/autopilot-campaign";
 import { discoveryProviderCoverageStatus } from "@/lib/lead-discovery";
+import { latestProviderSmokeTestResult } from "@/lib/operator-test-history";
+import { providerSmokeReadiness } from "@/lib/provider-smoke-readiness";
 import { webworkshopCleanBusinessName, webworkshopRecipientFirstName } from "@/lib/outreach-style-guide";
 import { sendInternalOperatorNotification, sendInternalOperatorSms, type InternalNotificationInput } from "@/lib/internal-notifications";
 import type { TopProspectJob } from "@/lib/top-prospects";
@@ -492,9 +494,16 @@ function metricsForQueue(queue: OutreachQueueItem[], settings: AutonomousGrowthS
   };
 }
 
-function buildCurrentAutopilotDashboard
-(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
-  return buildAutopilotDashboard(campaign, queue, hasDatabase, discoveryProviderCoverageStatus(), autopilotEnvironmentKillSwitchEnabled());
+async function buildCurrentAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[]) {
+  const providerSmoke = await latestProviderSmokeTestResult();
+  return buildAutopilotDashboard(
+    campaign,
+    queue,
+    hasDatabase,
+    discoveryProviderCoverageStatus(providerSmoke?.diagnostics?.providerDiagnostics ?? null),
+    autopilotEnvironmentKillSwitchEnabled(),
+    providerSmokeReadiness(providerSmoke),
+  );
 }
 
 async function sendInternalOperatorNotificationSafely(
@@ -602,7 +611,7 @@ export async function getAutonomousGrowthDashboard(): Promise<AutonomousGrowthDa
   const prospects = await listProspects();
   const env = outreachEnvironment();
   globalAutonomous.autopilotCampaignMemory = await refreshAutopilotCampaignFromTopProspects(memoryAutopilotCampaign());
-  const autopilot = buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
+  const autopilot = await buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue);
   const smartGrowth = buildSmartAutonomousGrowthSnapshot({
     queue,
     prospects,
@@ -692,7 +701,7 @@ export async function runFakeAutopilotSmokeTestForDashboard() {
   globalAutonomous.autopilotSmokeTestMemory = smokeTest;
   globalAutonomous.autopilotCampaignMemory = attachAutopilotRunReport(campaign, smokeTest.report);
   return {
-    autopilot: buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue),
+    autopilot: await buildCurrentAutopilotDashboard(globalAutonomous.autopilotCampaignMemory, queue),
     smokeTest,
   };
 }

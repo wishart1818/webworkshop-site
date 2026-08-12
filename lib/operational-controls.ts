@@ -165,6 +165,28 @@ export async function listAuditEvents(limit = 50): Promise<AuditEventView[]> {
   return structuredClone((globalOperations.auditEvents ?? []).slice(0, boundedLimit));
 }
 
+export async function findLatestAuditEvent(input: { action: string; subject: string }): Promise<AuditEventView | null> {
+  if (hasDatabase()) {
+    const event = await prismaClient().auditEvent.findFirst({
+      where: { action: input.action, subject: input.subject },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    });
+    if (!event) return null;
+    return {
+      id: event.id,
+      action: event.action,
+      outcome: event.outcome as AuditInput["outcome"],
+      subject: event.subject ?? undefined,
+      metadata: (event.metadata ?? undefined) as Prisma.InputJsonObject | undefined,
+      createdAt: event.createdAt.toISOString(),
+    };
+  }
+  const event = (globalOperations.auditEvents ?? []).find((candidate) => (
+    candidate.action === input.action && candidate.subject === input.subject
+  ));
+  return event ? structuredClone(event) : null;
+}
+
 export async function safeListAuditEvents(
   database: { configured: boolean; reachable?: boolean },
   loadEvents = () => listAuditEvents(50),

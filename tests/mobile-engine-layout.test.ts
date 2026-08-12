@@ -96,6 +96,7 @@ test("engine phone command center and overview stay compact", () => {
 
 test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export", () => {
   assert.match(prospectEngineWorkspace, /Autonomous Growth/);
+  assert.match(prospectEngineWorkspace, /webworkshop:review-autopilot-status/);
   assert.match(autonomousGrowthWorkspace, /Safe autonomous prospecting/);
   assert.match(autonomousGrowthWorkspace, /Autopilot Campaign/);
   assert.match(autonomousGrowthWorkspace, /Choose Autopilot Market/);
@@ -121,7 +122,8 @@ test("Autonomous Growth tab exposes safe modes, queue controls, and CSV export",
   assert.match(autonomousGrowthWorkspace, /Looms: manual only/);
   assert.match(autonomousGrowthWorkspace, /marketMismatchWarning/);
   assert.match(autonomousGrowthWorkspace, /providerGuardrailWarnings/);
-  assert.match(autonomousGrowthWorkspace, /Provider coverage is limited\. Run Provider Smoke Test or a small Top Prospects test before starting Autopilot\./);
+  assert.match(autonomousGrowthWorkspace, /Autopilot preflight needs attention\./);
+  assert.match(autonomousGrowthWorkspace, /webworkshop:review-autopilot-status/);
   assert.match(autonomousGrowthWorkspace, /updateMarketPreset/);
   assert.match(autonomousGrowthWorkspace, /autopilotPresetFields/);
   assert.match(autonomousGrowthWorkspace, /value=\{formSettings\.marketPresetId\}/);

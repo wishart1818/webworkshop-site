@@ -49,7 +49,15 @@ import {
   updateOutreachQueueStatus,
   upsertAutonomousQueueItemFromPackage,
 } from "../lib/autonomous-growth-repository";
-import { memoryAuditEventsForTests, resetOperationalMemoryForTests } from "../lib/operational-controls";
+import { memoryAuditEventsForTests, resetOperationalMemoryForTests, safeRecordAudit } from "../lib/operational-controls";
+import {
+  latestOperatorSafeTestResults,
+  latestProviderSmokeTestResult,
+  recordOperatorSafeTestResult,
+  type OperatorProviderTestResult,
+  type OperatorSafeTestRecord,
+} from "../lib/operator-test-history";
+import { providerSmokeReadiness } from "../lib/provider-smoke-readiness";
 import {
   autopilotActionLabels,
   autopilotDraftFromRecommendedMarket,
@@ -2329,12 +2337,169 @@ test("Autopilot provider guardrail warns for limited live runs without blocking 
     { prospectsDiscovered: 0, fakeOnly: false },
   );
 
-  assert.match(warnings.join(" "), /Google Places is missing/);
-  assert.match(warnings.join(" "), /Provider Smoke Test has not passed/);
+  assert.match(warnings.join(" "), /No Provider Smoke Test has been recorded/);
   assert.match(warnings.join(" "), /10\+ cities/);
   assert.match(warnings.join(" "), /0 discovered/);
   assert.match(warnings.join(" "), /no working discovery source/);
   assert.ok(runFakeAutopilotSmokeTest(createAutopilotCampaign(settings, new Date(0)), new Date(1)).report.fakeOnly);
+});
+
+function providerSmokeResult(
+  provider: OperatorProviderTestResult["provider"],
+  outcome: OperatorProviderTestResult["outcome"],
+  usableSampleCount: number,
+): OperatorProviderTestResult {
+  const names = { osm: "OpenStreetMap", azureMaps: "Azure Maps", googlePlaces: "Google Places", yelp: "Yelp" } as const;
+  return {
+    provider,
+    providerName: names[provider],
+    enabled: outcome !== "not_run",
+    envPresent: provider === "osm" ? null : outcome !== "not_run",
+    endpointVersion: provider === "googlePlaces" ? "New" : "",
+    outcome,
+    usableSampleCount,
+    rawRecords: usableSampleCount,
+    safeErrorMessage: outcome === "failed" ? "Provider failed safely." : "",
+    failureType: outcome === "failed" ? "provider_error" : "none",
+  };
+}
+
+function providerSmokeRecord(
+  providerResults: OperatorProviderTestResult[],
+  overrides: Partial<OperatorSafeTestRecord> = {},
+): OperatorSafeTestRecord {
+  return {
+    testType: "provider_smoke",
+    startedAt: "2026-08-11T11:59:00.000Z",
+    completedAt: "2026-08-11T12:00:00.000Z",
+    outcome: "partial",
+    summary: "Provider smoke test completed safely.",
+    providerResults,
+    usableSampleCount: providerResults.reduce((sum, provider) => sum + provider.usableSampleCount, 0),
+    createdOutreachPackages: false,
+    sentOutreach: false,
+    ...overrides,
+  };
+}
+
+const providerReadinessNow = new Date("2026-08-11T13:00:00.000Z");
+
+test("Campaign provider preflight passes with Google and Azure usable while OSM times out", () => {
+  const readiness = providerSmokeReadiness(providerSmokeRecord([
+    providerSmokeResult("osm", "failed", 0),
+    providerSmokeResult("azureMaps", "success", 2),
+    providerSmokeResult("googlePlaces", "success", 3),
+    providerSmokeResult("yelp", "not_run", 0),
+  ]), providerReadinessNow);
+  assert.equal(readiness.passed, true);
+  assert.deepEqual(readiness.usableApprovedProviders.map((provider) => provider.provider), ["azureMaps", "googlePlaces"]);
+  assert.deepEqual(autopilotProviderGuardrailWarnings(
+    recommendedFirstAutopilotRunSettings(),
+    {
+      level: "limited",
+      label: "Limited provider setup",
+      summary: "Static coverage has not consumed the persisted test.",
+      recommendation: "Run Provider Smoke Test.",
+      googleConfigured: true,
+      yelpConfigured: false,
+      azureOrBingConfigured: true,
+    },
+    undefined,
+    null,
+    readiness,
+  ), []);
+});
+
+test("Campaign provider preflight passes with usable Azure while Google fails and OSM times out", () => {
+  const readiness = providerSmokeReadiness(providerSmokeRecord([
+    providerSmokeResult("osm", "failed", 0),
+    providerSmokeResult("azureMaps", "success", 2),
+    providerSmokeResult("googlePlaces", "failed", 0),
+  ]), providerReadinessNow);
+  assert.equal(readiness.passed, true);
+  assert.deepEqual(readiness.usableApprovedProviders.map((provider) => provider.provider), ["azureMaps"]);
+});
+
+test("Campaign provider preflight passes with usable Google while Azure is not configured", () => {
+  const readiness = providerSmokeReadiness(providerSmokeRecord([
+    providerSmokeResult("osm", "failed", 0),
+    providerSmokeResult("azureMaps", "not_run", 0),
+    providerSmokeResult("googlePlaces", "success", 1),
+  ]), providerReadinessNow);
+  assert.equal(readiness.passed, true);
+  assert.deepEqual(readiness.usableApprovedProviders.map((provider) => provider.provider), ["googlePlaces"]);
+});
+
+test("Campaign provider preflight rejects OSM success without a usable approved provider", () => {
+  const readiness = providerSmokeReadiness(providerSmokeRecord([
+    providerSmokeResult("osm", "success", 5),
+    providerSmokeResult("azureMaps", "not_run", 0),
+    providerSmokeResult("googlePlaces", "not_run", 0),
+  ]), providerReadinessNow);
+  assert.equal(readiness.passed, false);
+  assert.equal(readiness.reason, "no_usable_approved_provider");
+});
+
+test("Campaign provider preflight rejects stale approved-provider success", () => {
+  const readiness = providerSmokeReadiness(providerSmokeRecord([
+    providerSmokeResult("googlePlaces", "success", 1),
+  ], { completedAt: "2026-08-09T12:00:00.000Z", outcome: "success" }), providerReadinessNow);
+  assert.equal(readiness.passed, false);
+  assert.equal(readiness.reason, "stale");
+});
+
+test("Campaign provider preflight rejects a failed smoke record even if its payload is contradictory", () => {
+  const readiness = providerSmokeReadiness(providerSmokeRecord([
+    providerSmokeResult("googlePlaces", "success", 1),
+  ], { outcome: "failed" }), providerReadinessNow);
+  assert.equal(readiness.passed, false);
+  assert.equal(readiness.reason, "failed");
+});
+
+test("Campaign provider preflight rejects missing provider smoke history", () => {
+  const readiness = providerSmokeReadiness(undefined, providerReadinessNow);
+  assert.equal(readiness.passed, false);
+  assert.equal(readiness.reason, "missing");
+});
+
+test("Autonomous Growth finds fresh provider smoke beyond 100 unrelated audit events", async () => {
+  resetOperationalMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  const queueBefore = outreachQueueMemoryForTests();
+  try {
+    await recordOperatorSafeTestResult(providerSmokeRecord([
+      providerSmokeResult("osm", "failed", 0),
+      providerSmokeResult("azureMaps", "success", 2),
+      providerSmokeResult("googlePlaces", "success", 2),
+      providerSmokeResult("yelp", "not_run", 0),
+    ], { completedAt: new Date().toISOString() }));
+    for (let index = 0; index < 101; index += 1) {
+      await safeRecordAudit({
+        action: "unrelated_operator_activity",
+        outcome: "success",
+        subject: `unrelated-${index}`,
+        metadata: { index },
+      });
+    }
+    const persistedProviderSmoke = await latestProviderSmokeTestResult();
+    const latestSafeTests = await latestOperatorSafeTestResults();
+    const dashboard = await getAutonomousGrowthDashboard();
+    const warnings = autopilotProviderGuardrailWarnings(
+      dashboard.autopilot.campaign.settings,
+      dashboard.autopilot.providerCoverage,
+      dashboard.autopilot.activity,
+      null,
+      dashboard.autopilot.providerSmokeReadiness,
+    );
+    assert.equal(persistedProviderSmoke?.testType, "provider_smoke");
+    assert.equal(latestSafeTests.provider_smoke?.testType, "provider_smoke");
+    assert.equal(dashboard.autopilot.providerSmokeReadiness.passed, true);
+    assert.doesNotMatch(warnings.join(" "), /Provider Smoke Test|approved provider/i);
+    assert.deepEqual(outreachQueueMemoryForTests(), queueBefore);
+  } finally {
+    resetOperationalMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+  }
 });
 
 test("Autopilot start confirmation uses the selected market, trade, duration, and no-send safety", () => {

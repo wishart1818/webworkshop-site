@@ -29,6 +29,11 @@ import {
   type ProspectMode,
 } from "@/lib/top-prospects";
 import type { DiscoveryProviderCoverageStatus } from "@/lib/lead-discovery";
+import {
+  providerSmokeReadiness as evaluateProviderSmokeReadiness,
+  providerSmokeReadinessWarning,
+  type ProviderSmokeReadiness,
+} from "@/lib/provider-smoke-readiness";
 
 export const autopilotCampaignStatuses = ["draft", "running", "paused", "stopped", "finished"] as const;
 export type AutopilotCampaignStatus = (typeof autopilotCampaignStatuses)[number];
@@ -289,6 +294,7 @@ export type AutopilotDashboard = {
   queues: Record<AutopilotQueueKey, OutreachQueueItem[]>;
   activity: AutopilotActivitySnapshot;
   providerCoverage?: DiscoveryProviderCoverageStatus;
+  providerSmokeReadiness: ProviderSmokeReadiness;
   providerRequestEstimate: number;
   marketTargets: string[];
   databaseConfigured: boolean;
@@ -539,13 +545,13 @@ export function autopilotProviderGuardrailWarnings(
   providerCoverage?: DiscoveryProviderCoverageStatus | null,
   activity?: Pick<AutopilotActivitySnapshot, "providerDiagnostics">,
   latestRunReport?: Pick<AutopilotRunReport, "prospectsDiscovered" | "fakeOnly"> | null,
+  smokeReadiness: ProviderSmokeReadiness = evaluateProviderSmokeReadiness(undefined),
 ) {
   const targets = autopilotMarketTargets(settings);
-  const weakCoverage = !providerCoverage || providerCoverage.level === "limited" || providerCoverage.level === "broken";
+  const weakCoverage = !smokeReadiness.passed;
   const warnings: string[] = [];
-  if (!providerCoverage?.googleConfigured) warnings.push("Google Places is missing.");
-  if (weakCoverage) warnings.push("Provider Smoke Test has not passed with strong coverage.");
-  if (providerCoverage?.level === "broken") warnings.push("All providers failed recently or provider setup is broken.");
+  if (weakCoverage) warnings.push(providerSmokeReadinessWarning(smokeReadiness));
+  if (weakCoverage && providerCoverage?.level === "broken") warnings.push("All approved providers failed recently or provider setup is broken.");
   if (latestRunReport && !latestRunReport.fakeOnly && latestRunReport.prospectsDiscovered === 0) warnings.push("Last Top Prospects run returned 0 discovered records.");
   if (targets.length >= 10 && weakCoverage) warnings.push("You are searching 10+ cities with weak provider coverage.");
   if (!warnings.length) return [];
@@ -1511,7 +1517,14 @@ function buildAutopilotActivity(campaign: AutopilotCampaign, queue: OutreachQueu
   };
 }
 
-export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: OutreachQueueItem[], databaseConfigured = false, providerCoverage?: DiscoveryProviderCoverageStatus, environmentKillSwitchEnabled = false): AutopilotDashboard {
+export function buildAutopilotDashboard(
+  campaign: AutopilotCampaign,
+  queue: OutreachQueueItem[],
+  databaseConfigured = false,
+  providerCoverage?: DiscoveryProviderCoverageStatus,
+  environmentKillSwitchEnabled = false,
+  smokeReadiness: ProviderSmokeReadiness = evaluateProviderSmokeReadiness(undefined),
+): AutopilotDashboard {
   const queues = autopilotQueuesForItems(queue);
   const liveQueueCounts = autopilotQueueCountsForItems(queue);
   const reportQueueCounts = campaign.latestRunReport?.queueCounts;
@@ -1522,6 +1535,7 @@ export function buildAutopilotDashboard(campaign: AutopilotCampaign, queue: Outr
     queues,
     activity: buildAutopilotActivity({ ...campaign, queueCounts }, queue),
     providerCoverage,
+    providerSmokeReadiness: smokeReadiness,
     providerRequestEstimate: autopilotProviderRequestEstimate(campaign.settings),
     marketTargets,
     databaseConfigured,
