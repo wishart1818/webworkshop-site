@@ -142,10 +142,10 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
   }
 }
 
-async function autonomousGrowthDashboardWithRecoveredAutopilot() {
+async function autonomousGrowthDashboardWithRecoveredAutopilot(request?: Request) {
   const dashboard = await getAutonomousGrowthDashboard();
   const missingCampaignState = dashboard.autopilot.campaign.status === "draft" && !dashboard.autopilot.activity.topProspectJobId;
-  if (!missingCampaignState) return dashboard;
+  if (!missingCampaignState || !request) return dashboard;
 
   const persisted = await readPersistedAutopilotRouteState();
   let job = persisted?.jobId ? await getTopProspectJob(persisted.jobId) : null;
@@ -170,9 +170,8 @@ async function autonomousGrowthDashboardWithRecoveredAutopilot() {
 }
 
 export async function GET(request: Request) {
-  void request;
   try {
-    return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot());
+    return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot(request));
   } catch (error) {
     console.error("[autonomous-growth] Dashboard load failed.", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json({ error: "Autonomous Growth dashboard is unavailable." }, { status: 503 });
