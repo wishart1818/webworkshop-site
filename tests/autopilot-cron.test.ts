@@ -6,7 +6,8 @@ test("Vercel schedules the guarded Auto Email Pilot once per day", () => {
   const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")) as {
     crons?: Array<{ path?: string; schedule?: string }>;
   };
-  assert.deepEqual(config.crons, [{ path: "/api/cron/autopilot", schedule: "0 14 * * *" }]);
+  const autopilotCron = config.crons?.find((entry) => entry.path === "/api/cron/autopilot");
+  assert.deepEqual(autopilotCron, { path: "/api/cron/autopilot", schedule: "0 14 * * *" });
 });
 
 test("scheduled autopilot endpoint fails closed and runs existing approved inventory", () => {

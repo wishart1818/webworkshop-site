@@ -1,47 +1,19 @@
 import { after } from "next/server";
+import { processTopProspectJob } from "@/lib/top-prospect-worker";
 
-const continuationTimeoutMs = 290_000;
-
-function engineAuthorization() {
-  const username = process.env.ENGINE_USERNAME?.trim();
-  const password = process.env.ENGINE_PASSWORD?.trim();
-  if (!username || !password) throw new Error("Engine credentials are required for background continuation.");
-  return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-}
-
-export function continueTopProspectJobAfterResponse(request: Request, jobId: string) {
-  const url = new URL(`/api/engine/top-prospects/${jobId}/run`, request.url);
+export function continueTopProspectJobAfterResponse(_request: Request, jobId: string) {
   after(async () => {
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { Authorization: engineAuthorization() },
-          cache: "no-store",
-          signal: AbortSignal.timeout(continuationTimeoutMs),
+    try {
+      const result = await processTopProspectJob(jobId);
+      if (result.shouldContinue) {
+        console.info("[top-prospects] Direct worker continuation completed one batch; durable cron will resume remaining work.", {
+          status: result.status,
         });
-        if (response.ok) return;
-        if (attempt === 2) {
-          const payload = await response.json().catch(() => ({})) as { classification?: unknown };
-          console.error("[top-prospects] Worker continuation returned a failure.", {
-            status: response.status,
-            classification: typeof payload.classification === "string" ? payload.classification : "unknown",
-          });
-        }
-      } catch (error) {
-        const timedOut = error instanceof DOMException && error.name === "TimeoutError";
-        if (timedOut) {
-          console.error("[top-prospects] Worker continuation exceeded the bounded runtime window.", {
-            classification: "timeout",
-          });
-          return;
-        }
-        if (attempt === 2) {
-          console.error("[top-prospects] Unable to schedule the next worker batch.", {
-            classification: "network_failure",
-          });
-        }
       }
+    } catch (error) {
+      console.error("[top-prospects] Direct worker continuation failed safely; durable cron can retry the persisted job.", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
     }
   });
 }

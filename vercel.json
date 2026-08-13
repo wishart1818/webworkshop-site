@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/autopilot",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/top-prospects",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
