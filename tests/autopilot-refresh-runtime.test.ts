@@ -75,12 +75,13 @@ test("Autopilot can recover safe settings from an active Top Prospects job", () 
   assert.equal(settings.requireWrittenContact, true);
 });
 
-test("real multi-city continuation avoids self-fetch recursion and has a durable cron recovery path", () => {
+test("real multi-city continuation avoids self-fetch recursion and uses a Hobby-compatible durable scheduler", () => {
   const listRoute = readFileSync("app/api/engine/top-prospects/route.ts", "utf8");
   const workerRoute = readFileSync("app/api/engine/top-prospects/[jobId]/run/route.ts", "utf8");
   const autonomousRoute = readFileSync("app/api/engine/autonomous-growth/route.ts", "utf8");
   const continuation = readFileSync("lib/top-prospect-continuation.ts", "utf8");
   const cronRoute = readFileSync("app/api/cron/top-prospects/route.ts", "utf8");
+  const schedulerWorkflow = readFileSync(".github/workflows/top-prospects-continuation.yml", "utf8");
   const vercelConfig = JSON.parse(readFileSync("vercel.json", "utf8")) as {
     crons?: Array<{ path?: string; schedule?: string }>;
   };
@@ -93,8 +94,8 @@ test("real multi-city continuation avoids self-fetch recursion and has a durable
   assert.doesNotMatch(continuation, /AbortSignal/);
   assert.match(cronRoute, /CRON_SECRET/);
   assert.match(cronRoute, /processTopProspectJob\(active\.id\)/);
-  assert.equal(
-    vercelConfig.crons?.find((entry) => entry.path === "/api/cron/top-prospects")?.schedule,
-    "*/5 * * * *",
-  );
+  assert.match(schedulerWorkflow, /cron:\s*["']\*\/5 \* \* \* \*["']/);
+  assert.match(schedulerWorkflow, /Authorization: Bearer \$CRON_SECRET/);
+  assert.match(schedulerWorkflow, /\/api\/cron\/top-prospects/);
+  assert.equal(vercelConfig.crons?.some((entry) => entry.path === "/api/cron/top-prospects"), false);
 });
