@@ -1,5 +1,7 @@
 import { after } from "next/server";
 
+const continuationTimeoutMs = 290_000;
+
 function engineAuthorization() {
   const username = process.env.ENGINE_USERNAME?.trim();
   const password = process.env.ENGINE_PASSWORD?.trim();
@@ -16,7 +18,7 @@ export function continueTopProspectJobAfterResponse(request: Request, jobId: str
           method: "POST",
           headers: { Authorization: engineAuthorization() },
           cache: "no-store",
-          signal: AbortSignal.timeout(45_000),
+          signal: AbortSignal.timeout(continuationTimeoutMs),
         });
         if (response.ok) return;
         if (attempt === 2) {
@@ -27,9 +29,16 @@ export function continueTopProspectJobAfterResponse(request: Request, jobId: str
           });
         }
       } catch (error) {
+        const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+        if (timedOut) {
+          console.error("[top-prospects] Worker continuation exceeded the bounded runtime window.", {
+            classification: "timeout",
+          });
+          return;
+        }
         if (attempt === 2) {
           console.error("[top-prospects] Unable to schedule the next worker batch.", {
-            classification: error instanceof DOMException && error.name === "TimeoutError" ? "timeout" : "network_failure",
+            classification: "network_failure",
           });
         }
       }
