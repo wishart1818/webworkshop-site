@@ -1,1 +1,0 @@
-Temporary CI trigger marker for read-only Autopilot status verification. Remove before merge.
