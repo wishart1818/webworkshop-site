@@ -8,29 +8,13 @@ const maxBatchesPerTick = 3;
 const softRuntimeBudgetMs = 240_000;
 
 function authorized(request: Request) {
-  const secret = process.env.CRON_SECRET?.trim();
+  const secret = process.env.TOP_PROSPECT_CRON_SECRET?.trim() || process.env.CRON_SECRET?.trim();
   if (!secret) return false;
   return request.headers.get("authorization") === `Bearer ${secret}`;
 }
 
-function unauthorizedDiagnostics(request: Request) {
-  const authorization = request.headers.get("authorization");
-  const [scheme, bearerToken = ""] = authorization?.split(/\s+/, 2) ?? [];
-  const secret = process.env.CRON_SECRET?.trim();
-
-  return {
-    authorizationPresent: Boolean(authorization),
-    authorizationScheme: scheme ?? null,
-    authorizationLength: authorization?.length ?? 0,
-    bearerTokenLength: scheme?.toLowerCase() === "bearer" ? bearerToken.length : 0,
-    secretConfigured: Boolean(secret),
-    secretLength: secret?.length ?? 0,
-  };
-}
-
 export async function GET(request: Request) {
   if (!authorized(request)) {
-    console.warn("[top-prospects-cron] Unauthorized request.", unauthorizedDiagnostics(request));
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
