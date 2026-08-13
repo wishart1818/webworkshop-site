@@ -44,11 +44,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --yes --token "$VERCEL_TOKEN" >/dev/null
+          npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --git-branch=main --yes --token "$VERCEL_TOKEN" >/dev/null
           set -a
           source /tmp/webworkshop-production.env
           set +a
-          if [[ -z "${CRON_SECRET:-}" ]]; then
+          CRON_SECRET="$(printf '%s' "${CRON_SECRET:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [[ -z "$CRON_SECRET" ]]; then
             echo "CRON_SECRET is missing; Top Prospects continuation remains fail-closed."
             exit 1
           fi
