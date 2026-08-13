@@ -46,7 +46,6 @@ export const maxDuration = 300;
 
 const autopilotDisabledMessage = "Autopilot is disabled by environment kill switch.";
 const staleOutreachRegenerationMessage = /current evidence does not support website-rebuild outreach/i;
-const resumableTopProspectStatuses = new Set(["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY"]);
 
 function autopilotEnvironmentDisabled() {
   return process.env.AUTOPILOT_DISABLED === "true";
@@ -143,10 +142,10 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
   }
 }
 
-async function autonomousGrowthDashboardWithRecoveredAutopilot(request?: Request) {
+async function autonomousGrowthDashboardWithRecoveredAutopilot() {
   const dashboard = await getAutonomousGrowthDashboard();
   const missingCampaignState = dashboard.autopilot.campaign.status === "draft" && !dashboard.autopilot.activity.topProspectJobId;
-  if (!missingCampaignState || !request) return dashboard;
+  if (!missingCampaignState) return dashboard;
 
   const persisted = await readPersistedAutopilotRouteState();
   let job = persisted?.jobId ? await getTopProspectJob(persisted.jobId) : null;
@@ -167,18 +166,12 @@ async function autonomousGrowthDashboardWithRecoveredAutopilot(request?: Request
   if (desiredStatus === "paused") autopilot = await pauseAutopilotCampaign();
   if (desiredStatus === "stopped") autopilot = await stopAutopilotCampaign();
 
-  const updatedAt = Date.parse(job.updatedAt);
-  const staleForMs = Number.isFinite(updatedAt) ? Date.now() - updatedAt : 0;
-  if (resumableTopProspectStatuses.has(job.status) && staleForMs > 60_000) {
-    continueTopProspectJobAfterResponse(request, job.id);
-  }
-
   return { ...dashboard, autopilot };
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot(request));
+    return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot());
   } catch (error) {
     console.error("[autonomous-growth] Dashboard load failed.", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json({ error: "Autonomous Growth dashboard is unavailable." }, { status: 503 });
