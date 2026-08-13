@@ -96,6 +96,7 @@ test("real multi-city continuation avoids self-fetch recursion and uses a Hobby-
   assert.match(cronRoute, /processTopProspectJob\(active\.id\)/);
   assert.match(schedulerWorkflow, /cron:\s*["']\*\/5 \* \* \* \*["']/);
   assert.match(schedulerWorkflow, /Authorization: Bearer \$CRON_SECRET/);
+  assert.match(schedulerWorkflow, /curl --location --fail-with-body/);
   assert.match(schedulerWorkflow, /\/api\/cron\/top-prospects/);
   assert.equal(vercelConfig.crons?.some((entry) => entry.path === "/api/cron/top-prospects"), false);
 });
