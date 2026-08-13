@@ -169,7 +169,8 @@ async function autonomousGrowthDashboardWithRecoveredAutopilot() {
   return { ...dashboard, autopilot };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  void request;
   try {
     return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot());
   } catch (error) {
