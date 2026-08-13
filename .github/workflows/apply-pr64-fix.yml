@@ -1,0 +1,133 @@
+name: Apply PR64 stale regeneration fix
+
+on:
+  push:
+    branches:
+      - fix/stale-outreach-regeneration
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/stale-outreach-regeneration
+          fetch-depth: 0
+
+      - name: Apply narrow production fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          repo_path = Path("lib/autonomous-growth-repository.ts")
+          repo = repo_path.read_text()
+
+          import_anchor = 'import { providerSmokeReadiness } from "@/lib/provider-smoke-readiness";\n'
+          import_line = 'import { attemptOutreachCopyRegeneration } from "@/lib/outreach-regeneration-guard";\n'
+          if import_line not in repo:
+              if import_anchor not in repo:
+                  raise SystemExit("repository import anchor not found")
+              repo = repo.replace(import_anchor, import_anchor + import_line, 1)
+
+          old_memory = '''      const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+          Object.assign(item, {
+            ...regeneratedQueueCopy(
+              item,
+              nowIso,
+              prospect,
+            ),
+            outreachCopyGeneratedAt: nowIso,
+            lastRegeneratedAt: nowIso,
+            updatedAt: nowIso,
+          });
+          summary.updated += 1;
+          summary.updatedItems.push(item.businessName);'''
+          new_memory = '''      const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+          const regeneration = attemptOutreachCopyRegeneration({
+            queueItemId: item.id,
+            prospectId: item.prospectId || undefined,
+            regenerate: () => regeneratedQueueCopy(item, nowIso, prospect),
+          });
+          if (!regeneration.ok) {
+            incrementReason(summary, regeneration.reason);
+            continue;
+          }
+          Object.assign(item, {
+            ...regeneration.value,
+            outreachCopyGeneratedAt: nowIso,
+            lastRegeneratedAt: nowIso,
+            updatedAt: nowIso,
+          });
+          summary.updated += 1;
+          summary.updatedItems.push(item.businessName);'''
+          if old_memory not in repo:
+              raise SystemExit("memory regeneration block not found")
+          repo = repo.replace(old_memory, new_memory, 1)
+
+          old_database = '''    const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+        const regenerated = regeneratedQueueCopy(
+          item,
+          nowIso,
+          prospect,
+        );
+        const updated = await database.outreachQueueItem.updateMany({'''
+          new_database = '''    const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+        const regeneration = attemptOutreachCopyRegeneration({
+          queueItemId: item.id,
+          prospectId: item.prospectId || undefined,
+          regenerate: () => regeneratedQueueCopy(item, nowIso, prospect),
+        });
+        if (!regeneration.ok) {
+          incrementReason(summary, regeneration.reason);
+          continue;
+        }
+        const updated = await database.outreachQueueItem.updateMany({'''
+          if old_database not in repo:
+              raise SystemExit("database regeneration block not found")
+          repo = repo.replace(old_database, new_database, 1)
+          repo = repo.replace('      data: regenerated,\n', '      data: regeneration.value,\n', 1)
+          repo_path.write_text(repo)
+
+          route_path = Path("app/api/engine/autonomous-growth/route.ts")
+          route = route_path.read_text()
+          old_route = '      return startAutopilotTopProspectsHandoff(request, settings);'
+          new_route = '      return await startAutopilotTopProspectsHandoff(request, settings);'
+          if old_route not in route:
+              raise SystemExit("Autopilot handoff return not found")
+          route_path.write_text(route.replace(old_route, new_route, 1))
+
+          Path(".github/stale-outreach-regeneration-task.md").unlink(missing_ok=True)
+          Path(".github/workflows/apply-pr64-fix.yml").unlink(missing_ok=True)
+          PY
+
+          git diff --check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify full repository
+        run: npm run verify
+
+      - name: Commit verified fix to PR branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix stale Autopilot outreach regeneration"
+          git push origin HEAD:fix/stale-outreach-regeneration
