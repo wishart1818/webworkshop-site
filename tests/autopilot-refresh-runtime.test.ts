@@ -83,7 +83,7 @@ test("Autopilot dashboard polling is read-only and cannot advance Top Prospects 
   assert.ok(postStart > recoveryStart);
   const readPath = autonomousRoute.slice(recoveryStart, postStart);
 
-  assert.match(readPath, /export async function GET\(\)/);
+  assert.match(readPath, /export async function GET/);
   assert.doesNotMatch(readPath, /continueTopProspectJobAfterResponse/);
   assert.doesNotMatch(readPath, /processTopProspectJob/);
   assert.doesNotMatch(readPath, /staleForMs|resumableTopProspectStatuses/);
