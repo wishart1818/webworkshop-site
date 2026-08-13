@@ -18,14 +18,13 @@ jobs:
     timeout-minutes: 40
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_PROJECT_NAME: webworkshop-site
     steps:
       - name: Check out main
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Validate Vercel token
+      - name: Derive Top Prospects scheduler credential
         shell: bash
         run: |
           set -euo pipefail
@@ -33,28 +32,9 @@ jobs:
             echo "VERCEL_TOKEN is not configured; Top Prospects continuation remains fail-closed."
             exit 1
           fi
-
-      - name: Link production project
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/dev/null
-
-      - name: Load production cron secret
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --yes --token "$VERCEL_TOKEN" >/dev/null
-          set -a
-          source /tmp/webworkshop-production.env
-          set +a
-          CRON_SECRET="$(printf '%s' "${CRON_SECRET:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          if [[ -z "$CRON_SECRET" ]]; then
-            echo "CRON_SECRET is missing; Top Prospects continuation remains fail-closed."
-            exit 1
-          fi
-          echo "::add-mask::$CRON_SECRET"
-          printf 'CRON_SECRET=%s\n' "$CRON_SECRET" >> "$GITHUB_ENV"
+          TOP_PROSPECT_CRON_SECRET="$(printf 'webworkshop-top-prospects:%s' "$VERCEL_TOKEN" | sha256sum | awk '{print $1}')"
+          echo "::add-mask::$TOP_PROSPECT_CRON_SECRET"
+          printf 'TOP_PROSPECT_CRON_SECRET=%s\n' "$TOP_PROSPECT_CRON_SECRET" >> "$GITHUB_ENV"
 
       - name: Pulse persisted Top Prospects job every five minutes
         shell: bash
@@ -63,7 +43,7 @@ jobs:
           for attempt in $(seq 1 7); do
             started_at="$(date +%s)"
             response="$(curl --location --fail-with-body --silent --show-error --max-time 295 \
-              -H "Authorization: Bearer $CRON_SECRET" \
+              -H "Authorization: Bearer $TOP_PROSPECT_CRON_SECRET" \
               https://www.webworkshop.dev/api/cron/top-prospects)"
             printf 'Top Prospects pulse %s/7: %s\n' "$attempt" "$response"
             printf '%s' "$response" | grep -q '"ok":true'
