@@ -143,10 +143,10 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
   }
 }
 
-async function autonomousGrowthDashboardWithRecoveredAutopilot(request: Request) {
+async function autonomousGrowthDashboardWithRecoveredAutopilot(request?: Request) {
   const dashboard = await getAutonomousGrowthDashboard();
   const missingCampaignState = dashboard.autopilot.campaign.status === "draft" && !dashboard.autopilot.activity.topProspectJobId;
-  if (!missingCampaignState) return dashboard;
+  if (!missingCampaignState || !request) return dashboard;
 
   const persisted = await readPersistedAutopilotRouteState();
   let job = persisted?.jobId ? await getTopProspectJob(persisted.jobId) : null;
@@ -176,7 +176,7 @@ async function autonomousGrowthDashboardWithRecoveredAutopilot(request: Request)
   return { ...dashboard, autopilot };
 }
 
-export async function GET(request: Request) {
+export async function GET(request?: Request) {
   try {
     return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot(request));
   } catch (error) {
