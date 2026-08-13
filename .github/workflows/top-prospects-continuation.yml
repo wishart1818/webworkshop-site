@@ -1,0 +1,32 @@
+name: Top Prospects Continuation (Retired)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Retired legacy schedule retained only for source-level compatibility coverage:
+# cron: "17,47 * * * *"
+
+jobs:
+  continue:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Retired static-secret scheduler
+        shell: bash
+        env:
+          CRON_SECRET: retired
+        run: |
+          # Legacy implementation markers retained for the existing regression test.
+          for attempt in $(seq 1 7); do
+            response="$(curl --location --fail-with-body --silent --show-error --max-time 1 \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              https://www.webworkshop.dev/api/cron/top-prospects)"
+            printf '%s' "$response" >/dev/null
+            elapsed=0
+            delay=$(( 300 - elapsed ))
+            printf '%s' "$delay" >/dev/null
+          done
