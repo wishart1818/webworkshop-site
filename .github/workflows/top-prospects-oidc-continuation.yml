@@ -1,0 +1,58 @@
+name: Top Prospects OIDC Continuation
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: top-prospects-continuation
+  cancel-in-progress: false
+
+jobs:
+  continue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Pulse persisted Top Prospects job every five minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 7); do
+            started_at="$(date +%s)"
+
+            token_response="$(curl --fail-with-body --silent --show-error --max-time 30 \
+              -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=webworkshop-top-prospects")"
+            oidc_token="$(printf '%s' "$token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+            if [[ -z "$oidc_token" ]]; then
+              echo "GitHub OIDC token request returned an empty token; continuation remains fail-closed."
+              exit 1
+            fi
+            echo "::add-mask::$oidc_token"
+
+            response="$(curl --location --fail-with-body --silent --show-error --max-time 295 \
+              -H "Authorization: Bearer $oidc_token" \
+              https://www.webworkshop.dev/api/cron/top-prospects)"
+            printf 'Top Prospects pulse %s/7: %s\n' "$attempt" "$response"
+            printf '%s' "$response" | grep -q '"ok":true'
+
+            if printf '%s' "$response" | grep -q '"status":"idle"'; then
+              break
+            fi
+            if printf '%s' "$response" | grep -q '"shouldContinue":false'; then
+              break
+            fi
+
+            if [[ "$attempt" -lt 7 ]]; then
+              elapsed=$(( $(date +%s) - started_at ))
+              delay=$(( 300 - elapsed ))
+              if (( delay > 0 )); then
+                sleep "$delay"
+              fi
+            fi
+          done
