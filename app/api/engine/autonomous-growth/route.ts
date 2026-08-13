@@ -4,6 +4,11 @@ import { createTopProspectJob, getActiveTopProspectJobSummary, getTopProspectJob
 import { safeTopProspectJobFailure } from "@/lib/top-prospect-diagnostics";
 import { validateTopProspectInput } from "@/lib/top-prospects";
 import {
+  persistAutopilotRouteState,
+  readPersistedAutopilotRouteState,
+  recoveredAutopilotSettingsFromJob,
+} from "@/lib/autopilot-route-state";
+import {
   approveAndQueueEmail,
   failAutopilotCampaignHandoff,
   getAutonomousGrowthDashboard,
@@ -37,9 +42,11 @@ import { autopilotStartConfirmation, autopilotTopProspectInput, normalizeAutopil
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const autopilotDisabledMessage = "Autopilot is disabled by environment kill switch.";
 const staleOutreachRegenerationMessage = /current evidence does not support website-rebuild outreach/i;
+const resumableTopProspectStatuses = new Set(["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY"]);
 
 function autopilotEnvironmentDisabled() {
   return process.env.AUTOPILOT_DISABLED === "true";
@@ -105,6 +112,7 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
       return NextResponse.json({ autopilot, topProspectJobWarning: "Top Prospects job was created but could not be loaded for Autopilot tracking." });
     }
     const autopilot = await startAutopilotCampaign(settings, job);
+    await persistAutopilotRouteState(autopilot);
     continueTopProspectJobAfterResponse(request, job.id);
     return NextResponse.json({ autopilot, topProspectJobId: job.id });
   } catch (error) {
@@ -135,9 +143,42 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
   }
 }
 
-export async function GET() {
+async function autonomousGrowthDashboardWithRecoveredAutopilot(request: Request) {
+  const dashboard = await getAutonomousGrowthDashboard();
+  const missingCampaignState = dashboard.autopilot.campaign.status === "draft" && !dashboard.autopilot.activity.topProspectJobId;
+  if (!missingCampaignState) return dashboard;
+
+  const persisted = await readPersistedAutopilotRouteState();
+  let job = persisted?.jobId ? await getTopProspectJob(persisted.jobId) : null;
+  let settings = persisted?.settings ?? null;
+  let desiredStatus = persisted?.status ?? "";
+
+  if (!job) {
+    const active = await getActiveTopProspectJobSummary();
+    job = active?.id ? await getTopProspectJob(active.id) : null;
+    if (job) {
+      settings = recoveredAutopilotSettingsFromJob(job);
+      desiredStatus = "running";
+    }
+  }
+  if (!job || !settings) return dashboard;
+
+  let autopilot = await startAutopilotCampaign(settings, job);
+  if (desiredStatus === "paused") autopilot = await pauseAutopilotCampaign();
+  if (desiredStatus === "stopped") autopilot = await stopAutopilotCampaign();
+
+  const updatedAt = Date.parse(job.updatedAt);
+  const staleForMs = Number.isFinite(updatedAt) ? Date.now() - updatedAt : 0;
+  if (resumableTopProspectStatuses.has(job.status) && staleForMs > 60_000) {
+    continueTopProspectJobAfterResponse(request, job.id);
+  }
+
+  return { ...dashboard, autopilot };
+}
+
+export async function GET(request: Request) {
   try {
-    return NextResponse.json(await getAutonomousGrowthDashboard());
+    return NextResponse.json(await autonomousGrowthDashboardWithRecoveredAutopilot(request));
   } catch (error) {
     console.error("[autonomous-growth] Dashboard load failed.", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json({ error: "Autonomous Growth dashboard is unavailable." }, { status: 503 });
@@ -277,23 +318,29 @@ export async function POST(request: Request) {
       return await startAutopilotTopProspectsHandoff(request, settings);
     }
     if (payload.action === "pause_autopilot") {
-      return NextResponse.json({ autopilot: await pauseAutopilotCampaign() });
+      const autopilot = await pauseAutopilotCampaign();
+      await persistAutopilotRouteState(autopilot);
+      return NextResponse.json({ autopilot });
     }
     if (payload.action === "resume_autopilot") {
-      await resumeAutopilotCampaign();
+      const autopilot = await resumeAutopilotCampaign();
+      await persistAutopilotRouteState(autopilot);
       const existingInventory = await processExistingQualifiedProspects({ dryRun: false });
       const dashboard = await getAutonomousGrowthDashboard();
       return NextResponse.json({ ...dashboard, autoEmailPilot: existingInventory.autoEmailPilot, summary: existingInventory.summary });
     }
     if (payload.action === "stop_autopilot") {
-      return NextResponse.json({ autopilot: await stopAutopilotCampaign() });
+      const autopilot = await stopAutopilotCampaign();
+      await persistAutopilotRouteState(autopilot);
+      return NextResponse.json({ autopilot });
     }
     if (payload.action === "run_autopilot_batch") {
       if (autopilotEnvironmentDisabled()) {
         const dashboard = await getAutonomousGrowthDashboard();
         return NextResponse.json({ autopilot: dashboard.autopilot, topProspectJobWarning: autopilotDisabledMessage });
       }
-      await runAutopilotNextBatchNow();
+      const autopilot = await runAutopilotNextBatchNow();
+      await persistAutopilotRouteState(autopilot);
       const existingInventory = await processExistingQualifiedProspects({ dryRun: false });
       const dashboard = await getAutonomousGrowthDashboard();
       return NextResponse.json({ ...dashboard, autoEmailPilot: existingInventory.autoEmailPilot, summary: existingInventory.summary });
