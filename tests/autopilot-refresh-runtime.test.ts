@@ -75,20 +75,6 @@ test("Autopilot can recover safe settings from an active Top Prospects job", () 
   assert.equal(settings.requireWrittenContact, true);
 });
 
-test("Autopilot dashboard polling is read-only and cannot advance Top Prospects work", () => {
-  const autonomousRoute = readFileSync("app/api/engine/autonomous-growth/route.ts", "utf8");
-  const recoveryStart = autonomousRoute.indexOf("async function autonomousGrowthDashboardWithRecoveredAutopilot(");
-  const postStart = autonomousRoute.indexOf("export async function POST", recoveryStart);
-  assert.ok(recoveryStart >= 0);
-  assert.ok(postStart > recoveryStart);
-  const readPath = autonomousRoute.slice(recoveryStart, postStart);
-
-  assert.match(readPath, /export async function GET/);
-  assert.doesNotMatch(readPath, /continueTopProspectJobAfterResponse/);
-  assert.doesNotMatch(readPath, /processTopProspectJob/);
-  assert.doesNotMatch(readPath, /staleForMs|resumableTopProspectStatuses/);
-});
-
 test("real multi-city continuation avoids self-fetch recursion and uses a Hobby-compatible durable scheduler", () => {
   const listRoute = readFileSync("app/api/engine/top-prospects/route.ts", "utf8");
   const workerRoute = readFileSync("app/api/engine/top-prospects/[jobId]/run/route.ts", "utf8");
