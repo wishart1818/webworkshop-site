@@ -1,4 +1,4 @@
-import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { createPublicKey, verify as verifySignature, type JsonWebKey } from "node:crypto";
 
 const githubActionsIssuer = "https://token.actions.githubusercontent.com";
 const githubActionsJwksUrl = "https://token.actions.githubusercontent.com/.well-known/jwks";
