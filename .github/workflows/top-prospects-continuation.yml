@@ -1,0 +1,65 @@
+name: Top Prospects Continuation
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: top-prospects-continuation
+  cancel-in-progress: false
+
+jobs:
+  continue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_NAME: webworkshop-site
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Vercel token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+            echo "VERCEL_TOKEN is not configured; Top Prospects continuation remains fail-closed."
+            exit 1
+          fi
+
+      - name: Link production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/dev/null
+
+      - name: Load production cron secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest env pull /tmp/webworkshop-production.env --environment=production --yes --token "$VERCEL_TOKEN" >/dev/null
+          set -a
+          source /tmp/webworkshop-production.env
+          set +a
+          if [[ -z "${CRON_SECRET:-}" ]]; then
+            echo "CRON_SECRET is missing; Top Prospects continuation remains fail-closed."
+            exit 1
+          fi
+          printf 'CRON_SECRET=%s\n' "$CRON_SECRET" >> "$GITHUB_ENV"
+
+      - name: Resume persisted Top Prospects job
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail-with-body --silent --show-error --max-time 295 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://webworkshop.dev/api/cron/top-prospects)"
+          printf '%s\n' "$response"
+          printf '%s' "$response" | grep -q '"ok":true'
