@@ -39,6 +39,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const autopilotDisabledMessage = "Autopilot is disabled by environment kill switch.";
+const staleOutreachRegenerationMessage = /current evidence does not support website-rebuild outreach/i;
 
 function autopilotEnvironmentDisabled() {
   return process.env.AUTOPILOT_DISABLED === "true";
@@ -66,8 +67,19 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
     }));
     return NextResponse.json({ autopilot, topProspectJobWarning: autopilotDisabledMessage });
   }
-  const existingInventory = await processExistingQualifiedProspects({ dryRun: false });
-  if (existingInventory.autoEmailPilot.approvedQueued > 0) {
+
+  let existingInventory: Awaited<ReturnType<typeof processExistingQualifiedProspects>> | null = null;
+  try {
+    existingInventory = await processExistingQualifiedProspects({ dryRun: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!staleOutreachRegenerationMessage.test(message)) throw error;
+    console.warn("[autonomous-growth] Stale outreach regeneration was skipped so fresh Autopilot discovery can continue safely.", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+  }
+
+  if (existingInventory?.autoEmailPilot.approvedQueued && existingInventory.autoEmailPilot.approvedQueued > 0) {
     const dashboard = await getAutonomousGrowthDashboard();
     return NextResponse.json({
       ...dashboard,
@@ -262,7 +274,7 @@ export async function POST(request: Request) {
     }
     if (payload.action === "start_autopilot" || payload.action === "retry_autopilot_handoff") {
       const settings = normalizeAutopilotCampaignSettings(payload.autopilotSettings ?? {});
-      return startAutopilotTopProspectsHandoff(request, settings);
+      return await startAutopilotTopProspectsHandoff(request, settings);
     }
     if (payload.action === "pause_autopilot") {
       return NextResponse.json({ autopilot: await pauseAutopilotCampaign() });
