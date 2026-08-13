@@ -1,3 +1,4 @@
+import { verifyTopProspectsGitHubOidcToken } from "@/lib/github-actions-oidc";
 import { getActiveTopProspectJobSummary } from "@/lib/top-prospect-repository";
 import { processTopProspectJob } from "@/lib/top-prospect-worker";
 
@@ -7,14 +8,33 @@ export const maxDuration = 300;
 const maxBatchesPerTick = 3;
 const softRuntimeBudgetMs = 240_000;
 
-function authorized(request: Request) {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return false;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+function bearerToken(request: Request) {
+  const authorization = request.headers.get("authorization")?.trim();
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = authorization.slice("Bearer ".length).trim();
+  return token || null;
+}
+
+async function authorized(request: Request) {
+  const token = bearerToken(request);
+  if (!token) return false;
+
+  const fallbackSecret = process.env.CRON_SECRET?.trim();
+  if (fallbackSecret && token === fallbackSecret) return true;
+  if (token.split(".").length !== 3) return false;
+
+  try {
+    return await verifyTopProspectsGitHubOidcToken(token);
+  } catch (error) {
+    console.error("[top-prospects-cron] GitHub Actions OIDC verification failed safely.", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+    return false;
+  }
 }
 
 export async function GET(request: Request) {
-  if (!authorized(request)) {
+  if (!(await authorized(request))) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
