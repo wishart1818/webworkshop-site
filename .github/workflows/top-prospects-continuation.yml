@@ -52,6 +52,7 @@ jobs:
             echo "CRON_SECRET is missing; Top Prospects continuation remains fail-closed."
             exit 1
           fi
+          echo "::add-mask::$CRON_SECRET"
           printf 'CRON_SECRET=%s\n' "$CRON_SECRET" >> "$GITHUB_ENV"
 
       - name: Resume persisted Top Prospects job
