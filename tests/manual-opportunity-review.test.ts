@@ -179,7 +179,7 @@ test("worker diverts final manual opportunities before outreach artifact generat
   assert.ok(processLeadStart >= 0);
   assert.ok(manualGate > processLeadStart);
   assert.ok(artifactGeneration > manualGate);
-  assert.match(workerSource.slice(manualGate, artifactGeneration), /return \{ qualified: false, unresolved \};/);
+  assert.match(workerSource.slice(manualGate, artifactGeneration), /return \{ qualified: false, unresolved, .*websiteEnrichment/);
 });
 
 test("owned borderline website surfaces only when bounded analysis has a concrete inspection observation", () => {

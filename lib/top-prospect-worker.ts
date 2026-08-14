@@ -14,6 +14,7 @@ import {
   type DiscoveryResult,
   type DiscoverySourceCounts,
   type TradeDiscoveryDiagnostic,
+  type TopProspectWebsiteEnrichmentRecord,
   type UnresolvedTopProspectRecord,
 } from "@/lib/lead-discovery";
 import {
@@ -656,6 +657,7 @@ function addSkip(summary: Record<string, number>, reason: string) {
 type ProcessLeadResult = {
   qualified: boolean;
   unresolved?: UnresolvedTopProspectRecord;
+  websiteEnrichment?: TopProspectWebsiteEnrichmentRecord;
 };
 
 export function existingProspectRequiresWebsiteResolution(prospect: Prospect) {
@@ -700,6 +702,22 @@ function unresolvedTopProspectRecord(
   };
 }
 
+function topProspectWebsiteEnrichmentRecord(
+  prospect: Prospect,
+  resolution?: SharedProspectVerificationResolution,
+): TopProspectWebsiteEnrichmentRecord | undefined {
+  const diagnostic = resolution?.noSiteEnrichment;
+  if (!diagnostic) return undefined;
+  return {
+    prospectId: prospect.id,
+    businessName: prospect.businessName,
+    trade: prospect.trade,
+    city: prospect.city,
+    state: prospect.state,
+    ...diagnostic,
+  };
+}
+
 function addUnresolvedSkip(
   summary: Record<string, number>,
   record: UnresolvedTopProspectRecord,
@@ -708,11 +726,17 @@ function addUnresolvedSkip(
   addSkip(summary, record.reviewBucket === "manual_opportunity" ? "manual_opportunity" : fallbackReason);
 }
 
-function discoveryWithUnresolvedRecords(
+function discoveryWithProcessingRecords(
   value: Prisma.JsonValue | null,
-  records: UnresolvedTopProspectRecord[],
+  unresolvedRecords: UnresolvedTopProspectRecord[],
+  websiteEnrichmentRecords: TopProspectWebsiteEnrichmentRecord[],
 ): Prisma.InputJsonValue | undefined {
-  if (!value || Array.isArray(value) || typeof value !== "object" || !records.length) return undefined;
+  if (
+    !value
+    || Array.isArray(value)
+    || typeof value !== "object"
+    || (!unresolvedRecords.length && !websiteEnrichmentRecords.length)
+  ) return undefined;
   const envelope = structuredClone(value) as Record<string, unknown>;
   const diagnostics = envelope.diagnostics && typeof envelope.diagnostics === "object" && !Array.isArray(envelope.diagnostics)
     ? envelope.diagnostics as Record<string, unknown>
@@ -721,8 +745,14 @@ function discoveryWithUnresolvedRecords(
     ? diagnostics.unresolvedRecords as UnresolvedTopProspectRecord[]
     : [];
   const byProspectId = new Map(existing.map((record) => [record.prospectId, record]));
-  for (const record of records) byProspectId.set(record.prospectId, record);
+  for (const record of unresolvedRecords) byProspectId.set(record.prospectId, record);
   diagnostics.unresolvedRecords = [...byProspectId.values()].slice(0, 250);
+  const existingEnrichment = Array.isArray(diagnostics.websiteEnrichmentRecords)
+    ? diagnostics.websiteEnrichmentRecords as TopProspectWebsiteEnrichmentRecord[]
+    : [];
+  const enrichmentByProspectId = new Map(existingEnrichment.map((record) => [record.prospectId, record]));
+  for (const record of websiteEnrichmentRecords) enrichmentByProspectId.set(record.prospectId, record);
+  diagnostics.websiteEnrichmentRecords = [...enrichmentByProspectId.values()].slice(0, 250);
   envelope.diagnostics = diagnostics;
   return envelope as Prisma.InputJsonValue;
 }
@@ -909,11 +939,40 @@ async function processLead(
       addSkip(summary, "previously_reviewed");
       return { qualified: false };
     }
+    let existingResolution: SharedProspectVerificationResolution | undefined;
     const existingManualOpportunity = assessManualTopProspectOpportunity(existing, lead);
     if (existingManualOpportunity) {
-      const unresolved = unresolvedTopProspectRecord(existing, lead);
-      addUnresolvedSkip(summary, unresolved, "manual_opportunity");
-      return { qualified: false, unresolved };
+      try {
+        existingResolution = await verifyProspectWebsiteWithSecondPass(existing, {
+          allowHistoricalNoSiteLookup: true,
+        });
+        existing = await saveProspect(mergeResolvedWebsiteEvidence(existing, existingResolution.result.prospect));
+      } catch {
+        const unresolved = unresolvedTopProspectRecord(existing, lead);
+        addUnresolvedSkip(summary, unresolved, "website_verification_failed");
+        return { qualified: false, unresolved };
+      }
+      const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
+      const refreshedManualOpportunity = assessManualTopProspectOpportunity(existing, lead);
+      if (refreshedManualOpportunity) {
+        const unresolved = unresolvedTopProspectRecord(existing, lead, existingResolution);
+        addUnresolvedSkip(summary, unresolved, "manual_opportunity");
+        return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
+      }
+      if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        const fit = normalizeWebsiteFitDisposition(existing);
+        const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"
+          ? undefined
+          : unresolvedTopProspectRecord(existing, lead, existingResolution);
+        if (unresolved) addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
+        else addSkip(summary, "confirmed_usable_website_not_fit");
+        return {
+          qualified: false,
+          ...(unresolved ? { unresolved } : {}),
+          ...(websiteEnrichment ? { websiteEnrichment } : {}),
+        };
+      }
+      resolvedExistingNow = true;
     }
     if (!websiteFitAllowsAutonomousOutreach(existing)) {
       if (!existingProspectRequiresWebsiteResolution(existing)) {
@@ -936,11 +995,14 @@ async function processLead(
           : unresolvedTopProspectRecord(existing, lead, resolution);
         if (unresolved) addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
         else addSkip(summary, "confirmed_usable_website_not_fit");
+        const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, resolution);
         return {
           qualified: false,
           ...(unresolved ? { unresolved } : {}),
+          ...(websiteEnrichment ? { websiteEnrichment } : {}),
         };
       }
+      existingResolution = resolution;
       resolvedExistingNow = true;
     }
     if (
@@ -952,29 +1014,34 @@ async function processLead(
         const fit = normalizeWebsiteFitDisposition(existing);
         if (fit === "adequate_existing_website" || fit === "strong_existing_website") {
           addSkip(summary, "confirmed_usable_website_not_fit");
-          return { qualified: false };
+          const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
+          return { qualified: false, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
         }
         const unresolved = unresolvedTopProspectRecord(existing, lead);
         addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
-        return { qualified: false, unresolved };
+        const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
+        return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
       }
       const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
-      return { qualified: rejectionReason === null };
+      const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
+      return { qualified: rejectionReason === null, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
     }
     addSkip(summary, "duplicate");
     return { qualified: false };
   }
 
   let prospect = createProspect({ ...lead, sizeIndicator: "Growing", status: "New" });
+  let verification: SharedProspectVerificationResolution;
   try {
-    const verified = await verifyProspectWebsiteWithSecondPass(prospect);
-    prospect = verified.result.prospect;
+    verification = await verifyProspectWebsiteWithSecondPass(prospect);
+    prospect = verification.result.prospect;
     if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "invalid_website"].includes(prospect.websiteStatus)) {
       await saveProspect(prospect);
-      const unresolved = unresolvedTopProspectRecord(prospect, lead, verified);
+      const unresolved = unresolvedTopProspectRecord(prospect, lead, verification);
       addUnresolvedSkip(summary, unresolved, `website_${prospect.websiteStatus}`);
-      return { qualified: false, unresolved };
+      const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, verification);
+      return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
     }
   } catch {
     prospect = await saveProspect({
@@ -990,9 +1057,10 @@ async function processLead(
   const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);
   if (manualOpportunity) {
     prospect = await saveProspect(prospect);
-    const unresolved = unresolvedTopProspectRecord(prospect, lead);
+    const unresolved = unresolvedTopProspectRecord(prospect, lead, verification);
     addUnresolvedSkip(summary, unresolved, "manual_opportunity");
-    return { qualified: false, unresolved };
+    const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, verification);
+    return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
   }
   if (!websiteFitAllowsAutonomousOutreach(prospect)) {
     await saveProspect(prospect);
@@ -1002,9 +1070,11 @@ async function processLead(
       : unresolvedTopProspectRecord(prospect, lead);
     if (unresolved) addUnresolvedSkip(summary, unresolved, "website_fit_requires_review");
     else addSkip(summary, "confirmed_usable_website_not_fit");
+    const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, verification);
     return {
       qualified: false,
       ...(unresolved ? { unresolved } : {}),
+      ...(websiteEnrichment ? { websiteEnrichment } : {}),
     };
   }
 
@@ -1018,7 +1088,8 @@ async function processLead(
   };
   const rejectionReason = await saveTopProspectResult(jobId, prospect, mode, outreachPreference);
   if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
-  return { qualified: rejectionReason === null };
+  const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, verification);
+  return { qualified: rejectionReason === null, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
 }
 
 export async function processTopProspectJob(jobId: string) {
@@ -1116,6 +1187,7 @@ export async function processTopProspectJob(jobId: string) {
     const summary = skipSummary(job.skipSummary);
     let qualified = 0;
     const unresolvedRecords: UnresolvedTopProspectRecord[] = [];
+    const websiteEnrichmentRecords: TopProspectWebsiteEnrichmentRecord[] = [];
     for (const lead of batch) {
       if (job.nextLeadIndex === 0) {
         console.info("[top-prospects] First candidate processing started.", {
@@ -1129,13 +1201,18 @@ export async function processTopProspectJob(jobId: string) {
       const result = await processLead(job.id, job.createdAt, lead, summary, mode, outreachPreference, excludePreviouslyReviewed);
       if (result.qualified) qualified += 1;
       if (result.unresolved) unresolvedRecords.push(result.unresolved);
+      if (result.websiteEnrichment) websiteEnrichmentRecords.push(result.websiteEnrichment);
     }
     const nextLeadIndex = job.nextLeadIndex + batch.length;
     const done = nextLeadIndex >= leads.length || nextLeadIndex >= acceptedSettings.businessesToScan;
     const waitingStatus = discoveryHasPartialIssues(discoveryDiagnostics)
       ? "PARTIAL_RESULTS_READY"
       : "NEEDS_NEXT_BATCH";
-    const updatedDiscovery = discoveryWithUnresolvedRecords(job.discoveredLeads, unresolvedRecords);
+    const updatedDiscovery = discoveryWithProcessingRecords(
+      job.discoveredLeads,
+      unresolvedRecords,
+      websiteEnrichmentRecords,
+    );
     await getProspectDatabase().topProspectJob.update({
       where: { id: job.id },
       data: {

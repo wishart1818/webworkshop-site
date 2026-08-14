@@ -27,6 +27,7 @@ import {
   normalizedStreetAddress,
   type DiscoveryIdentityEvidence,
 } from "@/lib/prospect-identity-evidence";
+import type { NoSiteEnrichmentDiagnostic } from "@/lib/prospect-verification-resolution";
 
 export type DiscoveredLead = {
   businessName: string;
@@ -167,6 +168,14 @@ export type UnresolvedTopProspectRecord = {
   websiteObservations?: string[];
 };
 
+export type TopProspectWebsiteEnrichmentRecord = NoSiteEnrichmentDiagnostic & {
+  prospectId: string;
+  businessName: string;
+  trade: string;
+  city: string;
+  state: string;
+};
+
 export type DiscoveryQualificationBreakdown = {
   mergedCandidates: number;
   ownedWebsiteCandidates: number;
@@ -196,6 +205,7 @@ export type DiscoveryDiagnostics = {
   excludePreviouslyReviewed?: boolean;
   nextRunRecommendations?: string[];
   unresolvedRecords?: UnresolvedTopProspectRecord[];
+  websiteEnrichmentRecords?: TopProspectWebsiteEnrichmentRecord[];
 };
 
 export type DiscoveryResult = {
@@ -1269,6 +1279,44 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   ...(Array.isArray(record.websiteObservations)
                     ? { websiteObservations: record.websiteObservations.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 500)).slice(0, 6) }
                     : {}),
+                }];
+              }).slice(0, 250),
+            }
+          : {}),
+        ...(Array.isArray(candidate.websiteEnrichmentRecords)
+          ? {
+              websiteEnrichmentRecords: candidate.websiteEnrichmentRecords.flatMap((item): TopProspectWebsiteEnrichmentRecord[] => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+                const record = item as Partial<TopProspectWebsiteEnrichmentRecord>;
+                if (
+                  typeof record.prospectId !== "string"
+                  || typeof record.businessName !== "string"
+                  || typeof record.trade !== "string"
+                  || typeof record.city !== "string"
+                  || typeof record.state !== "string"
+                  || record.version !== "no-site-enrichment-v1"
+                  || !["owned_website_found", "probable_no_owned_website", "broken_or_inactive_website", "unresolved"].includes(String(record.outcome))
+                  || typeof record.reason !== "string"
+                  || typeof record.checkedAt !== "string"
+                  || !Array.isArray(record.providerSources)
+                  || typeof record.websiteCandidate !== "string"
+                  || typeof record.websiteVerificationStatus !== "string"
+                  || typeof record.websiteFitDisposition !== "string"
+                ) return [];
+                return [{
+                  prospectId: record.prospectId.slice(0, 100),
+                  businessName: record.businessName.slice(0, 180),
+                  trade: record.trade.slice(0, 100),
+                  city: record.city.slice(0, 100),
+                  state: record.state.slice(0, 10),
+                  version: "no-site-enrichment-v1",
+                  outcome: record.outcome as TopProspectWebsiteEnrichmentRecord["outcome"],
+                  reason: record.reason.slice(0, 1_000),
+                  checkedAt: record.checkedAt.slice(0, 100),
+                  providerSources: record.providerSources.filter((source): source is DiscoverySource => discoverySources.includes(source as DiscoverySource)),
+                  websiteCandidate: record.websiteCandidate.slice(0, 500),
+                  websiteVerificationStatus: record.websiteVerificationStatus.slice(0, 100),
+                  websiteFitDisposition: record.websiteFitDisposition.slice(0, 100),
                 }];
               }).slice(0, 250),
             }

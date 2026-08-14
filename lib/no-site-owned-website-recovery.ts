@@ -47,6 +47,8 @@ export type OwnedWebsiteRecoveryDependencies = {
   azureMapsApiKey?: string;
   timeoutMs?: number;
   now?: () => Date;
+  // This permits a targeted recheck of a persisted manual record; it does not make old evidence current for qualification.
+  allowHistoricalLookup?: boolean;
 };
 
 const legalSuffixTokens = new Set([
@@ -152,6 +154,17 @@ function knownIdentityBindings(prospect: Prospect) {
     ...evidence.map((item) => normalizedStreetAddress(item.address)),
   ].filter(Boolean));
   return { evidence, phones, addresses };
+}
+
+function identityLookupIsAllowed(
+  prospect: Prospect,
+  dependencies: OwnedWebsiteRecoveryDependencies,
+) {
+  if (dependencies.allowHistoricalLookup) return true;
+  const now = dependencies.now?.() ?? new Date();
+  const createdAt = Date.parse(prospect.createdAt);
+  return Number.isFinite(createdAt)
+    && now.getTime() - createdAt <= 7 * 24 * 60 * 60 * 1_000;
 }
 
 function corroborationQueries(
@@ -346,9 +359,7 @@ export async function discoverIndependentNoSiteIdentityEvidence(
   if (prospect.website.trim() || prospect.inactive || prospect.prospectType !== "no_website_social_only") return [];
   if (prospect.activitySignals.includes("discovery_identity_conflict:same_name")) return [];
 
-  const now = dependencies.now?.() ?? new Date();
-  const createdAt = Date.parse(prospect.createdAt);
-  if (!Number.isFinite(createdAt) || now.getTime() - createdAt > 7 * 24 * 60 * 60 * 1_000) return [];
+  if (!identityLookupIsAllowed(prospect, dependencies)) return [];
 
   const bindings = knownIdentityBindings(prospect);
   const sources = new Set(bindings.evidence.map((item) => item.source));
@@ -442,9 +453,7 @@ export async function discoverGoogleOwnedWebsiteCandidates(
 ) {
   if (prospect.website.trim() || prospect.inactive || prospect.prospectType !== "no_website_social_only") return [];
 
-  const now = dependencies.now?.() ?? new Date();
-  const createdAt = Date.parse(prospect.createdAt);
-  if (!Number.isFinite(createdAt) || now.getTime() - createdAt > 7 * 24 * 60 * 60 * 1_000) return [];
+  if (!identityLookupIsAllowed(prospect, dependencies)) return [];
 
   const bindings = knownIdentityBindings(prospect);
   const expectedName = identityNameKey(prospect.businessName);
