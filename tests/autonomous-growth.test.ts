@@ -317,6 +317,29 @@ function topProspectResultFixture(prospect: Prospect, overrides: Partial<TopPros
   };
 }
 
+function unresolvedTopProspectFixture(
+  prospectId: string,
+  reviewBucket: "manual_opportunity" | "unresolved",
+): NonNullable<TopProspectJob["unresolvedProspects"]>[number] {
+  return {
+    prospectId,
+    businessName: `Review ${prospectId}`,
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    providerSources: ["google"],
+    websiteCandidate: "https://example.com",
+    websiteVerificationState: "inconclusive",
+    websiteFitState: "inconclusive_requires_review",
+    unresolvedReasonCode: "website_fit_requires_review",
+    evidenceSummary: "Current website evidence requires operator review.",
+    persistedAsProspect: true,
+    preventedQualification: "Current website evidence is incomplete.",
+    recommendedNextAction: "Review the current evidence manually.",
+    reviewBucket,
+  };
+}
+
 function eligibilityFor(prospect: Prospect, overrides: Partial<Parameters<typeof evaluateAutoSendEligibility>[0]> = {}) {
   const previewGate = overrides.previewGate ?? evaluatePreviewQualityGate(prospect);
   const emailQuality = overrides.emailQuality ?? evaluateOutreachEmailQuality(prospect, overrides.previewLink ?? publicLink);
@@ -2804,6 +2827,154 @@ test("completed and failed Top Prospects jobs sync real counts into Autopilot", 
   assert.equal(failedDashboard.activity.status, "failed_during_discovery");
   assert.equal(failedDashboard.activity.currentStep, "Top Prospects job failed during discovery");
   assert.ok(failedDashboard.activity.errors.length > 0);
+});
+
+test("Top Prospects report reconciles persisted review and hard-block buckets without double counting", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const selected = topProspectResultFixture(eligibleProspectFor({
+    id: "selected-email-prospect",
+    businessName: "Selected Email Prospect",
+    website: "https://selected-email.example",
+    email: "hello@selected-email.example",
+  }), {
+    id: "selected-email-result",
+    emailQuality: { ready: true, readinessLabel: "Send-ready", checks: [], issues: [] },
+  });
+  const reviewableEmail = topProspectResultFixture(eligibleProspectFor({
+    id: "reviewable-email-prospect",
+    businessName: "Reviewable Email Prospect",
+    website: "https://reviewable-email.example",
+    email: "hello@reviewable-email.example",
+  }), {
+    id: "reviewable-email-result",
+    selected: false,
+    rejectionReason: "Below final cutoff",
+    resultBucket: "reviewable_lower_priority",
+    emailQuality: { ready: true, readinessLabel: "Send-ready", checks: [], issues: [] },
+  });
+  const reviewableFormProspect = {
+    ...eligibleProspectFor({
+      id: "reviewable-form-prospect",
+      businessName: "Reviewable Form Prospect",
+      website: "https://reviewable-form.example",
+      email: "temporary@reviewable-form.example",
+    }),
+    email: "",
+    contactEvidence: [],
+    contactFormUrl: "https://reviewable-form.example/contact",
+    recommendedContactMethod: "submit_contact_form" as const,
+    bestManualContactMethod: "contact_form" as const,
+  } satisfies Prospect;
+  const reviewableForm = topProspectResultFixture(reviewableFormProspect, {
+    id: "reviewable-form-result",
+    selected: false,
+    rejectionReason: "Low redesign opportunity",
+    resultBucket: "reviewable_lower_priority",
+    emailQuality: { ready: false, readinessLabel: "Needs review", checks: [], issues: ["Operator review required."] },
+  });
+  const reviewableSocialProspect = {
+    ...reviewableFormProspect,
+    id: "reviewable-social-prospect",
+    businessName: "Reviewable Social Prospect",
+    contactFormUrl: "",
+    facebookUrl: "https://facebook.com/reviewable-social",
+    profileUrl: "https://facebook.com/reviewable-social",
+    classification: "social_only" as const,
+    recommendedContactMethod: "message_on_facebook" as const,
+    bestManualContactMethod: "facebook" as const,
+  } satisfies Prospect;
+  const reviewableSocial = topProspectResultFixture(reviewableSocialProspect, {
+    id: "reviewable-social-result",
+    selected: false,
+    rejectionReason: "Weak sales fit",
+    resultBucket: "reviewable_lower_priority",
+    emailQuality: { ready: false, readinessLabel: "Needs review", checks: [], issues: ["Manual social outreach only."] },
+  });
+  const blocked = topProspectResultFixture(eligibleProspectFor({
+    id: "blocked-supplier-prospect",
+    businessName: "Blocked Supplier",
+    website: "https://blocked-supplier.example",
+    email: "sales@blocked-supplier.example",
+  }), {
+    id: "blocked-supplier-result",
+    selected: false,
+    rejectionReason: "Supplier/distributor",
+    resultBucket: "blocked",
+  });
+  const manualOpportunity = unresolvedTopProspectFixture("manual-opportunity-prospect", "manual_opportunity");
+  const unresolved = unresolvedTopProspectFixture("unresolved-prospect", "unresolved");
+  const job = topProspectJobFixture(campaign, {
+    status: "COMPLETED",
+    stage: "COMPLETE",
+    scannedCount: 9,
+    qualifiedCount: 1,
+    skippedCount: 8,
+    results: [selected],
+    reviewedNotRecommended: [reviewableEmail, reviewableForm, reviewableSocial, blocked],
+    reviewableLowerPriority: [reviewableEmail, reviewableForm, reviewableSocial],
+    blockedProspects: [blocked],
+    manualOpportunityProspects: [manualOpportunity],
+    unresolvedProspects: [unresolved],
+    skipSummary: {
+      below_final_cutoff: 3,
+      manual_opportunity: 1,
+      website_fit_requires_review: 1,
+      supplier_distributor: 1,
+      national_large_brand: 1,
+      previously_contacted: 1,
+    },
+  });
+
+  const report = buildAutopilotTopProspectJobReport(campaign, job, new Date(10));
+  const represented = Object.values(report.queueCounts).reduce((total, count) => total + count, 0);
+
+  assert.equal(report.queueCounts.emailDraftReady, 2);
+  assert.equal(report.queueCounts.needsPreviewReview, 1);
+  assert.equal(report.queueCounts.readyForManualDm, 1);
+  assert.equal(report.queueCounts.needsHumanResearch, 2);
+  assert.equal(report.queueCounts.blockedBadFit, 3);
+  assert.equal(represented, job.scannedCount);
+  assert.ok(represented <= job.scannedCount);
+  assert.ok(report.blockedReasons?.some((reason) => reason.reason === "national large brand" && reason.count === 1));
+  assert.ok(report.blockedReasons?.some((reason) => reason.reason === "website fit requires review" && reason.count === 1));
+});
+
+test("Top Prospects report keeps a lower-priority email draft out of the blocked count", () => {
+  const campaign = createAutopilotCampaign(defaultAutopilotCampaignSettings, new Date(0));
+  const reviewableEmail = topProspectResultFixture(eligibleProspectFor({
+    id: "production-reviewable-email-prospect",
+    businessName: "Production Reviewable Email Prospect",
+    website: "https://production-reviewable.example",
+    email: "hello@production-reviewable.example",
+  }), {
+    id: "production-reviewable-email-result",
+    selected: false,
+    rejectionReason: "Below final cutoff",
+    resultBucket: "reviewable_lower_priority",
+    emailQuality: { ready: true, readinessLabel: "Send-ready", checks: [], issues: [] },
+  });
+  const job = topProspectJobFixture(campaign, {
+    status: "COMPLETED",
+    stage: "COMPLETE",
+    scannedCount: 95,
+    qualifiedCount: 0,
+    skippedCount: 95,
+    results: [],
+    reviewedNotRecommended: [reviewableEmail],
+    reviewableLowerPriority: [reviewableEmail],
+    blockedProspects: [],
+    manualOpportunityProspects: [],
+    unresolvedProspects: [],
+    skipSummary: { below_final_cutoff: 1, hard_skips_without_result_rows: 94 },
+  });
+
+  const report = buildAutopilotTopProspectJobReport(campaign, job, new Date(10));
+  const represented = Object.values(report.queueCounts).reduce((total, count) => total + count, 0);
+
+  assert.equal(report.prospectsQualified, 0);
+  assert.equal(report.queueCounts.emailDraftReady, 1);
+  assert.equal(report.queueCounts.blockedBadFit, 94);
+  assert.equal(represented, 95);
 });
 
 test("stopping Autopilot stops polling without claiming provider cancellation", () => {
