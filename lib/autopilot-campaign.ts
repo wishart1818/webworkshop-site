@@ -9,6 +9,7 @@ import {
   displayStateCode,
   displayTradeCategory,
   prospectSearchTypes,
+  prospectWrittenContactMethodIsUsable,
   titleCaseLocation,
   tradeCategories,
   withAnalysis,
@@ -23,9 +24,11 @@ import {
   prepareTopProspectArtifacts,
   publicProspectPreviewLink,
   recommendedMarketPresets,
+  topProspectResultBucket,
   type RecommendedMarketPreset,
   type TopProspectJob,
   type TopProspectInput,
+  type TopProspectResult,
   type ProspectMode,
 } from "@/lib/top-prospects";
 import type { DiscoveryProviderCoverageStatus } from "@/lib/lead-discovery";
@@ -831,22 +834,94 @@ function topProspectCityBreakdown(job: TopProspectJob): AutopilotCityActivity[] 
   }));
 }
 
+function selectedTopProspectQueueKey(result: TopProspectResult): AutopilotQueueKey {
+  const prospect = result.prospect;
+  if (/facebook|instagram/i.test(prospect.profileUrl || "") || prospect.classification === "social_only") {
+    return "readyForManualDm";
+  }
+  if (prospect.email || prospect.contactFormUrl) {
+    return result.emailQuality.ready ? "emailDraftReady" : "needsPreviewReview";
+  }
+  return "needsHumanResearch";
+}
+
+function reviewableTopProspectQueueKey(result: TopProspectResult): AutopilotQueueKey {
+  const prospect = result.prospect;
+  const socialManualFirst = (
+    prospect.recommendedContactMethod === "message_on_facebook"
+    || prospect.recommendedContactMethod === "message_on_social"
+    || prospect.classification === "social_only"
+  ) && prospectWrittenContactMethodIsUsable(prospect) && Boolean(
+    prospect.facebookUrl
+    || prospect.instagramUrl
+    || prospect.linkedinUrl
+    || /facebook|instagram|linkedin/i.test(prospect.profileUrl || ""),
+  );
+  if (socialManualFirst) return "readyForManualDm";
+  if (prospectWrittenContactMethodIsUsable(prospect)) {
+    return result.emailQuality.ready ? "emailDraftReady" : "needsPreviewReview";
+  }
+  return "needsHumanResearch";
+}
+
 function topProspectQueueCounts(job: TopProspectJob): AutopilotQueueCounts {
   const counts = emptyAutopilotQueueCounts();
-  for (const result of job.results) {
-    const prospect = result.prospect;
-    if (/facebook|instagram/i.test(prospect.profileUrl || "") || prospect.classification === "social_only") {
-      counts.readyForManualDm += 1;
-    } else if (prospect.email || prospect.contactFormUrl) {
-      if (result.emailQuality.ready) counts.emailDraftReady += 1;
-      else counts.needsPreviewReview += 1;
-    } else if (prospect.phone) {
-      counts.needsHumanResearch += 1;
-    } else {
-      counts.needsHumanResearch += 1;
-    }
+  const outcomeLimit = Math.max(0, job.scannedCount);
+  const representedProspects = new Set<string>();
+  let representedCount = 0;
+  const claimProspect = (prospectId: string) => {
+    if (!prospectId || representedProspects.has(prospectId) || representedCount >= outcomeLimit) return false;
+    representedProspects.add(prospectId);
+    representedCount += 1;
+    return true;
+  };
+  const routeResult = (result: TopProspectResult, queue: AutopilotQueueKey) => {
+    if (!claimProspect(result.prospect.id)) return false;
+    counts[queue] += 1;
+    return true;
+  };
+
+  for (const result of job.results) routeResult(result, selectedTopProspectQueueKey(result));
+
+  const reviewableResults = job.reviewableLowerPriority ?? job.reviewedNotRecommended
+    .filter((result) => (result.resultBucket ?? topProspectResultBucket(result)) === "reviewable_lower_priority");
+  let reviewableCount = 0;
+  for (const result of reviewableResults) {
+    if (routeResult(result, reviewableTopProspectQueueKey(result))) reviewableCount += 1;
   }
-  counts.blockedBadFit = Math.max(0, job.skippedCount + job.reviewedNotRecommended.length);
+
+  let manualOpportunityCount = 0;
+  for (const record of job.manualOpportunityProspects ?? []) {
+    if (!claimProspect(record.prospectId)) continue;
+    counts.needsHumanResearch += 1;
+    manualOpportunityCount += 1;
+  }
+
+  let unresolvedCount = 0;
+  for (const record of job.unresolvedProspects ?? []) {
+    if (!claimProspect(record.prospectId)) continue;
+    counts.needsHumanResearch += 1;
+    unresolvedCount += 1;
+  }
+
+  const blockedResults = job.blockedProspects ?? job.reviewedNotRecommended
+    .filter((result) => (result.resultBucket ?? topProspectResultBucket(result)) === "blocked");
+  let blockedResultCount = 0;
+  for (const result of blockedResults) {
+    if (!claimProspect(result.prospect.id)) continue;
+    blockedResultCount += 1;
+  }
+
+  const hardSkipsWithoutSavedResults = Math.max(
+    0,
+    Math.max(0, job.skippedCount)
+      - reviewableCount
+      - manualOpportunityCount
+      - unresolvedCount
+      - blockedResultCount,
+  );
+  counts.blockedBadFit = blockedResultCount
+    + Math.min(hardSkipsWithoutSavedResults, Math.max(0, outcomeLimit - representedCount));
   return counts;
 }
 
