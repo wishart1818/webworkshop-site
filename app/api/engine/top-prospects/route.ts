@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { continueTopProspectJobAfterResponse } from "@/lib/top-prospect-continuation";
 import { handleTopProspectList, safeTopProspectFailure } from "@/lib/top-prospect-list-route";
-import { createTopProspectJob } from "@/lib/top-prospect-repository";
-import { validateTopProspectInput } from "@/lib/top-prospects";
+import { startTopProspectSearch, TopProspectInputValidationError } from "@/lib/top-prospect-start";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,12 +12,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const validation = validateTopProspectInput(await request.json());
-    if (!validation.ok) return NextResponse.json({ error: validation.error }, { status: 400 });
-    const job = await createTopProspectJob(validation.value);
-    continueTopProspectJobAfterResponse(request, job.id);
-    return NextResponse.json({ jobId: job.id }, { status: 202 });
+    const result = await startTopProspectSearch(request, await request.json());
+    return NextResponse.json({ jobId: result.jobId }, { status: 202 });
   } catch (error) {
+    if (error instanceof TopProspectInputValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     const alreadyRunning = error instanceof Error && error.message === "A Top Prospects search is already running.";
     const failure = alreadyRunning ? {} : safeTopProspectFailure(error);
     return NextResponse.json(

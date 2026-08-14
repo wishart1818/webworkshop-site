@@ -7,9 +7,30 @@ import { createOrRefreshAutonomousReviewPackageForProspect, getAutonomousGrowthD
 import { autonomousGrowthModes, type AutonomousGrowthMode, type AutonomousGrowthSettings } from "@/lib/autonomous-growth";
 import { applyLegacyOutreachBackfill, previewLegacyOutreachBackfill } from "@/lib/legacy-outreach-backfill";
 import { listProspects, saveProspect } from "@/lib/prospect-repository";
-import { PREVIEW_GENERATOR_VERSION, previewRegenerationBlockReason, type Prospect } from "@/lib/prospect-engine";
+import {
+  allCoreServiceTradesOption,
+  normalizeTradeCategory,
+  PREVIEW_GENERATOR_VERSION,
+  previewRegenerationBlockReason,
+  prospectSearchTypes,
+  type Prospect,
+  type ProspectSearchType,
+} from "@/lib/prospect-engine";
 import { prepareProspectForPreview } from "@/lib/preview-preparation";
 import { prospectCurrentBucket } from "@/lib/prospect-funnel";
+import type { StartedTopProspectSearch } from "@/lib/top-prospect-start";
+import {
+  formatCityTargetsForHeader,
+  normalizeOutreachPreference,
+  normalizeProspectMode,
+  normalizeTopProspectWorkflowType,
+  outreachPreferences,
+  prospectModes,
+  validateTopProspectInput,
+  type OutreachPreference,
+  type ProspectMode,
+  type TopProspectInput,
+} from "@/lib/top-prospects";
 
 export const operatorCommandTypes = [
   "OPEN_PROSPECT",
@@ -31,6 +52,7 @@ export const operatorCommandTypes = [
   "RUN_SMART_BACKFILL_DRY_RUN",
   "RUN_MARKET_SCOUT_DRY_RUN",
   "RUN_SMART_AUTONOMOUS_DRY_RUN",
+  "RUN_TOP_PROSPECTS_SEARCH",
   "GENERATE_FAKE_TEST_PACKAGE",
   "SEND_INTERNAL_NOTIFICATION_TEST",
   "SEND_INTERNAL_RESEND_TEST",
@@ -117,6 +139,8 @@ export type OperatorCommandReceipt = {
   relatedPage?: string;
   relatedTestResultId?: string;
   relatedProspectIds?: string[];
+  relatedTopProspectJobId?: string;
+  relatedTopProspectSearch?: TopProspectInput;
   copyForChatGPT: string;
   technicalSummary: string;
 };
@@ -149,6 +173,15 @@ const supportedFields = new Set([
   "BUSINESS_NAME",
   "FEEDBACK",
   "FORCE",
+  "CITY",
+  "TRADE",
+  "PROSPECT_TYPE",
+  "PROSPECT_MODE",
+  "OUTREACH_PREFERENCE",
+  "RADIUS_KM",
+  "BUSINESSES_TO_SCAN",
+  "FINAL_PROSPECTS_WANTED",
+  "EXCLUDE_PREVIOUSLY_REVIEWED",
 ]);
 
 function isOperatorCommandType(value: string): value is OperatorCommandType {
@@ -196,6 +229,157 @@ function positiveInteger(value: string | undefined, field: string, errors: strin
     return undefined;
   }
   return number;
+}
+
+const requiredTopProspectCommandFields = [
+  "ACTION",
+  "CITY",
+  "TRADE",
+  "PROSPECT_TYPE",
+  "PROSPECT_MODE",
+  "OUTREACH_PREFERENCE",
+  "RADIUS_KM",
+  "BUSINESSES_TO_SCAN",
+  "FINAL_PROSPECTS_WANTED",
+  "EXCLUDE_PREVIOUSLY_REVIEWED",
+] as const;
+
+function commandOptionToken(value: string) {
+  return value.trim().toLowerCase().replace(/[_/\-]+/g, " ").replace(/\s+/g, " ");
+}
+
+function strictCommandInteger(value: string, field: string, errors: string[]) {
+  if (!/^\d+$/.test(value.trim())) {
+    errors.push(`${field} must be a whole number.`);
+    return undefined;
+  }
+  return Number(value);
+}
+
+function commandCityAndState(value: string, errors: string[]) {
+  const match = /^(.+\S)\s*,\s*([A-Za-z]{2})$/.exec(value.trim());
+  if (!match || /[;\n\r]/.test(match[1])) {
+    errors.push("CITY must use the City, ST format, for example Tampa, FL.");
+    return null;
+  }
+  return { city: value.trim(), state: match[2].toUpperCase() };
+}
+
+function commandProspectType(value: string): ProspectSearchType | null {
+  const token = commandOptionToken(value);
+  if (token === "all prospect types") return "all";
+  if (token === "redesign prospects") return "redesign";
+  return prospectSearchTypes.find((item) => commandOptionToken(item) === token) ?? null;
+}
+
+function commandProspectMode(value: string): ProspectMode | null {
+  const token = commandOptionToken(value);
+  const canonical = prospectModes.find((item) => commandOptionToken(item) === token);
+  return canonical ? normalizeProspectMode(canonical) : null;
+}
+
+function commandOutreachPreference(value: string): OutreachPreference | null {
+  const token = commandOptionToken(value);
+  const alias = token === "written outreach only" ? "written only" : token;
+  const canonical = outreachPreferences.find((item) => commandOptionToken(item) === alias);
+  return canonical ? normalizeOutreachPreference(canonical) : null;
+}
+
+function normalizeTopProspectStructuredInput(fields: Record<string, string>, errors: string[]) {
+  for (const field of requiredTopProspectCommandFields) {
+    if (!fields[field]?.trim()) errors.push(`${field} is required.`);
+  }
+  if (requiredTopProspectCommandFields.some((field) => !fields[field]?.trim())) return null;
+  if (fields.ACTION.trim().toUpperCase() !== "EXECUTE") {
+    errors.push("ACTION must be EXECUTE. The command still requires operator confirmation before starting.");
+  }
+
+  const location = commandCityAndState(fields.CITY, errors);
+  const trade = fields.TRADE === allCoreServiceTradesOption
+    ? allCoreServiceTradesOption
+    : normalizeTradeCategory(fields.TRADE);
+  if (!trade) errors.push("TRADE must be a supported Top Prospects trade.");
+
+  const prospectType = commandProspectType(fields.PROSPECT_TYPE);
+  if (!prospectType) errors.push("PROSPECT_TYPE must be a supported prospect type.");
+  const mode = commandProspectMode(fields.PROSPECT_MODE);
+  if (!mode) errors.push("PROSPECT_MODE must be Strict, Growth, or Volume.");
+  const outreachPreference = commandOutreachPreference(fields.OUTREACH_PREFERENCE);
+  if (!outreachPreference) errors.push("OUTREACH_PREFERENCE must be Written outreach only or Phone allowed.");
+
+  const radiusKm = strictCommandInteger(fields.RADIUS_KM, "RADIUS_KM", errors);
+  const businessesToScan = strictCommandInteger(fields.BUSINESSES_TO_SCAN, "BUSINESSES_TO_SCAN", errors);
+  const finalProspectsWanted = strictCommandInteger(fields.FINAL_PROSPECTS_WANTED, "FINAL_PROSPECTS_WANTED", errors);
+  const excludePreviouslyReviewed = boolValue(fields.EXCLUDE_PREVIOUSLY_REVIEWED, "EXCLUDE_PREVIOUSLY_REVIEWED", errors);
+  if (!location || !trade || !prospectType || !mode || !outreachPreference || radiusKm === undefined || businessesToScan === undefined || finalProspectsWanted === undefined || excludePreviouslyReviewed === undefined) {
+    return null;
+  }
+
+  const validation = validateTopProspectInput({
+    trade,
+    city: location.city,
+    state: location.state,
+    radiusKm,
+    businessesToScan,
+    finalProspectsWanted,
+    prospectType,
+    mode,
+    workflowType: normalizeTopProspectWorkflowType("search"),
+    outreachPreference,
+    excludePreviouslyReviewed,
+  });
+  if (!validation.ok) {
+    errors.push(validation.error);
+    return null;
+  }
+  return validation.value;
+}
+
+function setTopProspectPreviewParameters(preview: OperatorCommandPreview, input: TopProspectInput) {
+  preview.parsedParameters.CITY = formatCityTargetsForHeader(input.cityTargets, input.city, input.state);
+  preview.parsedParameters.STATE = input.state;
+  preview.parsedParameters.TRADE = input.trade;
+  preview.parsedParameters.PROSPECT_TYPE = input.prospectType;
+  preview.parsedParameters.PROSPECT_MODE = input.mode;
+  preview.parsedParameters.OUTREACH_PREFERENCE = input.outreachPreference;
+  preview.parsedParameters.RADIUS_KM = input.radiusKm;
+  preview.parsedParameters.BUSINESSES_TO_SCAN = input.businessesToScan;
+  preview.parsedParameters.FINAL_PROSPECTS_WANTED = input.finalProspectsWanted;
+  preview.parsedParameters.EXCLUDE_PREVIOUSLY_REVIEWED = input.excludePreviouslyReviewed;
+  preview.parsedParameters.WORKFLOW_TYPE = input.workflowType;
+}
+
+function validatedTopProspectInputFromPreview(preview: OperatorCommandPreview) {
+  const validation = validateTopProspectInput({
+    trade: preview.parsedParameters.TRADE,
+    city: preview.parsedParameters.CITY,
+    state: preview.parsedParameters.STATE,
+    radiusKm: preview.parsedParameters.RADIUS_KM,
+    businessesToScan: preview.parsedParameters.BUSINESSES_TO_SCAN,
+    finalProspectsWanted: preview.parsedParameters.FINAL_PROSPECTS_WANTED,
+    prospectType: preview.parsedParameters.PROSPECT_TYPE,
+    mode: preview.parsedParameters.PROSPECT_MODE,
+    workflowType: preview.parsedParameters.WORKFLOW_TYPE,
+    outreachPreference: preview.parsedParameters.OUTREACH_PREFERENCE,
+    excludePreviouslyReviewed: preview.parsedParameters.EXCLUDE_PREVIOUSLY_REVIEWED,
+  });
+  if (!validation.ok) throw new Error(validation.error);
+  return validation.value;
+}
+
+function topProspectSearchSummary(input: TopProspectInput) {
+  return [
+    `Trade: ${input.trade}`,
+    `Location: ${formatCityTargetsForHeader(input.cityTargets, input.city, input.state)}`,
+    `Prospect type: ${input.prospectType}`,
+    `Mode: ${input.mode}`,
+    `Outreach preference: ${input.outreachPreference}`,
+    `Radius: ${input.radiusKm} km`,
+    `Businesses to scan: ${input.businessesToScan}`,
+    `Final prospects wanted: ${input.finalProspectsWanted}`,
+    `Exclude previously reviewed: ${input.excludePreviouslyReviewed}`,
+    `Workflow: ${input.workflowType}`,
+  ];
 }
 
 function commandLabel(type: string) {
@@ -331,7 +515,18 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
     else if (["PROCESS_EXISTING_FIRST", "FULL_AUTO", "FOLLOW_UPS", "FORCE"].includes(key)) preview.parsedParameters[key] = boolValue(value, key, preview.validationErrors) ?? false;
     else preview.parsedParameters[key] = safeOperatorText(value);
   }
-  if (command === "CONFIGURE_AUTO_EMAIL_PILOT") {
+  if (command === "RUN_TOP_PROSPECTS_SEARCH") {
+    const input = normalizeTopProspectStructuredInput(parsed.fields, preview.validationErrors);
+    if (input) {
+      setTopProspectPreviewParameters(preview, input);
+      preview.navigation = { tab: "Top Prospects" };
+      preview.plannedActions.push("Create exactly one normal persisted Top Prospects search job.");
+      preview.plannedActions.push(...topProspectSearchSummary(input));
+      preview.plannedActions.push("Start the existing first batch after the response and leave remaining batches to the durable scheduler.");
+    }
+    preview.safetyImpact.push("Discovery providers may be queried and one Top Prospects job may be persisted after confirmation.");
+    preview.safetyImpact.push("Outreach sent = 0. No package, approval, email, DM, form, call, or Loom will be created or sent by this command.");
+  } else if (command === "CONFIGURE_AUTO_EMAIL_PILOT") {
     if (parsed.fields.FULL_AUTO && boolValue(parsed.fields.FULL_AUTO, "FULL_AUTO", preview.validationErrors) === true) {
       preview.validationErrors.push("FULL_AUTO:true is not allowed from CONFIGURE_AUTO_EMAIL_PILOT. Full-auto email requires a separate strong-confirmation workflow.");
     }
@@ -375,7 +570,7 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
 }
 
 function commandLevel(type: OperatorCommandType): OperatorCommandLevel {
-  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL", "REGENERATE_PROSPECT_PREVIEW", "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS", "RUN_SAFE_READINESS_REPAIR"].includes(type)) return 2;
+  if (["SET_AUTONOMOUS_MODE", "SET_DAILY_EMAIL_CAP", "SET_DAILY_QUEUE_CAP", "SET_DAILY_SCAN_CAP", "SET_DAILY_PREVIEW_CAP", "SET_COOLDOWN_MINUTES", "ENABLE_FOLLOW_UPS", "DISABLE_FOLLOW_UPS", "ENABLE_GLOBAL_KILL_SWITCH", "DISABLE_GLOBAL_KILL_SWITCH", "PAUSE_ALL_OUTREACH", "CONFIGURE_AUTO_EMAIL_PILOT", "PROCESS_EXISTING_QUALIFIED_PROSPECTS", "MOVE_REVIEWED_LEAD_TO_EMAIL_QUEUE", "APPLY_LEGACY_OUTREACH_BACKFILL", "REGENERATE_PROSPECT_PREVIEW", "REGENERATE_ELIGIBLE_UNSENT_PREVIEWS", "RUN_SAFE_READINESS_REPAIR", "RUN_TOP_PROSPECTS_SEARCH"].includes(type)) return 2;
   return 1;
 }
 
@@ -554,6 +749,8 @@ function copyForReceipt(receipt: Omit<OperatorCommandReceipt, "copyForChatGPT" |
     `Command: ${receipt.commandType}`,
     `Status: ${receipt.status}`,
     `Timestamp: ${receipt.completedAt ?? receipt.createdAt}`,
+    receipt.relatedTopProspectJobId ? `Top Prospects job ID: ${receipt.relatedTopProspectJobId}` : "",
+    receipt.relatedTopProspectSearch ? `Normalized search:\n- ${topProspectSearchSummary(receipt.relatedTopProspectSearch).join("\n- ")}` : "",
     receipt.whatChanged.length ? `Changed:\n- ${receipt.whatChanged.join("\n- ")}` : "Changed:\n- Nothing changed",
     receipt.whatDidNotChange.length ? `Unchanged:\n- ${receipt.whatDidNotChange.join("\n- ")}` : "",
     "Outreach:",
@@ -584,6 +781,8 @@ function makeReceipt(input: Omit<OperatorCommandReceipt, "id" | "createdAt" | "c
       recordsAffected: base.recordsAffected,
       testsTriggered: base.testsTriggered,
       relatedPage: base.relatedPage,
+      relatedTopProspectJobId: base.relatedTopProspectJobId,
+      relatedTopProspectSearch: base.relatedTopProspectSearch,
       safeErrorCategory: base.safeErrorCategory,
     }, null, 2)),
   };
@@ -671,7 +870,13 @@ function settingsPatchFromPreview(preview: OperatorCommandPreview): Partial<Auto
   return {};
 }
 
-export async function executeOperatorCommand(commandText: string, options: { mode?: "search" | "command"; confirmed?: boolean } = {}) {
+type ExecuteOperatorCommandOptions = {
+  mode?: "search" | "command";
+  confirmed?: boolean;
+  startTopProspectSearch?: (input: TopProspectInput) => Promise<StartedTopProspectSearch>;
+};
+
+export async function executeOperatorCommand(commandText: string, options: ExecuteOperatorCommandOptions = {}) {
   const preview = await previewOperatorCommand(commandText, options.mode);
   if (preview.validationErrors.length) {
     const receipt = makeReceipt({
@@ -754,7 +959,70 @@ export async function executeOperatorCommand(commandText: string, options: { mod
     }
 
     let receipt: OperatorCommandReceipt;
-    if (preview.commandType === "RUN_PROVIDER_SMOKE_TEST") {
+    if (preview.commandType === "RUN_TOP_PROSPECTS_SEARCH") {
+      if (!options.startTopProspectSearch) {
+        receipt = makeReceipt({
+          commandText: preview.commandText,
+          commandType: preview.commandType,
+          status: "blocked",
+          plannedActions: preview.plannedActions,
+          whatChanged: [],
+          whatDidNotChange: ["No Top Prospects job was created.", "No settings changed.", "No outreach was sent."],
+          recordsAffected: 0,
+          testsTriggered: [],
+          safeErrorMessage: "Top Prospects can only be started from an active operator request.",
+          safeErrorCategory: "top_prospects_request_context_unavailable",
+          nextRecommendedAction: "Run the command again from the Operator Command Bar.",
+          relatedPage: "Top Prospects",
+        });
+      } else {
+        const input = validatedTopProspectInputFromPreview(preview);
+        try {
+          const started = await options.startTopProspectSearch(input);
+          receipt = makeReceipt({
+            commandText: preview.commandText,
+            commandType: preview.commandType,
+            status: "completed",
+            confirmedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            plannedActions: preview.plannedActions,
+            whatChanged: [
+              `Top Prospects search started. Job ID: ${started.jobId}.`,
+              ...topProspectSearchSummary(started.input),
+            ],
+            whatDidNotChange: [
+              "No outreach package or approval was created.",
+              "No email, DM, form, phone call, or Loom was sent.",
+              "Qualification, website/contact verification, provider, scheduler, OIDC, and outreach settings were unchanged.",
+            ],
+            recordsAffected: 1,
+            testsTriggered: [],
+            nextRecommendedAction: `Open Top Prospects and monitor job ${started.jobId}.`,
+            relatedPage: "Top Prospects",
+            relatedTopProspectJobId: started.jobId,
+            relatedTopProspectSearch: started.input,
+          });
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "A Top Prospects search is already running.") throw error;
+          const activeJobId = safeOperatorText(String((error as Error & { activeJobId?: unknown }).activeJobId ?? ""));
+          receipt = makeReceipt({
+            commandText: preview.commandText,
+            commandType: preview.commandType,
+            status: "blocked",
+            plannedActions: preview.plannedActions,
+            whatChanged: [],
+            whatDidNotChange: ["The active Top Prospects search was not duplicated.", "No settings changed.", "No outreach was sent."],
+            recordsAffected: 0,
+            testsTriggered: [],
+            safeErrorMessage: error.message,
+            safeErrorCategory: "top_prospects_already_running",
+            nextRecommendedAction: activeJobId ? `Open Top Prospects and monitor active job ${activeJobId}.` : "Open Top Prospects and wait for the active search to finish.",
+            relatedPage: "Top Prospects",
+            relatedTopProspectJobId: activeJobId || undefined,
+          });
+        }
+      }
+    } else if (preview.commandType === "RUN_PROVIDER_SMOKE_TEST") {
       const test = await runProviderSmokeTestCommand();
       receipt = makeReceipt({
         commandText: preview.commandText,

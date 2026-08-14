@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { executeOperatorCommand, listOperatorCommandReceipts, previewOperatorCommand } from "@/lib/operator-command-center";
+import { startTopProspectSearch } from "@/lib/top-prospect-start";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
     return NextResponse.json(await executeOperatorCommand(commandText, {
       mode: payload.mode,
       confirmed: payload.action === "confirm",
+      startTopProspectSearch: (input) => startTopProspectSearch(request, input),
     }));
   } catch (error) {
     console.error("[operator-commands] Command failed safely.", { error: error instanceof Error ? error.name : "unknown" });
