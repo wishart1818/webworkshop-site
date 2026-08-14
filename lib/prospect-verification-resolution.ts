@@ -5,9 +5,11 @@ import {
 } from "@/lib/prospect-qualification";
 import {
   affirmativeFirstPartyIdentity,
+  discoveryIdentityEvidenceFromSignals,
   discoveryIdentityEvidenceSignal,
   isCredibleOwnedWebsiteCandidate,
   providerOwnedWebsiteCandidates,
+  type DiscoveryIdentitySource,
 } from "@/lib/prospect-identity-evidence";
 import {
   authoritativeProviderBoundWebsiteIdentity,
@@ -57,12 +59,71 @@ export type SharedProspectVerificationResolution = {
   reasonCode: ManualReviewTriageReasonCode;
   outcome: Exclude<ManualReviewTriageOutcome, "protected_ineligible">;
   explanation: string;
+  noSiteEnrichment?: NoSiteEnrichmentDiagnostic;
 };
 
 export type SharedProspectVerificationDependencies = WebsiteVerificationDependencies & {
   googlePlacesApiKey?: string;
   azureMapsApiKey?: string;
+  allowHistoricalNoSiteLookup?: boolean;
 };
+
+export const noSiteEnrichmentOutcomes = [
+  "owned_website_found",
+  "probable_no_owned_website",
+  "broken_or_inactive_website",
+  "unresolved",
+] as const;
+export type NoSiteEnrichmentOutcome = (typeof noSiteEnrichmentOutcomes)[number];
+export type NoSiteEnrichmentDiagnostic = {
+  version: "no-site-enrichment-v1";
+  outcome: NoSiteEnrichmentOutcome;
+  reason: string;
+  checkedAt: string;
+  providerSources: DiscoveryIdentitySource[];
+  websiteCandidate: string;
+  websiteVerificationStatus: string;
+  websiteFitDisposition: string;
+};
+
+const noSiteEnrichmentSignalPrefix = "no_site_enrichment_diagnostic:";
+
+export function noSiteEnrichmentDiagnosticSignal(diagnostic: NoSiteEnrichmentDiagnostic) {
+  return `${noSiteEnrichmentSignalPrefix}${Buffer.from(JSON.stringify(diagnostic)).toString("base64url")}`;
+}
+
+export function latestNoSiteEnrichmentDiagnostic(signals: string[]) {
+  return signals.flatMap((signal): NoSiteEnrichmentDiagnostic[] => {
+    if (!signal.startsWith(noSiteEnrichmentSignalPrefix) || signal.length > 8_000) return [];
+    try {
+      const value = JSON.parse(Buffer.from(signal.slice(noSiteEnrichmentSignalPrefix.length), "base64url").toString("utf8")) as Partial<NoSiteEnrichmentDiagnostic>;
+      if (
+        value.version !== "no-site-enrichment-v1"
+        || !noSiteEnrichmentOutcomes.includes(value.outcome as NoSiteEnrichmentOutcome)
+        || typeof value.reason !== "string"
+        || typeof value.checkedAt !== "string"
+        || !Array.isArray(value.providerSources)
+        || typeof value.websiteCandidate !== "string"
+        || typeof value.websiteVerificationStatus !== "string"
+        || typeof value.websiteFitDisposition !== "string"
+      ) return [];
+      return [{
+        version: "no-site-enrichment-v1",
+        outcome: value.outcome as NoSiteEnrichmentOutcome,
+        reason: value.reason.slice(0, 1_000),
+        checkedAt: value.checkedAt.slice(0, 100),
+        providerSources: value.providerSources.filter((source): source is DiscoveryIdentitySource => (
+          ["osm", "google", "bing", "yelp", "yellowPages"].includes(String(source))
+        )),
+        websiteCandidate: value.websiteCandidate.slice(0, 500),
+        websiteVerificationStatus: value.websiteVerificationStatus.slice(0, 100),
+        websiteFitDisposition: value.websiteFitDisposition.slice(0, 100),
+      }];
+    } catch {
+      return [];
+    }
+  }).at(-1) ?? null;
+}
 
 export function mergeResolvedWebsiteEvidence(
   existing: Prospect,
@@ -216,16 +277,92 @@ function secondPassDependencies(input: SharedProspectVerificationDependencies): 
   };
 }
 
+function noSiteEnrichmentDiagnosticFor(input: {
+  resolution: SharedProspectVerificationResolution;
+  workingProspect: Prospect;
+  corroboratingEvidenceCount: number;
+  recoveredCandidates: string[];
+  checkedAt: string;
+}) {
+  const { resolution } = input;
+  const resolved = resolution.result.prospect;
+  const report = resolution.result.report;
+  const providerSources = [...new Set(
+    discoveryIdentityEvidenceFromSignals(input.workingProspect.activitySignals).map((item) => item.source),
+  )].sort();
+  const candidate = resolved.website || input.recoveredCandidates[0] || "";
+  const disposition = normalizeWebsiteFitDisposition(resolved);
+  let outcome: NoSiteEnrichmentOutcome = "unresolved";
+  let reason = resolution.explanation;
+
+  if (report.status === "usable" && report.ownershipDecision === "owned" && candidate) {
+    outcome = "owned_website_found";
+    reason = `An exact provider identity match supplied ${candidate}; shared website verification confirmed an owned usable website.`;
+  } else if (["confirmed_broken", "confirmed_inactive"].includes(report.status) && candidate) {
+    outcome = "broken_or_inactive_website";
+    reason = `A matched business-domain candidate (${candidate}) passed through shared website verification and was confirmed ${report.status.replace("confirmed_", "")}.`;
+  } else if (disposition === "no_owned_website" && report.status === "no_owned_website") {
+    outcome = "probable_no_owned_website";
+    reason = `Independent provider identities (${providerSources.join(", ")}) matched the business without supplying a credible owned website; existing no-owned-website qualification rules accepted that evidence.`;
+  } else if (input.recoveredCandidates.length > 0) {
+    reason = `A matched provider website candidate was found, but shared verification remained ${report.status.replaceAll("_", " ")}; the record stays unresolved.`;
+  } else if (input.corroboratingEvidenceCount === 0) {
+    reason = `No independent provider result matched the stored business identity with sufficient phone or address evidence. ${resolution.explanation}`;
+  }
+
+  return {
+    version: "no-site-enrichment-v1",
+    outcome,
+    reason: reason.slice(0, 1_000),
+    checkedAt: input.checkedAt,
+    providerSources,
+    websiteCandidate: candidate,
+    websiteVerificationStatus: report.status,
+    websiteFitDisposition: disposition,
+  } satisfies NoSiteEnrichmentDiagnostic;
+}
+
+function attachNoSiteEnrichment(
+  resolution: SharedProspectVerificationResolution,
+  input: {
+    startedAsProbableNoSite: boolean;
+    workingProspect: Prospect;
+    corroboratingEvidenceCount: number;
+    recoveredCandidates: string[];
+    checkedAt: string;
+  },
+) {
+  if (!input.startedAsProbableNoSite) return resolution;
+  const diagnostic = noSiteEnrichmentDiagnosticFor({ resolution, ...input });
+  const prospect = resolution.result.prospect;
+  const activitySignals = [
+    ...prospect.activitySignals.filter((signal) => !signal.startsWith(noSiteEnrichmentSignalPrefix)),
+    noSiteEnrichmentDiagnosticSignal(diagnostic),
+  ];
+  return {
+    ...resolution,
+    result: {
+      ...resolution.result,
+      prospect: { ...prospect, activitySignals },
+    },
+    noSiteEnrichment: diagnostic,
+  } satisfies SharedProspectVerificationResolution;
+}
+
 export async function verifyProspectWebsiteWithSecondPass(
   prospect: Prospect,
   dependencies: SharedProspectVerificationDependencies = {},
 ): Promise<SharedProspectVerificationResolution> {
+  const startedAsProbableNoSite = !prospect.website.trim()
+    && prospect.prospectType === "no_website_social_only"
+    && !prospect.inactive;
   const recoveryTimeoutMs = Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000));
   const corroboratingEvidence = await discoverIndependentNoSiteIdentityEvidence(prospect, {
     fetch: dependencies.fetch,
     timeoutMs: recoveryTimeoutMs,
     googlePlacesApiKey: dependencies.googlePlacesApiKey,
     azureMapsApiKey: dependencies.azureMapsApiKey,
+    allowHistoricalLookup: dependencies.allowHistoricalNoSiteLookup,
   });
   const workingProspect = corroboratingEvidence.length
     ? {
@@ -244,14 +381,22 @@ export async function verifyProspectWebsiteWithSecondPass(
       fetch: dependencies.fetch,
       timeoutMs: recoveryTimeoutMs,
       googlePlacesApiKey: dependencies.googlePlacesApiKey,
+      allowHistoricalLookup: dependencies.allowHistoricalNoSiteLookup,
     })
     : [];
 
   const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(workingProspect, dependencies));
+  const finish = (resolution: SharedProspectVerificationResolution) => attachNoSiteEnrichment(resolution, {
+    startedAsProbableNoSite,
+    workingProspect,
+    corroboratingEvidenceCount: corroboratingEvidence.length,
+    recoveredCandidates,
+    checkedAt: (dependencies.now?.() ?? new Date()).toISOString(),
+  });
   const initialDisposition = normalizeWebsiteFitDisposition(initialResult.prospect);
   const recoveredOwnedSiteMustBeChecked = initialDisposition === "no_owned_website" && recoveredCandidates.length > 0;
   if (safelyResolved(initialResult) && !recoveredOwnedSiteMustBeChecked) {
-    return {
+    return finish({
       result: initialResult,
       initialResult,
       secondPassAttempted: false,
@@ -259,14 +404,14 @@ export async function verifyProspectWebsiteWithSecondPass(
       reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
-    };
+    });
   }
 
   const storedHost = normalizedHost(workingProspect.website);
   const providerHosts = new Set(providerCandidates.map(normalizedHost).filter(Boolean));
   if (storedHost) providerHosts.add(storedHost);
   if (providerHosts.size > 1) {
-    return {
+    return finish({
       result: initialResult,
       initialResult,
       secondPassAttempted: false,
@@ -274,7 +419,7 @@ export async function verifyProspectWebsiteWithSecondPass(
       reasonCode: "PROVIDER_WEBSITE_CONFLICT",
       outcome: "still_manual",
       explanation: "Provider website candidates conflict with the stored domain. No candidate was promoted automatically.",
-    };
+    });
   }
 
   const candidates = [...new Set([
@@ -283,7 +428,7 @@ export async function verifyProspectWebsiteWithSecondPass(
     ...recoveredCandidates,
   ].filter((value) => value && isCredibleOwnedWebsiteCandidate(value)))].slice(0, 3);
   if (!candidates.length && !workingProspect.website.trim()) {
-    return {
+    return finish({
       result: initialResult,
       initialResult,
       secondPassAttempted: false,
@@ -291,7 +436,7 @@ export async function verifyProspectWebsiteWithSecondPass(
       reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
-    };
+    });
   }
 
   let best: ProspectWebsiteVerificationResult | null = recoveredOwnedSiteMustBeChecked ? null : initialResult;
@@ -309,7 +454,7 @@ export async function verifyProspectWebsiteWithSecondPass(
     }
   }
   const finalResult = best ?? initialResult;
-  return {
+  return finish({
     result: finalResult,
     initialResult,
     secondPassAttempted: true,
@@ -317,5 +462,5 @@ export async function verifyProspectWebsiteWithSecondPass(
     reasonCode: resolutionReasonCode(finalResult),
     outcome: resolutionOutcome(finalResult),
     explanation: resultExplanation(finalResult, true),
-  };
+  });
 }

@@ -215,6 +215,13 @@ function bucketForResult(result: TopProspectResult) {
   return result.resultBucket ?? topProspectResultBucket(result);
 }
 
+const websiteEnrichmentOutcomeLabels = {
+  owned_website_found: "Owned website found",
+  probable_no_owned_website: "Probable no owned website",
+  broken_or_inactive_website: "Broken or inactive website",
+  unresolved: "Unresolved",
+} as const;
+
 function failedDiscoveryIssueCount(job: TopProspectJob) {
   const diagnostics = job.discoveryDiagnostics;
   if (!diagnostics) return job.status === "FAILED" || job.status === "FAILED_AFTER_DISCOVERY" ? 1 : 0;
@@ -457,6 +464,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     : [];
   const previouslyReviewedCount = latestJob ? latestJob.skipSummary.previously_reviewed ?? 0 : 0;
   const manualOpportunityProspects = latestJob?.manualOpportunityProspects ?? [];
+  const websiteEnrichmentRecords = latestJob?.discoveryDiagnostics?.websiteEnrichmentRecords ?? [];
   const outcomeCounts = latestJob ? topProspectOutcomeCounts(latestJob) : null;
   const manualReviewCount = outcomeCounts?.manualReview ?? 0;
   const strictlyQualifiedCount = outcomeCounts?.strictlyQualified ?? 0;
@@ -915,6 +923,34 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <ul>{skippedBucketEntries.map(([reason, count]) => <li key={reason}><b>{count}</b><span>{skipReasonLabel(reason)}</span></li>)}</ul>
             </div>
           )}
+        </section>
+      ) : null}
+
+      {latestJob && websiteEnrichmentRecords.length > 0 ? (
+        <section className="engine-panel engine-top-results" aria-label="Owned website corroboration">
+          <div className="engine-panel__head">
+            <div>
+              <h2>Owned website corroboration</h2>
+              <p>Independent provider matches were checked before a missing website field was treated as meaningful evidence. This step generated no package and sent nothing.</p>
+            </div>
+            <span>{websiteEnrichmentRecords.length} checked</span>
+          </div>
+          <div className="engine-operator-summary-grid">
+            {websiteEnrichmentRecords.map((record) => (
+              <article key={record.prospectId}>
+                <span>{websiteEnrichmentOutcomeLabels[record.outcome]}</span>
+                <h3>{record.businessName}</h3>
+                <p>{record.trade} in {record.city}, {record.state}</p>
+                <p>{record.reason}</p>
+                <p><b>Providers:</b> {record.providerSources.join(", ") || "No independent exact match"}</p>
+                {record.websiteCandidate ? <p><b>Website checked:</b> {compactUrl(record.websiteCandidate)}</p> : null}
+                <p><b>Verification:</b> {record.websiteVerificationStatus.replaceAll("_", " ")} / <b>Fit:</b> {record.websiteFitDisposition.replaceAll("_", " ")}</p>
+                <div className="engine-inline-actions">
+                  <button className="engine-button" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
       ) : null}
 

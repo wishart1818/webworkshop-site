@@ -26,6 +26,7 @@ import {
   verifyProspectWebsiteWithSecondPass,
   type ManualReviewTriageOutcome,
   type ManualReviewTriageReasonCode,
+  type SharedProspectVerificationDependencies,
   type SharedProspectVerificationResolution,
 } from "@/lib/prospect-verification-resolution";
 import { safeHighConfidenceWebsiteExclusion } from "@/lib/website-repair-decision";
@@ -43,7 +44,6 @@ import {
   type WebsiteRepairAuditRun,
 } from "@/lib/website-repair-audit-repository";
 import { enforceWebsiteRepairApplyRateLimit } from "@/lib/website-repair-rate-limit";
-import type { WebsiteVerificationDependencies } from "@/lib/site-analysis";
 
 export const manualReviewTriageConfirmationText = "APPLY REVIEWED TRIAGE RESULTS";
 export const manualReviewTriageChunkSize = 8;
@@ -104,7 +104,7 @@ export type ManualReviewTriageReport = {
 
 type ManualReviewTriageDependencies = {
   now?: () => Date;
-  verification?: WebsiteVerificationDependencies;
+  verification?: SharedProspectVerificationDependencies;
   listPopulation?: typeof listManualReviewTriagePopulation;
   getProspect?: typeof getProspect;
   listQueue?: typeof listOutreachQueueItemsForBackfill;
@@ -201,7 +201,9 @@ function triageProtectionReason(prospect: Prospect, queueItems: OutreachQueueIte
   return websiteRepairProtectionReason(prospect, queueItems);
 }
 
-function boundedVerificationDependencies(input: WebsiteVerificationDependencies = {}): WebsiteVerificationDependencies {
+function boundedVerificationDependencies(
+  input: SharedProspectVerificationDependencies = {},
+): SharedProspectVerificationDependencies {
   return {
     ...input,
     maxVerificationAttempts: Math.min(3, Math.max(1, input.maxVerificationAttempts ?? 3)),
@@ -336,7 +338,7 @@ function baseRecord(input: {
 export async function inspectManualReviewTriageCandidate(
   prospect: Prospect,
   queueItems: OutreachQueueItem[],
-  dependencies: WebsiteVerificationDependencies = {},
+  dependencies: SharedProspectVerificationDependencies = {},
 ) {
   const protectedReason = triageProtectionReason(prospect, queueItems);
   if (protectedReason) {
@@ -353,7 +355,10 @@ export async function inspectManualReviewTriageCandidate(
   }
   let resolution: SharedProspectVerificationResolution;
   try {
-    resolution = await verifyProspectWebsiteWithSecondPass(prospect, boundedVerificationDependencies(dependencies));
+    resolution = await verifyProspectWebsiteWithSecondPass(prospect, {
+      ...boundedVerificationDependencies(dependencies),
+      allowHistoricalNoSiteLookup: true,
+    });
   } catch {
     const record = baseRecord({
       prospect,
@@ -399,7 +404,7 @@ export async function inspectManualReviewTriageCandidate(
 
 export async function inspectManualReviewTriageCandidatesBounded(
   candidates: Prospect[],
-  dependencies: WebsiteVerificationDependencies,
+  dependencies: SharedProspectVerificationDependencies,
   groupedQueue: Map<string, OutreachQueueItem[]>,
 ) {
   const inspected = new Array<Awaited<ReturnType<typeof inspectManualReviewTriageCandidate>>>(candidates.length);
