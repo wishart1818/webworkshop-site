@@ -98,6 +98,7 @@ export function OperatorCommandBar({
     "Show me email-ready leads.",
     "Why is sending blocked?",
     "Run the full readiness test.",
+    "COMMAND: RUN_TOP_PROSPECTS_SEARCH\nCITY: Tampa, FL\nTRADE: Pressure Washing\nPROSPECT_TYPE: All Prospect Types\nPROSPECT_MODE: Growth\nOUTREACH_PREFERENCE: Written outreach only\nRADIUS_KM: 50\nBUSINESSES_TO_SCAN: 30\nFINAL_PROSPECTS_WANTED: 10\nEXCLUDE_PREVIOUSLY_REVIEWED: true\nACTION: EXECUTE",
     "COMMAND: RUN_SAFE_READINESS_REPAIR\nACTION: EXECUTE",
     "Show previews that need regeneration.",
     "Regenerate the preview for Pinnacle Pressure Washing of Toledo.",
@@ -201,6 +202,7 @@ export function OperatorCommandBar({
         <div className={`engine-command-receipt engine-command-receipt--${receipt.status}`} role="status">
           <div>
             <b>Command {displayStatus(receipt.status)}</b>
+            {receipt.relatedTopProspectJobId ? <p><b>Top Prospects job:</b> {receipt.relatedTopProspectJobId}</p> : null}
             <p>{receipt.nextRecommendedAction}</p>
           </div>
           <button className="engine-button" onClick={() => void copyText("Command result", receipt.copyForChatGPT)} type="button">{copied === "Command result" ? "Copied" : "Copy Result for ChatGPT"}</button>
@@ -276,6 +278,7 @@ export function CommandActivityWorkspace() {
                 <div><dt>Outreach sent</dt><dd>{receipt.outreachSent.emails} emails, {receipt.outreachSent.dms} DMs, {receipt.outreachSent.forms} forms, {receipt.outreachSent.calls} calls, {receipt.outreachSent.looms} Looms</dd></div>
               </dl>
               {receipt.safeErrorMessage ? <p className="engine-command-error"><b>Safe error:</b> {receipt.safeErrorMessage}</p> : null}
+              {receipt.relatedTopProspectJobId ? <p><b>Top Prospects job:</b> {receipt.relatedTopProspectJobId}</p> : null}
               <p><b>Next:</b> {receipt.nextRecommendedAction}</p>
               <div className="engine-command-actions">
                 <button className="engine-button" onClick={() => void copyText(`chatgpt-${receipt.id}`, receipt.copyForChatGPT)} type="button">{copied === `chatgpt-${receipt.id}` ? "Copied" : "Copy Result for ChatGPT"}</button>
