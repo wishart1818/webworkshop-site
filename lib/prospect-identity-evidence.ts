@@ -120,8 +120,12 @@ function isSpecificGoogleBusinessProfileUrl(value: string) {
     }
     if (!(host === "google.com" || host.endsWith(".google.com"))) return false;
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    return /\/maps\/(?:place|search|dir)\//i.test(path)
-      || /\/maps$/i.test(path) && Boolean(url.searchParams.get("cid") || url.searchParams.get("q") || url.searchParams.get("query_place_id"));
+    const isGoogleMapsUrl = host === "maps.google.com" || /^\/maps(?:\/|$)/i.test(path);
+    if (!isGoogleMapsUrl) return false;
+    const cid = url.searchParams.get("cid") ?? "";
+    return /^\d+$/.test(cid)
+      || /\/maps\/place\//i.test(path)
+      || Boolean(url.searchParams.get("query_place_id"));
   } catch {
     return false;
   }
