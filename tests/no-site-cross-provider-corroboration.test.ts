@@ -201,7 +201,7 @@ test("Bing-only no-site candidate can gain exact Google evidence including the p
   assert.equal(decision.verified, true);
 });
 
-test("ambiguous or already multi-provider records do not trigger another corroboration request", async () => {
+test("same-name ambiguity receives one bounded corroboration pass while already multi-provider records do not", async () => {
   let calls = 0;
   const fetchImpl: typeof fetch = async () => {
     calls += 1;
@@ -215,6 +215,7 @@ test("ambiguous or already multi-provider records do not trigger another corrobo
     fetch: fetchImpl,
     now: () => now,
   });
+  const callsAfterAmbiguous = calls;
   const alreadyCorroborated = await discoverIndependentNoSiteIdentityEvidence(prospect({
     activitySignals: [googleSignal(), bingSignal()],
   }), {
@@ -225,7 +226,8 @@ test("ambiguous or already multi-provider records do not trigger another corrobo
 
   assert.deepEqual(ambiguous, []);
   assert.deepEqual(alreadyCorroborated, []);
-  assert.equal(calls, 0);
+  assert.equal(callsAfterAmbiguous, 3);
+  assert.equal(calls, callsAfterAmbiguous);
 });
 
 test("resolved provider evidence is persisted when website-only resolution merges into an existing prospect", () => {

@@ -1294,7 +1294,7 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   || typeof record.trade !== "string"
                   || typeof record.city !== "string"
                   || typeof record.state !== "string"
-                  || record.version !== "no-site-enrichment-v1"
+                  || !["no-site-enrichment-v1", "no-site-enrichment-v2"].includes(String(record.version))
                   || !["owned_website_found", "probable_no_owned_website", "broken_or_inactive_website", "unresolved"].includes(String(record.outcome))
                   || typeof record.reason !== "string"
                   || typeof record.checkedAt !== "string"
@@ -1309,7 +1309,7 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   trade: record.trade.slice(0, 100),
                   city: record.city.slice(0, 100),
                   state: record.state.slice(0, 10),
-                  version: "no-site-enrichment-v1",
+                  version: record.version as TopProspectWebsiteEnrichmentRecord["version"],
                   outcome: record.outcome as TopProspectWebsiteEnrichmentRecord["outcome"],
                   reason: record.reason.slice(0, 1_000),
                   checkedAt: record.checkedAt.slice(0, 100),
@@ -1317,6 +1317,11 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   websiteCandidate: record.websiteCandidate.slice(0, 500),
                   websiteVerificationStatus: record.websiteVerificationStatus.slice(0, 100),
                   websiteFitDisposition: record.websiteFitDisposition.slice(0, 100),
+                  ...(typeof record.identityMatchedProvider === "string" ? { identityMatchedProvider: record.identityMatchedProvider as TopProspectWebsiteEnrichmentRecord["identityMatchedProvider"] } : {}),
+                  ...(Array.isArray(record.identityMatchedSignals) ? { identityMatchedSignals: record.identityMatchedSignals.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 100)).slice(0, 12) } : {}),
+                  ...(Array.isArray(record.identityConflictingSignals) ? { identityConflictingSignals: record.identityConflictingSignals.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 100)).slice(0, 12) } : {}),
+                  ...(typeof record.identityConfidenceSufficient === "boolean" ? { identityConfidenceSufficient: record.identityConfidenceSufficient } : {}),
+                  ...(typeof record.providerWebsiteAcceptedAsOwned === "boolean" ? { providerWebsiteAcceptedAsOwned: record.providerWebsiteAcceptedAsOwned } : {}),
                 }];
               }).slice(0, 250),
             }

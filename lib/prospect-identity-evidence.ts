@@ -31,6 +31,7 @@ export type NoOwnedWebsiteEvidenceDecision = {
 
 const evidenceSignalPrefix = "discovery_identity_evidence:";
 const sameNameAmbiguitySignal = "discovery_identity_conflict:same_name";
+const identityResolutionSignalPrefix = "provider_identity_resolution:";
 const authoritativeIdentitySources = new Set<DiscoveryIdentitySource>(["google", "bing", "yelp"]);
 const socialHosts = ["facebook.com", "instagram.com", "linkedin.com", "x.com", "twitter.com", "youtube.com"];
 const genericSocialPath = /^(?:\/?|\/login\/?|\/share(?:r)?\/?|\/sharer(?:\.php)?\/?|\/intent\/?|\/home\.php\/?|\/pages\/?|\/explore\/?|\/accounts\/login\/?|\/company\/?|\/in\/?|\/feed\/?|\/watch\/?|\/channel\/?|\/user\/?)$/i;
@@ -171,6 +172,30 @@ export function discoverySameNameAmbiguitySignal() {
   return sameNameAmbiguitySignal;
 }
 
+export function discoverySameNameAmbiguityRemains(signals: string[]) {
+  if (!signals.includes(sameNameAmbiguitySignal)) return false;
+  const latestResolution = signals.flatMap((signal): Array<{ confidenceSufficient: boolean }> => {
+    if (!signal.startsWith(identityResolutionSignalPrefix) || signal.length > 8_000) return [];
+    try {
+      const value = JSON.parse(Buffer.from(signal.slice(identityResolutionSignalPrefix.length), "base64url").toString("utf8")) as {
+        version?: unknown;
+        status?: unknown;
+        confidenceSufficient?: unknown;
+        evidenceCurrentForQualification?: unknown;
+      };
+      return value.version === "provider-identity-resolution-v1"
+        && value.status === "strong_match"
+        && value.confidenceSufficient === true
+        && value.evidenceCurrentForQualification === true
+        ? [{ confidenceSufficient: true }]
+        : [];
+    } catch {
+      return [];
+    }
+  }).at(-1);
+  return latestResolution?.confidenceSufficient !== true;
+}
+
 export function discoveryIdentityEvidenceFromSignals(signals: string[]) {
   return signals.flatMap((signal): DiscoveryIdentityEvidence[] => {
     if (!signal.startsWith(evidenceSignalPrefix) || signal.length > 4_000) return [];
@@ -267,7 +292,7 @@ export function authoritativeNoOwnedWebsiteEvidence(prospect: Prospect, now = ne
     };
   }
   const sources = [...new Set(evidence.map((item) => item.source))];
-  if (prospect.activitySignals.includes(sameNameAmbiguitySignal)) {
+  if (discoverySameNameAmbiguityRemains(prospect.activitySignals)) {
     return { verified: false, sources, reasonCode: "identity_ambiguous", explanation: "Another provider record has the same normalized name, so identity is ambiguous." };
   }
   if (evidence.some((item) => isCredibleOwnedWebsiteCandidate(item.website))) {

@@ -943,7 +943,11 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 <p>{record.trade} in {record.city}, {record.state}</p>
                 <p>{record.reason}</p>
                 <p><b>Providers:</b> {record.providerSources.join(", ") || "No independent exact match"}</p>
+                <p><b>Identity match:</b> {record.identityConfidenceSufficient
+                  ? `${record.identityMatchedProvider || "Provider"} matched (${record.identityMatchedSignals?.join(", ").replaceAll("_", " ") || "strong independent evidence"})`
+                  : `Insufficient${record.identityConflictingSignals?.length ? `; conflicts: ${record.identityConflictingSignals.join(", ").replaceAll("_", " ")}` : ""}`}</p>
                 {record.websiteCandidate ? <p><b>Website checked:</b> {compactUrl(record.websiteCandidate)}</p> : null}
+                {record.websiteCandidate ? <p><b>Provider website ownership:</b> {record.providerWebsiteAcceptedAsOwned ? "Accepted after strong identity match and shared verification" : "Not established by provider evidence alone"}</p> : null}
                 <p><b>Verification:</b> {record.websiteVerificationStatus.replaceAll("_", " ")} / <b>Fit:</b> {record.websiteFitDisposition.replaceAll("_", " ")}</p>
                 <div className="engine-inline-actions">
                   <button className="engine-button" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>
