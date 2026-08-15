@@ -8,6 +8,7 @@ import {
   discoveryIdentityEvidenceSignal,
   discoverySameNameAmbiguitySignal,
   isSpecificBusinessSocialProfileUrl,
+  isSpecificProviderBusinessProfileEvidence,
 } from "../lib/prospect-identity-evidence";
 
 const now = new Date("2026-08-10T12:00:00.000Z");
@@ -47,6 +48,82 @@ function identitySignal(source: "osm" | "google" | "bing" | "yelp", overrides: R
     ...overrides,
   });
 }
+
+function googleProfileEvidence(profileUrl: string) {
+  return {
+    source: "google" as const,
+    businessName: "Precision Roofing",
+    website: "",
+    profileUrl,
+    phone: "419-555-0199",
+    address: "120 Main Street, Toledo, OH",
+    city: "Toledo",
+    state: "OH",
+    latitude: 41.6528,
+    longitude: -83.5379,
+  };
+}
+
+test("Google provider-profile evidence accepts numeric CIDs without accepting generic map searches", () => {
+  const accepted = [
+    "https://maps.google.com/?cid=3545450935484072529",
+    "https://www.google.com/maps/place/Precision+Roofing",
+    "https://maps.app.goo.gl/precision-roofing",
+    "https://g.page/precision-roofing",
+  ];
+  const rejected = [
+    "https://maps.google.com/",
+    "https://maps.google.com/?q=pressure+washing",
+    "https://maps.google.com/?cid=",
+    "https://maps.google.com/?cid=abc123",
+    "https://www.google.com/maps/search/pressure+washing",
+    "https://www.google.com/maps?q=pressure+washing",
+    "https://www.google.com/search?q=pressure+washing",
+  ];
+
+  for (const profileUrl of accepted) {
+    assert.equal(isSpecificProviderBusinessProfileEvidence(googleProfileEvidence(profileUrl)), true, profileUrl);
+  }
+  for (const profileUrl of rejected) {
+    assert.equal(isSpecificProviderBusinessProfileEvidence(googleProfileEvidence(profileUrl)), false, profileUrl);
+  }
+});
+
+test("numeric Google CID participates in the existing authoritative no-owned-website gate only with strong identity evidence", () => {
+  const cidProfile = "https://maps.google.com/?cid=3545450935484072529";
+  const verifiedProspect = noSiteProspect([
+    identitySignal("google", { profileUrl: cidProfile }),
+    identitySignal("bing", { profileUrl: "" }),
+  ]);
+  const original = structuredClone(verifiedProspect);
+  const verified = authoritativeNoOwnedWebsiteEvidence(verifiedProspect, now);
+  assert.equal(verified.verified, true);
+  assert.equal(verified.reasonCode, "verified_provider_social_absence");
+  assert.deepEqual(verifiedProspect, original);
+
+  const conflicting = authoritativeNoOwnedWebsiteEvidence(noSiteProspect([
+    identitySignal("google", { profileUrl: cidProfile }),
+    identitySignal("bing", {
+      profileUrl: "",
+      phone: "214-555-0110",
+      address: "900 Commerce Street, Dallas, TX",
+      city: "Dallas",
+      state: "TX",
+      latitude: 32.7767,
+      longitude: -96.797,
+    }),
+  ]), now);
+  assert.equal(conflicting.verified, false);
+  assert.equal(conflicting.reasonCode, "identity_incomplete");
+
+  const ambiguous = authoritativeNoOwnedWebsiteEvidence(noSiteProspect([
+    identitySignal("google", { profileUrl: cidProfile }),
+    identitySignal("bing", { profileUrl: "" }),
+    discoverySameNameAmbiguitySignal(),
+  ]), now);
+  assert.equal(ambiguous.verified, false);
+  assert.equal(ambiguous.reasonCode, "identity_ambiguous");
+});
 
 test("NO_OWNED_WEBSITE requires fresh independent identity and a specific business profile", () => {
   const verified = authoritativeNoOwnedWebsiteEvidence(noSiteProspect([
