@@ -5,6 +5,7 @@ import {
 } from "@/lib/prospect-qualification";
 import {
   affirmativeFirstPartyIdentity,
+  authoritativeNoOwnedWebsiteEvidence,
   discoveryIdentityEvidenceFromSignals,
   discoveryIdentityEvidenceSignal,
   isCredibleOwnedWebsiteCandidate,
@@ -508,9 +509,14 @@ export async function verifyProspectWebsiteWithSecondPass(
     && !isCredibleOwnedWebsiteCandidate(independentLookup.evidence[0]?.website ?? "")
     && new Set(discoveryIdentityEvidenceFromSignals(resolvedWorkingProspect.activitySignals).map((item) => item.source)).size >= 2,
   );
+  const authoritativeNoSiteVerifiedAtEntry = authoritativeNoOwnedWebsiteEvidence(
+    prospect,
+    new Date(checkedAt),
+  ).verified;
   const ownedWebsiteLookup = !resolvedWorkingProspect.website.trim()
     && providerCandidates.length === 0
     && !independentlyCorroboratedWithoutWebsite
+    && !authoritativeNoSiteVerifiedAtEntry
     ? await discoverGoogleOwnedWebsiteResolution(resolvedWorkingProspect, {
       fetch: dependencies.fetch,
       timeoutMs: recoveryTimeoutMs,
