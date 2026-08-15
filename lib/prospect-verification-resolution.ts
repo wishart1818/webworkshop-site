@@ -13,12 +13,21 @@ import {
 } from "@/lib/prospect-identity-evidence";
 import {
   authoritativeProviderBoundWebsiteIdentity,
+  authoritativeProviderBoundBrokenWebsiteIdentity,
   verifiedCustomerFacingWebsiteStructure,
 } from "@/lib/provider-bound-website-exclusion";
 import {
-  discoverGoogleOwnedWebsiteCandidates,
-  discoverIndependentNoSiteIdentityEvidence,
+  discoverGoogleOwnedWebsiteResolution,
+  discoverIndependentNoSiteIdentityResolution,
 } from "@/lib/no-site-owned-website-recovery";
+import {
+  latestProviderIdentityResolutionDiagnostic,
+  providerIdentityResolutionDiagnosticSignal,
+  resolveProviderIdentityCandidates,
+  sameNameIdentityAmbiguityRemains,
+  type ProviderIdentityResolution,
+  type ProviderIdentityResolutionDiagnostic,
+} from "@/lib/prospect-identity-resolution";
 import {
   verifyProspectWebsite,
   type ProspectWebsiteVerificationResult,
@@ -76,7 +85,7 @@ export const noSiteEnrichmentOutcomes = [
 ] as const;
 export type NoSiteEnrichmentOutcome = (typeof noSiteEnrichmentOutcomes)[number];
 export type NoSiteEnrichmentDiagnostic = {
-  version: "no-site-enrichment-v1";
+  version: "no-site-enrichment-v1" | "no-site-enrichment-v2";
   outcome: NoSiteEnrichmentOutcome;
   reason: string;
   checkedAt: string;
@@ -84,6 +93,11 @@ export type NoSiteEnrichmentDiagnostic = {
   websiteCandidate: string;
   websiteVerificationStatus: string;
   websiteFitDisposition: string;
+  identityMatchedProvider?: DiscoveryIdentitySource | "";
+  identityMatchedSignals?: string[];
+  identityConflictingSignals?: string[];
+  identityConfidenceSufficient?: boolean;
+  providerWebsiteAcceptedAsOwned?: boolean;
 };
 
 const noSiteEnrichmentSignalPrefix = "no_site_enrichment_diagnostic:";
@@ -98,7 +112,7 @@ export function latestNoSiteEnrichmentDiagnostic(signals: string[]) {
     try {
       const value = JSON.parse(Buffer.from(signal.slice(noSiteEnrichmentSignalPrefix.length), "base64url").toString("utf8")) as Partial<NoSiteEnrichmentDiagnostic>;
       if (
-        value.version !== "no-site-enrichment-v1"
+        !["no-site-enrichment-v1", "no-site-enrichment-v2"].includes(String(value.version))
         || !noSiteEnrichmentOutcomes.includes(value.outcome as NoSiteEnrichmentOutcome)
         || typeof value.reason !== "string"
         || typeof value.checkedAt !== "string"
@@ -108,7 +122,7 @@ export function latestNoSiteEnrichmentDiagnostic(signals: string[]) {
         || typeof value.websiteFitDisposition !== "string"
       ) return [];
       return [{
-        version: "no-site-enrichment-v1",
+        version: value.version as NoSiteEnrichmentDiagnostic["version"],
         outcome: value.outcome as NoSiteEnrichmentOutcome,
         reason: value.reason.slice(0, 1_000),
         checkedAt: value.checkedAt.slice(0, 100),
@@ -118,6 +132,11 @@ export function latestNoSiteEnrichmentDiagnostic(signals: string[]) {
         websiteCandidate: value.websiteCandidate.slice(0, 500),
         websiteVerificationStatus: value.websiteVerificationStatus.slice(0, 100),
         websiteFitDisposition: value.websiteFitDisposition.slice(0, 100),
+        ...(typeof value.identityMatchedProvider === "string" ? { identityMatchedProvider: value.identityMatchedProvider as DiscoveryIdentitySource | "" } : {}),
+        ...(Array.isArray(value.identityMatchedSignals) ? { identityMatchedSignals: value.identityMatchedSignals.filter((item): item is string => typeof item === "string").slice(0, 12) } : {}),
+        ...(Array.isArray(value.identityConflictingSignals) ? { identityConflictingSignals: value.identityConflictingSignals.filter((item): item is string => typeof item === "string").slice(0, 12) } : {}),
+        ...(typeof value.identityConfidenceSufficient === "boolean" ? { identityConfidenceSufficient: value.identityConfidenceSufficient } : {}),
+        ...(typeof value.providerWebsiteAcceptedAsOwned === "boolean" ? { providerWebsiteAcceptedAsOwned: value.providerWebsiteAcceptedAsOwned } : {}),
       }];
     } catch {
       return [];
@@ -204,6 +223,52 @@ function providerBoundAdequateExclusion(
   return { ...result, prospect: resolvedProspect, report };
 }
 
+function replaceIdentityDiagnostic(
+  prospect: Prospect,
+  update: (diagnostic: ProviderIdentityResolutionDiagnostic) => ProviderIdentityResolutionDiagnostic,
+) {
+  const diagnostic = latestProviderIdentityResolutionDiagnostic(prospect.activitySignals);
+  if (!diagnostic) return prospect;
+  return {
+    ...prospect,
+    activitySignals: [
+      ...prospect.activitySignals.filter((signal) => !signal.startsWith("provider_identity_resolution:")),
+      providerIdentityResolutionDiagnosticSignal(update(diagnostic)),
+    ],
+  };
+}
+
+function providerBoundBrokenWebsiteOwnership(
+  result: ProspectWebsiteVerificationResult,
+): ProspectWebsiteVerificationResult {
+  if (!authoritativeProviderBoundBrokenWebsiteIdentity(result.prospect, result.report)) return result;
+  const providerBindingEvidence = "A trusted provider record strongly matched the business by name and independent identity evidence and associated this exact website host with that business.";
+  const report: WebsiteVerificationReport = {
+    ...result.report,
+    ownershipDecision: "owned",
+    identityEvidence: [...new Set([...(result.report.identityEvidence ?? []), providerBindingEvidence])],
+    fit: result.report.fit ? {
+      ...result.report.fit,
+      supportingEvidence: [...new Set([...result.report.fit.supportingEvidence, providerBindingEvidence])],
+    } : result.report.fit,
+    freshness: result.report.freshness ? {
+      ...result.report.freshness,
+      humanReviewRequired: false,
+      staleReason: "",
+    } : result.report.freshness,
+  };
+  const prospect = replaceIdentityDiagnostic({ ...result.prospect, websiteVerification: report }, (diagnostic) => ({
+    ...diagnostic,
+    providerWebsiteAcceptedAsOwned: true,
+    reason: `${diagnostic.reason} Shared website verification confirmed the provider-associated domain is ${report.status.replace("confirmed_", "")}.`,
+  }));
+  return { ...result, prospect, report };
+}
+
+function applyProviderBoundWebsiteEvidence(result: ProspectWebsiteVerificationResult) {
+  return providerBoundBrokenWebsiteOwnership(providerBoundAdequateExclusion(result));
+}
+
 function safelyResolved(result: ProspectWebsiteVerificationResult) {
   const disposition = normalizeWebsiteFitDisposition(result.prospect);
   if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) {
@@ -245,7 +310,7 @@ function resolutionReasonCode(result: ProspectWebsiteVerificationResult): Manual
 }
 
 export function unresolvedWebsiteReason(prospect: Prospect): ManualReviewTriageReasonCode {
-  if (prospect.activitySignals.includes("discovery_identity_conflict:same_name")) return "SAME_NAME_AMBIGUOUS";
+  if (sameNameIdentityAmbiguityRemains(prospect.activitySignals)) return "SAME_NAME_AMBIGUOUS";
   const report = prospect.websiteVerification;
   if (report?.status === "crawler_blocked") return "CRAWLER_BLOCKED";
   if (report?.status === "temporarily_unavailable") return "CRAWLER_TIMEOUT_OR_TRANSIENT_FAILURE";
@@ -283,6 +348,7 @@ function noSiteEnrichmentDiagnosticFor(input: {
   corroboratingEvidenceCount: number;
   recoveredCandidates: string[];
   checkedAt: string;
+  identityResolution: ProviderIdentityResolution | null;
 }) {
   const { resolution } = input;
   const resolved = resolution.result.prospect;
@@ -310,8 +376,14 @@ function noSiteEnrichmentDiagnosticFor(input: {
     reason = `No independent provider result matched the stored business identity with sufficient phone or address evidence. ${resolution.explanation}`;
   }
 
+  const identityDiagnostic = latestProviderIdentityResolutionDiagnostic(resolved.activitySignals)
+    ?? latestProviderIdentityResolutionDiagnostic(input.workingProspect.activitySignals);
+  if (identityDiagnostic && !identityDiagnostic.confidenceSufficient) {
+    reason = `${identityDiagnostic.reason} ${reason}`.slice(0, 1_000);
+  }
+
   return {
-    version: "no-site-enrichment-v1",
+    version: "no-site-enrichment-v2",
     outcome,
     reason: reason.slice(0, 1_000),
     checkedAt: input.checkedAt,
@@ -319,6 +391,11 @@ function noSiteEnrichmentDiagnosticFor(input: {
     websiteCandidate: candidate,
     websiteVerificationStatus: report.status,
     websiteFitDisposition: disposition,
+    identityMatchedProvider: identityDiagnostic?.matchedProvider ?? input.identityResolution?.matchedProvider ?? "",
+    identityMatchedSignals: identityDiagnostic?.matchedSignals ?? input.identityResolution?.matchedSignals ?? [],
+    identityConflictingSignals: identityDiagnostic?.conflictingSignals ?? input.identityResolution?.conflictingSignals ?? [],
+    identityConfidenceSufficient: identityDiagnostic?.confidenceSufficient ?? input.identityResolution?.confidenceSufficient ?? false,
+    providerWebsiteAcceptedAsOwned: identityDiagnostic?.providerWebsiteAcceptedAsOwned ?? false,
   } satisfies NoSiteEnrichmentDiagnostic;
 }
 
@@ -330,6 +407,7 @@ function attachNoSiteEnrichment(
     corroboratingEvidenceCount: number;
     recoveredCandidates: string[];
     checkedAt: string;
+    identityResolution: ProviderIdentityResolution | null;
   },
 ) {
   if (!input.startedAsProbableNoSite) return resolution;
@@ -357,12 +435,35 @@ export async function verifyProspectWebsiteWithSecondPass(
     && prospect.prospectType === "no_website_social_only"
     && !prospect.inactive;
   const recoveryTimeoutMs = Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000));
-  const corroboratingEvidence = await discoverIndependentNoSiteIdentityEvidence(prospect, {
+  const independentLookup = await discoverIndependentNoSiteIdentityResolution(prospect, {
     fetch: dependencies.fetch,
     timeoutMs: recoveryTimeoutMs,
     googlePlacesApiKey: dependencies.googlePlacesApiKey,
     azureMapsApiKey: dependencies.azureMapsApiKey,
     allowHistoricalLookup: dependencies.allowHistoricalNoSiteLookup,
+  });
+  const corroboratingEvidence = independentLookup?.evidence ?? [];
+  const checkedAt = (dependencies.now?.() ?? new Date()).toISOString();
+  const prospectCreatedAt = Date.parse(prospect.createdAt);
+  const identityEvidenceCurrentForQualification = !dependencies.allowHistoricalNoSiteLookup
+    && Number.isFinite(prospectCreatedAt)
+    && Date.parse(checkedAt) - prospectCreatedAt <= 7 * 24 * 60 * 60 * 1_000;
+  const identityDiagnosticFor = (
+    resolution: ProviderIdentityResolution,
+    websiteCandidate = resolution.matchedEvidence?.website ?? "",
+  ): ProviderIdentityResolutionDiagnostic => ({
+    version: "provider-identity-resolution-v1",
+    status: resolution.status,
+    matchedProvider: resolution.matchedProvider,
+    matchedSignals: resolution.matchedSignals,
+    conflictingSignals: resolution.conflictingSignals,
+    confidenceSufficient: resolution.confidenceSufficient,
+    evidenceCurrentForQualification: identityEvidenceCurrentForQualification,
+    plausibleCandidateCount: resolution.plausibleCandidateCount,
+    websiteCandidate,
+    providerWebsiteAcceptedAsOwned: false,
+    reason: resolution.reason,
+    checkedAt,
   });
   const workingProspect = corroboratingEvidence.length
     ? {
@@ -371,43 +472,93 @@ export async function verifyProspectWebsiteWithSecondPass(
           ...prospect.activitySignals,
           ...corroboratingEvidence.map(discoveryIdentityEvidenceSignal),
           ...corroboratingEvidence.map((item) => `discovery_source:${item.source}`),
+          ...(independentLookup ? [providerIdentityResolutionDiagnosticSignal(identityDiagnosticFor(independentLookup.resolution))] : []),
         ])],
       }
-    : prospect;
+    : independentLookup
+      ? {
+          ...prospect,
+          activitySignals: [
+            ...prospect.activitySignals.filter((signal) => !signal.startsWith("provider_identity_resolution:")),
+            providerIdentityResolutionDiagnosticSignal(identityDiagnosticFor(independentLookup.resolution)),
+          ],
+        }
+      : prospect;
 
-  const providerCandidates = providerOwnedWebsiteCandidates(workingProspect);
-  const recoveredCandidates = !workingProspect.website.trim() && providerCandidates.length === 0
-    ? await discoverGoogleOwnedWebsiteCandidates(workingProspect, {
+  let resolvedWorkingProspect = workingProspect;
+  let identityResolution = independentLookup?.resolution ?? null;
+  let providerCandidates = providerOwnedWebsiteCandidates(resolvedWorkingProspect);
+  if (!identityResolution && providerCandidates.length > 0) {
+    const providerWebsiteEvidence = discoveryIdentityEvidenceFromSignals(resolvedWorkingProspect.activitySignals)
+      .filter((item) => isCredibleOwnedWebsiteCandidate(item.website));
+    const storedResolution = resolveProviderIdentityCandidates(resolvedWorkingProspect, providerWebsiteEvidence);
+    identityResolution = storedResolution;
+    resolvedWorkingProspect = {
+      ...resolvedWorkingProspect,
+      activitySignals: [
+        ...resolvedWorkingProspect.activitySignals.filter((signal) => !signal.startsWith("provider_identity_resolution:")),
+        providerIdentityResolutionDiagnosticSignal(identityDiagnosticFor(storedResolution)),
+      ],
+    };
+  }
+  const independentlyCorroboratedWithoutWebsite = Boolean(
+    independentLookup?.resolution.confidenceSufficient
+    && independentLookup.resolution.matchedProvider === "google"
+    && independentLookup.evidence.length === 1
+    && !isCredibleOwnedWebsiteCandidate(independentLookup.evidence[0]?.website ?? "")
+    && new Set(discoveryIdentityEvidenceFromSignals(resolvedWorkingProspect.activitySignals).map((item) => item.source)).size >= 2,
+  );
+  const ownedWebsiteLookup = !resolvedWorkingProspect.website.trim()
+    && providerCandidates.length === 0
+    && !independentlyCorroboratedWithoutWebsite
+    ? await discoverGoogleOwnedWebsiteResolution(resolvedWorkingProspect, {
       fetch: dependencies.fetch,
       timeoutMs: recoveryTimeoutMs,
       googlePlacesApiKey: dependencies.googlePlacesApiKey,
       allowHistoricalLookup: dependencies.allowHistoricalNoSiteLookup,
     })
-    : [];
+    : null;
+  const recoveredCandidates = ownedWebsiteLookup?.candidates ?? [];
+  if (ownedWebsiteLookup) {
+    identityResolution = ownedWebsiteLookup.resolution;
+    resolvedWorkingProspect = {
+      ...resolvedWorkingProspect,
+      activitySignals: [...new Set([
+        ...resolvedWorkingProspect.activitySignals.filter((signal) => !signal.startsWith("provider_identity_resolution:")),
+        ...ownedWebsiteLookup.evidence.map(discoveryIdentityEvidenceSignal),
+        ...ownedWebsiteLookup.evidence.map((item) => `discovery_source:${item.source}`),
+        providerIdentityResolutionDiagnosticSignal(identityDiagnosticFor(
+          ownedWebsiteLookup.resolution,
+          ownedWebsiteLookup.resolution.matchedEvidence?.website ?? "",
+        )),
+      ])],
+    };
+    providerCandidates = providerOwnedWebsiteCandidates(resolvedWorkingProspect);
+  }
 
-  const initialResult = providerBoundAdequateExclusion(await verifyProspectWebsite(workingProspect, dependencies));
+  const initialResult = applyProviderBoundWebsiteEvidence(await verifyProspectWebsite(resolvedWorkingProspect, dependencies));
   const finish = (resolution: SharedProspectVerificationResolution) => attachNoSiteEnrichment(resolution, {
     startedAsProbableNoSite,
-    workingProspect,
+    workingProspect: resolvedWorkingProspect,
     corroboratingEvidenceCount: corroboratingEvidence.length,
     recoveredCandidates,
-    checkedAt: (dependencies.now?.() ?? new Date()).toISOString(),
+    checkedAt,
+    identityResolution,
   });
-  const initialDisposition = normalizeWebsiteFitDisposition(initialResult.prospect);
-  const recoveredOwnedSiteMustBeChecked = initialDisposition === "no_owned_website" && recoveredCandidates.length > 0;
+  const recoveredOwnedSiteMustBeChecked = startedAsProbableNoSite && recoveredCandidates.length > 0;
   if (safelyResolved(initialResult) && !recoveredOwnedSiteMustBeChecked) {
     return finish({
       result: initialResult,
       initialResult,
       secondPassAttempted: false,
-      candidateUrlsConsidered: workingProspect.website ? [workingProspect.website] : [],
+      candidateUrlsConsidered: resolvedWorkingProspect.website ? [resolvedWorkingProspect.website] : [],
       reasonCode: resolutionReasonCode(initialResult),
       outcome: resolutionOutcome(initialResult),
       explanation: resultExplanation(initialResult, false),
     });
   }
 
-  const storedHost = normalizedHost(workingProspect.website);
+  const storedHost = normalizedHost(resolvedWorkingProspect.website);
   const providerHosts = new Set(providerCandidates.map(normalizedHost).filter(Boolean));
   if (storedHost) providerHosts.add(storedHost);
   if (providerHosts.size > 1) {
@@ -423,11 +574,11 @@ export async function verifyProspectWebsiteWithSecondPass(
   }
 
   const candidates = [...new Set([
-    workingProspect.website,
+    resolvedWorkingProspect.website,
     ...providerCandidates,
     ...recoveredCandidates,
   ].filter((value) => value && isCredibleOwnedWebsiteCandidate(value)))].slice(0, 3);
-  if (!candidates.length && !workingProspect.website.trim()) {
+  if (!candidates.length && !resolvedWorkingProspect.website.trim()) {
     return finish({
       result: initialResult,
       initialResult,
@@ -441,8 +592,8 @@ export async function verifyProspectWebsiteWithSecondPass(
 
   let best: ProspectWebsiteVerificationResult | null = recoveredOwnedSiteMustBeChecked ? null : initialResult;
   for (const candidate of candidates) {
-    const candidateResult = providerBoundAdequateExclusion(await verifyProspectWebsite(
-      { ...workingProspect, website: candidate },
+    const candidateResult = applyProviderBoundWebsiteEvidence(await verifyProspectWebsite(
+      { ...resolvedWorkingProspect, website: candidate },
       secondPassDependencies(dependencies),
     ));
     if (safelyResolved(candidateResult)) {

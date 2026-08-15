@@ -267,7 +267,7 @@ test("persisted manual opportunities reuse targeted enrichment without generatin
 
 test("Top Prospects diagnostics retain bounded enrichment evidence for operator display", () => {
   const diagnostic = {
-    version: "no-site-enrichment-v1" as const,
+    version: "no-site-enrichment-v2" as const,
     outcome: "owned_website_found" as const,
     reason: "An exact Google identity match supplied an owned website.",
     checkedAt: now.toISOString(),
@@ -275,6 +275,11 @@ test("Top Prospects diagnostics retain bounded enrichment evidence for operator 
     websiteCandidate: "https://coastalbright.example/",
     websiteVerificationStatus: "usable",
     websiteFitDisposition: "adequate_existing_website",
+    identityMatchedProvider: "google" as const,
+    identityMatchedSignals: ["legal_suffix_equivalent_name", "exact_phone"],
+    identityConflictingSignals: [],
+    identityConfidenceSufficient: true,
+    providerWebsiteAcceptedAsOwned: false,
   };
   const payload = {
     rawProviderCount: 1,
@@ -314,6 +319,9 @@ test("Top Prospects diagnostics retain bounded enrichment evidence for operator 
   assert.equal(parsed?.websiteEnrichmentRecords?.length, 1);
   assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.outcome, "owned_website_found");
   assert.match(parsed?.websiteEnrichmentRecords?.[0]?.reason ?? "", /exact Google identity match/i);
+  assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.identityMatchedProvider, "google");
+  assert.deepEqual(parsed?.websiteEnrichmentRecords?.[0]?.identityMatchedSignals, ["legal_suffix_equivalent_name", "exact_phone"]);
+  assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.identityConfidenceSufficient, true);
 });
 
 test("Top Prospects surfaces persisted enrichment outcomes without adding an outreach action", () => {
@@ -327,6 +335,8 @@ test("Top Prospects surfaces persisted enrichment outcomes without adding an out
   assert.match(source, /Probable no owned website/);
   assert.match(source, /Broken or inactive website/);
   assert.match(section, /No independent exact match/);
+  assert.match(section, /Identity match:/);
+  assert.match(section, /Provider website ownership:/);
   assert.match(section, /generated no package and sent nothing/);
   assert.doesNotMatch(section, /Approve|Queue|Generate|Send email/);
 });

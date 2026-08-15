@@ -1,11 +1,15 @@
 import type { Prospect, WebsiteVerificationReport } from "@/lib/prospect-engine";
 import {
   discoveryIdentityEvidenceFromSignals,
+  discoverySameNameAmbiguityRemains,
   isCredibleOwnedWebsiteCandidate,
   normalizedBusinessIdentityName,
   normalizedCompletePhone,
   normalizedStreetAddress,
 } from "@/lib/prospect-identity-evidence";
+import {
+  latestProviderIdentityResolutionDiagnostic,
+} from "@/lib/prospect-identity-resolution";
 
 const authoritativeProviderSources = new Set(["google", "bing", "yelp"]);
 
@@ -29,7 +33,7 @@ export function authoritativeProviderBoundWebsiteIdentity(
   report: WebsiteVerificationReport | undefined,
 ) {
   if (!report || report.version !== "website-verification-v2" || report.status !== "usable") return false;
-  if (prospect.activitySignals.includes("discovery_identity_conflict:same_name")) return false;
+  if (discoverySameNameAmbiguityRemains(prospect.activitySignals)) return false;
 
   const canonicalHost = normalizedHost(report.canonicalUrl || prospect.website);
   const storedHost = normalizedHost(prospect.website);
@@ -61,6 +65,28 @@ export function authoritativeProviderBoundWebsiteIdentity(
     const addressMatches = Boolean(expectedAddress && normalizedStreetAddress(item.address) === expectedAddress);
     return phoneMatches || addressMatches;
   });
+}
+
+export function authoritativeProviderBoundBrokenWebsiteIdentity(
+  prospect: Prospect,
+  report: WebsiteVerificationReport | undefined,
+) {
+  if (
+    !report
+    || report.version !== "website-verification-v2"
+    || !["confirmed_broken", "confirmed_inactive"].includes(report.status)
+  ) return false;
+  const diagnostic = latestProviderIdentityResolutionDiagnostic(prospect.activitySignals);
+  if (
+    !diagnostic?.confidenceSufficient
+    || !diagnostic.evidenceCurrentForQualification
+    || diagnostic.status !== "strong_match"
+    || !authoritativeProviderSources.has(diagnostic.matchedProvider)
+    || discoverySameNameAmbiguityRemains(prospect.activitySignals)
+  ) return false;
+  const storedHost = normalizedHost(prospect.website);
+  const providerHost = normalizedHost(diagnostic.websiteCandidate);
+  return Boolean(storedHost && providerHost && storedHost === providerHost);
 }
 
 export function verifiedCustomerFacingWebsiteStructure(
