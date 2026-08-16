@@ -12,6 +12,7 @@ import {
   websiteFitAllowsAutonomousOutreach,
 } from "../lib/prospect-qualification";
 import { verifyProspectWebsiteWithSecondPass } from "../lib/prospect-verification-resolution";
+import { verifiedExistingTopProspectCanBeReassessed } from "../lib/top-prospect-worker";
 import {
   assessNoWebsiteOpportunity,
   assessManualTopProspectOpportunity,
@@ -240,6 +241,81 @@ test("second-pass authoritative no-site result is not returned to Manual Opportu
   assert.equal(topProspectRejectionReason(verified, assessNoWebsiteOpportunity(verified), "growth", "phone_allowed"), null);
   assert.equal(verified.outreach, undefined);
   assert.equal(verified.preview, undefined);
+});
+
+test("older verified no-site prospect without outreach can re-enter normal Top Prospect assessment", () => {
+  const existing = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  existing.createdAt = "2026-08-01T12:00:00.000Z";
+  existing.activities.unshift({
+    id: "prior-top-prospect-review",
+    type: "analysis",
+    label: "Automated Top Prospects analysis completed in an earlier run.",
+    at: "2026-08-10T12:00:00.000Z",
+  });
+
+  assert.equal(existing.outreach, undefined);
+  assert.equal(websiteFitAllowsAutonomousOutreach(existing), true);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(existing, new Date(now)), true);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(existing, new Date(now), { excludePreviouslyReviewed: true }), false);
+  assert.equal(topProspectRejectionReason(existing, assessNoWebsiteOpportunity(existing), "growth", "phone_allowed"), null);
+});
+
+test("verified-fit reassessment remains closed for contacted and suppressed prospects", () => {
+  const contacted = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  contacted.status = "Contacted";
+  const suppressed = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  suppressed.notes.push("Do not contact - operator suppression.");
+
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(contacted, new Date(now)), false);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(suppressed, new Date(now)), false);
+});
+
+test("existing verified-fit reuse remains closed for stale, unresolved, and adequate-site records", () => {
+  const stale = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  stale.websiteVerification!.checkedAt = "2026-08-01T12:00:00.000Z";
+  stale.websiteVerification!.fit!.evaluatedAt = "2026-08-01T12:00:00.000Z";
+  const unresolved = markWebsiteState(corroboratedNoSiteProspect(), "inconclusive_requires_review", "inconclusive", "uncertain");
+  const adequate = markWebsiteState(
+    prospect({ website: "https://adequate-pressure-washing.example", prospectType: "redesign" }),
+    "adequate_existing_website",
+    "usable",
+    "owned",
+  );
+
+  for (const value of [stale, unresolved, adequate]) {
+    assert.equal(verifiedExistingTopProspectCanBeReassessed(value, new Date(now)), false);
+  }
+});
+
+test("verified no-site prospect without written contact reaches the real downstream rejection", () => {
+  const existing = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(existing, new Date(now)), true);
+  assert.equal(
+    topProspectRejectionReason(existing, assessNoWebsiteOpportunity(existing), "growth", "written_only"),
+    "Phone-only / written outreach blocked",
+  );
+});
+
+test("worker preserves current-result, contacted, suppressed, and review-setting guards before verified-fit reuse", () => {
+  const workerSource = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
+  const processLeadStart = workerSource.indexOf("async function processLead(");
+  const currentResultGuard = workerSource.indexOf("if (existingResult) return", processLeadStart);
+  const contactedGuard = workerSource.indexOf("if (contactedStatuses.has(existing.status))", currentResultGuard);
+  const suppressionGuard = workerSource.indexOf("if (prospectIsSuppressed(existing))", contactedGuard);
+  const reviewSettingGuard = workerSource.indexOf("if (excludePreviouslyReviewed && previouslyReviewed)", suppressionGuard);
+  const verifiedReuse = workerSource.indexOf("verifiedExistingTopProspectCanBeReassessed(existing, jobCreatedAt, { excludePreviouslyReviewed })", reviewSettingGuard);
+  const resultSave = workerSource.indexOf("saveTopProspectResult(jobId, existing", verifiedReuse);
+  const duplicateSkip = workerSource.indexOf('addSkip(summary, "duplicate")', resultSave);
+
+  assert.ok(processLeadStart >= 0);
+  assert.ok(currentResultGuard > processLeadStart);
+  assert.ok(contactedGuard > currentResultGuard);
+  assert.ok(suppressionGuard > contactedGuard);
+  assert.ok(reviewSettingGuard > suppressionGuard);
+  assert.ok(verifiedReuse > reviewSettingGuard);
+  assert.ok(resultSave > verifiedReuse);
+  assert.ok(duplicateSkip > resultSave);
 });
 
 test("worker diverts final manual opportunities before outreach artifact generation", () => {

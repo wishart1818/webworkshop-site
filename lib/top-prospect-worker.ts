@@ -27,7 +27,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
-import { normalizeWebsiteFitDisposition, websiteFitAllowsAutonomousOutreach } from "@/lib/prospect-qualification";
+import { normalizeWebsiteFitDisposition, prospectFreshnessAt, websiteFitAllowsAutonomousOutreach } from "@/lib/prospect-qualification";
 import { prospectIsSuppressed } from "@/lib/prospect-funnel";
 import {
   mergeResolvedWebsiteEvidence,
@@ -769,6 +769,27 @@ export function recoverableTopProspect(prospect: Awaited<ReturnType<typeof findP
   );
 }
 
+function existingProspectWasPreviouslyReviewed(prospect: Prospect) {
+  return prospect.status !== "New"
+    || Boolean(prospect.analysis)
+    || Boolean(prospect.outreach)
+    || Boolean(prospect.preview)
+    || prospect.activities.some((item) => item.label.startsWith("Automated Top Prospects") || item.label.startsWith("Automated online presence"));
+}
+
+export function verifiedExistingTopProspectCanBeReassessed(
+  prospect: Prospect,
+  now = new Date(),
+  options: { excludePreviouslyReviewed?: boolean } = {},
+) {
+  if (contactedStatuses.has(prospect.status) || prospectIsSuppressed(prospect)) return false;
+  if (options.excludePreviouslyReviewed && existingProspectWasPreviouslyReviewed(prospect)) return false;
+  const freshness = prospectFreshnessAt(prospect, now);
+  return websiteFitAllowsAutonomousOutreach(prospect)
+    && freshness.websiteVerificationFresh
+    && freshness.websiteFitFresh;
+}
+
 async function claimJob(jobId: string) {
   const database = getProspectDatabase();
   const token = crypto.randomUUID();
@@ -930,11 +951,7 @@ async function processLead(
       addSkip(summary, "suppressed_do_not_contact");
       return { qualified: false };
     }
-    const previouslyReviewed = existing.status !== "New"
-      || Boolean(existing.analysis)
-      || Boolean(existing.outreach)
-      || Boolean(existing.preview)
-      || existing.activities.some((item) => item.label.startsWith("Automated Top Prospects") || item.label.startsWith("Automated online presence"));
+    const previouslyReviewed = existingProspectWasPreviouslyReviewed(existing);
     if (excludePreviouslyReviewed && previouslyReviewed) {
       addSkip(summary, "previously_reviewed");
       return { qualified: false };
@@ -1007,6 +1024,7 @@ async function processLead(
     }
     if (
       resolvedExistingNow
+      || verifiedExistingTopProspectCanBeReassessed(existing, jobCreatedAt, { excludePreviouslyReviewed })
       || recoverableTopProspect(existing, jobCreatedAt)
       || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach)
     ) {
