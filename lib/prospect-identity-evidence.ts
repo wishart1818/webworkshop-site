@@ -14,6 +14,7 @@ export type DiscoveryIdentityEvidence = {
   state: string;
   latitude: number | null;
   longitude: number | null;
+  observedAt?: string;
 };
 
 export type NoOwnedWebsiteEvidenceDecision = {
@@ -33,6 +34,7 @@ const evidenceSignalPrefix = "discovery_identity_evidence:";
 const sameNameAmbiguitySignal = "discovery_identity_conflict:same_name";
 const identityResolutionSignalPrefix = "provider_identity_resolution:";
 const authoritativeIdentitySources = new Set<DiscoveryIdentitySource>(["google", "bing", "yelp"]);
+const providerEvidenceFreshnessMs = 7 * 24 * 60 * 60 * 1_000;
 const socialHosts = ["facebook.com", "instagram.com", "linkedin.com", "x.com", "twitter.com", "youtube.com"];
 const genericSocialPath = /^(?:\/?|\/login\/?|\/share(?:r)?\/?|\/sharer(?:\.php)?\/?|\/intent\/?|\/home\.php\/?|\/pages\/?|\/explore\/?|\/accounts\/login\/?|\/company\/?|\/in\/?|\/feed\/?|\/watch\/?|\/channel\/?|\/user\/?)$/i;
 const knownDirectoryHosts = [
@@ -168,6 +170,9 @@ export function discoveryIdentityEvidenceSignal(evidence: DiscoveryIdentityEvide
     state: evidence.state.trim().slice(0, 10),
     latitude: Number.isFinite(evidence.latitude) ? evidence.latitude : null,
     longitude: Number.isFinite(evidence.longitude) ? evidence.longitude : null,
+    ...(typeof evidence.observedAt === "string" && Number.isFinite(Date.parse(evidence.observedAt))
+      ? { observedAt: new Date(evidence.observedAt).toISOString() }
+      : {}),
   };
   return `${evidenceSignalPrefix}${Buffer.from(JSON.stringify(bounded)).toString("base64url")}`;
 }
@@ -226,11 +231,23 @@ export function discoveryIdentityEvidenceFromSignals(signals: string[]) {
         state: value.state,
         latitude: typeof value.latitude === "number" && Number.isFinite(value.latitude) ? value.latitude : null,
         longitude: typeof value.longitude === "number" && Number.isFinite(value.longitude) ? value.longitude : null,
+        ...(typeof value.observedAt === "string" && Number.isFinite(Date.parse(value.observedAt))
+          ? { observedAt: new Date(value.observedAt).toISOString() }
+          : {}),
       }];
     } catch {
       return [];
     }
   });
+}
+
+export function discoveryIdentityEvidenceIsFresh(
+  evidence: DiscoveryIdentityEvidence,
+  now = new Date(),
+) {
+  const observedAt = Date.parse(evidence.observedAt ?? "");
+  const ageMs = now.getTime() - observedAt;
+  return Number.isFinite(observedAt) && ageMs >= 0 && ageMs <= providerEvidenceFreshnessMs;
 }
 
 function coordinateKey(evidence: DiscoveryIdentityEvidence) {
@@ -285,12 +302,12 @@ export function authoritativeNoOwnedWebsiteEvidence(prospect: Prospect, now = ne
   if (prospect.website.trim() || prospect.prospectType !== "no_website_social_only" || prospect.inactive) {
     return { verified: false, sources: [], reasonCode: "owned_domain_candidate", explanation: "The record is not an active no-owned-website candidate." };
   }
-  const evidence = discoveryIdentityEvidenceFromSignals(prospect.activitySignals);
-  const prospectCreatedAt = Date.parse(prospect.createdAt);
-  if (!Number.isFinite(prospectCreatedAt) || now.getTime() - prospectCreatedAt > 7 * 24 * 60 * 60 * 1_000) {
+  const storedEvidence = discoveryIdentityEvidenceFromSignals(prospect.activitySignals);
+  const evidence = storedEvidence.filter((item) => discoveryIdentityEvidenceIsFresh(item, now));
+  if (evidence.length === 0) {
     return {
       verified: false,
-      sources: [...new Set(evidence.map((item) => item.source))],
+      sources: [...new Set(storedEvidence.map((item) => item.source))],
       reasonCode: "identity_incomplete",
       explanation: "The provider identity evidence is stale and must be refreshed before concluding that no owned website exists.",
     };

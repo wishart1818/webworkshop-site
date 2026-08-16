@@ -23,6 +23,7 @@ function evidenceSignal(source: "google" | "bing") {
     state: "IN",
     latitude: 41.0123,
     longitude: -85.0912,
+    observedAt: now.toISOString(),
   });
 }
 

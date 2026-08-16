@@ -218,8 +218,8 @@ test("verified no-owned-website state uses cautious language and remains distinc
     facebookUrl,
     createdAt: checkedAt,
     activitySignals: [
-      discoveryIdentityEvidenceSignal({ source: "google", businessName: "Pinnacle Pressure Washing of Toledo", website: "", profileUrl: facebookUrl, phone: "+14195550123", address: "100 Main Street, Toledo, OH", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 }),
-      discoveryIdentityEvidenceSignal({ source: "osm", businessName: "Pinnacle Pressure Washing of Toledo", website: facebookUrl, profileUrl: facebookUrl, phone: "(419) 555-0123", address: "100 Main St, Toledo, Ohio", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 }),
+      discoveryIdentityEvidenceSignal({ source: "google", businessName: "Pinnacle Pressure Washing of Toledo", website: "", profileUrl: facebookUrl, phone: "+14195550123", address: "100 Main Street, Toledo, OH", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54, observedAt: checkedAt }),
+      discoveryIdentityEvidenceSignal({ source: "osm", businessName: "Pinnacle Pressure Washing of Toledo", website: facebookUrl, profileUrl: facebookUrl, phone: "(419) 555-0123", address: "100 Main St, Toledo, Ohio", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54, observedAt: checkedAt }),
     ],
     sourceConfidence: 50,
     contactEvidence: [{

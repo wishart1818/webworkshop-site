@@ -26,6 +26,7 @@ function evidence(overrides: Partial<DiscoveryIdentityEvidence> = {}): Discovery
     state: "FL",
     latitude: 27.9506,
     longitude: -82.4572,
+    observedAt: now.toISOString(),
     ...overrides,
   };
 }

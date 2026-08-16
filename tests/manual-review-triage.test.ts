@@ -154,8 +154,8 @@ test("authoritative provider identity can recover a no-owned-site record only as
     facebookUrl: facebook,
     prospectType: "no_website_social_only",
     activitySignals: [
-      discoveryIdentityEvidenceSignal({ source: "google", businessName: "Stealth Landscape Services", website: "", profileUrl: facebook, phone: "4195550104", address: "100 Main St Toledo OH", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 }),
-      discoveryIdentityEvidenceSignal({ source: "osm", businessName: "Stealth Landscape Services", website: facebook, profileUrl: facebook, phone: "(419) 555-0104", address: "100 Main Street, Toledo, Ohio", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 }),
+      discoveryIdentityEvidenceSignal({ source: "google", businessName: "Stealth Landscape Services", website: "", profileUrl: facebook, phone: "4195550104", address: "100 Main St Toledo OH", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54, observedAt: now.toISOString() }),
+      discoveryIdentityEvidenceSignal({ source: "osm", businessName: "Stealth Landscape Services", website: facebook, profileUrl: facebook, phone: "(419) 555-0104", address: "100 Main Street, Toledo, Ohio", city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54, observedAt: now.toISOString() }),
     ],
   });
   let calls = 0;

@@ -114,6 +114,7 @@ function corroboratedNoSiteProspect() {
     state: value.state,
     latitude: 41.6528,
     longitude: -83.5379,
+    observedAt: now,
   };
   value.activitySignals = [
     discoveryIdentityEvidenceSignal({
@@ -128,6 +129,36 @@ function corroboratedNoSiteProspect() {
     }),
   ];
   return value;
+}
+
+function currentNoSiteProviderFetch(input: string | URL | Request, website = "") {
+  const url = new URL(String(input));
+  if (url.hostname === "atlas.microsoft.com") {
+    return new Response(JSON.stringify({ results: [{
+      poi: { name: "Neighborhood Pressure Washing", phone: "419-555-0142" },
+      position: { lat: 41.6528, lon: -83.5379 },
+      address: {
+        freeformAddress: "123 Main Street, Toledo, OH",
+        localName: "Toledo",
+        countrySubdivisionCode: "OH",
+      },
+    }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+  if (url.hostname === "places.googleapis.com") {
+    return new Response(JSON.stringify({ places: [{
+      displayName: { text: "Neighborhood Pressure Washing" },
+      formattedAddress: "123 Main Street, Toledo, OH, USA",
+      nationalPhoneNumber: "419-555-0142",
+      websiteUri: website || undefined,
+      googleMapsUri: "https://maps.google.com/?cid=3545450935484072529",
+      location: { latitude: 41.6528, longitude: -83.5379 },
+      addressComponents: [
+        { longText: "Toledo", types: ["locality"] },
+        { shortText: "OH", types: ["administrative_area_level_1"] },
+      ],
+    }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+  return null;
 }
 
 test("probable no-site candidate with insufficient autonomous activity is retained for manual review", () => {
@@ -303,9 +334,15 @@ test("stale verified no-site evidence is refreshed before normal Top Prospect as
   assert.equal(verifiedExistingTopProspectCanBeReassessed(existing, refreshAt), false);
 
   const resolution = await verifyProspectWebsiteWithSecondPass(existing, {
-    fetch: async () => {
-      throw new Error("Current structured no-site evidence should not require a speculative website request.");
+    fetch: async (input) => {
+      const provider = currentNoSiteProviderFetch(input);
+      if (provider) return provider;
+      return new Response("Not found", { status: 404, headers: { "Content-Type": "text/html" } });
     },
+    googlePlacesApiKey: "google-test-key",
+    azureMapsApiKey: "azure-test-key",
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
     forceNoSiteEvidenceRefresh: true,
     now: () => refreshAt,
   });
@@ -340,6 +377,7 @@ test("historical stale no-site evidence that cannot be refreshed becomes unresol
   const refreshed = mergeResolvedWebsiteEvidence(existing, resolution.result.prospect);
 
   assert.equal(resolution.outcome, "still_manual");
+  assert.match(resolution.noSiteEnrichment?.reason ?? "", /current provider refresh was unavailable/i);
   assert.equal(refreshed.fitDisposition, "inconclusive_requires_review");
   assert.equal(websiteFitAllowsAutonomousOutreach(refreshed), false);
   assert.equal(verifiedExistingTopProspectCanBeReassessed(refreshed, refreshAt), false);
@@ -375,7 +413,11 @@ test("stale no-site refresh excludes a newly verified adequate owned website", a
   const resolution = await verifyProspectWebsiteWithSecondPass(existing, {
     allowHistoricalNoSiteLookup: true,
     forceNoSiteEvidenceRefresh: true,
+    googlePlacesApiKey: "google-test-key",
+    azureMapsApiKey: "azure-test-key",
     fetch: async (input) => {
+      const provider = currentNoSiteProviderFetch(input, website);
+      if (provider) return provider;
       assert.equal(new URL(String(input)).hostname, "neighborhood-pressure-washing.example");
       return new Response(`<!doctype html><html><head><title>Neighborhood Pressure Washing | Toledo</title><meta name="viewport" content="width=device-width" /></head>
         <body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav><h1>Neighborhood Pressure Washing</h1>

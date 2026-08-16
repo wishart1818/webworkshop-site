@@ -42,6 +42,7 @@ function prospect(): Prospect {
       state: "IN",
       latitude: 41.0123,
       longitude: -85.0912,
+      observedAt: now.toISOString(),
     })],
   };
 }
@@ -68,6 +69,7 @@ function corroboratedProspect(options: {
       state: "IN",
       latitude: 41.0123,
       longitude: -85.0912,
+      observedAt: options.createdAt ?? now.toISOString(),
     }),
     discoveryIdentityEvidenceSignal({
       source: "bing",
@@ -80,6 +82,7 @@ function corroboratedProspect(options: {
       state: options.conflicting ? "TX" : "IN",
       latitude: options.conflicting ? 32.7767 : 41.0123,
       longitude: options.conflicting ? -96.797 : -85.0912,
+      observedAt: options.createdAt ?? now.toISOString(),
     }),
     ...(options.ambiguous ? [discoverySameNameAmbiguitySignal()] : []),
   ];

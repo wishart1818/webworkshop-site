@@ -947,7 +947,8 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                   ? `${record.identityMatchedProvider || "Provider"} matched (${record.identityMatchedSignals?.join(", ").replaceAll("_", " ") || "strong independent evidence"})`
                   : `Insufficient${record.identityConflictingSignals?.length ? `; conflicts: ${record.identityConflictingSignals.join(", ").replaceAll("_", " ")}` : ""}`}</p>
                 {record.websiteCandidate ? <p><b>Website checked:</b> {compactUrl(record.websiteCandidate)}</p> : null}
-                {record.websiteCandidate ? <p><b>Provider website ownership:</b> {record.providerWebsiteAcceptedAsOwned ? "Accepted after strong identity match and shared verification" : "Not established by provider evidence alone"}</p> : null}
+                {record.websiteCandidate ? <p><b>Candidate source:</b> {record.websiteCandidateProvenance === "deterministic_guess" ? "Deterministic domain guess" : "Matched provider website"}</p> : null}
+                {record.websiteCandidate ? <p><b>Website ownership:</b> {record.websiteOwnershipVerified ? "Accepted only after shared first-party verification" : "Not established"}</p> : null}
                 <p><b>Verification:</b> {record.websiteVerificationStatus.replaceAll("_", " ")} / <b>Fit:</b> {record.websiteFitDisposition.replaceAll("_", " ")}</p>
                 <div className="engine-inline-actions">
                   <button className="engine-button" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>

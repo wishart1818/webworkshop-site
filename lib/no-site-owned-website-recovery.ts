@@ -1,6 +1,7 @@
 import type { Prospect } from "@/lib/prospect-engine";
 import {
   discoveryIdentityEvidenceFromSignals,
+  discoveryIdentityEvidenceIsFresh,
   isCredibleOwnedWebsiteCandidate,
   normalizedBusinessIdentityName,
   normalizedCompletePhone,
@@ -53,6 +54,8 @@ export type OwnedWebsiteRecoveryDependencies = {
   now?: () => Date;
   // This permits a targeted recheck of a persisted manual record; it does not make old evidence current for qualification.
   allowHistoricalLookup?: boolean;
+  // A stale no-site refresh must collect current provider observations instead of trusting stored source membership.
+  forceCurrentProviderRefresh?: boolean;
 };
 
 export type TargetedProviderIdentityLookup = {
@@ -61,7 +64,15 @@ export type TargetedProviderIdentityLookup = {
 };
 
 export type TargetedOwnedWebsiteLookup = TargetedProviderIdentityLookup & {
-  candidates: string[];
+  candidates: OwnedWebsiteRecoveryCandidate[];
+};
+
+export type OwnedWebsiteCandidateProvenance = "provider_supplied" | "deterministic_guess";
+
+export type OwnedWebsiteRecoveryCandidate = {
+  url: string;
+  provenance: OwnedWebsiteCandidateProvenance;
+  provider: DiscoveryIdentityEvidence["source"] | "";
 };
 
 const legalSuffixTokens = new Set([
@@ -173,11 +184,10 @@ function identityLookupIsAllowed(
   prospect: Prospect,
   dependencies: OwnedWebsiteRecoveryDependencies,
 ) {
-  if (dependencies.allowHistoricalLookup) return true;
+  if (dependencies.allowHistoricalLookup || dependencies.forceCurrentProviderRefresh) return true;
   const now = dependencies.now?.() ?? new Date();
-  const createdAt = Date.parse(prospect.createdAt);
-  return Number.isFinite(createdAt)
-    && now.getTime() - createdAt <= 7 * 24 * 60 * 60 * 1_000;
+  return discoveryIdentityEvidenceFromSignals(prospect.activitySignals)
+    .some((evidence) => discoveryIdentityEvidenceIsFresh(evidence, now));
 }
 
 function corroborationQueries(
@@ -202,7 +212,7 @@ function finiteNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function googlePlaceEvidence(place: GooglePlaceCandidate): DiscoveryIdentityEvidence | null {
+function googlePlaceEvidence(place: GooglePlaceCandidate, observedAt: string): DiscoveryIdentityEvidence | null {
   const businessName = place.displayName?.text?.trim() ?? "";
   if (!businessName) return null;
   const city = place.addressComponents?.find((component) => component.types?.includes("locality"))?.longText?.trim() ?? "";
@@ -218,10 +228,11 @@ function googlePlaceEvidence(place: GooglePlaceCandidate): DiscoveryIdentityEvid
     state,
     latitude: finiteNumber(place.location?.latitude),
     longitude: finiteNumber(place.location?.longitude),
+    observedAt,
   };
 }
 
-function azurePlaceEvidence(place: AzurePoiCandidate): DiscoveryIdentityEvidence | null {
+function azurePlaceEvidence(place: AzurePoiCandidate, observedAt: string): DiscoveryIdentityEvidence | null {
   const businessName = place.poi?.name?.trim() ?? "";
   if (!businessName) return null;
   const city = place.address?.localName?.trim() || place.address?.municipality?.trim() || "";
@@ -245,6 +256,7 @@ function azurePlaceEvidence(place: AzurePoiCandidate): DiscoveryIdentityEvidence
     state,
     latitude: finiteNumber(place.position?.lat),
     longitude: finiteNumber(place.position?.lon),
+    observedAt,
   };
 }
 
@@ -332,16 +344,30 @@ export async function discoverIndependentNoSiteIdentityResolution(
 
   const bindings = knownIdentityBindings(prospect);
   const sources = new Set(bindings.evidence.map((item) => item.source));
-  if (sources.size === 0 || sources.size >= 2 || (bindings.phones.size === 0 && bindings.addresses.size === 0)) return null;
-  if (bindings.evidence.some((item) => isCredibleOwnedWebsiteCandidate(item.website))) return null;
+  const forceCurrentRefresh = dependencies.forceCurrentProviderRefresh === true;
+  if (
+    (!forceCurrentRefresh && (sources.size === 0 || sources.size >= 2))
+    || (bindings.phones.size === 0 && bindings.addresses.size === 0)
+  ) return null;
+  if (!forceCurrentRefresh && bindings.evidence.some((item) => isCredibleOwnedWebsiteCandidate(item.website))) return null;
 
   const queries = corroborationQueries(prospect, bindings);
   if (!queries.length) return null;
   const fetchImpl = dependencies.fetch ?? fetch;
   const timeoutMs = Math.min(6_000, Math.max(750, dependencies.timeoutMs ?? 5_000));
+  const observedAt = (dependencies.now?.() ?? new Date()).toISOString();
+  const resolutionProspect = forceCurrentRefresh
+    ? {
+        ...prospect,
+        activitySignals: prospect.activitySignals.filter((signal) => !signal.startsWith("discovery_identity_evidence:")),
+      }
+    : prospect;
+  const resolutions: ProviderIdentityResolution[] = [];
+  const currentEvidence: DiscoveryIdentityEvidence[] = [];
+  let currentProviderResponseAvailable = false;
 
   const azureMapsKey = (dependencies.azureMapsApiKey ?? process.env.AZURE_MAPS_API_KEY ?? "").trim();
-  if (!sources.has("bing") && azureMapsKey) {
+  if ((forceCurrentRefresh || !sources.has("bing")) && azureMapsKey) {
     const anchor = bindings.evidence.find((item) => item.latitude !== null && item.longitude !== null);
     const batches = await Promise.all(queries.map(async (query): Promise<DiscoveryIdentityEvidence[]> => {
       try {
@@ -360,19 +386,18 @@ export async function discoverIndependentNoSiteIdentityResolution(
           signal: AbortSignal.timeout(timeoutMs),
         });
         if (!response.ok) return [];
+        currentProviderResponseAvailable = true;
         const payload = await response.json() as AzureMapsSearchResponse;
         return (payload.results ?? [])
-          .map(azurePlaceEvidence)
+          .map((place) => azurePlaceEvidence(place, observedAt))
           .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
       } catch {
         return [];
       }
     }));
-    const resolution = resolveProviderIdentityCandidates(prospect, batches.flat());
-    return {
-      evidence: resolution.matchedEvidence ? [resolution.matchedEvidence] : [],
-      resolution,
-    };
+    const resolution = resolveProviderIdentityCandidates(resolutionProspect, batches.flat());
+    resolutions.push(resolution);
+    if (resolution.matchedEvidence) currentEvidence.push(resolution.matchedEvidence);
   }
 
   const googlePlacesApiKey = (
@@ -381,7 +406,7 @@ export async function discoverIndependentNoSiteIdentityResolution(
     ?? process.env.GOOGLE_PLACES_API_KEY
     ?? ""
   ).trim();
-  if (!sources.has("google") && googlePlacesApiKey) {
+  if ((forceCurrentRefresh || !sources.has("google")) && googlePlacesApiKey) {
     const batches = await Promise.all(queries.map(async (query): Promise<DiscoveryIdentityEvidence[]> => {
       try {
         const response = await fetchImpl("https://places.googleapis.com/v1/places:searchText", {
@@ -395,22 +420,37 @@ export async function discoverIndependentNoSiteIdentityResolution(
           signal: AbortSignal.timeout(timeoutMs),
         });
         if (!response.ok) return [];
+        currentProviderResponseAvailable = true;
         const payload = await response.json() as GooglePlacesSearchResponse;
         return (payload.places ?? [])
-          .map(googlePlaceEvidence)
+          .map((place) => googlePlaceEvidence(place, observedAt))
           .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
       } catch {
         return [];
       }
     }));
-    const resolution = resolveProviderIdentityCandidates(prospect, batches.flat());
-    return {
-      evidence: resolution.matchedEvidence ? [resolution.matchedEvidence] : [],
-      resolution,
-    };
+    const resolution = resolveProviderIdentityCandidates(resolutionProspect, batches.flat());
+    resolutions.push(resolution);
+    if (resolution.matchedEvidence) currentEvidence.push(resolution.matchedEvidence);
   }
 
-  return null;
+  if (!resolutions.length || (forceCurrentRefresh && !currentProviderResponseAvailable)) return null;
+  const unsafeResolution = resolutions.find((resolution) => resolution.status === "ambiguous");
+  if (unsafeResolution) return { evidence: [], resolution: unsafeResolution };
+  const strongResolutions = resolutions.filter((resolution) => resolution.status === "strong_match");
+  const first = strongResolutions[0] ?? resolutions[0]!;
+  if (!strongResolutions.length) return { evidence: [], resolution: first };
+  return {
+    evidence: currentEvidence,
+    resolution: {
+      ...first,
+      matchedSignals: [...new Set(strongResolutions.flatMap((resolution) => resolution.matchedSignals))],
+      plausibleCandidateCount: strongResolutions.reduce((sum, resolution) => sum + resolution.plausibleCandidateCount, 0),
+      reason: currentEvidence.length > 1
+        ? `Current ${currentEvidence.map((item) => item.source).join(" and ")} provider records independently matched the stored business identity.`
+        : first.reason,
+    },
+  };
 }
 
 /**
@@ -427,7 +467,7 @@ export async function discoverGoogleOwnedWebsiteCandidates(
   prospect: Prospect,
   dependencies: OwnedWebsiteRecoveryDependencies = {},
 ) {
-  return (await discoverGoogleOwnedWebsiteResolution(prospect, dependencies))?.candidates ?? [];
+  return (await discoverGoogleOwnedWebsiteResolution(prospect, dependencies))?.candidates.map((candidate) => candidate.url) ?? [];
 }
 
 export async function discoverGoogleOwnedWebsiteResolution(
@@ -457,6 +497,7 @@ export async function discoverGoogleOwnedWebsiteResolution(
   if (!query) return null;
   const fetchImpl = dependencies.fetch ?? fetch;
   const timeoutMs = Math.min(6_000, Math.max(750, dependencies.timeoutMs ?? 5_000));
+  const observedAt = (dependencies.now?.() ?? new Date()).toISOString();
 
   try {
     const response = await fetchImpl("https://places.googleapis.com/v1/places:searchText", {
@@ -473,7 +514,7 @@ export async function discoverGoogleOwnedWebsiteResolution(
 
     const payload = await response.json() as GooglePlacesSearchResponse;
     const evidence = (payload.places ?? [])
-      .map(googlePlaceEvidence)
+      .map((place) => googlePlaceEvidence(place, observedAt))
       .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
     const resolution = resolveProviderIdentityCandidates(prospect, evidence);
     const matched = resolution.matchedEvidence;
@@ -484,11 +525,23 @@ export async function discoverGoogleOwnedWebsiteResolution(
     if (candidates.length) {
       const hosts = new Set(candidates.map(normalizedHost).filter(Boolean));
       if (hosts.size !== 1) return { evidence: [], resolution: { ...resolution, status: "ambiguous", confidenceSufficient: false }, candidates: [] };
-      return { evidence: matched ? [matched] : [], resolution, candidates: candidates.slice(0, 3) };
+      return {
+        evidence: matched ? [matched] : [],
+        resolution,
+        candidates: candidates.slice(0, 3).map((url) => ({ url, provenance: "provider_supplied" as const, provider: "google" as const })),
+      };
     }
 
     if (!matched) return { evidence: [], resolution, candidates: [] };
-    return { evidence: [matched], resolution, candidates: deterministicOwnedWebsiteCandidates(prospect) };
+    return {
+      evidence: [matched],
+      resolution,
+      candidates: deterministicOwnedWebsiteCandidates(prospect).map((url) => ({
+        url,
+        provenance: "deterministic_guess" as const,
+        provider: "" as const,
+      })),
+    };
   } catch {
     return null;
   }
