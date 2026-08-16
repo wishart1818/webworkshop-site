@@ -11,8 +11,11 @@ import {
   verifiedEmailEvidenceForProspect,
   websiteFitAllowsAutonomousOutreach,
 } from "../lib/prospect-qualification";
-import { verifyProspectWebsiteWithSecondPass } from "../lib/prospect-verification-resolution";
-import { verifiedExistingTopProspectCanBeReassessed } from "../lib/top-prospect-worker";
+import { mergeResolvedWebsiteEvidence, verifyProspectWebsiteWithSecondPass } from "../lib/prospect-verification-resolution";
+import {
+  existingProspectRequiresWebsiteResolution,
+  verifiedExistingTopProspectCanBeReassessed,
+} from "../lib/top-prospect-worker";
 import {
   assessNoWebsiteOpportunity,
   assessManualTopProspectOpportunity,
@@ -285,6 +288,116 @@ test("existing verified-fit reuse remains closed for stale, unresolved, and adeq
   for (const value of [stale, unresolved, adequate]) {
     assert.equal(verifiedExistingTopProspectCanBeReassessed(value, new Date(now)), false);
   }
+  assert.equal(existingProspectRequiresWebsiteResolution(stale, new Date(now)), true);
+  assert.equal(existingProspectRequiresWebsiteResolution(unresolved, new Date(now)), true);
+  assert.equal(existingProspectRequiresWebsiteResolution(adequate, new Date(now)), false);
+});
+
+test("stale verified no-site evidence is refreshed before normal Top Prospect assessment", async () => {
+  const checkedAt = new Date(now);
+  const refreshAt = new Date(checkedAt.getTime() + 2 * 24 * 60 * 60 * 1_000);
+  const existing = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  existing.createdAt = checkedAt.toISOString();
+
+  assert.equal(existingProspectRequiresWebsiteResolution(existing, refreshAt), true);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(existing, refreshAt), false);
+
+  const resolution = await verifyProspectWebsiteWithSecondPass(existing, {
+    fetch: async () => {
+      throw new Error("Current structured no-site evidence should not require a speculative website request.");
+    },
+    forceNoSiteEvidenceRefresh: true,
+    now: () => refreshAt,
+  });
+  const refreshed = mergeResolvedWebsiteEvidence(existing, resolution.result.prospect);
+
+  assert.equal(resolution.result.report.status, "no_owned_website");
+  assert.equal(refreshed.websiteVerification?.checkedAt, refreshAt.toISOString());
+  assert.equal(existingProspectRequiresWebsiteResolution(refreshed, refreshAt), false);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(refreshed, refreshAt), true);
+  assert.equal(
+    topProspectRejectionReason(refreshed, assessNoWebsiteOpportunity(refreshed), "growth", "written_only"),
+    "Phone-only / written outreach blocked",
+  );
+  assert.equal(refreshed.outreach, undefined);
+});
+
+test("historical stale no-site evidence that cannot be refreshed becomes unresolved instead of reusable", async () => {
+  const refreshAt = new Date(now);
+  const existing = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  existing.createdAt = "2026-07-01T12:00:00.000Z";
+  existing.websiteVerification!.checkedAt = "2026-07-01T12:00:00.000Z";
+  existing.websiteVerification!.fit!.evaluatedAt = "2026-07-01T12:00:00.000Z";
+
+  const resolution = await verifyProspectWebsiteWithSecondPass(existing, {
+    allowHistoricalNoSiteLookup: true,
+    forceNoSiteEvidenceRefresh: true,
+    fetch: async () => {
+      throw new Error("Two stored provider identities require no additional configured provider lookup.");
+    },
+    now: () => refreshAt,
+  });
+  const refreshed = mergeResolvedWebsiteEvidence(existing, resolution.result.prospect);
+
+  assert.equal(resolution.outcome, "still_manual");
+  assert.equal(refreshed.fitDisposition, "inconclusive_requires_review");
+  assert.equal(websiteFitAllowsAutonomousOutreach(refreshed), false);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(refreshed, refreshAt), false);
+  assert.equal(refreshed.outreach, undefined);
+});
+
+test("stale no-site refresh excludes a newly verified adequate owned website", async () => {
+  const refreshAt = new Date(now);
+  const website = "https://neighborhood-pressure-washing.example/";
+  const existing = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
+  existing.createdAt = "2026-07-01T12:00:00.000Z";
+  existing.websiteVerification!.checkedAt = "2026-07-01T12:00:00.000Z";
+  existing.websiteVerification!.fit!.evaluatedAt = "2026-07-01T12:00:00.000Z";
+  const identity = {
+    businessName: existing.businessName,
+    phone: existing.phone,
+    address: existing.address,
+    city: existing.city,
+    state: existing.state,
+    latitude: 41.6528,
+    longitude: -83.5379,
+  };
+  existing.activitySignals = [
+    discoveryIdentityEvidenceSignal({
+      ...identity,
+      source: "google",
+      website,
+      profileUrl: "https://maps.google.com/?cid=3545450935484072529",
+    }),
+    discoveryIdentityEvidenceSignal({ ...identity, source: "bing", website: "", profileUrl: "" }),
+  ];
+
+  const resolution = await verifyProspectWebsiteWithSecondPass(existing, {
+    allowHistoricalNoSiteLookup: true,
+    forceNoSiteEvidenceRefresh: true,
+    fetch: async (input) => {
+      assert.equal(new URL(String(input)).hostname, "neighborhood-pressure-washing.example");
+      return new Response(`<!doctype html><html><head><title>Neighborhood Pressure Washing | Toledo</title><meta name="viewport" content="width=device-width" /></head>
+        <body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav><h1>Neighborhood Pressure Washing</h1>
+        <p>Residential pressure washing, house washing, and concrete cleaning for Toledo homeowners.</p>
+        <a href="tel:+14195550142">(419) 555-0142</a><form><button>Request an estimate</button></form>
+        <img src="/project.jpg" alt="Completed pressure washing project" /></body></html>`, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    },
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
+    maxContactPages: 0,
+    now: () => refreshAt,
+  });
+  const refreshed = mergeResolvedWebsiteEvidence(existing, resolution.result.prospect);
+
+  assert.equal(resolution.result.report.status, "usable");
+  assert.ok(["adequate_existing_website", "strong_existing_website"].includes(refreshed.fitDisposition));
+  assert.equal(websiteFitAllowsAutonomousOutreach(refreshed), false);
+  assert.equal(verifiedExistingTopProspectCanBeReassessed(refreshed, refreshAt), false);
+  assert.equal(refreshed.outreach, undefined);
 });
 
 test("verified no-site prospect without written contact reaches the real downstream rejection", () => {
@@ -316,6 +429,27 @@ test("worker preserves current-result, contacted, suppressed, and review-setting
   assert.ok(verifiedReuse > reviewSettingGuard);
   assert.ok(resultSave > verifiedReuse);
   assert.ok(duplicateSkip > resultSave);
+});
+
+test("worker refreshes stale existing evidence and resolves every failure before duplicate fallback", () => {
+  const workerSource = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
+  const processLeadStart = workerSource.indexOf("async function processLead(");
+  const refreshGate = workerSource.indexOf("if (existingProspectRequiresWebsiteResolution(existing, jobCreatedAt))", processLeadStart);
+  const historicalLookup = workerSource.indexOf("allowHistoricalNoSiteLookup: existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt)", refreshGate);
+  const forcedRefresh = workerSource.indexOf("forceNoSiteEvidenceRefresh: staleNoSiteEvidence", historicalLookup);
+  const verificationFailure = workerSource.indexOf('addUnresolvedSkip(summary, unresolved, "website_verification_failed")', forcedRefresh);
+  const fitFailure = workerSource.indexOf('addUnresolvedSkip(summary, unresolved, "website_fit_requires_review")', verificationFailure);
+  const refreshedResult = workerSource.indexOf("saveTopProspectResult(jobId, existing", fitFailure);
+  const duplicateSkip = workerSource.indexOf('addSkip(summary, "duplicate")', refreshedResult);
+
+  assert.ok(processLeadStart >= 0);
+  assert.ok(refreshGate > processLeadStart);
+  assert.ok(historicalLookup > refreshGate);
+  assert.ok(forcedRefresh > historicalLookup);
+  assert.ok(verificationFailure > forcedRefresh);
+  assert.ok(fitFailure > verificationFailure);
+  assert.ok(refreshedResult > fitFailure);
+  assert.ok(duplicateSkip > refreshedResult);
 });
 
 test("worker diverts final manual opportunities before outreach artifact generation", () => {

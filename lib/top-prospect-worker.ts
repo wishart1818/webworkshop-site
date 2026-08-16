@@ -660,10 +660,18 @@ type ProcessLeadResult = {
   websiteEnrichment?: TopProspectWebsiteEnrichmentRecord;
 };
 
-export function existingProspectRequiresWebsiteResolution(prospect: Prospect) {
+export function existingProspectRequiresWebsiteResolution(prospect: Prospect, now = new Date()) {
   const disposition = normalizeWebsiteFitDisposition(prospect);
-  return !websiteFitAllowsAutonomousOutreach(prospect)
-    && !["adequate_existing_website", "strong_existing_website"].includes(disposition);
+  if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) return false;
+  if (!websiteFitAllowsAutonomousOutreach(prospect)) return true;
+  const freshness = prospectFreshnessAt(prospect, now);
+  return !freshness.websiteVerificationFresh || !freshness.websiteFitFresh;
+}
+
+function existingProspectNeedsHistoricalNoSiteLookup(prospect: Prospect, now: Date) {
+  if (prospect.website.trim() || prospect.prospectType !== "no_website_social_only") return false;
+  const createdAt = Date.parse(prospect.createdAt);
+  return !Number.isFinite(createdAt) || now.getTime() - createdAt > 7 * 24 * 60 * 60 * 1_000;
 }
 
 function unresolvedTopProspectRecord(
@@ -991,14 +999,14 @@ async function processLead(
       }
       resolvedExistingNow = true;
     }
-    if (!websiteFitAllowsAutonomousOutreach(existing)) {
-      if (!existingProspectRequiresWebsiteResolution(existing)) {
-        addSkip(summary, "confirmed_usable_website_not_fit");
-        return { qualified: false };
-      }
+    if (existingProspectRequiresWebsiteResolution(existing, jobCreatedAt)) {
       let resolution: SharedProspectVerificationResolution;
       try {
-        resolution = await verifyProspectWebsiteWithSecondPass(existing);
+        const staleNoSiteEvidence = !existing.website.trim() && existing.prospectType === "no_website_social_only";
+        resolution = await verifyProspectWebsiteWithSecondPass(existing, {
+          allowHistoricalNoSiteLookup: existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt),
+          forceNoSiteEvidenceRefresh: staleNoSiteEvidence,
+        });
       } catch {
         const unresolved = unresolvedTopProspectRecord(existing, lead);
         addUnresolvedSkip(summary, unresolved, "website_verification_failed");
@@ -1021,6 +1029,9 @@ async function processLead(
       }
       existingResolution = resolution;
       resolvedExistingNow = true;
+    } else if (!websiteFitAllowsAutonomousOutreach(existing)) {
+      addSkip(summary, "confirmed_usable_website_not_fit");
+      return { qualified: false };
     }
     if (
       resolvedExistingNow

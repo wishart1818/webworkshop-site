@@ -76,6 +76,7 @@ export type SharedProspectVerificationDependencies = WebsiteVerificationDependen
   googlePlacesApiKey?: string;
   azureMapsApiKey?: string;
   allowHistoricalNoSiteLookup?: boolean;
+  forceNoSiteEvidenceRefresh?: boolean;
 };
 
 export const noSiteEnrichmentOutcomes = [
@@ -509,10 +510,8 @@ export async function verifyProspectWebsiteWithSecondPass(
     && !isCredibleOwnedWebsiteCandidate(independentLookup.evidence[0]?.website ?? "")
     && new Set(discoveryIdentityEvidenceFromSignals(resolvedWorkingProspect.activitySignals).map((item) => item.source)).size >= 2,
   );
-  const authoritativeNoSiteVerifiedAtEntry = authoritativeNoOwnedWebsiteEvidence(
-    prospect,
-    new Date(checkedAt),
-  ).verified;
+  const authoritativeNoSiteVerifiedAtEntry = !dependencies.forceNoSiteEvidenceRefresh
+    && authoritativeNoOwnedWebsiteEvidence(prospect, new Date(checkedAt)).verified;
   const ownedWebsiteLookup = !resolvedWorkingProspect.website.trim()
     && providerCandidates.length === 0
     && !independentlyCorroboratedWithoutWebsite
@@ -542,7 +541,16 @@ export async function verifyProspectWebsiteWithSecondPass(
     providerCandidates = providerOwnedWebsiteCandidates(resolvedWorkingProspect);
   }
 
-  const initialResult = applyProviderBoundWebsiteEvidence(await verifyProspectWebsite(resolvedWorkingProspect, dependencies));
+  const initialVerificationProspect = dependencies.forceNoSiteEvidenceRefresh && startedAsProbableNoSite
+    ? {
+        ...resolvedWorkingProspect,
+        websiteStatus: "unknown" as const,
+        websiteStatusDetail: "Stored no-owned-website evidence is being refreshed.",
+        fitDisposition: "inconclusive_requires_review" as const,
+        websiteVerification: undefined,
+      }
+    : resolvedWorkingProspect;
+  const initialResult = applyProviderBoundWebsiteEvidence(await verifyProspectWebsite(initialVerificationProspect, dependencies));
   const finish = (resolution: SharedProspectVerificationResolution) => attachNoSiteEnrichment(resolution, {
     startedAsProbableNoSite,
     workingProspect: resolvedWorkingProspect,
