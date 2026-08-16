@@ -280,6 +280,7 @@ export function assessManualTopProspectOpportunity(
 
   const disposition = normalizeWebsiteFitDisposition(prospect);
   if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) return null;
+  if (websiteFitAllowsAutonomousOutreach(prospect)) return null;
 
   if (prospect.prospectType === "no_website_social_only" && !prospect.website.trim()) {
     const plausibleProviderIdentity = Boolean(
@@ -300,8 +301,6 @@ export function assessManualTopProspectOpportunity(
       websiteObservations: [],
     };
   }
-
-  if (websiteFitAllowsAutonomousOutreach(prospect)) return null;
 
   const observations = boundedManualWebsiteObservations(prospect);
   if (

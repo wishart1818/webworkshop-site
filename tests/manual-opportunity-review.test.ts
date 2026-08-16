@@ -4,10 +4,16 @@ import test from "node:test";
 import { discoveryDiagnosticsFromJson, mergeDiscoveryCandidates, type DiscoveredLead, type UnresolvedTopProspectRecord } from "../lib/lead-discovery";
 import { createProspect, type Prospect, type WebsiteFitDisposition } from "../lib/prospect-engine";
 import {
+  discoveryIdentityEvidenceSignal,
+  discoverySameNameAmbiguitySignal,
+} from "../lib/prospect-identity-evidence";
+import {
   verifiedEmailEvidenceForProspect,
   websiteFitAllowsAutonomousOutreach,
 } from "../lib/prospect-qualification";
+import { verifyProspectWebsiteWithSecondPass } from "../lib/prospect-verification-resolution";
 import {
+  assessNoWebsiteOpportunity,
   assessManualTopProspectOpportunity,
   topProspectOutcomeCounts,
   topProspectRejectionReason,
@@ -88,6 +94,38 @@ function manualLead(overrides: Partial<DiscoveredLead> = {}): DiscoveredLead {
   };
 }
 
+function corroboratedNoSiteProspect() {
+  const value = prospect({
+    prospectType: "no_website_social_only",
+    classification: "phone_only",
+    recommendedContactMethod: "call_first",
+    createdAt: now,
+  });
+  const identity = {
+    businessName: value.businessName,
+    website: "",
+    phone: value.phone,
+    address: value.address,
+    city: value.city,
+    state: value.state,
+    latitude: 41.6528,
+    longitude: -83.5379,
+  };
+  value.activitySignals = [
+    discoveryIdentityEvidenceSignal({
+      ...identity,
+      source: "google",
+      profileUrl: "https://maps.google.com/?cid=3545450935484072529",
+    }),
+    discoveryIdentityEvidenceSignal({
+      ...identity,
+      source: "bing",
+      profileUrl: "",
+    }),
+  ];
+  return value;
+}
+
 test("probable no-site candidate with insufficient autonomous activity is retained for manual review", () => {
   const result = mergeDiscoveryCandidates({
     candidates: [{
@@ -151,34 +189,70 @@ test("manual opportunities cannot displace strict candidates at the discovery li
   assert.equal(result.diagnostics.qualificationBreakdown?.manualOpportunityCandidates, 1);
 });
 
-test("probable no-site manual opportunity remains blocked from autonomous and JIT qualification", () => {
-  const value = markWebsiteState(prospect({ prospectType: "no_website_social_only" }), "no_owned_website", "no_owned_website", "not_owned");
+test("verified no-owned-website prospect leaves manual review and continues through normal qualification gates", () => {
+  const value = markWebsiteState(corroboratedNoSiteProspect(), "no_owned_website", "no_owned_website", "not_owned");
   const assessment = assessManualTopProspectOpportunity(value, manualLead());
 
-  assert.equal(assessment?.kind, "probable_no_owned_website");
+  assert.equal(assessment, null);
   assert.equal(websiteFitAllowsAutonomousOutreach(value), true);
-  assert.notEqual(topProspectRejectionReason(value, {
-    opportunityScore: 90,
-    salesScores: { websiteQualityScore: 0, revenueOpportunityScore: 0, contactabilityScore: 80, localMarketCompetitivenessScore: 0, aiReplacementConfidenceScore: 0, weightedSalesScore: 90 },
-    presenceScores: null,
-    mainWeakness: "No owned website is verified.",
-    whyMayBuy: "Manual review only.",
-    pitchAngle: "Manual review only.",
-  }, "strict", "phone_allowed"), null);
+  assert.equal(topProspectRejectionReason(value, assessNoWebsiteOpportunity(value), "growth", "phone_allowed"), null);
   assert.equal(verifiedEmailEvidenceForProspect(value), null);
   assert.equal(value.outreach, undefined);
   assert.equal(value.preview, undefined);
+});
+
+test("uncorroborated and conflicting no-site prospects remain manual and package-free", () => {
+  const uncorroborated = prospect({ prospectType: "no_website_social_only" });
+  const conflicting = markWebsiteState(
+    prospect({
+      prospectType: "no_website_social_only",
+      activitySignals: [discoverySameNameAmbiguitySignal()],
+    }),
+    "inconclusive_requires_review",
+    "inconclusive",
+    "uncertain",
+  );
+
+  for (const value of [uncorroborated, conflicting]) {
+    assert.equal(websiteFitAllowsAutonomousOutreach(value), false);
+    assert.equal(assessManualTopProspectOpportunity(value, manualLead())?.kind, "probable_no_owned_website");
+    assert.equal(value.outreach, undefined);
+    assert.equal(value.preview, undefined);
+  }
+});
+
+test("second-pass authoritative no-site result is not returned to Manual Opportunity Review", async () => {
+  const result = await verifyProspectWebsiteWithSecondPass(corroboratedNoSiteProspect(), {
+    fetch: async () => {
+      throw new Error("Authoritative two-provider no-site evidence should not need speculative recovery.");
+    },
+    now: () => new Date(now),
+    googlePlacesApiKey: "google-test-key",
+    azureMapsApiKey: "azure-test-key",
+  });
+  const verified = result.result.prospect;
+
+  assert.equal(result.result.report.status, "no_owned_website");
+  assert.equal(websiteFitAllowsAutonomousOutreach(verified), true);
+  assert.equal(assessManualTopProspectOpportunity(verified, manualLead({ sources: ["bing", "google"] })), null);
+  assert.equal(topProspectRejectionReason(verified, assessNoWebsiteOpportunity(verified), "growth", "phone_allowed"), "No usable contact path");
+  verified.recommendedContactMethod = "call_first";
+  assert.equal(topProspectRejectionReason(verified, assessNoWebsiteOpportunity(verified), "growth", "phone_allowed"), null);
+  assert.equal(verified.outreach, undefined);
+  assert.equal(verified.preview, undefined);
 });
 
 test("worker diverts final manual opportunities before outreach artifact generation", () => {
   const workerSource = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
   const processLeadStart = workerSource.indexOf("async function processLead(");
   const manualGate = workerSource.indexOf("const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);", processLeadStart);
+  const websiteFitGate = workerSource.indexOf("if (!websiteFitAllowsAutonomousOutreach(prospect))", manualGate);
   const artifactGeneration = workerSource.indexOf("const rejectionReason = await saveTopProspectResult(jobId, prospect", processLeadStart);
 
   assert.ok(processLeadStart >= 0);
   assert.ok(manualGate > processLeadStart);
-  assert.ok(artifactGeneration > manualGate);
+  assert.ok(websiteFitGate > manualGate);
+  assert.ok(artifactGeneration > websiteFitGate);
   assert.match(workerSource.slice(manualGate, artifactGeneration), /return \{ qualified: false, unresolved, .*websiteEnrichment/);
 });
 
