@@ -114,6 +114,14 @@ function ownedWebsiteHtml(businessName = "HK Pressure Washing", publishedPhone =
     <img src="/project.jpg" alt="Pressure washing project" /></body></html>`;
 }
 
+function sameNameWrongMarketWebsiteHtml() {
+  return `<!doctype html><html><head><title>HK Pressure Washing | Houston</title><meta name="viewport" content="width=device-width" /></head>
+    <body><nav><a href="/services">Services</a><a href="/contact">Contact</a></nav><h1>HK Pressure Washing</h1>
+    <p>Pressure washing services for Houston, TX properties.</p>
+    <a href="tel:713-555-0199">713-555-0199</a><a href="mailto:info@hkpressurewashing.com">info@hkpressurewashing.com</a>
+    <form><button>Request an estimate</button></form><img src="/project.jpg" alt="Pressure washing project" /></body></html>`;
+}
+
 function refreshDependencies(fetchImpl: typeof fetch, includeAzure = true) {
   return {
     fetch: fetchImpl,
@@ -196,7 +204,20 @@ test("HK-style unrelated deterministic domain is never attached as an owned webs
   assert.doesNotMatch(result.noSiteEnrichment?.reason ?? "", /provider supplied/i);
 });
 
-test("deterministic candidate overrides no-site only after strict first-party ownership succeeds", async () => {
+test("same-name wrong-market deterministic domain cannot establish ownership from its domain email", async () => {
+  const { fetchImpl } = providerFetch({ websiteHtml: sameNameWrongMarketWebsiteHtml(), websiteStatus: 200 });
+
+  const result = await verifyProspectWebsiteWithSecondPass(staleProspect(), refreshDependencies(fetchImpl));
+
+  assert.equal(result.result.report.status, "no_owned_website");
+  assert.equal(result.result.report.ownershipDecision, "not_owned");
+  assert.equal(result.result.prospect.website, "");
+  assert.equal(authoritativeNoOwnedWebsiteEvidence(result.result.prospect, now).verified, true);
+  assert.equal(result.noSiteEnrichment?.websiteCandidateProvenance, "deterministic_guess");
+  assert.match(result.noSiteEnrichment?.reason ?? "", /did not establish first-party ownership/i);
+});
+
+test("matching prospect phone allows a legitimate deterministic candidate to establish ownership", async () => {
   const { fetchImpl } = providerFetch({ websiteHtml: ownedWebsiteHtml(), websiteStatus: 200 });
 
   const result = await verifyProspectWebsiteWithSecondPass(staleProspect(), refreshDependencies(fetchImpl));
@@ -205,6 +226,7 @@ test("deterministic candidate overrides no-site only after strict first-party ow
   assert.equal(result.result.report.ownershipDecision, "owned");
   assert.equal(result.result.prospect.website, "https://hkpressurewashing.com/");
   assert.notEqual(result.result.prospect.fitDisposition, "no_owned_website");
+  assert.equal(result.result.report.identitySignals?.includes("public_phone_match"), true);
   assert.equal(result.noSiteEnrichment?.websiteCandidateProvenance, "deterministic_guess");
   assert.match(result.noSiteEnrichment?.reason ?? "", /strict first-party ownership verification/i);
 });

@@ -304,6 +304,20 @@ function safelyResolved(result: ProspectWebsiteVerificationResult) {
   return websiteFitAllowsAutonomousOutreach(result.prospect);
 }
 
+function deterministicCandidateHasProspectSpecificIdentityBinding(
+  result: ProspectWebsiteVerificationResult,
+) {
+  const signals = new Set(result.report.identitySignals ?? []);
+  return result.report.ownershipDecision === "owned"
+    && (
+      signals.has("public_phone_match")
+      || (
+        signals.has("market_location_match")
+        && signals.has("business_domain_email_match")
+      )
+    );
+}
+
 function resolutionOutcome(result: ProspectWebsiteVerificationResult): SharedProspectVerificationResolution["outcome"] {
   const disposition = normalizeWebsiteFitDisposition(result.prospect);
   if (["adequate_existing_website", "strong_existing_website"].includes(disposition) && safelyResolved(result)) {
@@ -659,7 +673,10 @@ export async function verifyProspectWebsiteWithSecondPass(
     ));
     if (safelyResolved(candidateResult)) {
       best = candidateResult;
-      if (candidate.provenance === "deterministic_guess" && candidateResult.report.ownershipDecision === "owned") {
+      if (
+        candidate.provenance === "deterministic_guess"
+        && deterministicCandidateHasProspectSpecificIdentityBinding(candidateResult)
+      ) {
         deterministicOwnedResult = candidateResult;
       }
       if (candidate.provenance !== "deterministic_guess" || deterministicOwnedResult) break;
