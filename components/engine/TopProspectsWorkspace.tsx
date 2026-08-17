@@ -949,6 +949,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 {record.websiteCandidate ? <p><b>Website checked:</b> {compactUrl(record.websiteCandidate)}</p> : null}
                 {record.websiteCandidate ? <p><b>Candidate source:</b> {record.websiteCandidateProvenance === "deterministic_guess" ? "Deterministic domain guess" : "Matched provider website"}</p> : null}
                 {record.websiteCandidate ? <p><b>Website ownership:</b> {record.websiteOwnershipVerified ? "Accepted only after shared first-party verification" : "Not established"}</p> : null}
+                {record.legacyDeterministicCandidateRepaired ? <p><b>Legacy candidate repair:</b> Re-evaluated under current provider and ownership rules</p> : null}
                 <p><b>Verification:</b> {record.websiteVerificationStatus.replaceAll("_", " ")} / <b>Fit:</b> {record.websiteFitDisposition.replaceAll("_", " ")}</p>
                 <div className="engine-inline-actions">
                   <button className="engine-button" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>

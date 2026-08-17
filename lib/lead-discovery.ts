@@ -1328,6 +1328,12 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                     ? { websiteCandidateProvenance: record.websiteCandidateProvenance as NonNullable<TopProspectWebsiteEnrichmentRecord["websiteCandidateProvenance"]> }
                     : {}),
                   ...(typeof record.websiteOwnershipVerified === "boolean" ? { websiteOwnershipVerified: record.websiteOwnershipVerified } : {}),
+                  ...(typeof record.legacyDeterministicCandidateRepaired === "boolean"
+                    ? { legacyDeterministicCandidateRepaired: record.legacyDeterministicCandidateRepaired }
+                    : {}),
+                  ...(typeof record.legacyDeterministicCandidateUrl === "string"
+                    ? { legacyDeterministicCandidateUrl: record.legacyDeterministicCandidateUrl.slice(0, 500) }
+                    : {}),
                 }];
               }).slice(0, 250),
             }
