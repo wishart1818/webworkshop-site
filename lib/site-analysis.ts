@@ -1143,6 +1143,8 @@ function websiteIdentitySignals(
   const city = normalizedIdentityText(prospect.city);
   const phone = normalizedPhoneDigits(prospect.phone);
   const publishedPhones = pagePhoneNumbers(html);
+  const publicPhoneMatch = phone.length === 10 && publishedPhones.includes(phone);
+  const publicPhoneConflict = phone.length === 10 && publishedPhones.length > 0 && !publicPhoneMatch;
   const canonicalRoot = rootPageForOrigin(canonicalUrl, pages);
   const rootBusinessIdentity = Boolean(
     canonicalRoot && htmlProminentlyMatchesBusinessIdentity(canonicalRoot.html, prospect.businessName),
@@ -1151,7 +1153,8 @@ function websiteIdentitySignals(
     htmlProminentlyMatchesBusinessIdentity(html, prospect.businessName) ? "prominent_business_name" as const : null,
     equivalentOwnedHost(canonicalUrl, prospect.website) ? "stored_website_host_match" as const : null,
     city.length >= 3 && text.includes(city) ? "market_location_match" as const : null,
-    phone.length === 10 && publishedPhones.includes(phone) ? "public_phone_match" as const : null,
+    publicPhoneMatch ? "public_phone_match" as const : null,
+    publicPhoneConflict ? "public_phone_conflict" as const : null,
     rootBusinessIdentity ? "canonical_root_business_identity" as const : null,
     rootHasFirstPartySiteStructure(canonicalUrl, prospect.businessName, pages) ? "first_party_site_structure" as const : null,
     pagesPublishBusinessDomainEmail(canonicalUrl, pages) ? "business_domain_email_match" as const : null,
@@ -1787,6 +1790,7 @@ export async function verifyProspectWebsite(
       identitySignals.includes("stored_website_host_match") ? "The canonical host matches the stored business website host." : "",
       identitySignals.includes("market_location_match") ? "The verified website names the prospect's stored city or market." : "",
       identitySignals.includes("public_phone_match") ? "The verified website publishes the prospect's stored business phone number." : "",
+      identitySignals.includes("public_phone_conflict") ? "The verified website publishes complete phone numbers, but none match the prospect's stored business phone." : "",
       identitySignals.includes("canonical_root_business_identity") ? "The canonical website root prominently identifies the business." : "",
       identitySignals.includes("first_party_site_structure") ? "The branded root links to same-origin business detail or contact pages." : "",
       identitySignals.includes("business_domain_email_match") ? "The verified website publishes an email on its own business domain." : "",
@@ -1796,7 +1800,9 @@ export async function verifyProspectWebsite(
       ? fitDispositionForVerifiedWebsite(analysis, contactProspect, successful.usableSignals, checkedAt)
       : {
           disposition: "inconclusive_requires_review" as const,
-          reason: "The page is usable, but the business identity was not prominent enough to confirm website ownership automatically.",
+          reason: identitySignals.includes("public_phone_conflict")
+            ? "The page is usable, but its published phone numbers conflict with the prospect's stored business phone, so website ownership cannot be confirmed automatically."
+            : "The page is usable, but the business identity was not prominent enough to confirm website ownership automatically.",
           supportingEvidence: identityEvidence,
           confidence: "low" as const,
           analysisOrigin: "automated_html" as const,
