@@ -944,6 +944,7 @@ export function parseWebsiteVerificationReport(value: unknown): WebsiteVerificat
     "canonical_root_business_identity",
     "first_party_site_structure",
     "business_domain_email_match",
+    "public_phone_conflict",
   ].includes(signal))) {
     throw new Error("Website identity signal is not supported.");
   }
