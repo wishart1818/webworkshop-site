@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/phone-conflict-runtime-decoder
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
