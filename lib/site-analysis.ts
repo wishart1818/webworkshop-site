@@ -18,6 +18,7 @@ import {
   type WebsiteAvailabilityStatus,
   type WebsiteVerificationAttempt,
   type WebsiteVerificationFailureCategory,
+  type WebsiteFitObservation,
   type WebsiteVerificationReport,
 } from "@/lib/prospect-engine";
 import {
@@ -1485,6 +1486,48 @@ export type ProspectWebsiteVerificationResult = {
   report: WebsiteVerificationReport;
 };
 
+type ObjectiveWebsiteDeficiency = "contact_path" | "service_content" | "navigation" | "mobile_viewport";
+
+function objectiveWeakWebsiteObservation(
+  deficiencies: ObjectiveWebsiteDeficiency[],
+  evidence: string[],
+): WebsiteFitObservation {
+  if (deficiencies.includes("contact_path")) {
+    return {
+      kind: "contact_visibility",
+      statement: "I couldn't find a clear phone, email, contact page, or quote-request path on the current website.",
+      rebuildSentence: "I can rebuild your current website so customers have a clear way to call, email, or request a quote while keeping your services and business information easy to find.",
+      evidence,
+      demoChecklist: ["Show a clear phone or email action", "Show the contact or quote-request path on desktop and mobile"],
+    };
+  }
+  if (deficiencies.includes("service_content")) {
+    return {
+      kind: "service_clarity",
+      statement: "I couldn't find clear service information on the current website.",
+      rebuildSentence: "I can rebuild your current website with clear service information and straightforward contact and quote-request paths for customers.",
+      evidence,
+      demoChecklist: ["Show the verified primary services", "Show how customers move from a service to the contact or quote action"],
+    };
+  }
+  if (deficiencies.includes("navigation")) {
+    return {
+      kind: "service_clarity",
+      statement: "I couldn't find clear customer navigation on the current website.",
+      rebuildSentence: "I can rebuild your current website with clear navigation that helps customers find services, contact information, and the quote-request path.",
+      evidence,
+      demoChecklist: ["Show the primary customer navigation", "Show the service and contact paths on desktop and mobile"],
+    };
+  }
+  return {
+    kind: "general_rebuild",
+    statement: "The current website does not declare a mobile viewport in its public HTML.",
+    rebuildSentence: "I can rebuild your current website with a responsive page structure that keeps service and contact information clear across screen sizes.",
+    evidence,
+    demoChecklist: ["Show the responsive page structure", "Show service and contact information at desktop and mobile widths"],
+  };
+}
+
 function fitDispositionForVerifiedWebsite(
   analysis: Analysis,
   prospect: Prospect,
@@ -1492,12 +1535,12 @@ function fitDispositionForVerifiedWebsite(
   evaluatedAt: string,
 ) {
   const signals = new Set(usableSignals);
-  const hasContactPath = Boolean(
-    prospect.contactFormDetected
-    || prospect.quoteFormDetected
-    || prospect.email
-    || prospect.phone,
-  );
+  const hasContactPath = prospect.contactEvidence.some((item) => (
+    item.sourceType === "owned_website"
+    && item.firstParty === true
+    && item.decision !== "rejected"
+    && ["phone", "email", "contact_page", "contact_form", "quote_form"].includes(item.kind)
+  ));
   const structuralSignals = [
     signals.has("meaningful page title"),
     signals.has("navigation"),
@@ -1515,6 +1558,20 @@ function fitDispositionForVerifiedWebsite(
     signals.has("business imagery") ? "Business imagery is present." : "",
     signals.has("structured business data") ? "Structured business data is present." : "",
   ].filter(Boolean);
+  const objectiveDeficiencies: Array<{ key: ObjectiveWebsiteDeficiency; evidence: string }> = [
+    !signals.has("navigation")
+      ? { key: "navigation", evidence: "No meaningful customer navigation was found in the verified homepage HTML." }
+      : null,
+    !signals.has("service content")
+      ? { key: "service_content", evidence: "No meaningful service content was found in the verified homepage text." }
+      : null,
+    !signals.has("mobile viewport")
+      ? { key: "mobile_viewport", evidence: "No mobile viewport declaration was found in the verified homepage HTML." }
+      : null,
+    !hasContactPath
+      ? { key: "contact_path", evidence: "The bounded first-party crawl found no public phone, email, contact page, contact form, or quote form." }
+      : null,
+  ].filter((item): item is { key: ObjectiveWebsiteDeficiency; evidence: string } => Boolean(item));
 
   if (structuralSignals >= 5) {
     return {
@@ -1524,6 +1581,22 @@ function fitDispositionForVerifiedWebsite(
       confidence: "high" as const,
       analysisOrigin: "automated_html" as const,
       evaluatedAt,
+    };
+  }
+
+  if (structuralSignals <= 2 && objectiveDeficiencies.length >= 3) {
+    const deficiencyEvidence = objectiveDeficiencies.map((item) => item.evidence);
+    return {
+      disposition: "clearly_weak_or_outdated_website" as const,
+      reason: `The verified owned website has only ${structuralSignals} of 6 customer-facing structural signals and ${objectiveDeficiencies.length} independently observed critical deficiencies. This supports a rebuild opportunity without making a subjective visual-age claim.`,
+      supportingEvidence: [...deficiencyEvidence, ...supportingEvidence],
+      confidence: "high" as const,
+      analysisOrigin: "automated_html" as const,
+      evaluatedAt,
+      observation: objectiveWeakWebsiteObservation(
+        objectiveDeficiencies.map((item) => item.key),
+        deficiencyEvidence,
+      ),
     };
   }
 

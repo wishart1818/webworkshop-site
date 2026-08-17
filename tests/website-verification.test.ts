@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createProspect,
+  generateOutreach,
   prospectVerifiedEmailEvidence,
   prospectWebsiteVerificationBlockReason,
 } from "../lib/prospect-engine";
+import {
+  outreachObservationForProspect,
+  websiteFitAllowsAutonomousOutreach,
+} from "../lib/prospect-qualification";
 import {
   extractContactDiscoveryFromPages,
   verifyProspectWebsite,
   type WebsiteVerificationDependencies,
 } from "../lib/site-analysis";
 import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
+import { assessOpportunity, topProspectRejectionReason } from "../lib/top-prospects";
 
 const fixedNow = new Date("2026-07-28T12:00:00.000Z");
 
@@ -93,6 +99,32 @@ const trueCleanContact = `
   </html>
 `;
 
+const sparseOwnedHomepage = `
+  <!doctype html>
+  <html>
+    <head>
+      <title>True Clean Prowash</title>
+      <link rel="canonical" href="https://truecleanprowash.com/" />
+    </head>
+    <body>
+      <h1>True Clean Prowash</h1>
+      <p>${"Local company information for Columbus property owners and nearby communities. ".repeat(8)}</p>
+      <a href="/contact" aria-label="Details"></a>
+    </body>
+  </html>
+`;
+
+function sparseOwnedWebsiteFetch(contactMarkup: string): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const pathname = new URL(requestUrl(input)).pathname;
+    if (pathname === "/") return htmlResponse(sparseOwnedHomepage);
+    if (pathname === "/contact") {
+      return htmlResponse(`<html><head><title>True Clean Prowash</title></head><body><h1>True Clean Prowash</h1>${contactMarkup}</body></html>`);
+    }
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+}
+
 test("True Clean crawler-specific 508 is overridden by bounded usable-site and contact evidence", async () => {
   const calls: Array<{ url: string; browserHeaders: boolean }> = [];
   const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -133,6 +165,101 @@ test("True Clean crawler-specific 508 is overridden by bounded usable-site and c
   assert.equal(emailEvidence?.decision, "autonomous_eligible");
   assert.ok(calls.length <= 10);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
+});
+
+test("verified owned usable HTML with multiple objective structural deficiencies becomes a grounded weak-site opportunity", async () => {
+  const result = await verifyProspectWebsite(
+    prospect({ phone: "" }),
+    verificationDependencies(sparseOwnedWebsiteFetch("<a href='mailto:info@truecleanprowash.com'>info@truecleanprowash.com</a>")),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.prospect.fitDisposition, "clearly_weak_or_outdated_website");
+  assert.equal(result.report.fit?.analysisOrigin, "automated_html");
+  assert.equal(result.report.fit?.observation?.kind, "service_clarity");
+  assert.match(result.report.fit?.observation?.statement ?? "", /couldn't find clear service information/i);
+  assert.match(result.report.fit?.observation?.rebuildSentence ?? "", /rebuild your current website with clear service information/i);
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), true);
+  assert.ok(prospectVerifiedEmailEvidence(result.prospect));
+  assert.equal(
+    topProspectRejectionReason(result.prospect, assessOpportunity(result.prospect), "growth", "written_only"),
+    null,
+  );
+
+  const outreach = generateOutreach(result.prospect, "", {
+    NODE_ENV: "test",
+    OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+  });
+  assert.equal(outreach.approved, false);
+  assert.match(outreach.concise, /couldn't find clear service information/i);
+  assert.match(outreach.concise, /rebuild your current website with clear service information/i);
+  assert.doesNotMatch(outreach.concise, /looks? (?:old|outdated)|old design|outdated design/i);
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("the same grounded weak-site fit remains blocked from written outreach when only a phone route is available", async () => {
+  const result = await verifyProspectWebsite(
+    prospect({ phone: "+16145550123" }),
+    verificationDependencies(sparseOwnedWebsiteFetch("<a href='tel:+16145550123'>Call (614) 555-0123</a>")),
+  );
+
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.prospect.fitDisposition, "clearly_weak_or_outdated_website");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), true);
+  assert.equal(prospectVerifiedEmailEvidence(result.prospect), null);
+  assert.equal(
+    topProspectRejectionReason(result.prospect, assessOpportunity(result.prospect), "growth", "written_only"),
+    "Phone-only / written outreach blocked",
+  );
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("one minor missing structural signal leaves a verified owned website adequate", async () => {
+  const noImageHomepage = trueCleanHomepage.replace(
+    '<img src="/crew-cleaning-siding.jpg" alt="Exterior cleaning crew washing residential siding" />',
+    "",
+  );
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => (
+    new URL(requestUrl(input)).pathname === "/" ? htmlResponse(noImageHomepage) : htmlResponse(trueCleanContact)
+  )) as typeof fetch;
+  const result = await verifyProspectWebsite(prospect(), verificationDependencies(fetchImpl));
+
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(outreachObservationForProspect(result.prospect), null);
+  assert.equal(
+    topProspectRejectionReason(result.prospect, assessOpportunity(result.prospect), "growth", "written_only"),
+    "Confirmed usable website / not a fit",
+  );
+});
+
+test("an ambiguous four-signal owned website remains inconclusive", async () => {
+  const homepage = `<!doctype html><html><head><title>True Clean Prowash</title><meta name="viewport" content="width=device-width"></head><body><header><nav><a href="/contact">Contact</a></nav></header><h1>True Clean Prowash</h1><p>${"Local company information for Columbus property owners. ".repeat(8)}</p></body></html>`;
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => (
+    new URL(requestUrl(input)).pathname === "/"
+      ? htmlResponse(homepage)
+      : htmlResponse("<html><head><title>True Clean Prowash</title></head><body><h1>True Clean Prowash</h1><a href='mailto:info@truecleanprowash.com'>Email</a></body></html>")
+  )) as typeof fetch;
+  const result = await verifyProspectWebsite(prospect({ phone: "" }), verificationDependencies(fetchImpl));
+
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(result.report.fit?.observation, undefined);
+});
+
+test("weak usable HTML with uncertain ownership remains inconclusive", async () => {
+  const result = await verifyProspectWebsite(
+    prospect({ phone: "", website: "https://unverified-example.com" }),
+    verificationDependencies((async () => htmlResponse(sparseOwnedHomepage.replaceAll("truecleanprowash.com", "unverified-example.com"))) as typeof fetch),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
 });
 
 test("website identity requires one complete published phone instead of concatenated page digits", async () => {
@@ -231,6 +358,7 @@ test("repeated transient failures remain temporary and never become a no-website
   assert.equal(result.prospect.websiteStatus, "temporarily_unavailable");
   assert.equal(result.prospect.prospectType, "redesign");
   assert.equal(result.prospect.recommendedContactMethod, "needs_manual_contact_research");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
   assert.ok(result.report.attempts.every((attempt) => attempt.failureCategory === "http_transient"));
 });
 
@@ -243,6 +371,7 @@ test("bot-blocked pages remain crawler blocked without an access-control bypass"
 
   assert.equal(result.report.status, "crawler_blocked");
   assert.equal(result.prospect.recommendedContactMethod, "needs_manual_contact_research");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
   assert.ok(result.report.attempts.every((attempt) => attempt.botBlocked));
   assert.ok(result.report.attempts.length <= 6);
 });
