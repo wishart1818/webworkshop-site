@@ -222,8 +222,8 @@ test("complete identity merges provider duplicates while partial phones alone ne
     radiusKm: 50,
     limit: 20,
     candidates: [
-      { source: "google", businessName: "Precision Roofing", website: "https://precisionroofing.example", phone: "419-555-0199" },
-      { source: "osm", businessName: "Precision Roofing LLC", phone: "+1 (419) 555-0199" },
+      { source: "google", businessName: "Precision Roofing", website: "https://precisionroofing.example", phone: "419-555-0199", city: "Toledo", state: "OH" },
+      { source: "osm", businessName: "Precision Roofing LLC", phone: "+1 (419) 555-0199", city: "Toledo", state: "OH" },
     ],
   });
   assert.equal(matched.leads.length, 1);
@@ -239,8 +239,8 @@ test("complete identity merges provider duplicates while partial phones alone ne
     radiusKm: 50,
     limit: 20,
     candidates: [
-      { source: "google", businessName: "Precision Roofing", website: "https://precision-one.example", phone: "555-0199" },
-      { source: "osm", businessName: "Precision Roofing", website: "https://precision-two.example", phone: "555-0199" },
+      { source: "google", businessName: "Precision Roofing", website: "https://precision-one.example", phone: "555-0199", city: "Toledo", state: "OH" },
+      { source: "osm", businessName: "Precision Roofing", website: "https://precision-two.example", phone: "555-0199", city: "Toledo", state: "OH" },
     ],
   });
   assert.equal(partial.leads.length, 2);

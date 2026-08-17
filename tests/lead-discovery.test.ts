@@ -47,10 +47,10 @@ test("discovery diagnostics expose provider, distance, duplicate, qualification,
   });
 
   assert.equal(result.diagnostics.rawProviderCount, 6);
-  assert.equal(result.diagnostics.afterDistanceFilteringCount, 5);
-  assert.equal(result.diagnostics.afterDuplicateFilteringCount, 3);
-  assert.equal(result.diagnostics.afterQualificationFilteringCount, 2);
-  assert.equal(result.diagnostics.returnedCount, 2);
+  assert.equal(result.diagnostics.afterDistanceFilteringCount, 4);
+  assert.equal(result.diagnostics.afterDuplicateFilteringCount, 2);
+  assert.equal(result.diagnostics.afterQualificationFilteringCount, 1);
+  assert.equal(result.diagnostics.returnedCount, 1);
   assert.deepEqual(result.diagnostics.categorySignals, ["craft=roofer", "name~roof|roofing"]);
   assert.deepEqual(result.diagnostics.sourceCounts, { osm: 6, google: 0, bing: 0, yelp: 0, yellowPages: 0 });
   assert.equal(result.diagnostics.providerDiagnostics.osm.status, "succeeded");
@@ -58,8 +58,108 @@ test("discovery diagnostics expose provider, distance, duplicate, qualification,
   assert.equal(result.diagnostics.providerDiagnostics.osm.envVarName, "Not required");
   assert.equal(result.diagnostics.providerDiagnostics.azureMaps.envVarName, "AZURE_MAPS_API_KEY or BING_MAPS_API_KEY");
   assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.envVarPresent, false);
-  assert.equal(result.diagnostics.finalMergedCount, 3);
-  assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Local Roofing", "Missing Center Roofing"]);
+  assert.equal(result.diagnostics.finalMergedCount, 2);
+  assert.deepEqual(result.leads.map((lead) => lead.businessName), ["Local Roofing"]);
+});
+
+test("discovery fails closed for coordinate-less out-of-market candidates while preserving authoritative radius evidence", () => {
+  const result = mergeDiscoveryCandidates({
+    latitude: 27.9506,
+    longitude: -82.4572,
+    city: "Tampa",
+    state: "FL",
+    trade: "Cleaning",
+    radiusKm: 50,
+    limit: 20,
+    sourceCounts: { osm: 0, google: 7, bing: 0, yelp: 0, yellowPages: 0 },
+    candidates: [
+      {
+        source: "google",
+        businessName: "MaidPro McKinney",
+        address: "McKinney, TX",
+        city: "McKinney",
+        state: "TX",
+      },
+      {
+        source: "google",
+        businessName: "Tampa Exact Location Cleaning",
+        website: "https://tampa-exact.example",
+        city: "Tampa",
+        state: "FL",
+      },
+      {
+        source: "google",
+        businessName: "Tampa Coordinate Cleaning",
+        website: "https://tampa-coordinate.example",
+        city: "Tampa",
+        state: "FL",
+        latitude: 27.9606,
+        longitude: -82.4672,
+      },
+      {
+        source: "google",
+        businessName: "McKinney Coordinate Cleaning",
+        city: "McKinney",
+        state: "TX",
+        latitude: 33.1972,
+        longitude: -96.6398,
+      },
+      {
+        source: "google",
+        businessName: "State Mismatch Cleaning",
+        city: "Tampa",
+        state: "TX",
+      },
+      {
+        source: "google",
+        businessName: "Missing Location Cleaning",
+      },
+      {
+        source: "google",
+        businessName: "Partial Coordinate Cleaning",
+        website: "https://partial-coordinate.example",
+        city: "Tampa",
+        state: "FL",
+        latitude: 27.9506,
+      },
+    ],
+  });
+
+  assert.deepEqual(result.leads.map((lead) => lead.businessName), [
+    "Tampa Exact Location Cleaning",
+    "Tampa Coordinate Cleaning",
+    "Partial Coordinate Cleaning",
+  ]);
+  assert.equal(result.diagnostics.afterDistanceFilteringCount, 3);
+  assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.returnedCount, 7);
+  assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.withinRadiusCount, 3);
+  assert.equal(result.leads.some((lead) => lead.businessName === "MaidPro McKinney"), false);
+});
+
+test("valid coordinates remain authoritative for businesses across a nearby state border", () => {
+  const result = mergeDiscoveryCandidates({
+    latitude: 41.6528,
+    longitude: -83.5379,
+    city: "Toledo",
+    state: "OH",
+    trade: "Cleaning",
+    radiusKm: 50,
+    limit: 10,
+    candidates: [{
+      source: "google",
+      businessName: "Lambertville Border Cleaning",
+      website: "https://lambertville-border.example",
+      city: "Lambertville",
+      state: "MI",
+      latitude: 41.7659,
+      longitude: -83.6277,
+    }],
+  });
+
+  assert.equal(result.leads.length, 1);
+  assert.equal(result.leads[0].city, "Lambertville");
+  assert.equal(result.leads[0].state, "MI");
+  assert.equal(result.leads[0].originCity, "Toledo, OH");
 });
 
 test("Toledo roofing discovery can return dozens when the provider supplies them", async () => {
@@ -138,12 +238,12 @@ test("multi-source discovery merges business identity and prioritizes enriched l
     sourceCounts: { osm: 2, google: 1, bing: 1, yelp: 2, yellowPages: 1 },
     candidates: [
       { source: "osm", businessName: "North Coast Roofing LLC", website: "northcoastroofing.example", phone: "419-555-0100", latitude: 41.65, longitude: -83.54 },
-      { source: "google", businessName: "North Coast Roofing", phone: "(419) 555-0100", rating: 4.8, reviewCount: 87, recentReviewCount: 4 },
-      { source: "yelp", businessName: "North Coast Roofing", phone: "419-555-0100", rating: 4.5, reviewCount: 61 },
-      { source: "bing", businessName: "Maumee Roof Repair", website: "https://maumeeroof.example", phone: "419-555-0200" },
-      { source: "yellowPages", businessName: "Maumee Roof Repair Inc", email: "sales@maumeeroof.example", phone: "419-555-0200" },
-      { source: "yelp", businessName: "Directory Only Roofing", phone: "419-555-0300", reviewCount: 12 },
-      { source: "osm", businessName: "Closed Roofing", website: "https://closed.example", inactive: true },
+      { source: "google", businessName: "North Coast Roofing", phone: "(419) 555-0100", rating: 4.8, reviewCount: 87, recentReviewCount: 4, city: "Toledo", state: "OH" },
+      { source: "yelp", businessName: "North Coast Roofing", phone: "419-555-0100", rating: 4.5, reviewCount: 61, city: "Toledo", state: "OH" },
+      { source: "bing", businessName: "Maumee Roof Repair", website: "https://maumeeroof.example", phone: "419-555-0200", city: "Toledo", state: "OH" },
+      { source: "yellowPages", businessName: "Maumee Roof Repair Inc", email: "sales@maumeeroof.example", phone: "419-555-0200", city: "Toledo", state: "OH" },
+      { source: "yelp", businessName: "Directory Only Roofing", phone: "419-555-0300", reviewCount: 12, city: "Toledo", state: "OH" },
+      { source: "osm", businessName: "Closed Roofing", website: "https://closed.example", inactive: true, city: "Toledo", state: "OH" },
     ],
   });
 
@@ -194,10 +294,10 @@ test("discovery marks institutional, supplier, and mismatched businesses as bad 
     radiusKm: 50,
     limit: 50,
     candidates: [
-      { source: "osm", businessName: "Campus Electrical Operations", website: "https://facilities.example.edu/electrical", phone: "419-555-0100" },
-      { source: "bing", businessName: "Toledo Electrical Equipment Supply", website: "https://toledo-electrical-supply.example", phone: "419-555-0200" },
-      { source: "google", businessName: "BrightWire Electric", website: "https://saunatimes.example", phone: "419-555-0300" },
-      { source: "yelp", businessName: "Neighborhood Electrical Repair", website: "https://neighborhood-electric.example", phone: "419-555-0400" },
+      { source: "osm", businessName: "Campus Electrical Operations", website: "https://facilities.example.edu/electrical", phone: "419-555-0100", city: "Toledo", state: "OH" },
+      { source: "bing", businessName: "Toledo Electrical Equipment Supply", website: "https://toledo-electrical-supply.example", phone: "419-555-0200", city: "Toledo", state: "OH" },
+      { source: "google", businessName: "BrightWire Electric", website: "https://saunatimes.example", phone: "419-555-0300", city: "Toledo", state: "OH" },
+      { source: "yelp", businessName: "Neighborhood Electrical Repair", website: "https://neighborhood-electric.example", phone: "419-555-0400", city: "Toledo", state: "OH" },
     ],
   });
 
@@ -220,7 +320,7 @@ test("No Website / Social Only discovery keeps active businesses and classifies 
     { source: "google" as const, businessName: "No Phone Roofing", reviewCount: 10 },
   ];
   const result = mergeDiscoveryCandidates({
-    candidates,
+    candidates: candidates.map((candidate) => ({ ...candidate, city: "Toledo", state: "OH" })),
     latitude: 41.65,
     longitude: -83.54,
     city: "Toledo",
@@ -257,6 +357,8 @@ test("third-party directory URLs are not treated as owned websites or send-ready
         phone: "419-555-0200",
         reviewCount: 8,
         rating: 4.2,
+        city: "Toledo",
+        state: "OH",
       },
     ],
     latitude: 41.65,
@@ -281,8 +383,8 @@ test("third-party directory URLs are not treated as owned websites or send-ready
 test("All Prospect Types discovery returns redesign and no-website opportunities together", () => {
   const result = mergeDiscoveryCandidates({
     candidates: [
-      { source: "osm", businessName: "Owned Website Roofing", website: "https://owned.example", phone: "419-555-0100" },
-      { source: "yelp", businessName: "Listing Only Roofing", profileUrl: "https://www.yelp.com/biz/listing-only", phone: "419-555-0200", reviewCount: 14 },
+      { source: "osm", businessName: "Owned Website Roofing", website: "https://owned.example", phone: "419-555-0100", city: "Toledo", state: "OH" },
+      { source: "yelp", businessName: "Listing Only Roofing", profileUrl: "https://www.yelp.com/biz/listing-only", phone: "419-555-0200", reviewCount: 14, city: "Toledo", state: "OH" },
     ],
     latitude: 41.65,
     longitude: -83.54,
@@ -321,7 +423,7 @@ test("configured licensed sources enrich OSM discovery without becoming required
     const url = String(input);
     if (url.includes("nominatim")) return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
     if (url.includes("overpass")) {
-      return new Response(JSON.stringify({ elements: [{ type: "node", id: 1, tags: { name: "Enriched Roofing", website: "enriched.example" } }] }), { status: 200 });
+      return new Response(JSON.stringify({ elements: [{ type: "node", id: 1, tags: { name: "Enriched Roofing", website: "enriched.example", "addr:city": "Toledo", "addr:state": "OH" } }] }), { status: 200 });
     }
     if (url.includes("googleapis")) {
       assert.equal(url, "https://places.googleapis.com/v1/places:searchText");
@@ -339,7 +441,7 @@ test("configured licensed sources enrich OSM discovery without becoming required
       return new Response(JSON.stringify({ results: [{ poi: { name: "Bing Roofing", url: "bingroofing.example" }, position: { lat: 41.65, lon: -83.54 } }] }), { status: 200 });
     }
     if (url.includes("yelp")) return new Response(JSON.stringify({ businesses: [{ name: "Enriched Roofing", display_phone: "419-555-0100", coordinates: { latitude: 41.65, longitude: -83.54 }, review_count: 90, rating: 4.7 }] }), { status: 200 });
-    if (url.includes("directory.example")) return new Response(JSON.stringify({ results: [{ name: "Directory Roofing", website: "directoryroofing.example", email: "hello@directoryroofing.example" }] }), { status: 200 });
+    if (url.includes("directory.example")) return new Response(JSON.stringify({ results: [{ name: "Directory Roofing", website: "directoryroofing.example", email: "hello@directoryroofing.example", city: "Toledo", state: "OH" }] }), { status: 200 });
     return new Response("unavailable", { status: 503 });
   };
   resetDiscoveryThrottleForTests();
@@ -403,7 +505,7 @@ test("provider throttling retries HTTP 429 and records retry diagnostics", async
       googleCalls += 1;
       return googleCalls === 1
         ? new Response("slow down", { status: 429, headers: { "retry-after": "0" } })
-        : new Response(JSON.stringify({ places: [{ displayName: { text: "Retry Roofing" }, websiteUri: "retryroofing.example" }] }), { status: 200 });
+        : new Response(JSON.stringify({ places: [{ displayName: { text: "Retry Roofing" }, websiteUri: "retryroofing.example", addressComponents: [{ longText: "Toledo", types: ["locality"] }, { shortText: "OH", types: ["administrative_area_level_1"] }] }] }), { status: 200 });
     }
     return new Response("unavailable", { status: 503 });
   };
