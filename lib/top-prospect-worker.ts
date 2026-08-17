@@ -32,6 +32,7 @@ import { prospectIsSuppressed } from "@/lib/prospect-funnel";
 import {
   mergeResolvedWebsiteEvidence,
   legacyDeterministicWebsiteRepairInput,
+  latestNoSiteEnrichmentDiagnostic,
   unresolvedWebsiteReason,
   verifyProspectWebsiteWithSecondPass,
   type SharedProspectVerificationResolution,
@@ -45,12 +46,18 @@ import {
   parseTopProspectCityTargets,
   citySearchBudgets,
   prepareTopProspectOutreachArtifacts,
+  assessNoWebsiteOpportunity,
   assessManualTopProspectOpportunity,
   type CitySearchTarget,
   type OutreachPreference,
   type ProspectMode,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
+import {
+  enrichProspectWrittenContact,
+  latestWrittenContactEnrichmentDiagnostic,
+  prospectNeedsBoundedWrittenContactEnrichment,
+} from "@/lib/written-contact-enrichment";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import {
   encodeTopProspectJobFailure,
@@ -715,8 +722,9 @@ function topProspectWebsiteEnrichmentRecord(
   prospect: Prospect,
   resolution?: SharedProspectVerificationResolution,
 ): TopProspectWebsiteEnrichmentRecord | undefined {
-  const diagnostic = resolution?.noSiteEnrichment;
+  const diagnostic = resolution?.noSiteEnrichment ?? latestNoSiteEnrichmentDiagnostic(prospect.activitySignals);
   if (!diagnostic) return undefined;
+  const writtenContact = latestWrittenContactEnrichmentDiagnostic(prospect.activitySignals);
   return {
     prospectId: prospect.id,
     businessName: prospect.businessName,
@@ -724,7 +732,21 @@ function topProspectWebsiteEnrichmentRecord(
     city: prospect.city,
     state: prospect.state,
     ...diagnostic,
+    ...(writtenContact ? { writtenContactEnrichment: writtenContact } : {}),
   };
+}
+
+async function enrichWrittenContactBeforeAssessment(
+  prospect: Prospect,
+  outreachPreference: OutreachPreference,
+) {
+  if (
+    outreachPreference !== "written_only"
+    || assessNoWebsiteOpportunity(prospect).presenceScores!.finalSalesScore < 45
+    || !prospectNeedsBoundedWrittenContactEnrichment(prospect)
+  ) return prospect;
+  const result = await enrichProspectWrittenContact(prospect);
+  return result.attempted ? saveProspect(result.prospect) : prospect;
 }
 
 function addUnresolvedSkip(
@@ -1060,6 +1082,7 @@ async function processLead(
         const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
         return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
       }
+      existing = await enrichWrittenContactBeforeAssessment(existing, outreachPreference);
       const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
       const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
@@ -1116,6 +1139,7 @@ async function processLead(
     };
   }
 
+  prospect = await enrichWrittenContactBeforeAssessment(prospect, outreachPreference);
   prospect = {
     ...prospect,
     activities: [
