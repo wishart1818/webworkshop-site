@@ -122,6 +122,13 @@ function sameNameWrongMarketWebsiteHtml() {
     <form><button>Request an estimate</button></form><img src="/project.jpg" alt="Pressure washing project" /></body></html>`;
 }
 
+function ownedWebsiteWithInconclusiveFitHtml() {
+  return `<!doctype html><html><head><title>HK Pressure Washing | Georgetown</title></head>
+    <body><nav><a href="/contact">Contact</a></nav><h1>HK Pressure Washing</h1>
+    <p>Local exterior care for Georgetown properties. Speak directly with our team about the areas around your property that need attention and the timing that works for you.</p>
+    <a href="tel:512-555-0142">512-555-0142</a></body></html>`;
+}
+
 function refreshDependencies(fetchImpl: typeof fetch, includeAzure = true) {
   return {
     fetch: fetchImpl,
@@ -229,4 +236,20 @@ test("matching prospect phone allows a legitimate deterministic candidate to est
   assert.equal(result.result.report.identitySignals?.includes("public_phone_match"), true);
   assert.equal(result.noSiteEnrichment?.websiteCandidateProvenance, "deterministic_guess");
   assert.match(result.noSiteEnrichment?.reason ?? "", /strict first-party ownership verification/i);
+});
+
+test("proven deterministic ownership is retained when website fit still requires manual review", async () => {
+  const { fetchImpl } = providerFetch({ websiteHtml: ownedWebsiteWithInconclusiveFitHtml(), websiteStatus: 200 });
+
+  const result = await verifyProspectWebsiteWithSecondPass(staleProspect(), refreshDependencies(fetchImpl));
+
+  assert.equal(result.result.report.status, "usable");
+  assert.equal(result.result.report.ownershipDecision, "owned");
+  assert.equal(result.result.prospect.website, "https://hkpressurewashing.com/");
+  assert.equal(result.result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.notEqual(result.result.report.status, "no_owned_website");
+  assert.equal(result.outcome, "still_manual");
+  assert.equal(result.result.prospect.outreach, undefined);
+  assert.equal(result.noSiteEnrichment?.websiteCandidateProvenance, "deterministic_guess");
+  assert.equal(result.noSiteEnrichment?.websiteOwnershipVerified, true);
 });

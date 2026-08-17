@@ -308,7 +308,9 @@ function deterministicCandidateHasProspectSpecificIdentityBinding(
   result: ProspectWebsiteVerificationResult,
 ) {
   const signals = new Set(result.report.identitySignals ?? []);
-  return result.report.ownershipDecision === "owned"
+  return result.report.status === "usable"
+    && result.report.ownershipDecision === "owned"
+    && affirmativeFirstPartyIdentity(result.report.identitySignals)
     && (
       signals.has("public_phone_match")
       || (
@@ -671,15 +673,17 @@ export async function verifyProspectWebsiteWithSecondPass(
       { ...resolvedWorkingProspect, website: candidate.url },
       secondPassDependencies(dependencies),
     ));
+    if (
+      candidate.provenance === "deterministic_guess"
+      && deterministicCandidateHasProspectSpecificIdentityBinding(candidateResult)
+    ) {
+      deterministicOwnedResult = candidateResult;
+      best = candidateResult;
+      break;
+    }
     if (safelyResolved(candidateResult)) {
       best = candidateResult;
-      if (
-        candidate.provenance === "deterministic_guess"
-        && deterministicCandidateHasProspectSpecificIdentityBinding(candidateResult)
-      ) {
-        deterministicOwnedResult = candidateResult;
-      }
-      if (candidate.provenance !== "deterministic_guess" || deterministicOwnedResult) break;
+      if (candidate.provenance !== "deterministic_guess") break;
       continue;
     }
     if (!best || (best.report.status !== "usable" && candidateResult.report.status === "usable")) {
