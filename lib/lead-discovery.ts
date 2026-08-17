@@ -28,6 +28,7 @@ import {
   type DiscoveryIdentityEvidence,
 } from "@/lib/prospect-identity-evidence";
 import type { NoSiteEnrichmentDiagnostic } from "@/lib/prospect-verification-resolution";
+import type { WrittenContactEnrichmentDiagnostic } from "@/lib/written-contact-enrichment";
 
 export type DiscoveredLead = {
   businessName: string;
@@ -174,6 +175,7 @@ export type TopProspectWebsiteEnrichmentRecord = NoSiteEnrichmentDiagnostic & {
   trade: string;
   city: string;
   state: string;
+  writtenContactEnrichment?: WrittenContactEnrichmentDiagnostic;
 };
 
 export type DiscoveryQualificationBreakdown = {
@@ -1333,6 +1335,32 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                     : {}),
                   ...(typeof record.legacyDeterministicCandidateUrl === "string"
                     ? { legacyDeterministicCandidateUrl: record.legacyDeterministicCandidateUrl.slice(0, 500) }
+                    : {}),
+                  ...(record.writtenContactEnrichment
+                    && typeof record.writtenContactEnrichment === "object"
+                    && record.writtenContactEnrichment.version === "written-contact-enrichment-v1"
+                    && ["verified_email", "manual_social", "no_route", "provider_unavailable", "identity_conflict"].includes(record.writtenContactEnrichment.outcome)
+                    && typeof record.writtenContactEnrichment.checkedAt === "string"
+                    && typeof record.writtenContactEnrichment.reason === "string"
+                    && Array.isArray(record.writtenContactEnrichment.providerSources)
+                    && typeof record.writtenContactEnrichment.sourceUrl === "string"
+                    && ["email", "facebook", "instagram", "linkedin", ""].includes(record.writtenContactEnrichment.routeKind)
+                    && typeof record.writtenContactEnrichment.extractionMethod === "string"
+                    && typeof record.writtenContactEnrichment.requestCount === "number"
+                    ? {
+                        writtenContactEnrichment: {
+                          version: "written-contact-enrichment-v1" as const,
+                          outcome: record.writtenContactEnrichment.outcome,
+                          checkedAt: record.writtenContactEnrichment.checkedAt.slice(0, 100),
+                          reason: record.writtenContactEnrichment.reason.slice(0, 1_000),
+                          providerSources: record.writtenContactEnrichment.providerSources
+                            .filter((source): source is DiscoverySource => discoverySources.includes(source as DiscoverySource)),
+                          sourceUrl: record.writtenContactEnrichment.sourceUrl.slice(0, 500),
+                          routeKind: record.writtenContactEnrichment.routeKind,
+                          extractionMethod: record.writtenContactEnrichment.extractionMethod,
+                          requestCount: Math.max(0, Math.min(2, Math.floor(record.writtenContactEnrichment.requestCount))),
+                        },
+                      }
                     : {}),
                 }];
               }).slice(0, 250),

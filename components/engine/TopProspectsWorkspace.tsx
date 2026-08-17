@@ -950,6 +950,21 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
                 {record.websiteCandidate ? <p><b>Candidate source:</b> {record.websiteCandidateProvenance === "deterministic_guess" ? "Deterministic domain guess" : "Matched provider website"}</p> : null}
                 {record.websiteCandidate ? <p><b>Website ownership:</b> {record.websiteOwnershipVerified ? "Accepted only after shared first-party verification" : "Not established"}</p> : null}
                 {record.legacyDeterministicCandidateRepaired ? <p><b>Legacy candidate repair:</b> Re-evaluated under current provider and ownership rules</p> : null}
+                {record.writtenContactEnrichment ? (
+                  <>
+                    <p><b>Written contact enrichment:</b> {record.writtenContactEnrichment.outcome === "verified_email"
+                      ? "Verified public email found"
+                      : record.writtenContactEnrichment.outcome === "manual_social"
+                        ? `Official ${record.writtenContactEnrichment.routeKind} found - manual message route`
+                        : record.writtenContactEnrichment.outcome === "provider_unavailable"
+                          ? "Provider evidence unavailable"
+                          : record.writtenContactEnrichment.outcome === "identity_conflict"
+                            ? "Identity conflict - manual review required"
+                            : "Checked - no verified written route found"}</p>
+                    <p>{record.writtenContactEnrichment.reason}</p>
+                    {record.writtenContactEnrichment.sourceUrl ? <p><b>Contact source:</b> {compactUrl(record.writtenContactEnrichment.sourceUrl)}</p> : null}
+                  </>
+                ) : null}
                 <p><b>Verification:</b> {record.websiteVerificationStatus.replaceAll("_", " ")} / <b>Fit:</b> {record.websiteFitDisposition.replaceAll("_", " ")}</p>
                 <div className="engine-inline-actions">
                   <button className="engine-button" onClick={() => onOpenProspect(record.prospectId)} type="button">Inspect prospect</button>

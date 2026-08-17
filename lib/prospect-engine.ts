@@ -2152,7 +2152,21 @@ function prospectEmailHasHardBlock(value: string) {
     || /(?:godaddy|totalwp|wp[-.]?theme|wordpress|themeforest|template|demo|staging|developer|webdesigner|webmaster|hosting|wpengine|directory|yellowpages|yelp)/i.test(domain);
 }
 
-export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence">>) {
+type ProspectEmailVerificationInput = Partial<Pick<Prospect,
+  | "businessName"
+  | "website"
+  | "websiteVerification"
+  | "email"
+  | "contactEvidence"
+  | "profileUrl"
+  | "facebookUrl"
+  | "instagramUrl"
+  | "linkedinUrl"
+  | "xUrl"
+  | "youtubeUrl"
+>>;
+
+export function prospectEmailNeedsManualVerification(input: ProspectEmailVerificationInput) {
   if (!input.email) return false;
   if (prospectEmailHasHardBlock(input.email)) return true;
   if (input.contactEvidence === undefined) return false;
@@ -2160,10 +2174,17 @@ export function prospectEmailNeedsManualVerification(input: Partial<Pick<Prospec
     email: input.email,
     contactEvidence: input.contactEvidence ?? [],
     website: input.website,
+    websiteVerification: input.websiteVerification,
+    profileUrl: input.profileUrl,
+    facebookUrl: input.facebookUrl,
+    instagramUrl: input.instagramUrl,
+    linkedinUrl: input.linkedinUrl,
+    xUrl: input.xUrl,
+    youtubeUrl: input.youtubeUrl,
   });
 }
 
-function hasUsableEmail(input: Partial<Pick<Prospect, "businessName" | "website" | "email" | "contactEvidence">>) {
+function hasUsableEmail(input: ProspectEmailVerificationInput) {
   return Boolean(input.email) && !prospectEmailNeedsManualVerification(input);
 }
 
