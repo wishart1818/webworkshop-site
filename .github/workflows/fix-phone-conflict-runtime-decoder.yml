@@ -1,0 +1,43 @@
+name: Fix phone-conflict runtime decoder
+
+on:
+  push:
+    branches:
+      - fix/phone-conflict-runtime-decoder
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/phone-conflict-runtime-decoder
+
+      - name: Patch runtime decoder
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("lib/prospect-validation.ts")
+          text = path.read_text()
+          old = '''    "first_party_site_structure",\n    "business_domain_email_match",\n  ].includes(signal))) {'''
+          new = '''    "first_party_site_structure",\n    "business_domain_email_match",\n    "public_phone_conflict",\n  ].includes(signal))) {'''
+          if old not in text:
+              raise SystemExit("Expected website identity signal allowlist block was not found.")
+          if "\"public_phone_conflict\",\n  ].includes(signal)))" in text:
+              raise SystemExit(0)
+          path.write_text(text.replace(old, new, 1))
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/prospect-validation.ts
+          git diff --cached --check
+          git commit -m "Accept phone conflict in runtime decoder"
+          git push origin HEAD:fix/phone-conflict-runtime-decoder
