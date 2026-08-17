@@ -272,6 +272,7 @@ function valuesSharedByIndependentSources(
 
 export function affirmativeFirstPartyIdentity(signals: string[] | undefined) {
   const values = new Set(signals ?? []);
+  if (values.has("public_phone_conflict")) return false;
   return values.has("prominent_business_name")
     && values.has("stored_website_host_match")
     && values.has("canonical_root_business_identity")
