@@ -911,8 +911,17 @@ export function mergeDiscoveryCandidates(input: {
   let withinRadius: DiscoveryCandidate[];
   try {
     withinRadius = input.candidates.filter((candidate) => {
-      if (!Number.isFinite(candidate.latitude) || !Number.isFinite(candidate.longitude)) return true;
-      return distanceKm(input.latitude, input.longitude, Number(candidate.latitude), Number(candidate.longitude)) <= input.radiusKm;
+      if (Number.isFinite(candidate.latitude) && Number.isFinite(candidate.longitude)) {
+        return distanceKm(input.latitude, input.longitude, Number(candidate.latitude), Number(candidate.longitude)) <= input.radiusKm;
+      }
+      const candidateCity = candidate.city?.trim().toLowerCase();
+      const candidateState = candidate.state?.trim().toUpperCase();
+      return Boolean(
+        candidateCity
+        && candidateState
+        && candidateCity === input.city.trim().toLowerCase()
+        && candidateState === displayStateCode(input.state),
+      );
     });
   } catch (error) {
     throw new TopProspectStageError(
