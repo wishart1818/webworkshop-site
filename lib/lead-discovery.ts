@@ -905,6 +905,7 @@ export function mergeDiscoveryCandidates(input: {
   providerDiagnostics?: DiscoveryProviderDiagnostics;
   logger?: DiscoveryLogger;
 }): DiscoveryResult {
+  const observedAt = new Date().toISOString();
   let withinRadius: DiscoveryCandidate[];
   try {
     withinRadius = input.candidates.filter((candidate) => {
@@ -931,6 +932,7 @@ export function mergeDiscoveryCandidates(input: {
     state: candidate.state ?? input.state,
     latitude: Number.isFinite(candidate.latitude) ? Number(candidate.latitude) : null,
     longitude: Number.isFinite(candidate.longitude) ? Number(candidate.longitude) : null,
+    observedAt,
   });
   const coordinatesClose = (left: DiscoveryCandidate, right: DiscoveryCandidate) => (
     Number.isFinite(left.latitude)
@@ -1294,7 +1296,7 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   || typeof record.trade !== "string"
                   || typeof record.city !== "string"
                   || typeof record.state !== "string"
-                  || !["no-site-enrichment-v1", "no-site-enrichment-v2"].includes(String(record.version))
+                  || !["no-site-enrichment-v1", "no-site-enrichment-v2", "no-site-enrichment-v3"].includes(String(record.version))
                   || !["owned_website_found", "probable_no_owned_website", "broken_or_inactive_website", "unresolved"].includes(String(record.outcome))
                   || typeof record.reason !== "string"
                   || typeof record.checkedAt !== "string"
@@ -1322,6 +1324,10 @@ export function discoveryDiagnosticsFromJson(value: unknown): DiscoveryDiagnosti
                   ...(Array.isArray(record.identityConflictingSignals) ? { identityConflictingSignals: record.identityConflictingSignals.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 100)).slice(0, 12) } : {}),
                   ...(typeof record.identityConfidenceSufficient === "boolean" ? { identityConfidenceSufficient: record.identityConfidenceSufficient } : {}),
                   ...(typeof record.providerWebsiteAcceptedAsOwned === "boolean" ? { providerWebsiteAcceptedAsOwned: record.providerWebsiteAcceptedAsOwned } : {}),
+                  ...(["provider_supplied", "deterministic_guess", ""].includes(String(record.websiteCandidateProvenance))
+                    ? { websiteCandidateProvenance: record.websiteCandidateProvenance as NonNullable<TopProspectWebsiteEnrichmentRecord["websiteCandidateProvenance"]> }
+                    : {}),
+                  ...(typeof record.websiteOwnershipVerified === "boolean" ? { websiteOwnershipVerified: record.websiteOwnershipVerified } : {}),
                 }];
               }).slice(0, 250),
             }

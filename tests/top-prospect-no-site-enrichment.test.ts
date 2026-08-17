@@ -20,6 +20,7 @@ function providerEvidence(source: "bing" | "google", overrides: Partial<{
   profileUrl: string;
   phone: string;
   address: string;
+  observedAt: string;
 }> = {}) {
   return discoveryIdentityEvidenceSignal({
     source,
@@ -32,6 +33,7 @@ function providerEvidence(source: "bing" | "google", overrides: Partial<{
     state: "FL",
     latitude: 26.9342,
     longitude: -80.0942,
+    observedAt: overrides.observedAt ?? now.toISOString(),
   });
 }
 
@@ -190,7 +192,10 @@ test("a known parked business domain uses existing broken-site verification", as
 
 test("historical manual records can run a targeted lookup without making stale no-site evidence autonomous", async () => {
   let googleCalls = 0;
-  const old = prospect({ createdAt: "2026-06-01T00:00:00.000Z" });
+  const old = prospect({
+    createdAt: "2026-06-01T00:00:00.000Z",
+    activitySignals: [providerEvidence("bing", { observedAt: "2026-06-01T00:00:00.000Z" })],
+  });
   const fetchImpl: typeof fetch = async (input, init) => {
     googleCalls += 1;
     return googlePlacesResponse(input, init, {
@@ -267,7 +272,7 @@ test("persisted manual opportunities reuse targeted enrichment without generatin
 
 test("Top Prospects diagnostics retain bounded enrichment evidence for operator display", () => {
   const diagnostic = {
-    version: "no-site-enrichment-v2" as const,
+    version: "no-site-enrichment-v3" as const,
     outcome: "owned_website_found" as const,
     reason: "An exact Google identity match supplied an owned website.",
     checkedAt: now.toISOString(),
@@ -280,6 +285,8 @@ test("Top Prospects diagnostics retain bounded enrichment evidence for operator 
     identityConflictingSignals: [],
     identityConfidenceSufficient: true,
     providerWebsiteAcceptedAsOwned: false,
+    websiteCandidateProvenance: "provider_supplied" as const,
+    websiteOwnershipVerified: true,
   };
   const payload = {
     rawProviderCount: 1,
@@ -322,6 +329,8 @@ test("Top Prospects diagnostics retain bounded enrichment evidence for operator 
   assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.identityMatchedProvider, "google");
   assert.deepEqual(parsed?.websiteEnrichmentRecords?.[0]?.identityMatchedSignals, ["legal_suffix_equivalent_name", "exact_phone"]);
   assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.identityConfidenceSufficient, true);
+  assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.websiteCandidateProvenance, "provider_supplied");
+  assert.equal(parsed?.websiteEnrichmentRecords?.[0]?.websiteOwnershipVerified, true);
 });
 
 test("Top Prospects surfaces persisted enrichment outcomes without adding an outreach action", () => {
@@ -336,7 +345,9 @@ test("Top Prospects surfaces persisted enrichment outcomes without adding an out
   assert.match(source, /Broken or inactive website/);
   assert.match(section, /No independent exact match/);
   assert.match(section, /Identity match:/);
-  assert.match(section, /Provider website ownership:/);
+  assert.match(section, /Candidate source:/);
+  assert.match(section, /Deterministic domain guess/);
+  assert.match(section, /Website ownership:/);
   assert.match(section, /generated no package and sent nothing/);
   assert.doesNotMatch(section, /Approve|Queue|Generate|Send email/);
 });

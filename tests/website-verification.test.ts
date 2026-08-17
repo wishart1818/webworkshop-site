@@ -321,6 +321,7 @@ test("bounded provider and official social evidence preserves a discovered no-we
         state: "OH",
         latitude: 39.9612,
         longitude: -82.9988,
+        observedAt: fixedNow.toISOString(),
       }),
       discoveryIdentityEvidenceSignal({
         source: "osm",
@@ -333,6 +334,7 @@ test("bounded provider and official social evidence preserves a discovered no-we
         state: "OH",
         latitude: 39.9612,
         longitude: -82.9988,
+        observedAt: fixedNow.toISOString(),
       }),
     ],
     sourceConfidence: 42,

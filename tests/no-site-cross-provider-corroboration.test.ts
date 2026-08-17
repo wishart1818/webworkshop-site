@@ -28,6 +28,7 @@ function googleSignal(overrides: Partial<{
     state: "IN",
     latitude: 41.0123,
     longitude: -85.0912,
+    observedAt: now.toISOString(),
   });
 }
 
@@ -43,6 +44,7 @@ function bingSignal() {
     state: "IN",
     latitude: 41.0123,
     longitude: -85.0912,
+    observedAt: now.toISOString(),
   });
 }
 

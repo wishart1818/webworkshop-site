@@ -45,6 +45,7 @@ function identitySignal(source: "osm" | "google" | "bing" | "yelp", overrides: R
     state: "OH",
     latitude: 41.6528,
     longitude: -83.5379,
+    observedAt: now.toISOString(),
     ...overrides,
   });
 }
@@ -169,10 +170,22 @@ test("NO_OWNED_WEBSITE fails closed for same-name ambiguity, stale evidence, and
   assert.equal(withDomain.reasonCode, "owned_domain_candidate");
 
   const stale = noSiteProspect(evidence);
-  stale.createdAt = "2026-07-01T12:00:00.000Z";
+  stale.activitySignals = [
+    identitySignal("google", { observedAt: "2026-07-01T12:00:00.000Z" }),
+    identitySignal("osm", { observedAt: "2026-07-01T12:00:00.000Z" }),
+  ];
   const staleDecision = authoritativeNoOwnedWebsiteEvidence(stale, now);
   assert.equal(staleDecision.verified, false);
   assert.equal(staleDecision.reasonCode, "identity_incomplete");
+
+  const legacyWithoutObservationTime = noSiteProspect([
+    identitySignal("google", { observedAt: "" }),
+    identitySignal("osm", { observedAt: "" }),
+  ]);
+  legacyWithoutObservationTime.createdAt = now.toISOString();
+  const legacyDecision = authoritativeNoOwnedWebsiteEvidence(legacyWithoutObservationTime, now);
+  assert.equal(legacyDecision.verified, false);
+  assert.equal(legacyDecision.reasonCode, "identity_incomplete");
 });
 
 test("same-name businesses with conflicting domains remain separate and visibly ambiguous", () => {

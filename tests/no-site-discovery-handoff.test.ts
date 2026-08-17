@@ -55,6 +55,7 @@ function noSiteProspect(profileUrl: string) {
     state: "TX",
     latitude: 33.1972,
     longitude: -96.6398,
+    observedAt: now.toISOString(),
   });
   const bingEvidence = discoveryIdentityEvidenceSignal({
     source: "bing",
@@ -67,6 +68,7 @@ function noSiteProspect(profileUrl: string) {
     state: "TX",
     latitude: 33.1972,
     longitude: -96.6398,
+    observedAt: now.toISOString(),
   });
   const prospect = createProspect({
     businessName: "Precision Cleaning",

@@ -17,6 +17,7 @@ function googleEvidence(overrides: Partial<{
   address: string;
   city: string;
   state: string;
+  observedAt: string;
 }> = {}) {
   return discoveryIdentityEvidenceSignal({
     source: "google",
@@ -29,6 +30,7 @@ function googleEvidence(overrides: Partial<{
     state: overrides.state ?? "TX",
     latitude: 33.2148,
     longitude: -97.1331,
+    observedAt: overrides.observedAt ?? new Date().toISOString(),
   });
 }
 
@@ -164,7 +166,7 @@ test("stale or non-Google no-site records do not trigger recovery queries", asyn
   };
 
   const stale = await discoverGoogleOwnedWebsiteCandidates(prospect({
-    createdAt: "2026-01-01T00:00:00.000Z",
+    activitySignals: [googleEvidence({ observedAt: "2026-01-01T00:00:00.000Z" })],
   }), {
     apiKey: "test-key",
     fetch: fetchImpl,

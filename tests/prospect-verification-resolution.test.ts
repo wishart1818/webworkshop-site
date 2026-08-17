@@ -249,10 +249,10 @@ test("a production-shaped 20-business fresh sample resolves evidence without pro
       const profileUrl = `https://facebook.com/freshlocalcontractor${index + 1}`;
       const signals = index < 14
         ? [
-            discoveryIdentityEvidenceSignal({ source: "google", businessName, website: "", profileUrl, phone, address: `${100 + index} Main Street, Toledo, OH`, city: "Toledo", state: "OH", latitude: 41.65 + index / 10_000, longitude: -83.54 }),
-            discoveryIdentityEvidenceSignal({ source: "osm", businessName, website: profileUrl, profileUrl, phone, address: `${100 + index} Main St, Toledo, Ohio`, city: "Toledo", state: "OH", latitude: 41.65 + index / 10_000, longitude: -83.54 }),
+            discoveryIdentityEvidenceSignal({ source: "google", businessName, website: "", profileUrl, phone, address: `${100 + index} Main Street, Toledo, OH`, city: "Toledo", state: "OH", latitude: 41.65 + index / 10_000, longitude: -83.54, observedAt: now.toISOString() }),
+            discoveryIdentityEvidenceSignal({ source: "osm", businessName, website: profileUrl, profileUrl, phone, address: `${100 + index} Main St, Toledo, Ohio`, city: "Toledo", state: "OH", latitude: 41.65 + index / 10_000, longitude: -83.54, observedAt: now.toISOString() }),
           ]
-        : [discoveryIdentityEvidenceSignal({ source: "google", businessName, website: "", profileUrl, phone, address: `${100 + index} Main Street, Toledo, OH`, city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54 })];
+        : [discoveryIdentityEvidenceSignal({ source: "google", businessName, website: "", profileUrl, phone, address: `${100 + index} Main Street, Toledo, OH`, city: "Toledo", state: "OH", latitude: 41.65, longitude: -83.54, observedAt: now.toISOString() })];
       const value = prospect({ businessName, website: "", phone, profileUrl, facebookUrl: profileUrl, prospectType: "no_website_social_only", activitySignals: signals });
       value.createdAt = now.toISOString();
       return { kind: index < 14 ? "verified_no_site" as const : "ambiguous_no_site" as const, prospect: value };
