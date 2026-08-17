@@ -175,7 +175,7 @@ function normalizedSocialUrl(value: string) {
     url.hash = "";
     url.hostname = url.hostname.replace(/^www\./i, "").toLowerCase();
     url.pathname = url.pathname.replace(/\/+$/, "") || "/";
-    return url.href;
+    return socialKind(url.href) ? url.href : "";
   } catch {
     return "";
   }
@@ -183,10 +183,11 @@ function normalizedSocialUrl(value: string) {
 
 function socialKind(value: string): "facebook" | "instagram" | "linkedin" | "" {
   try {
-    const host = new URL(value).hostname.replace(/^www\./i, "").toLowerCase();
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
     if (host === "facebook.com" || host.endsWith(".facebook.com") || host === "fb.com" || host.endsWith(".fb.com")) return "facebook";
     if (host === "instagram.com" || host.endsWith(".instagram.com")) return "instagram";
-    if (host === "linkedin.com" || host.endsWith(".linkedin.com")) return "linkedin";
+    if ((host === "linkedin.com" || host.endsWith(".linkedin.com")) && /^\/company\/[^/]+/i.test(url.pathname)) return "linkedin";
   } catch {
     return "";
   }
@@ -221,26 +222,44 @@ function cleanPublicText(html: string) {
     .trim();
 }
 
-function pageReconfirmsIdentity(prospect: Prospect, evidence: DiscoveryIdentityEvidence, html: string) {
+type PageIdentityResult = "confirmed" | "explicit_conflict" | "insufficient";
+
+function pageIdentityResult(prospect: Prospect, evidence: DiscoveryIdentityEvidence, html: string): PageIdentityResult {
   const text = cleanPublicText(html);
   const normalizedPage = normalizedBusinessIdentityName(text);
   const expectedName = normalizedBusinessIdentityName(prospect.businessName);
-  if (!expectedName || !normalizedPage.includes(expectedName)) return false;
+  const nameMatches = Boolean(expectedName && normalizedPage.includes(expectedName));
   const expectedPhone = normalizedCompletePhone(prospect.phone);
   const pagePhones = new Set((text.match(/(?:\+?1[\s.(\-]*)?(?:\d{3}|\(\d{3}\))[\s.)\-]*\d{3}[\s.\-]*\d{4}/g) ?? [])
     .map(normalizedCompletePhone)
     .filter(Boolean));
-  if (expectedPhone && pagePhones.size > 0 && !pagePhones.has(expectedPhone)) return false;
-  if (expectedPhone && pagePhones.has(expectedPhone)) return true;
+  if (expectedPhone && pagePhones.size > 0 && !pagePhones.has(expectedPhone)) return "explicit_conflict";
+
+  const expectedCity = normalizedBusinessIdentityName(prospect.city);
+  const expectedState = prospect.state.trim().toUpperCase();
+  const pageMarkets = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, "\n")
+    .split(/\r?\n/)
+    .flatMap((line) => [...line.matchAll(/(?:^|,\s*)([A-Za-z][A-Za-z .'-]{1,50}),\s*([A-Z]{2})\b/g)])
+    .map((match) => ({ city: normalizedBusinessIdentityName(match[1] ?? ""), state: (match[2] ?? "").toUpperCase() }));
+  const marketMatches = Boolean(expectedCity && expectedState && pageMarkets.some((market) => market.city === expectedCity && market.state === expectedState));
+  if (pageMarkets.length > 0 && !marketMatches) return "explicit_conflict";
+
+  if (!nameMatches) return "insufficient";
+  if (expectedPhone && pagePhones.has(expectedPhone)) return "confirmed";
+  if (marketMatches) return "confirmed";
   const expectedAddress = normalizedStreetAddress(prospect.address);
   const evidenceAddress = normalizedStreetAddress(evidence.address);
-  return Boolean(
+  const addressMatches = Boolean(
     expectedAddress
     && evidenceAddress
     && expectedAddress === evidenceAddress
     && text.toLowerCase().includes(prospect.city.toLowerCase())
-    && text.toLowerCase().includes(prospect.state.toLowerCase()),
+    && text.toLowerCase().includes(prospect.state.toLowerCase())
   );
+  return addressMatches ? "confirmed" : "insufficient";
 }
 
 function observedEmailCandidates(html: string) {
@@ -288,6 +307,24 @@ function withSocialRoute(prospect: Prospect, url: string, checkedAt: string) {
     ...(kind === "instagram" ? { instagramUrl: url } : {}),
     ...(kind === "linkedin" ? { linkedinUrl: url } : {}),
     contactEvidence,
+  };
+  const classification = classifyProspectPresence(updated);
+  return reconcileProspectContactRouting({
+    ...updated,
+    classification,
+    recommendedContactMethod: recommendProspectContactMethod({ ...updated, classification }),
+  });
+}
+
+function withoutSocialRoute(prospect: Prospect, url: string) {
+  const kind = socialKind(url);
+  if (!kind) return prospect;
+  const updated = {
+    ...prospect,
+    ...(kind === "facebook" && normalizedSocialUrl(prospect.facebookUrl) === url ? { facebookUrl: "" } : {}),
+    ...(kind === "instagram" && normalizedSocialUrl(prospect.instagramUrl) === url ? { instagramUrl: "" } : {}),
+    ...(kind === "linkedin" && normalizedSocialUrl(prospect.linkedinUrl) === url ? { linkedinUrl: "" } : {}),
+    contactEvidence: prospect.contactEvidence.filter((item) => !(item.kind === kind && normalizedSocialUrl(item.value) === url)),
   };
   const classification = classifyProspectPresence(updated);
   return reconcileProspectContactRouting({
@@ -350,28 +387,38 @@ export async function enrichProspectWrittenContact(
   let updated = prospect;
   let verifiedEmail: ContactRouteEvidence | null = null;
   let selectedSocial = "";
+  let pageIdentityConflict = false;
 
   for (const candidate of candidates) {
-    selectedSocial ||= candidate.url;
-    updated = withSocialRoute(updated, candidate.url, checkedAt);
     try {
       requestCount += 1;
       const document = await (dependencies.fetchDocument
         ? dependencies.fetchDocument(candidate.url)
         : fetchPublicResearchDocument(candidate.url, { requestTimeoutMs: 5_000 }));
       if (socialProviderDomain(document.url.href) !== socialProviderDomain(candidate.url)) continue;
-      if (!pageReconfirmsIdentity(updated, candidate.evidence, document.text)) continue;
-      for (const email of observedEmailCandidates(document.text)) {
-        const result = withObservedEmail(updated, email, candidate.url, document.text, checkedAt);
-        updated = result.prospect;
-        if (verifiedEmailEvidenceForProspect(updated)) {
-          verifiedEmail = result.evidence;
-          break;
+      const pageIdentity = pageIdentityResult(prospect, candidate.evidence, document.text);
+      if (pageIdentity === "explicit_conflict") {
+        pageIdentityConflict = true;
+        updated = withoutSocialRoute(updated, candidate.url);
+        continue;
+      }
+      selectedSocial ||= candidate.url;
+      updated = withSocialRoute(updated, candidate.url, checkedAt);
+      if (pageIdentity === "confirmed") {
+        for (const email of observedEmailCandidates(document.text)) {
+          const result = withObservedEmail(updated, email, candidate.url, document.text, checkedAt);
+          updated = result.prospect;
+          if (verifiedEmailEvidenceForProspect(updated)) {
+            verifiedEmail = result.evidence;
+            break;
+          }
         }
       }
       if (verifiedEmail) break;
     } catch {
       // A social page may block crawling. The identity-matched profile remains a manual route.
+      selectedSocial ||= candidate.url;
+      updated = withSocialRoute(updated, candidate.url, checkedAt);
     }
   }
 
@@ -380,7 +427,7 @@ export async function enrichProspectWrittenContact(
     ? "verified_email"
     : selectedSocial
       ? "manual_social"
-      : ambiguity
+      : ambiguity || pageIdentityConflict
         ? "identity_conflict"
         : providerEvidence.length === 0
           ? "provider_unavailable"
@@ -391,8 +438,8 @@ export async function enrichProspectWrittenContact(
     ? `A verified public email was observed on the identity-matched official social profile ${sourceUrl}.`
     : selectedSocial
       ? `An identity-matched official ${routeKind} profile was found. Messaging remains manual and no message was sent.`
-      : ambiguity
-        ? "Provider identity evidence remains ambiguous, so no written contact route was attached."
+      : ambiguity || pageIdentityConflict
+        ? "Provider or page identity evidence conflicts with this prospect, so no written contact route was attached."
         : providerEvidence.length === 0
           ? "No current provider identity evidence was available for bounded written-contact enrichment."
           : "Current identity-matched provider evidence contained no trustworthy public written contact route.";

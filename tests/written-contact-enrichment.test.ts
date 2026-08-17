@@ -113,6 +113,18 @@ function facebookDocument(body: string) {
   };
 }
 
+function prospectWithProviderProfile(profileUrl: string, overrides: Partial<Prospect> = {}) {
+  const base = noSiteProspect();
+  return noSiteProspect({
+    ...overrides,
+    activitySignals: [
+      discoveryIdentityEvidenceSignal(identity("google", { profileUrl })),
+      discoveryIdentityEvidenceSignal(identity("bing")),
+      ...base.activitySignals.filter((signal) => signal.startsWith("no_site_enrichment_diagnostic:")),
+    ],
+  });
+}
+
 test("bounded enrichment persists an identity-matched official Facebook route as manual only", async () => {
   const result = await enrichProspectWrittenContact(noSiteProspect(), {
     now: () => now,
@@ -174,6 +186,94 @@ test("wrong-market or conflicting-phone same-name social evidence is rejected", 
     assert.equal(result.prospect.facebookUrl, "");
     assert.equal(prospectWrittenContactMethodIsUsable(result.prospect), false);
   }
+});
+
+test("a fetched same-name Facebook page with a conflicting market and phone overrides provider-bound identity", async () => {
+  const result = await enrichProspectWrittenContact(noSiteProspect(), {
+    now: () => now,
+    fetchDocument: async () => ({
+      url: new URL(facebookUrl),
+      text: "<html><body><h1>Austin Pressure Washing</h1><p>Houston, TX</p><p>Call 713-555-0199</p></body></html>",
+    }),
+  });
+
+  assert.equal(result.diagnostic?.outcome, "identity_conflict");
+  assert.equal(result.prospect.facebookUrl, "");
+  assert.equal(result.prospect.recommendedContactMethod, "needs_manual_contact_research");
+  assert.equal(prospectWrittenContactMethodIsUsable(result.prospect), false);
+  assert.equal(topProspectRejectionReason(result.prospect, assessNoWebsiteOpportunity(result.prospect), "growth", "written_only"), "Phone-only / written outreach blocked");
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("a fetched Facebook page with a conflicting phone is rejected even when its market matches", async () => {
+  const result = await enrichProspectWrittenContact(noSiteProspect(), {
+    now: () => now,
+    fetchDocument: async () => ({
+      url: new URL(facebookUrl),
+      text: "<html><body><h1>Austin Pressure Washing</h1><p>123 Congress Avenue, Austin, TX</p><p>Call 713-555-0199</p></body></html>",
+    }),
+  });
+
+  assert.equal(result.diagnostic?.outcome, "identity_conflict");
+  assert.equal(result.prospect.facebookUrl, "");
+  assert.equal(prospectWrittenContactMethodIsUsable(result.prospect), false);
+});
+
+test("a blocked social page preserves only the provider-bound manual route and infers no email", async () => {
+  const result = await enrichProspectWrittenContact(noSiteProspect(), {
+    now: () => now,
+    fetchDocument: async () => {
+      throw new Error("Crawler blocked");
+    },
+  });
+
+  assert.equal(result.diagnostic?.outcome, "manual_social");
+  assert.equal(result.prospect.facebookUrl, facebookUrl);
+  assert.equal(result.prospect.email, "");
+  assert.equal(result.prospect.contactEvidence.some((item) => item.kind === "email"), false);
+  assert.equal(result.prospect.recommendedContactMethod, "message_on_facebook");
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("unsupported social networks and personal LinkedIn profiles cannot create written routes", async () => {
+  for (const profileUrl of [
+    "https://x.com/austinpressurewashing",
+    "https://twitter.com/austinpressurewashing",
+    "https://youtube.com/@austinpressurewashing",
+    "https://linkedin.com/in/person-name",
+  ]) {
+    let requests = 0;
+    const result = await enrichProspectWrittenContact(prospectWithProviderProfile(profileUrl), {
+      now: () => now,
+      fetchDocument: async () => {
+        requests += 1;
+        return { url: new URL(profileUrl), text: "<html><body>Austin Pressure Washing</body></html>" };
+      },
+    });
+
+    assert.equal(requests, 0, profileUrl);
+    assert.equal(result.diagnostic?.outcome, "no_route", profileUrl);
+    assert.equal(prospectWrittenContactMethodIsUsable(result.prospect), false, profileUrl);
+    assert.equal(result.prospect.linkedinUrl, "", profileUrl);
+    assert.equal(result.prospect.outreach, undefined, profileUrl);
+  }
+});
+
+test("an identity-matched LinkedIn company page remains an allowed manual route", async () => {
+  const linkedinUrl = "https://linkedin.com/company/austin-pressure-washing";
+  const result = await enrichProspectWrittenContact(prospectWithProviderProfile(linkedinUrl), {
+    now: () => now,
+    fetchDocument: async () => ({
+      url: new URL(linkedinUrl),
+      text: "<html><body><h1>Austin Pressure Washing</h1><p>123 Congress Avenue, Austin, TX</p><p>Call 512-555-0142</p></body></html>",
+    }),
+  });
+
+  assert.equal(result.diagnostic?.outcome, "manual_social");
+  assert.equal(result.prospect.linkedinUrl, linkedinUrl);
+  assert.equal(result.prospect.recommendedContactMethod, "message_on_social");
+  assert.equal(prospectWrittenContactMethodIsUsable(result.prospect), true);
+  assert.equal(result.prospect.outreach, undefined);
 });
 
 test("verified email observed on an identity-matched official social profile passes the existing authority gate", async () => {
