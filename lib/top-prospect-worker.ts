@@ -31,6 +31,7 @@ import { normalizeWebsiteFitDisposition, prospectFreshnessAt, websiteFitAllowsAu
 import { prospectIsSuppressed } from "@/lib/prospect-funnel";
 import {
   mergeResolvedWebsiteEvidence,
+  legacyDeterministicWebsiteRepairInput,
   unresolvedWebsiteReason,
   verifyProspectWebsiteWithSecondPass,
   type SharedProspectVerificationResolution,
@@ -964,8 +965,12 @@ async function processLead(
       addSkip(summary, "previously_reviewed");
       return { qualified: false };
     }
+    const legacyRepair = legacyDeterministicWebsiteRepairInput(existing);
+    const legacyDeterministicCandidateUrl = legacyRepair?.candidateUrl ?? "";
     let existingResolution: SharedProspectVerificationResolution | undefined;
-    const existingManualOpportunity = assessManualTopProspectOpportunity(existing, lead);
+    const existingManualOpportunity = legacyDeterministicCandidateUrl
+      ? null
+      : assessManualTopProspectOpportunity(existing, lead);
     if (existingManualOpportunity) {
       try {
         existingResolution = await verifyProspectWebsiteWithSecondPass(existing, {
@@ -999,13 +1004,17 @@ async function processLead(
       }
       resolvedExistingNow = true;
     }
-    if (existingProspectRequiresWebsiteResolution(existing, jobCreatedAt)) {
+    if (legacyDeterministicCandidateUrl || existingProspectRequiresWebsiteResolution(existing, jobCreatedAt)) {
       let resolution: SharedProspectVerificationResolution;
       try {
-        const staleNoSiteEvidence = !existing.website.trim() && existing.prospectType === "no_website_social_only";
-        resolution = await verifyProspectWebsiteWithSecondPass(existing, {
-          allowHistoricalNoSiteLookup: existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt),
+        const staleNoSiteEvidence = Boolean(legacyDeterministicCandidateUrl)
+          || (!existing.website.trim() && existing.prospectType === "no_website_social_only");
+        const verificationProspect = legacyRepair?.prospect ?? existing;
+        resolution = await verifyProspectWebsiteWithSecondPass(verificationProspect, {
+          allowHistoricalNoSiteLookup: Boolean(legacyDeterministicCandidateUrl)
+            || existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt),
           forceNoSiteEvidenceRefresh: staleNoSiteEvidence,
+          legacyDeterministicCandidateUrl,
         });
       } catch {
         const unresolved = unresolvedTopProspectRecord(existing, lead);

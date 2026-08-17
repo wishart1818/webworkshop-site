@@ -80,6 +80,7 @@ export type SharedProspectVerificationDependencies = WebsiteVerificationDependen
   azureMapsApiKey?: string;
   allowHistoricalNoSiteLookup?: boolean;
   forceNoSiteEvidenceRefresh?: boolean;
+  legacyDeterministicCandidateUrl?: string;
 };
 
 export const noSiteEnrichmentOutcomes = [
@@ -105,6 +106,8 @@ export type NoSiteEnrichmentDiagnostic = {
   providerWebsiteAcceptedAsOwned?: boolean;
   websiteCandidateProvenance?: "provider_supplied" | "deterministic_guess" | "";
   websiteOwnershipVerified?: boolean;
+  legacyDeterministicCandidateRepaired?: boolean;
+  legacyDeterministicCandidateUrl?: string;
 };
 
 const noSiteEnrichmentSignalPrefix = "no_site_enrichment_diagnostic:";
@@ -148,11 +151,73 @@ export function latestNoSiteEnrichmentDiagnostic(signals: string[]) {
           ? { websiteCandidateProvenance: value.websiteCandidateProvenance as NonNullable<NoSiteEnrichmentDiagnostic["websiteCandidateProvenance"]> }
           : {}),
         ...(typeof value.websiteOwnershipVerified === "boolean" ? { websiteOwnershipVerified: value.websiteOwnershipVerified } : {}),
+        ...(typeof value.legacyDeterministicCandidateRepaired === "boolean"
+          ? { legacyDeterministicCandidateRepaired: value.legacyDeterministicCandidateRepaired }
+          : {}),
+        ...(typeof value.legacyDeterministicCandidateUrl === "string"
+          ? { legacyDeterministicCandidateUrl: value.legacyDeterministicCandidateUrl.slice(0, 500) }
+          : {}),
       }];
     } catch {
       return [];
     }
   }).at(-1) ?? null;
+}
+
+const legacyUnresolvedWebsiteStatuses = new Set([
+  "unknown",
+  "crawler_blocked",
+  "temporarily_unavailable",
+  "inconclusive",
+  "invalid_website",
+  "http_404",
+  "unreachable_website",
+  "broken_website",
+  "inactive_website",
+  "confirmed_broken",
+  "confirmed_inactive",
+]);
+
+export function legacyUnverifiedDeterministicWebsiteNeedsRepair(prospect: Prospect) {
+  const storedHost = normalizedHost(prospect.website);
+  if (!storedHost || prospect.websiteVerification?.ownershipDecision === "owned") return false;
+  const unresolvedOwnership = legacyUnresolvedWebsiteStatuses.has(prospect.websiteStatus)
+    || prospect.websiteVerification?.fit?.disposition === "inconclusive_requires_review"
+    || prospect.websiteVerification?.ownershipDecision === "uncertain";
+  if (!unresolvedOwnership) return false;
+  const deterministicHosts = new Set(deterministicOwnedWebsiteCandidates(prospect).map(normalizedHost).filter(Boolean));
+  if (!deterministicHosts.has(storedHost)) return false;
+  const providerSuppliesStoredHost = discoveryIdentityEvidenceFromSignals(prospect.activitySignals)
+    .some((item) => normalizedHost(item.website) === storedHost);
+  if (providerSuppliesStoredHost) return false;
+  const diagnostic = latestNoSiteEnrichmentDiagnostic(prospect.activitySignals);
+  if (
+    !diagnostic
+    || !["no-site-enrichment-v1", "no-site-enrichment-v2"].includes(diagnostic.version)
+    || normalizedHost(diagnostic.websiteCandidate) !== storedHost
+    || diagnostic.outcome === "owned_website_found"
+    || diagnostic.providerWebsiteAcceptedAsOwned === true
+    || diagnostic.websiteOwnershipVerified === true
+    || diagnostic.websiteCandidateProvenance === "provider_supplied"
+  ) return false;
+  return true;
+}
+
+export function legacyDeterministicWebsiteRepairInput(prospect: Prospect) {
+  if (!legacyUnverifiedDeterministicWebsiteNeedsRepair(prospect)) return null;
+  return {
+    candidateUrl: prospect.website,
+    prospect: {
+      ...prospect,
+      website: "",
+      websiteStatus: "unknown" as const,
+      websiteStatusDetail: "A legacy deterministic website candidate requires current provider and ownership verification.",
+      websiteVerification: undefined,
+      websiteAnalysisAttemptedAt: "",
+      fitDisposition: "inconclusive_requires_review" as const,
+      prospectType: "no_website_social_only" as const,
+    },
+  };
 }
 
 export function mergeResolvedWebsiteEvidence(
@@ -377,6 +442,7 @@ function noSiteEnrichmentDiagnosticFor(input: {
   checkedAt: string;
   identityResolution: ProviderIdentityResolution | null;
   providerRefreshForced: boolean;
+  legacyDeterministicCandidateUrl: string;
 }) {
   const { resolution } = input;
   const resolved = resolution.result.prospect;
@@ -419,6 +485,9 @@ function noSiteEnrichmentDiagnosticFor(input: {
   if (identityDiagnostic && !identityDiagnostic.confidenceSufficient) {
     reason = `${identityDiagnostic.reason} ${reason}`.slice(0, 1_000);
   }
+  if (input.legacyDeterministicCandidateUrl) {
+    reason = `A legacy deterministic website candidate (${input.legacyDeterministicCandidateUrl}) was re-evaluated under current provider and ownership rules. ${reason}`.slice(0, 1_000);
+  }
 
   return {
     version: "no-site-enrichment-v3",
@@ -436,6 +505,8 @@ function noSiteEnrichmentDiagnosticFor(input: {
     providerWebsiteAcceptedAsOwned: identityDiagnostic?.providerWebsiteAcceptedAsOwned ?? false,
     websiteCandidateProvenance: candidateProvenance,
     websiteOwnershipVerified: report.ownershipDecision === "owned",
+    legacyDeterministicCandidateRepaired: Boolean(input.legacyDeterministicCandidateUrl),
+    legacyDeterministicCandidateUrl: input.legacyDeterministicCandidateUrl,
   } satisfies NoSiteEnrichmentDiagnostic;
 }
 
@@ -449,6 +520,7 @@ function attachNoSiteEnrichment(
     checkedAt: string;
     identityResolution: ProviderIdentityResolution | null;
     providerRefreshForced: boolean;
+    legacyDeterministicCandidateUrl: string;
   },
 ) {
   if (!input.startedAsProbableNoSite) return resolution;
@@ -472,8 +544,9 @@ export async function verifyProspectWebsiteWithSecondPass(
   prospect: Prospect,
   dependencies: SharedProspectVerificationDependencies = {},
 ): Promise<SharedProspectVerificationResolution> {
+  const legacyDeterministicCandidateUrl = dependencies.legacyDeterministicCandidateUrl?.trim() ?? "";
   const startedAsProbableNoSite = !prospect.website.trim()
-    && prospect.prospectType === "no_website_social_only"
+    && (prospect.prospectType === "no_website_social_only" || Boolean(legacyDeterministicCandidateUrl))
     && !prospect.inactive;
   const recoveryTimeoutMs = Math.min(6_000, Math.max(750, dependencies.requestTimeoutMs ?? 5_000));
   const checkedAt = (dependencies.now?.() ?? new Date()).toISOString();
@@ -565,7 +638,7 @@ export async function verifyProspectWebsiteWithSecondPass(
       now: () => new Date(checkedAt),
     })
     : null;
-  const recoveredCandidates: OwnedWebsiteRecoveryCandidate[] = ownedWebsiteLookup?.candidates
+  const currentlyRecoveredCandidates: OwnedWebsiteRecoveryCandidate[] = ownedWebsiteLookup?.candidates
     ?? (currentGoogleWithoutWebsite && providerCandidates.length === 0
       ? deterministicOwnedWebsiteCandidates(resolvedWorkingProspect).map((url) => ({
           url,
@@ -573,6 +646,18 @@ export async function verifyProspectWebsiteWithSecondPass(
           provider: "" as const,
         }))
       : []);
+  const currentProviderSuppliedCandidate = providerCandidates.length > 0
+    || currentlyRecoveredCandidates.some((candidate) => candidate.provenance === "provider_supplied");
+  const recoveredCandidates = [...new Map([
+    ...currentlyRecoveredCandidates,
+    ...(!currentProviderSuppliedCandidate && isCredibleOwnedWebsiteCandidate(legacyDeterministicCandidateUrl)
+      ? [{
+          url: legacyDeterministicCandidateUrl,
+          provenance: "deterministic_guess" as const,
+          provider: "" as const,
+        }]
+      : []),
+  ].map((candidate) => [candidate.url, candidate] as const)).values()];
   if (ownedWebsiteLookup) {
     identityResolution = ownedWebsiteLookup.resolution;
     resolvedWorkingProspect = {
@@ -610,6 +695,7 @@ export async function verifyProspectWebsiteWithSecondPass(
     checkedAt,
     identityResolution,
     providerRefreshForced: dependencies.forceNoSiteEvidenceRefresh === true,
+    legacyDeterministicCandidateUrl,
   });
   const recoveredOwnedSiteMustBeChecked = startedAsProbableNoSite && recoveredCandidates.length > 0;
   if (safelyResolved(initialResult) && !recoveredOwnedSiteMustBeChecked) {

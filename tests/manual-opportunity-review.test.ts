@@ -476,8 +476,8 @@ test("worker preserves current-result, contacted, suppressed, and review-setting
 test("worker refreshes stale existing evidence and resolves every failure before duplicate fallback", () => {
   const workerSource = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
   const processLeadStart = workerSource.indexOf("async function processLead(");
-  const refreshGate = workerSource.indexOf("if (existingProspectRequiresWebsiteResolution(existing, jobCreatedAt))", processLeadStart);
-  const historicalLookup = workerSource.indexOf("allowHistoricalNoSiteLookup: existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt)", refreshGate);
+  const refreshGate = workerSource.indexOf("existingProspectRequiresWebsiteResolution(existing, jobCreatedAt)) {", processLeadStart);
+  const historicalLookup = workerSource.indexOf("existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt)", refreshGate);
   const forcedRefresh = workerSource.indexOf("forceNoSiteEvidenceRefresh: staleNoSiteEvidence", historicalLookup);
   const verificationFailure = workerSource.indexOf('addUnresolvedSkip(summary, unresolved, "website_verification_failed")', forcedRefresh);
   const fitFailure = workerSource.indexOf('addUnresolvedSkip(summary, unresolved, "website_fit_requires_review")', verificationFailure);
