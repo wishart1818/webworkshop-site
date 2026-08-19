@@ -947,7 +947,6 @@ async function maybeSaveEmailReviewCandidate(
   const review = prospectEmailReviewEligibility(prospect);
   if (!review.eligible) return null;
   await saveTopProspectResult(jobId, prospect, mode, outreachPreference, { reviewOnly: true });
-  addSkip(summary, "email_review_candidate");
   const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, resolution);
   return { qualified: false, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
 }

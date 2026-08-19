@@ -110,7 +110,10 @@ export function prospectCallQueueEligibility(prospect: Prospect) {
   const strongIdentity = Boolean(
     prospect.websiteVerification?.confidence === "high"
     && ["owned", "not_owned"].includes(prospect.websiteVerification.ownershipDecision ?? ""),
-  ) || prospect.sourceConfidence >= 85;
+  ) || prospect.sourceConfidence >= 85 || Boolean(
+    prospect.priorityScore >= 88
+    && (prospect.reviewCount >= 20 || prospect.rating >= 4.4 || prospect.recentReviewCount >= 3 || prospect.activitySignals.length >= 2),
+  );
   const activityStrong = prospect.reviewCount >= 20
     || prospect.rating >= 4.4
     || prospect.recentReviewCount >= 3

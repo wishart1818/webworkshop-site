@@ -2432,7 +2432,7 @@ export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = proces
   return [
     "Thanks,",
     "",
-    "Brendan Wishart",
+    "Brendan",
     "WebWorkshop",
     "webworkshop.dev",
     ...(address ? ["", address] : []),
