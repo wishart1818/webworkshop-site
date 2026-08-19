@@ -19,6 +19,7 @@ import {
   verifiedEmailEvidenceForProspect,
   websiteFitAllowsAutonomousOutreach,
 } from "@/lib/prospect-qualification";
+import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
 
 export const prospectStatuses = [
   "New",
@@ -2431,8 +2432,9 @@ export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = proces
   return [
     "Thanks,",
     "",
-    "Brendan",
+    "Brendan Wishart",
     "WebWorkshop",
+    "webworkshop.dev",
     ...(address ? ["", address] : []),
     "",
     webworkshopOptOutLine(),
@@ -2502,6 +2504,43 @@ export function firstTouchEmailDraft(prospect: Prospect, footer: string) {
     rebuildSolutionLine: observation?.rebuildSentence,
     recipientName: verifiedContactFirstNameForProspect(prospect),
   });
+}
+
+export function generateEmailReviewOutreach(prospect: Prospect, environment: NodeJS.ProcessEnv = process.env): OutreachDraft {
+  const eligibility = prospectEmailReviewEligibility(prospect);
+  if (!eligibility.eligible) {
+    throw new Error(`This prospect is not eligible for the human-review email lane: ${eligibility.reasons.join(" ")}`);
+  }
+  const complianceFooter = outreachComplianceFooter(environment);
+  const generatedAt = now();
+  const trade = displayTradeCategory(prospectTrade(prospect)).toLowerCase();
+  const city = titleCaseLocation(prospect.city);
+  const firstTouch = webworkshopFirstEmail({
+    businessName: prospect.businessName,
+    trade,
+    city,
+    kind: "has_website",
+    footer: complianceFooter,
+    rebuildSolutionLine: "I had a couple ideas for a refreshed version focused on making the services and next step easier for customers to understand.",
+    recipientName: verifiedContactFirstNameForProspect(prospect),
+  });
+  return {
+    subjects: [
+      `Quick website idea for ${prospect.businessName}`,
+      `Website idea for ${prospect.businessName}`,
+      `${displayTradeCategory(prospectTrade(prospect))} website idea for ${city}`,
+    ],
+    concise: firstTouch,
+    detailed: `${webworkshopYesReply("")}\n\n${complianceFooter}`,
+    followUps: [
+      `Hi again,\n\nJust wanted to follow up on the website idea I mentioned. No rush - I was mainly wondering whether you would be open to seeing a refreshed direction for the site.\n\n${complianceFooter}`,
+      `Hi again,\n\nLast note from me. If this is not useful or timing is off, no problem. I will close the loop.\n\n${complianceFooter}`,
+    ],
+    approved: false,
+    generatedAt,
+    outreachCopyVersion: OUTREACH_COPY_VERSION,
+    outreachCopyGeneratedAt: generatedAt,
+  };
 }
 
 export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {

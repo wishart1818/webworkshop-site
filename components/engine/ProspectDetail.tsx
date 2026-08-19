@@ -40,6 +40,7 @@ import {
   verifiedContactFirstNameForProspect,
   verifiedEmailEvidenceForProspect,
 } from "@/lib/prospect-qualification";
+import { prospectRoutingDecision } from "@/lib/prospect-review-routing";
 
 const readOnlyUnavailablePreview: PreviewConcept = {
   direction: "Unavailable saved preview",
@@ -1294,6 +1295,7 @@ function WebsiteVerificationPanel({
     ?? prospect.contactEvidence.find((item) => item.kind === "email" && item.value.toLowerCase() === prospect.email.toLowerCase());
   const socialEvidence = prospect.contactEvidence.filter((item) => ["facebook", "instagram", "linkedin", "x", "youtube"].includes(item.kind));
   const dimensions = prospectDecisionDimensions(prospect);
+  const routing = prospectRoutingDecision(prospect);
   const freshness = prospectFreshnessAt(prospect);
   const blockers = prospectQualificationBlockReasons(prospect);
   const verifiedFirstName = verifiedContactFirstNameForProspect(prospect);
@@ -1337,7 +1339,9 @@ function WebsiteVerificationPanel({
         <div><span>Identity Confidence</span><b>{dimensions.businessIdentityConfidence}</b></div>
         <div><span>Contact Evidence Confidence</span><b>{dimensions.contactEvidenceConfidence}</b></div>
         <div><span>Outreach Fit</span><b>{dimensions.outreachFit}</b></div>
-        <div><span>Autonomous Eligibility</span><b>{dimensions.finalAutonomousEligibility}</b></div>
+        <div><span>Opportunity</span><b>{routing.opportunity}</b></div>
+        <div><span>Email</span><b>{routing.email}</b></div>
+        <div><span>Email Sending</span><b>{routing.sending}</b></div>
       </div>
       <details>
         <summary>Why this can or cannot be contacted</summary>
