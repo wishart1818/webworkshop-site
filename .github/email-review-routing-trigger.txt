@@ -1,1 +1,1 @@
-Trigger the temporary email-review routing implementation workflow.
+Trigger the temporary email-review routing implementation workflow after PR creation.
