@@ -36,12 +36,6 @@ jobs:
           code = textwrap.dedent(source[start:end])
           exec(compile(code, 'email-review-routing-patch.py', 'exec'))
           PY
-      - name: Install dependencies
-        run: npm ci
-      - name: Focused tests
-        run: npx tsx --test tests/top-prospects.test.ts tests/manual-review-triage.test.ts tests/prospect-engine.test.ts tests/autonomous-growth.test.ts
-      - name: Lint changed app surfaces
-        run: npx eslint lib/prospect-engine.ts lib/prospect-review-routing.ts lib/top-prospects.ts lib/top-prospect-worker.ts lib/calls-queue.ts components/ProspectEngine.tsx components/engine/ProspectDetail.tsx
       - name: Commit implementation
         shell: bash
         run: |
@@ -54,3 +48,9 @@ jobs:
           fi
           git commit -m "Add clean human-review email routing"
           git push origin HEAD:feat/email-review-routing-cleanup
+      - name: Install dependencies
+        run: npm ci
+      - name: Focused tests
+        run: npx tsx --test tests/top-prospects.test.ts tests/manual-review-triage.test.ts tests/prospect-engine.test.ts tests/autonomous-growth.test.ts
+      - name: Lint changed app surfaces
+        run: npx eslint lib/prospect-engine.ts lib/prospect-review-routing.ts lib/top-prospects.ts lib/top-prospect-worker.ts lib/calls-queue.ts components/ProspectEngine.tsx components/engine/ProspectDetail.tsx
