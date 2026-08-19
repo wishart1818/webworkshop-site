@@ -1,0 +1,230 @@
+name: Apply email review routing cleanup
+
+on:
+  push:
+    branches:
+      - feat/email-review-routing-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/email-review-routing-cleanup
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Apply focused routing changes
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"missing anchor in {path}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          def replace_all(path, old, new, expected_min=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count < expected_min:
+                  raise SystemExit(f"expected at least {expected_min} anchors in {path}, found {count}: {old[:120]!r}")
+              p.write_text(text.replace(old, new))
+
+          # Prospect engine: review-only draft path + branded compliance footer.
+          replace_once(
+              "lib/prospect-engine.ts",
+              '} from "@/lib/prospect-qualification";\n\nexport const prospectStatuses',
+              '} from "@/lib/prospect-qualification";\nimport { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";\n\nexport const prospectStatuses',
+          )
+          replace_once(
+              "lib/prospect-engine.ts",
+              '    "Brendan",\n    "WebWorkshop",\n    ...(address ? ["", address] : []),',
+              '    "Brendan Wishart",\n    "WebWorkshop",\n    "webworkshop.dev",\n    ...(address ? ["", address] : []),',
+          )
+          replace_once(
+              "lib/prospect-engine.ts",
+              'export function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {',
+              '''export function generateEmailReviewOutreach(prospect: Prospect, environment: NodeJS.ProcessEnv = process.env): OutreachDraft {\n  const eligibility = prospectEmailReviewEligibility(prospect);\n  if (!eligibility.eligible) {\n    throw new Error(`This prospect is not eligible for the human-review email lane: ${eligibility.reasons.join(" ")}`);\n  }\n  const complianceFooter = outreachComplianceFooter(environment);\n  const generatedAt = now();\n  const trade = displayTradeCategory(prospectTrade(prospect)).toLowerCase();\n  const city = titleCaseLocation(prospect.city);\n  const firstTouch = webworkshopFirstEmail({\n    businessName: prospect.businessName,\n    trade,\n    city,\n    kind: "has_website",\n    footer: complianceFooter,\n    rebuildSolutionLine: "I had a couple ideas for a refreshed version focused on making the services and next step easier for customers to understand.",\n    recipientName: verifiedContactFirstNameForProspect(prospect),\n  });\n  return {\n    subjects: [\n      `Quick website idea for ${prospect.businessName}`,\n      `Website idea for ${prospect.businessName}`,\n      `${displayTradeCategory(prospectTrade(prospect))} website idea for ${city}`,\n    ],\n    concise: firstTouch,\n    detailed: `${webworkshopYesReply("")}\\n\\n${complianceFooter}`,\n    followUps: [\n      `Hi again,\\n\\nJust wanted to follow up on the website idea I mentioned. No rush - I was mainly wondering whether you would be open to seeing a refreshed direction for the site.\\n\\n${complianceFooter}`,\n      `Hi again,\\n\\nLast note from me. If this is not useful or timing is off, no problem. I will close the loop.\\n\\n${complianceFooter}`,\n    ],\n    approved: false,\n    generatedAt,\n    outreachCopyVersion: OUTREACH_COPY_VERSION,\n    outreachCopyGeneratedAt: generatedAt,\n  };\n}\n\nexport function generateOutreach(prospect: Prospect, previewLink = "", environment: NodeJS.ProcessEnv = process.env): OutreachDraft {''',
+          )
+
+          # Top Prospects: persist review-only draft packages without making them strict selections.
+          replace_once(
+              "lib/top-prospects.ts",
+              '  generateOutreach,\n  generatePreview,',
+              '  generateOutreach,\n  generateEmailReviewOutreach,\n  generatePreview,',
+          )
+          replace_once(
+              "lib/top-prospects.ts",
+              'import { prospectIsBadFit, prospectIsContacted, prospectIsSuppressed } from "@/lib/prospect-funnel";\n',
+              'import { prospectIsBadFit, prospectIsContacted, prospectIsSuppressed } from "@/lib/prospect-funnel";\nimport { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";\n',
+          )
+          replace_once(
+              "lib/top-prospects.ts",
+              '  if (!result.rejectionReason) return "reviewable_lower_priority";\n  if (hardBlockedResultReasons.has(result.rejectionReason)) return "blocked";',
+              '  if (!result.rejectionReason) return "reviewable_lower_priority";\n  if (prospectEmailReviewEligibility(result.prospect).eligible && result.packageStatus !== "NOT_GENERATED") return "reviewable_lower_priority";\n  if (hardBlockedResultReasons.has(result.rejectionReason)) return "blocked";',
+          )
+          replace_once(
+              "lib/top-prospects.ts",
+              '  let outreach = generateOutreach(prospect, "");\n  let withArtifacts: Prospect = { ...prospect, outreach };',
+              '  const reviewOnly = prospectEmailReviewEligibility(prospect).eligible;\n  let outreach = reviewOnly ? generateEmailReviewOutreach(prospect) : generateOutreach(prospect, "");\n  let withArtifacts: Prospect = { ...prospect, outreach };',
+          )
+
+          # Worker: a review-only result gets a package but can never increment strict qualification.
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              'import { prospectIsSuppressed } from "@/lib/prospect-funnel";\n',
+              'import { prospectIsSuppressed } from "@/lib/prospect-funnel";\nimport { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";\n',
+          )
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              '  outreachPreference: OutreachPreference,\n) {\n  const database = getProspectDatabase();',
+              '  outreachPreference: OutreachPreference,\n  options: { reviewOnly?: boolean } = {},\n) {\n  const database = getProspectDatabase();',
+          )
+          replace_all(
+              "lib/top-prospect-worker.ts",
+              '      selected: rejectionReason === null,',
+              '      selected: !options.reviewOnly && rejectionReason === null,',
+              expected_min=2,
+          )
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              '  return rejectionReason;\n}\n\nasync function processLead(',
+              '''  return rejectionReason;\n}\n\nasync function maybeSaveEmailReviewCandidate(\n  jobId: string,\n  prospect: Prospect,\n  summary: Record<string, number>,\n  mode: ProspectMode,\n  outreachPreference: OutreachPreference,\n  resolution?: SharedProspectVerificationResolution,\n): Promise<ProcessLeadResult | null> {\n  if (outreachPreference !== "written_only") return null;\n  const review = prospectEmailReviewEligibility(prospect);\n  if (!review.eligible) return null;\n  await saveTopProspectResult(jobId, prospect, mode, outreachPreference, { reviewOnly: true });\n  addSkip(summary, "email_review_candidate");\n  const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, resolution);\n  return { qualified: false, ...(websiteEnrichment ? { websiteEnrichment } : {}) };\n}\n\nasync function processLead(''',
+          )
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              '      if (refreshedManualOpportunity) {\n        const unresolved = unresolvedTopProspectRecord(existing, lead, existingResolution);',
+              '      if (refreshedManualOpportunity) {\n        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);\n        if (reviewOnly) return reviewOnly;\n        const unresolved = unresolvedTopProspectRecord(existing, lead, existingResolution);',
+          )
+          replace_all(
+              "lib/top-prospect-worker.ts",
+              '      if (!websiteFitAllowsAutonomousOutreach(existing)) {\n        const fit = normalizeWebsiteFitDisposition(existing);',
+              '      if (!websiteFitAllowsAutonomousOutreach(existing)) {\n        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);\n        if (reviewOnly) return reviewOnly;\n        const fit = normalizeWebsiteFitDisposition(existing);',
+              expected_min=2,
+          )
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              '    } else if (!websiteFitAllowsAutonomousOutreach(existing)) {\n      addSkip(summary, "confirmed_usable_website_not_fit");',
+              '    } else if (!websiteFitAllowsAutonomousOutreach(existing)) {\n      const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);\n      if (reviewOnly) return reviewOnly;\n      addSkip(summary, "confirmed_usable_website_not_fit");',
+          )
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              '  if (manualOpportunity) {\n    prospect = await saveProspect(prospect);',
+              '  if (manualOpportunity) {\n    const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, prospect, summary, mode, outreachPreference, verification);\n    if (reviewOnly) return reviewOnly;\n    prospect = await saveProspect(prospect);',
+          )
+          replace_once(
+              "lib/top-prospect-worker.ts",
+              '  if (!websiteFitAllowsAutonomousOutreach(prospect)) {\n    await saveProspect(prospect);',
+              '  if (!websiteFitAllowsAutonomousOutreach(prospect)) {\n    const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, prospect, summary, mode, outreachPreference, verification);\n    if (reviewOnly) return reviewOnly;\n    await saveProspect(prospect);',
+          )
+
+          # Prospect workspace: reuse the existing Email view instead of creating another page.
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '  prospectMatchesFunnelFilter,\n  type ProspectFunnelFilterKey,',
+              '  prospectMatchesFunnelFilter,\n  prospectCurrentBucket,\n  type ProspectFunnelFilterKey,',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              'import { requestProspectList } from "@/lib/prospect-list-client";\n',
+              'import { requestProspectList } from "@/lib/prospect-list-client";\nimport { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";\n',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '  email: "Email Ready",',
+              '  email: "Email Review",',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '          .filter((prospect) => prospectMatchesFunnelFilter(prospect, funnelFilter))\n          .filter((prospect) => `${prospect.businessName} ${prospect.city} ${prospect.state}`.toLowerCase().includes(query.toLowerCase())),',
+              '          .filter((prospect) => prospectMatchesFunnelFilter(prospect, funnelFilter))\n          .filter((prospect) => prospectView !== "email" || prospectCurrentBucket(prospect) === "ready_email" || prospectEmailReviewEligibility(prospect).eligible)\n          .filter((prospect) => `${prospect.businessName} ${prospect.city} ${prospect.state}`.toLowerCase().includes(query.toLowerCase())),',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '    [contactFilter, funnelFilter, prospects, query, sort, status, trade],',
+              '    [contactFilter, funnelFilter, prospectView, prospects, query, sort, status, trade],',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '  const prospectFunnel = useMemo(() => buildProspectFunnel(prospects), [prospects]);\n  const callsQueue',
+              '  const prospectFunnel = useMemo(() => buildProspectFunnel(prospects), [prospects]);\n  const emailReviewCount = useMemo(() => prospects.filter((prospect) => prospectCurrentBucket(prospect) === "ready_email" || prospectEmailReviewEligibility(prospect).eligible).length, [prospects]);\n  const callsQueue',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '    const emailReady = prospectFunnel.currentInventory.emailReady;\n    const reviewReady',
+              '    const reviewReady',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '      if (emailReady > 0) return { label: `Review ${emailReady} email-ready prospect${emailReady === 1 ? "" : "s"}`, action: () => { setWorkspaceTab("Prospects"); applyProspectView("email"); } };',
+              '      if (emailReviewCount > 0) return { label: `Review ${emailReviewCount} email prospect${emailReviewCount === 1 ? "" : "s"}`, action: () => { setWorkspaceTab("Prospects"); applyProspectView("email"); } };',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '  }, [pendingCalls, prospectFunnel, prospects, workspaceTab]);',
+              '  }, [emailReviewCount, pendingCalls, prospectFunnel, prospects, workspaceTab]);',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '      setContactFilter("email");\n      setFunnelFilter("ready_email");',
+              '      setContactFilter("email");\n      setFunnelFilter("all");',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '<MetricCard label="Email Ready" value={prospectFunnel.currentInventory.emailReady} detail="Review drafts" onClick={() => { setWorkspaceTab("Prospects"); applyProspectView("email"); }} />',
+              '<MetricCard label="Email Review" value={emailReviewCount} detail="Review drafts" onClick={() => { setWorkspaceTab("Prospects"); applyProspectView("email"); }} />',
+          )
+          replace_once(
+              "components/ProspectEngine.tsx",
+              '<div><dt>Opportunity score</dt><dd>{prospect.priorityScore}</dd></div>',
+              '<div><dt>Call score</dt><dd>{item.callOpportunityScore}</dd></div>',
+          )
+
+          # Prospect detail: separate business opportunity, email evidence, and sending state.
+          replace_once(
+              "components/engine/ProspectDetail.tsx",
+              '} from "@/lib/prospect-qualification";\n',
+              '} from "@/lib/prospect-qualification";\nimport { prospectRoutingDecision } from "@/lib/prospect-review-routing";\n',
+          )
+          replace_once(
+              "components/engine/ProspectDetail.tsx",
+              '  const dimensions = prospectDecisionDimensions(prospect);\n  const freshness',
+              '  const dimensions = prospectDecisionDimensions(prospect);\n  const routing = prospectRoutingDecision(prospect);\n  const freshness',
+          )
+          replace_once(
+              "components/engine/ProspectDetail.tsx",
+              '<div><span>Autonomous Eligibility</span><b>{dimensions.finalAutonomousEligibility}</b></div>',
+              '<div><span>Opportunity</span><b>{routing.opportunity}</b></div>\n        <div><span>Email</span><b>{routing.email}</b></div>\n        <div><span>Email Sending</span><b>{routing.sending}</b></div>',
+          )
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+      - name: Focused tests
+        run: npx tsx --test tests/top-prospects.test.ts tests/manual-review-triage.test.ts tests/prospect-engine.test.ts tests/autonomous-growth.test.ts
+      - name: Lint changed app surfaces
+        run: npx eslint lib/prospect-engine.ts lib/prospect-review-routing.ts lib/top-prospects.ts lib/top-prospect-worker.ts lib/calls-queue.ts components/ProspectEngine.tsx components/engine/ProspectDetail.tsx
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/prospect-engine.ts lib/top-prospects.ts lib/top-prospect-worker.ts components/ProspectEngine.tsx components/engine/ProspectDetail.tsx
+          if git diff --cached --quiet; then
+            echo "No implementation changes to commit"
+            exit 1
+          fi
+          git commit -m "Add clean human-review email routing"
+          git push origin HEAD:feat/email-review-routing-cleanup
