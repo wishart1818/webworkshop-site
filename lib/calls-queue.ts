@@ -57,7 +57,9 @@ export function manualCallOpportunityScore(prospect: Prospect) {
     : prospect.fitDisposition === "broken_or_inactive_website" ? 92
       : prospect.fitDisposition === "clearly_weak_or_outdated_website" ? 82
         : prospect.fitDisposition === "inconclusive_requires_review" ? 55
-          : 0;
+          : ["adequate_existing_website", "strong_existing_website", "confirmed_usable_not_fit"].includes(prospect.fitDisposition) ? 0
+            : prospect.classification === "phone_only" ? 55
+              : 0;
   const verification = prospect.websiteVerification;
   const identityConfidence = verification?.ownershipDecision === "not_owned" && verification.confidence === "high" ? 95
     : verification?.ownershipDecision === "owned" && verification.confidence === "high" ? 92
