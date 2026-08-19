@@ -16,7 +16,7 @@ export type EmailReviewEligibility = {
 export type ProspectRoutingDecision = {
   opportunity: "Qualified" | "Needs Review" | "Not a Fit";
   email: "Ready" | "Verify Email" | "No Email";
-  sending: "Auto Eligible" | "Approval Required" | "Blocked";
+  sending: "Strict Email Eligible" | "Approval Required" | "Blocked";
 };
 
 function reviewSignals(prospect: Prospect) {
@@ -74,7 +74,7 @@ export function prospectRoutingDecision(prospect: Prospect, now = new Date()): P
   const fit = normalizeWebsiteFitDisposition(prospect);
   const emailEvidence = verifiedEmailEvidenceForProspect(prospect);
   const review = prospectEmailReviewEligibility(prospect, now);
-  const strictAuto = prospectQualificationBlockReasons(prospect, { now }).length === 0
+  const strictEmailEligible = prospectQualificationBlockReasons(prospect, { now }).length === 0
     && Boolean(emailEvidence)
     && websiteFitAllowsAutonomousOutreach(prospect);
   const notFit = prospect.inactive
@@ -82,8 +82,8 @@ export function prospectRoutingDecision(prospect: Prospect, now = new Date()): P
     || ["adequate_existing_website", "strong_existing_website"].includes(fit);
 
   return {
-    opportunity: strictAuto ? "Qualified" : notFit ? "Not a Fit" : "Needs Review",
+    opportunity: strictEmailEligible ? "Qualified" : notFit ? "Not a Fit" : "Needs Review",
     email: emailEvidence ? "Ready" : prospect.email.trim() ? "Verify Email" : "No Email",
-    sending: strictAuto ? "Auto Eligible" : review.eligible ? "Approval Required" : "Blocked",
+    sending: strictEmailEligible ? "Strict Email Eligible" : review.eligible ? "Approval Required" : "Blocked",
   };
 }
