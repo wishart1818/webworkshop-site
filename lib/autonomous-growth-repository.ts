@@ -44,6 +44,7 @@ import {
 import {
   activity,
   createProspect,
+  generateEmailReviewOutreach,
   generateOutreach,
   normalizeTradeCategory,
   prospectVerifiedEmailEvidence,
@@ -53,6 +54,7 @@ import {
   type ContactRouteEvidence,
   type Prospect,
 } from "@/lib/prospect-engine";
+import { prospectEmailReviewEligibility, prospectRoutingDecision } from "@/lib/prospect-review-routing";
 import {
   getProspect,
   getProspectDatabase,
@@ -557,15 +559,16 @@ function topProspectBackfillBlockedReason(result: TopProspectJob["results"][numb
   return "";
 }
 
-async function syncTopProspectResultIntoQueue(
+export async function syncTopProspectResultIntoQueue(
   result: TopProspectJob["results"][number],
   outreachPreference: OutreachPreference,
 ) {
   const previewLink = topProspectHasPublicPreview(result.previewLink) ? result.previewLink : "";
   const nowIso = new Date().toISOString();
   const prospect = reconcileProspectContactRouting(result.prospect);
+  const forceReviewOnly = prospectEmailReviewEligibility(prospect).eligible;
   const outreach = {
-    ...generateOutreach(prospect, previewLink),
+    ...(forceReviewOnly ? generateEmailReviewOutreach(prospect) : generateOutreach(prospect, previewLink)),
     approved: false,
     lastRegeneratedAt: nowIso,
   };
@@ -594,6 +597,7 @@ async function syncTopProspectResultIntoQueue(
     if (refreshed.count !== 1) throw new Error("The Top Prospect package changed before refresh completed.");
   }
   return upsertAutonomousQueueItemFromPackage({
+    forceReviewOnly,
     internalSmsEnabled: false,
     outreachPreference,
     previewLink,
@@ -1478,6 +1482,15 @@ export async function approveAndQueueEmail(
       blockedReasons: ["The recipient or email draft changed during the final safety refresh. Review the updated draft before approval."],
     };
   }
+  const prospect = refreshed.prospectId ? await getProspect(refreshed.prospectId) : null;
+  const strictApprovalBlockReasons = providerDispatchProspectBlockReasons(prospect, refreshed);
+  if (strictApprovalBlockReasons.length) {
+    return {
+      item: refreshed,
+      queued: false,
+      blockedReasons: strictApprovalBlockReasons,
+    };
+  }
   if (!approvableQueueStatuses.has(refreshed.status)) {
     return {
       item: refreshed,
@@ -1519,7 +1532,6 @@ export async function approveAndQueueEmail(
     return { item: saved ?? blocked, queued: false, blockedReasons: readiness.blockedReasons };
   }
 
-  const prospect = refreshed.prospectId ? await getProspect(refreshed.prospectId) : null;
   if (!hasDatabase) {
     const current = memoryQueue().find((entry) => entry.id === refreshed.id);
     if (
@@ -2059,6 +2071,9 @@ function providerDispatchProspectBlockReasons(
     ? `Hi ${verifiedFirstName},`
     : `Hi ${webworkshopCleanBusinessName(prospect.businessName)} team,`;
   return [
+    prospectRoutingDecision(prospect).sending !== "Strict Email Eligible"
+      ? "The prospect does not currently pass strict email routing qualification."
+      : "",
     !["New", "Reviewed"].includes(prospect.status)
       ? `Prospect status ${prospect.status} is already contacted or closed.`
       : "",
@@ -2762,6 +2777,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
   topProspectResultId: string;
 }) {
   const {
+    forceReviewOnly = false,
     outreachPreference,
     previewLink,
     sourceProvider = "Top Prospects",
@@ -2786,7 +2802,7 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
   });
   const selfReview = evaluateSelfReview({ emailQuality, previewGate, prospect });
   const computedStatus = queueStatusForPackage({ autoEligibility, emailQuality, previewGate, settings });
-  const status = computedStatus === "Queued" ? "Eligible" : computedStatus;
+  const status = forceReviewOnly ? "Needs Review" : computedStatus === "Queued" ? "Eligible" : computedStatus;
   const now = new Date();
   const outreach = prospect.outreach;
   const outreachGeneratedAt = outreach?.outreachCopyGeneratedAt || outreach?.generatedAt || now.toISOString();
@@ -2806,10 +2822,14 @@ export async function upsertAutonomousQueueItemFromPackage(input: {
     emailBody: outreach?.concise ?? "",
     dmScript: manualDmScript(prospect, previewLink),
     loomTalkingPoints: loomTalkingPoints(prospect, previewLink),
-    eligibilityReason: emailQuality.ready
+    eligibilityReason: forceReviewOnly
+      ? "This package is grounded for human review, but current website fit does not permit send approval or provider dispatch."
+      : emailQuality.ready
       ? `${prospect.trade} prospect has send-safe permission-first copy and a usable written contact path. The preview will be built manually only after interest.`
       : "First-touch package generated, but review is required before any outreach.",
-    blockedReason: blockedReasonText(autoEligibility.blockedReasons, []) || null,
+    blockedReason: forceReviewOnly
+      ? "Human review only: current website fit is not strictly qualified for outreach."
+      : blockedReasonText(autoEligibility.blockedReasons, []) || null,
     reviewScore: selfReview.reviewScore,
     reviewSummary: selfReview.reviewSummary,
     improvementSuggestions: selfReview.improvementSuggestions,

@@ -28,6 +28,8 @@ import {
   validPublicPreviewToken,
 } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
+import { prospectQualificationBlockReasons } from "@/lib/prospect-qualification";
+import { prospectEmailReviewEligibility, prospectRoutingDecision } from "@/lib/prospect-review-routing";
 
 const resultInclude = { prospect: true } satisfies Prisma.TopProspectResultInclude;
 const jobInclude = {
@@ -431,6 +433,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
         ...prepared.prospect.activities,
       ],
     });
+    const reviewOnly = prepared.reviewOnly && prospectEmailReviewEligibility(saved).eligible;
     const scores = prepared.assessment.salesScores;
     await database.topProspectResult.update({
       where: { id: resultId },
@@ -443,7 +446,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
         mainWeakness: prepared.assessment.mainWeakness,
         whyMayBuy: prepared.assessment.whyMayBuy,
         pitchAngle: prepared.assessment.pitchAngle,
-        packageStatus: "PACKAGE_GENERATED",
+        packageStatus: reviewOnly ? "READY_FOR_REVIEW" : "PACKAGE_GENERATED",
         packageGeneratedAt: new Date(),
         packageReviewedAt: null,
         packageApprovedAt: null,
@@ -454,6 +457,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
     console.info("[outreach-package] Permission-first package generated without a preview.", { resultId, prospectId: saved.id });
     try {
       await upsertAutonomousQueueItemFromPackage({
+        forceReviewOnly: reviewOnly,
         outreachPreference: normalizeOutreachPreference(result.job?.outreachPreference),
         previewLink: result.previewLink,
         prospect: saved,
@@ -468,6 +472,10 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
     }
   } else {
     if (action === "approve") {
+      const strictQualificationReasons = prospectQualificationBlockReasons(prospect);
+      if (prospectRoutingDecision(prospect).sending !== "Strict Email Eligible") {
+        throw new Error(`This package is review-only and cannot be approved to send.${strictQualificationReasons.length ? ` ${strictQualificationReasons.join(" ")}` : ""}`);
+      }
       assertOutreachEmailReady(prospect, result.previewLink, normalizeOutreachPreference(result.job?.outreachPreference));
     }
     const now = new Date();

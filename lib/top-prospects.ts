@@ -10,6 +10,7 @@ import { siteUrl } from "@/lib/site";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
 import {
   generateOutreach,
+  generateEmailReviewOutreach,
   generatePreview,
   allCoreServiceTradesOption,
   coreServiceTrades,
@@ -33,6 +34,7 @@ import {
   webworkshopPostalAddress,
 } from "@/lib/prospect-engine";
 import { prospectIsBadFit, prospectIsContacted, prospectIsSuppressed } from "@/lib/prospect-funnel";
+import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
 
 export const topProspectJobStatuses = [
   "QUEUED",
@@ -1170,6 +1172,7 @@ export function topProspectResultBucket(
 ): TopProspectResultBucket {
   if (result.selected) return "ranked_top_prospect";
   if (!result.rejectionReason) return "reviewable_lower_priority";
+  if (prospectEmailReviewEligibility(result.prospect).eligible && result.packageStatus !== "NOT_GENERATED") return "reviewable_lower_priority";
   if (hardBlockedResultReasons.has(result.rejectionReason)) return "blocked";
 
   const hasManualWrittenPath = prospectWrittenContactMethodIsUsable(result.prospect)
@@ -1284,7 +1287,8 @@ export function prepareTopProspectOutreachArtifacts(
   prospect: Prospect,
   outreachPreference: OutreachPreference = "written_only",
 ) {
-  let outreach = generateOutreach(prospect, "");
+  const reviewOnly = prospectEmailReviewEligibility(prospect).eligible;
+  let outreach = reviewOnly ? generateEmailReviewOutreach(prospect) : generateOutreach(prospect, "");
   let withArtifacts: Prospect = { ...prospect, outreach };
   let emailQuality = evaluateOutreachEmailQuality(withArtifacts, "", outreachPreference);
   if (emailQuality.readinessLabel === "Unsupported claim") {
@@ -1301,6 +1305,7 @@ export function prepareTopProspectOutreachArtifacts(
     buildPrompt: "",
     previewLink: "",
     emailQuality,
+    reviewOnly,
   };
 }
 

@@ -384,9 +384,9 @@ export function initialProspectFreshness(prospect: Prospect, checkedAt: string):
 }
 
 export function outreachObservationForProspect(prospect: Prospect): WebsiteFitObservation | null {
-  if (!websiteFitAllowsAutonomousOutreach(prospect)) return null;
   const saved = prospect.websiteVerification?.fit?.observation;
   if (saved) return saved;
+  if (!websiteFitAllowsAutonomousOutreach(prospect)) return null;
   const disposition = normalizeWebsiteFitDisposition(prospect);
   if (disposition === "no_owned_website") {
     return {

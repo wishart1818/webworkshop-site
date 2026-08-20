@@ -39,6 +39,7 @@ import type {
 } from "@/lib/top-prospects";
 import { outreachPackageStatusLabel } from "@/lib/top-prospects";
 import type { TopProspectJobFailureClassification } from "@/lib/top-prospect-diagnostics";
+import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
 
 type Props = {
   onOpenProspect: (id: string) => void;
@@ -251,10 +252,15 @@ function generatedPackageNeedsReview(result: TopProspectResult) {
   return result.packageStatus !== "NOT_GENERATED" && result.packageStatus !== "SENT" && result.packageStatus !== "SKIPPED";
 }
 
+function emailReviewOnly(result: TopProspectResult) {
+  return prospectEmailReviewEligibility(result.prospect).eligible;
+}
+
 function packageReviewStatusText(result: TopProspectResult) {
   if (phoneOnlyWrittenOutreachBlocked(result) && result.packageStatus !== "NOT_GENERATED") {
     return "Preview generated, outreach blocked: phone-only.";
   }
+  if (emailReviewOnly(result)) return "Human review only; not eligible for send approval.";
   return result.emailQuality.readinessLabel;
 }
 
@@ -1230,7 +1236,9 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
               <button className="engine-button" disabled={packageActioning.startsWith(`${outreachResult.id}:`) || outreachResult.packageStatus === "SENT"} onClick={() => void runPackageAction(outreachResult, "skip")} type="button">Skip</button>
               <a className="engine-button" href={outreachResult.previewLink} rel="noreferrer" target="_blank">Open full preview</a>
               <button className="engine-button" onClick={() => { setPromptResult(outreachResult); setOutreachResult(null); }} type="button">Open build prompt</button>
-              {outreachResult.packageStatus === "APPROVED_TO_SEND"
+              {emailReviewOnly(outreachResult)
+                ? <p className="engine-copy-warning">This prospect is available for human review only. It cannot be approved or provider-dispatched unless current evidence later passes strict qualification.</p>
+                : outreachResult.packageStatus === "APPROVED_TO_SEND"
                 ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`)} onClick={() => void runPackageAction(outreachResult, "mark_sent")} type="button">Mark Sent</button>
                 : outreachResult.packageStatus !== "SENT" && outreachResult.packageStatus !== "SKIPPED"
                   ? <button className="engine-button engine-button--primary" disabled={packageActioning.startsWith(`${outreachResult.id}:`) || !outreachResult.emailQuality.ready || phoneOnlyWrittenOutreachBlocked(outreachResult)} onClick={() => void runPackageAction(outreachResult, "approve")} type="button">Approve to Send</button>
@@ -1282,7 +1290,8 @@ function PackageReviewCard({
   const generated = result.packageStatus !== "NOT_GENERATED" && result.packageStatus !== "SKIPPED";
   const reviewable = generated && result.packageStatus !== "SENT";
   const phoneOnlyBlocked = phoneOnlyWrittenOutreachBlocked(result);
-  const approvable = !phoneOnlyBlocked && result.emailQuality.ready && (result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW");
+  const reviewOnly = emailReviewOnly(result);
+  const approvable = !reviewOnly && !phoneOnlyBlocked && result.emailQuality.ready && (result.packageStatus === "PACKAGE_GENERATED" || result.packageStatus === "READY_FOR_REVIEW");
   const miniStyle = {
     "--package-primary": profile.primaryColor,
     "--package-accent": profile.accentColor,
@@ -1317,7 +1326,9 @@ function PackageReviewCard({
       <div className="engine-package-card__actions">
         <button className="engine-button" disabled={busy || result.packageStatus === "SENT"} onClick={() => void onAction(result, "generate")} type="button">Generate Outreach Package</button>
         <button className="engine-button" disabled={busy || !reviewable} onClick={() => onReview(result)} type="button">Review preview + email</button>
-        {result.packageStatus === "APPROVED_TO_SEND"
+        {reviewOnly
+          ? <button className="engine-button engine-button--primary" disabled type="button">Review only</button>
+          : result.packageStatus === "APPROVED_TO_SEND"
           ? <button className="engine-button engine-button--primary" disabled={busy} onClick={() => void onAction(result, "mark_sent")} type="button">Mark Sent</button>
           : <button className="engine-button engine-button--primary" disabled={busy || !approvable} onClick={() => void onAction(result, "approve")} type="button">Approve</button>}
         <button className="engine-button" disabled={busy || result.packageStatus === "SENT" || result.packageStatus === "SKIPPED"} onClick={() => void onAction(result, "skip")} type="button">Skip</button>

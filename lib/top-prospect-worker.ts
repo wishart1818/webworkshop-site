@@ -29,6 +29,7 @@ import {
 import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { normalizeWebsiteFitDisposition, prospectFreshnessAt, websiteFitAllowsAutonomousOutreach } from "@/lib/prospect-qualification";
 import { prospectIsSuppressed } from "@/lib/prospect-funnel";
+import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
 import {
   mergeResolvedWebsiteEvidence,
   legacyDeterministicWebsiteRepairInput,
@@ -868,6 +869,7 @@ async function saveTopProspectResult(
   prospect: Prospect,
   mode: ProspectMode,
   outreachPreference: OutreachPreference,
+  options: { reviewOnly?: boolean } = {},
 ) {
   const database = getProspectDatabase();
   const existingResult = await database.topProspectResult.findUnique({
@@ -875,6 +877,7 @@ async function saveTopProspectResult(
     select: { buildPrompt: true, previewLink: true, publicPreviewToken: true },
   });
   const prepared = prepareTopProspectOutreachArtifacts(prospect, outreachPreference);
+  const reviewOnly = options.reviewOnly || prepared.reviewOnly;
   const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode, outreachPreference);
   const scores = prepared.assessment.salesScores;
   await saveProspect({
@@ -903,13 +906,13 @@ async function saveTopProspectResult(
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
       ...preservedPreview,
-      packageStatus: "PACKAGE_GENERATED",
+      packageStatus: reviewOnly ? "READY_FOR_REVIEW" : "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
       packageReviewedAt: null,
       packageApprovedAt: null,
       packageSentAt: null,
       packageSkippedAt: null,
-      selected: rejectionReason === null,
+      selected: !reviewOnly && rejectionReason === null,
     },
     create: {
       jobId,
@@ -925,12 +928,28 @@ async function saveTopProspectResult(
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: "",
       previewLink: "",
-      packageStatus: "PACKAGE_GENERATED",
+      packageStatus: reviewOnly ? "READY_FOR_REVIEW" : "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
-      selected: rejectionReason === null,
+      selected: !reviewOnly && rejectionReason === null,
     },
   });
   return rejectionReason;
+}
+
+async function maybeSaveEmailReviewCandidate(
+  jobId: string,
+  prospect: Prospect,
+  summary: Record<string, number>,
+  mode: ProspectMode,
+  outreachPreference: OutreachPreference,
+  resolution?: SharedProspectVerificationResolution,
+): Promise<ProcessLeadResult | null> {
+  if (outreachPreference !== "written_only") return null;
+  const review = prospectEmailReviewEligibility(prospect);
+  if (!review.eligible) return null;
+  await saveTopProspectResult(jobId, prospect, mode, outreachPreference, { reviewOnly: true });
+  const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, resolution);
+  return { qualified: false, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
 }
 
 async function processLead(
@@ -1007,11 +1026,15 @@ async function processLead(
       const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
       const refreshedManualOpportunity = assessManualTopProspectOpportunity(existing, lead);
       if (refreshedManualOpportunity) {
+        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
+        if (reviewOnly) return reviewOnly;
         const unresolved = unresolvedTopProspectRecord(existing, lead, existingResolution);
         addUnresolvedSkip(summary, unresolved, "manual_opportunity");
         return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
       }
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
+        if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
         const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"
           ? undefined
@@ -1045,6 +1068,8 @@ async function processLead(
       }
       existing = await saveProspect(mergeResolvedWebsiteEvidence(existing, resolution.result.prospect));
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, resolution);
+        if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
         const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"
           ? undefined
@@ -1061,6 +1086,8 @@ async function processLead(
       existingResolution = resolution;
       resolvedExistingNow = true;
     } else if (!websiteFitAllowsAutonomousOutreach(existing)) {
+      const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
+      if (reviewOnly) return reviewOnly;
       addSkip(summary, "confirmed_usable_website_not_fit");
       return { qualified: false };
     }
@@ -1071,6 +1098,8 @@ async function processLead(
       || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach)
     ) {
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
+        if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
         if (fit === "adequate_existing_website" || fit === "strong_existing_website") {
           addSkip(summary, "confirmed_usable_website_not_fit");
@@ -1117,6 +1146,8 @@ async function processLead(
   }
   const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);
   if (manualOpportunity) {
+    const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, prospect, summary, mode, outreachPreference, verification);
+    if (reviewOnly) return reviewOnly;
     prospect = await saveProspect(prospect);
     const unresolved = unresolvedTopProspectRecord(prospect, lead, verification);
     addUnresolvedSkip(summary, unresolved, "manual_opportunity");
@@ -1124,6 +1155,8 @@ async function processLead(
     return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
   }
   if (!websiteFitAllowsAutonomousOutreach(prospect)) {
+    const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, prospect, summary, mode, outreachPreference, verification);
+    if (reviewOnly) return reviewOnly;
     await saveProspect(prospect);
     const fit = normalizeWebsiteFitDisposition(prospect);
     const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"

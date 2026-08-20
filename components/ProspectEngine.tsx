@@ -17,6 +17,7 @@ import {
   prospectExclusiveBucketKeys,
   prospectFunnelLabels,
   prospectMatchesFunnelFilter,
+  prospectCurrentBucket,
   type ProspectFunnelFilterKey,
 } from "@/lib/prospect-funnel";
 import {
@@ -42,6 +43,7 @@ import {
   type TradeCategory,
 } from "@/lib/prospect-engine";
 import { requestProspectList } from "@/lib/prospect-list-client";
+import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
 
 type WorkspaceTab = "Overview" | "Top Prospects" | "Prospects" | "Calls" | "Pipeline" | "Autonomous Growth" | "Operator Test Center" | "System" | "Command Activity";
 type ContactFilter = "all" | "email" | "form" | "social" | "hide_phone_only" | "send_ready" | "needs_research";
@@ -69,7 +71,7 @@ const workspaceIcons: Record<WorkspaceTab, string> = {
 const prospectViewLabels: Record<ProspectView, string> = {
   all: "All Prospects",
   review: "Review Needed",
-  email: "Email Ready",
+  email: "Email Review",
   manual: "Manual Contact",
   blocked: "Blocked",
   contacted: "Contacted",
@@ -271,13 +273,15 @@ export function ProspectEngine() {
           .filter((prospect) => status === "All" || prospect.status === status)
           .filter((prospect) => matchesContactFilter(prospect, contactFilter))
           .filter((prospect) => prospectMatchesFunnelFilter(prospect, funnelFilter))
+          .filter((prospect) => prospectView !== "email" || prospectCurrentBucket(prospect) === "ready_email" || prospectEmailReviewEligibility(prospect).eligible)
           .filter((prospect) => `${prospect.businessName} ${prospect.city} ${prospect.state}`.toLowerCase().includes(query.toLowerCase())),
       sort,
     ),
-    [contactFilter, funnelFilter, prospects, query, sort, status, trade],
+    [contactFilter, funnelFilter, prospectView, prospects, query, sort, status, trade],
   );
 
   const prospectFunnel = useMemo(() => buildProspectFunnel(prospects), [prospects]);
+  const emailReviewCount = useMemo(() => prospects.filter((prospect) => prospectCurrentBucket(prospect) === "ready_email" || prospectEmailReviewEligibility(prospect).eligible).length, [prospects]);
   const callsQueue = useMemo(() => buildManualCallsQueue(prospects), [prospects]);
   const pendingCalls = useMemo(() => pendingManualCallsCount(prospects), [prospects]);
   const selected = filtered.find((prospect) => prospect.id === selectedId) ?? null;
@@ -298,12 +302,11 @@ export function ProspectEngine() {
   );
 
   const nextAction = useMemo(() => {
-    const emailReady = prospectFunnel.currentInventory.emailReady;
     const reviewReady = prospectFunnel.currentInventory.readyForReview;
     const previewIssues = prospects.filter((prospect) => prospect.analysis && !prospect.preview).length;
     const unapprovedOutreach = prospects.filter((prospect) => prospect.outreach && !prospect.outreach.approved).length;
     if (workspaceTab === "Overview") {
-      if (emailReady > 0) return { label: `Review ${emailReady} email-ready prospect${emailReady === 1 ? "" : "s"}`, action: () => { setWorkspaceTab("Prospects"); applyProspectView("email"); } };
+      if (emailReviewCount > 0) return { label: `Review ${emailReviewCount} email prospect${emailReviewCount === 1 ? "" : "s"}`, action: () => { setWorkspaceTab("Prospects"); applyProspectView("email"); } };
       if (pendingCalls > 0) return { label: `Process ${pendingCalls} manual call${pendingCalls === 1 ? "" : "s"}`, action: () => setWorkspaceTab("Calls") };
       return { label: "Start next prospect scan", action: () => setWorkspaceTab("Top Prospects") };
     }
@@ -323,7 +326,7 @@ export function ProspectEngine() {
     if (workspaceTab === "System") return { label: "Run provider smoke test", action: () => void runProviderSmokeTest() };
     if (workspaceTab === "Command Activity") return { label: "Review latest command", action: () => undefined };
     return { label: unapprovedOutreach > 0 ? `Approve ${unapprovedOutreach} draft${unapprovedOutreach === 1 ? "" : "s"}` : "Review prospects", action: () => setWorkspaceTab("Prospects") };
-  }, [pendingCalls, prospectFunnel, prospects, workspaceTab]);
+  }, [emailReviewCount, pendingCalls, prospectFunnel, prospects, workspaceTab]);
 
   useEffect(() => {
     if (selectedId && !filtered.some((prospect) => prospect.id === selectedId)) setSelectedId("");
@@ -373,7 +376,7 @@ export function ProspectEngine() {
     if (view === "email") {
       setStatus("All");
       setContactFilter("email");
-      setFunnelFilter("ready_email");
+      setFunnelFilter("all");
     }
     if (view === "manual") {
       setStatus("All");
@@ -883,7 +886,7 @@ export function ProspectEngine() {
               <button className="engine-button engine-button--primary" onClick={nextAction.action} type="button">{nextAction.label}</button>
             </section>
             <section className="engine-overview-cards" aria-label="Operational dashboard">
-              <MetricCard label="Email Ready" value={prospectFunnel.currentInventory.emailReady} detail="Review drafts" onClick={() => { setWorkspaceTab("Prospects"); applyProspectView("email"); }} />
+              <MetricCard label="Email Review" value={emailReviewCount} detail="Review drafts" onClick={() => { setWorkspaceTab("Prospects"); applyProspectView("email"); }} />
               <MetricCard label="Manual DM" value={prospectFunnel.currentInventory.facebookReady + prospectFunnel.currentInventory.instagramReady} detail="Social paths" onClick={() => { setWorkspaceTab("Prospects"); setContactFilter("social"); setFunnelFilter("all"); setProspectView("all"); }} />
               <MetricCard label="Phone Only" value={prospectFunnel.exclusiveBuckets.phone_only} detail="Blocked from written send" onClick={() => openFunnelFilter("phone_only")} />
               <MetricCard label="Blocked / Suppressed" value={prospectFunnel.exclusiveBuckets.bad_fit + prospectFunnel.exclusiveBuckets.suppressed_do_not_contact} detail="Do not contact" onClick={() => openFunnelFilter("bad_fit")} />
@@ -1282,7 +1285,7 @@ function CallsWorkspace({
                   <div><dt>Reviews</dt><dd>{prospect.reviewCount || "Not recorded"}</dd></div>
                   <div><dt>Rating</dt><dd>{prospect.rating || "Not recorded"}</dd></div>
                   <div><dt>Website status</dt><dd>{prospect.websiteStatusDetail || prospect.websiteStatus.replaceAll("_", " ")}</dd></div>
-                  <div><dt>Opportunity score</dt><dd>{prospect.priorityScore}</dd></div>
+                  <div><dt>Call score</dt><dd>{item.callOpportunityScore}</dd></div>
                   <div><dt>Service area</dt><dd>{prospect.serviceArea || "Not recorded"}</dd></div>
                 </dl>
                 <section>
