@@ -427,6 +427,7 @@ test("Prospect Detail does not infer a public preview link from permission-first
 
 test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   const source = readFileSync("components/ProspectEngine.tsx", "utf8");
+  const detailSource = readFileSync("components/engine/ProspectDetail.tsx", "utf8");
 
   assert.match(source, /OperatorCommandBar/);
   assert.match(source, /Command Activity/);
@@ -443,13 +444,16 @@ test("Prospect Engine overview renders clickable funnel diagnostics", () => {
   assert.match(source, /engine-overview-cards/);
   assert.match(source, /Operational dashboard/);
   assert.match(source, /function MetricCard/);
-  assert.match(source, /Email Ready/);
+  assert.match(source, /Email Review/);
   assert.match(source, /Manual DM/);
   assert.match(source, /Phone Only/);
   assert.match(source, /Blocked \/ Suppressed/);
   assert.match(source, /Replies/);
   assert.match(source, /Follow-ups/);
   assert.match(source, /Why this action\?/);
+  assert.match(detailSource, /<span>Opportunity<\/span>/);
+  assert.match(detailSource, /<span>Email<\/span>/);
+  assert.match(detailSource, /<span>Email Sending<\/span>/);
 });
 
 test("Prospect Engine shell uses compact navigation, density, page tabs, and a single safety strip", () => {

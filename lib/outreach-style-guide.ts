@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v7";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v8";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [

@@ -1446,8 +1446,10 @@ function senderPostalAddressForDrafts(environment: NodeJS.ProcessEnv = process.e
 export function prospectFacingEmailBodySafe(item: OutreachQueueItem, environment: NodeJS.ProcessEnv = process.env) {
   const combined = `${item.subjectLine}\n${item.emailBody}`;
   const postalAddresses = senderPostalAddressForDrafts(environment);
+  const requiredFooter = outreachComplianceFooter(environment);
   return [
     item.outreachCopyVersion !== currentOutreachCopyVersion ? `Outreach copy is outdated. Regenerate with ${currentOutreachCopyVersion}.` : "",
+    !item.emailBody.includes(requiredFooter) ? "Prospect-facing email is missing the current required sender and compliance footer." : "",
     item.businessName && !combined.toLowerCase().includes(item.businessName.toLowerCase())
       ? "Outreach copy does not match the current business identity."
       : "",

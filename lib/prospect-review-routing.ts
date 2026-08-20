@@ -1,6 +1,14 @@
 import type { Prospect } from "@/lib/prospect-engine";
 import {
+  prospectIsBadFit,
+  prospectIsContacted,
+  prospectIsDuplicate,
+  prospectIsSuppressed,
+} from "@/lib/prospect-funnel";
+import {
   normalizeWebsiteFitDisposition,
+  outreachObservationForProspect,
+  outreachObservationGroundingProblems,
   prospectFreshnessAt,
   prospectQualificationBlockReasons,
   verifiedEmailEvidenceForProspect,
@@ -16,8 +24,19 @@ export type EmailReviewEligibility = {
 export type ProspectRoutingDecision = {
   opportunity: "Qualified" | "Needs Review" | "Not a Fit";
   email: "Ready" | "Verify Email" | "No Email";
-  sending: "Strict Email Eligible" | "Approval Required" | "Blocked";
+  sending: "Strict Email Eligible" | "Review Only" | "Blocked";
 };
+
+function routingSafetyReasons(prospect: Prospect) {
+  return [
+    prospectIsContacted(prospect) ? `Prospect status ${prospect.status} is protected.` : "",
+    prospectIsSuppressed(prospect) ? "Prospect history contains contact protection or suppression evidence." : "",
+    prospectIsBadFit(prospect) ? "The prospect is inactive, blocked, or not a supported local-business fit." : "",
+    prospectIsDuplicate(prospect) ? "The prospect is a duplicate." : "",
+    prospect.classification === "phone_only" ? "Phone-only prospects cannot enter email routing." : "",
+    prospect.recommendedContactMethod !== "send_email" ? "The current verified contact route is not public email." : "",
+  ].filter(Boolean);
+}
 
 function reviewSignals(prospect: Prospect) {
   const signals: string[] = [];
@@ -50,10 +69,10 @@ export function prospectEmailReviewEligibility(prospect: Prospect, now = new Dat
   const emailEvidence = verifiedEmailEvidenceForProspect(prospect);
   const freshness = prospectFreshnessAt(prospect, now);
   const signals = reviewSignals(prospect);
+  const observationProblems = outreachObservationGroundingProblems(outreachObservationForProspect(prospect));
   const reasons = [
+    ...routingSafetyReasons(prospect),
     prospect.prospectType !== "redesign" ? "Only existing-site redesign prospects use this human-review email lane." : "",
-    prospect.inactive ? "The business is inactive." : "",
-    ["national_large_brand", "duplicate_bad_fit"].includes(prospect.classification) ? "The prospect classification is blocked." : "",
     verification?.version !== "website-verification-v2" ? "Current structured website verification is missing." : "",
     prospect.websiteStatus !== "usable" || verification?.status !== "usable" ? "The owned website is not currently verified usable." : "",
     verification?.ownershipDecision !== "owned" ? "Website ownership is not established." : "",
@@ -66,6 +85,7 @@ export function prospectEmailReviewEligibility(prospect: Prospect, now = new Dat
     !freshness.contactSourceFresh ? "Public contact evidence is stale." : "",
     !emailEvidence ? "No current autonomous-quality first-party public business email is saved." : "",
     !signals.length ? "No bounded website observation is strong enough to justify human redesign review." : "",
+    observationProblems.length ? `The saved website observation is not review-copy ready: ${observationProblems.join(" ")}` : "",
   ].filter(Boolean);
   return { eligible: reasons.length === 0, reasons, reviewSignals: signals };
 }
@@ -74,7 +94,9 @@ export function prospectRoutingDecision(prospect: Prospect, now = new Date()): P
   const fit = normalizeWebsiteFitDisposition(prospect);
   const emailEvidence = verifiedEmailEvidenceForProspect(prospect);
   const review = prospectEmailReviewEligibility(prospect, now);
-  const strictEmailEligible = prospectQualificationBlockReasons(prospect, { now }).length === 0
+  const routingBlocked = routingSafetyReasons(prospect).length > 0;
+  const strictEmailEligible = !routingBlocked
+    && prospectQualificationBlockReasons(prospect, { now }).length === 0
     && Boolean(emailEvidence)
     && websiteFitAllowsAutonomousOutreach(prospect);
   const notFit = prospect.inactive
@@ -84,6 +106,6 @@ export function prospectRoutingDecision(prospect: Prospect, now = new Date()): P
   return {
     opportunity: strictEmailEligible ? "Qualified" : notFit ? "Not a Fit" : "Needs Review",
     email: emailEvidence ? "Ready" : prospect.email.trim() ? "Verify Email" : "No Email",
-    sending: strictEmailEligible ? "Strict Email Eligible" : review.eligible ? "Approval Required" : "Blocked",
+    sending: strictEmailEligible ? "Strict Email Eligible" : review.eligible ? "Review Only" : "Blocked",
   };
 }

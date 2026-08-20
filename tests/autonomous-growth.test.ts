@@ -18,6 +18,7 @@ import {
   normalizeAutonomousGrowthMode,
   normalizeAutonomousGrowthSettings,
   outreachEnvironment,
+  prospectFacingEmailBodySafe,
   outreachQueueStatuses,
   outreachRewritePlan,
   previewRegenerationPlan,
@@ -45,6 +46,7 @@ import {
   runSmartAutonomousDryRun,
   sendQueuedEmailQueueItem,
   setOutreachQueueMemoryForTests,
+  syncTopProspectResultIntoQueue,
   updateAutonomousGrowthSettings,
   updateOutreachQueueStatus,
   upsertAutonomousQueueItemFromPackage,
@@ -424,6 +426,32 @@ test("Auto Email Pilot only passes for eligible email leads with all sender gate
   }), "Queued");
 });
 
+test("human-review website fit cannot satisfy strict autonomous email eligibility", () => {
+  const prospect = eligibleProspect();
+  prospect.fitDisposition = "inconclusive_requires_review";
+  prospect.websiteVerification = {
+    ...prospect.websiteVerification!,
+    fit: {
+      ...prospect.websiteVerification!.fit!,
+      disposition: "inconclusive_requires_review",
+      reason: "The saved website evidence still requires a human rebuild-fit decision.",
+    },
+  };
+  const emailQuality = evaluateOutreachEmailQuality(prospect, publicLink);
+
+  const result = evaluateAutoSendEligibility({
+    emailQuality: { ...emailQuality, ready: true, readinessLabel: "Send-ready", issues: [] },
+    environment: env(),
+    previewGate: evaluatePreviewQualityGate(prospect),
+    previewLink: publicLink,
+    prospect,
+    settings: { ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false },
+  });
+
+  assert.equal(result.eligible, false);
+  assert.match(result.blockedReasons.join(" "), /inconclusive|website fit/i);
+});
+
 test("queued email send readiness enforces suppression, truthful first touch, compliance, and review state", () => {
   const safeBody = [
     "Hi Ready Pressure Washing team,",
@@ -436,8 +464,10 @@ test("queued email send readiness enforces suppression, truthful first touch, co
     "",
     "Thanks,",
     "",
-    "Brendan",
+    "Brendan Wishart",
     "WebWorkshop",
+    "webworkshop.dev",
+    "",
     "123 Main St, Toledo, OH",
     "",
     "If you'd rather not hear from me again, just let me know.",
@@ -2021,6 +2051,18 @@ test("database send and approval paths use conditional serializable claims", () 
   assert.match(repository, /applySelectedWebsiteRepairsAtomically[\s\S]*\$transaction[\s\S]*assertAtomicRepairSnapshot[\s\S]*clearPersistedApproval\(transaction[\s\S]*persistProspectInTransaction\(transaction[\s\S]*isolationLevel:\s*"Serializable"/);
   assert.match(repository, /mutation\.alreadyApplied[\s\S]*queueItemHasPersistedApproval\(item, transaction\)[\s\S]*A selected outreach approval changed after review/);
   assert.doesNotMatch(repository, /autoEmailPilotCyclePromise/);
+});
+
+test("review-only Top Prospect packages cannot cross into send approval", () => {
+  const repository = readFileSync(new URL("../lib/top-prospect-repository.ts", import.meta.url), "utf8");
+  const worker = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
+
+  assert.match(worker, /packageStatus:\s*reviewOnly\s*\?\s*"READY_FOR_REVIEW"\s*:\s*"PACKAGE_GENERATED"/);
+  assert.match(repository, /packageStatus:\s*reviewOnly\s*\?\s*"READY_FOR_REVIEW"\s*:\s*"PACKAGE_GENERATED"/);
+  assert.match(repository, /action\s*===\s*"approve"[\s\S]*prospectRoutingDecision\(prospect\)\.sending\s*!==\s*"Strict Email Eligible"[\s\S]*throw new Error/);
+  assert.match(workspace, /emailReviewOnly\(result\)[\s\S]*Human review only; not eligible for send approval/);
+  assert.match(workspace, /reviewOnly[\s\S]*disabled[^>]*>Review only<\/button>/);
 });
 
 test("Auto Email Pilot success notifications never invoke Twilio SMS", async () => {
@@ -3815,6 +3857,26 @@ function queueItem(overrides: Partial<OutreachQueueItem> = {}): OutreachQueueIte
   };
 }
 
+test("send readiness requires the current centralized sender and compliance footer", () => {
+  const environment = {
+    ...process.env,
+    WEBWORKSHOP_POSTAL_ADDRESS: "123 Main St, Toledo, OH",
+  };
+  const prospect = eligibleProspect();
+  const currentBody = generateOutreach(prospect, "", environment).concise;
+  const current = queueItem({ emailBody: currentBody, outreachCopyVersion: currentOutreachCopyVersion });
+  assert.doesNotMatch(prospectFacingEmailBodySafe(current, environment).join(" "), /required sender and compliance footer/i);
+
+  const incomplete = {
+    ...current,
+    emailBody: currentBody.replace("Brendan Wishart\nWebWorkshop\nwebworkshop.dev", "Brendan\nWebWorkshop"),
+  };
+  assert.match(prospectFacingEmailBodySafe(incomplete, environment).join(" "), /required sender and compliance footer/i);
+
+  const priorVersion = { ...current, outreachCopyVersion: "verified_rebuild_permission_first_v7" };
+  assert.match(prospectFacingEmailBodySafe(priorVersion, environment).join(" "), /Outreach copy is outdated/i);
+});
+
 test("feedback updates learning summary and dashboard empty states can be represented", () => {
   const empty = learningSummaryForQueue([]);
   assert.equal(empty.latestReview, null);
@@ -3962,6 +4024,65 @@ test("pre-interest Top Prospect artifacts create outreach without a preview", ()
   assert.equal(prepared.buildPrompt, "");
   assert.equal(prepared.prospect.preview, undefined);
   assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
+});
+
+test("review-only Top Prospect sync creates a grounded human-review queue item that cannot be approved", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  let providerCalls = 0;
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env({ INTERNAL_NOTIFICATIONS_ENABLED: "false" }));
+  try {
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ id: "must-not-send" }), { status: 200 });
+    };
+    const strictProspect = eligibleProspect();
+    const reviewProspect = structuredClone(strictProspect);
+    reviewProspect.id = "review-only-sync-prospect";
+    reviewProspect.fitDisposition = "inconclusive_requires_review";
+    reviewProspect.websiteVerification = {
+      ...reviewProspect.websiteVerification!,
+      fit: {
+        ...reviewProspect.websiteVerification!.fit!,
+        disposition: "inconclusive_requires_review",
+        reason: "The saved website observation is grounded, but rebuild fit still requires operator review.",
+      },
+    };
+    const reviewArtifacts = prepareTopProspectOutreachArtifacts(reviewProspect, "written_only");
+    assert.equal(reviewArtifacts.reviewOnly, true);
+    assert.equal(reviewArtifacts.emailQuality.ready, true);
+    const baseResult = topProspectResultFixture(strictProspect);
+    const result: TopProspectResult = {
+      ...baseResult,
+      id: "review-only-sync-result",
+      selected: false,
+      rejectionReason: "Weak sales fit",
+      resultBucket: "reviewable_lower_priority",
+      prospect: reviewProspect,
+      packageStatus: "READY_FOR_REVIEW",
+    };
+
+    const queued = await syncTopProspectResultIntoQueue(result, "written_only");
+    assert.equal(queued.status, "Needs Review");
+    assert.match(queued.eligibilityReason, /human review/i);
+    assert.match(queued.emailBody, /quote request is difficult to reach/i);
+    assert.match(queued.emailBody, /rebuild your current website/i);
+
+    const approval = await approveAndQueueEmail(queued.id);
+    assert.equal(approval.queued, false);
+    assert.notEqual(approval.item?.status, "Queued");
+    assert.match(approval.blockedReasons.join(" "), /strict email routing|website fit/i);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
 });
 
 test("approval snapshot rejects a changed reviewed draft", async () => {
@@ -4134,7 +4255,8 @@ test("verified contact first name save updates the prospect and only the linked 
     const savedProspect = await getProspect(prospect.id);
     assert.equal(savedProspect?.contactPersonName, "Nick");
     assert.equal(savedProspect?.contactEvidence.some((item) => item.kind === "contact_person" && item.value === "Nick" && item.firstParty), true);
-    assert.equal(result?.item.status, queued.status);
+    assert.equal(result?.item.status, "Needs Review");
+    assert.notEqual(result?.item.status, "Queued");
     assert.equal(result?.item.sentDate, "");
 
     await assert.rejects(

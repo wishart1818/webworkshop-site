@@ -877,6 +877,7 @@ async function saveTopProspectResult(
     select: { buildPrompt: true, previewLink: true, publicPreviewToken: true },
   });
   const prepared = prepareTopProspectOutreachArtifacts(prospect, outreachPreference);
+  const reviewOnly = options.reviewOnly || prepared.reviewOnly;
   const rejectionReason = topProspectRejectionReason(prepared.prospect, prepared.assessment, mode, outreachPreference);
   const scores = prepared.assessment.salesScores;
   await saveProspect({
@@ -905,13 +906,13 @@ async function saveTopProspectResult(
       whyMayBuy: prepared.assessment.whyMayBuy,
       pitchAngle: prepared.assessment.pitchAngle,
       ...preservedPreview,
-      packageStatus: "PACKAGE_GENERATED",
+      packageStatus: reviewOnly ? "READY_FOR_REVIEW" : "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
       packageReviewedAt: null,
       packageApprovedAt: null,
       packageSentAt: null,
       packageSkippedAt: null,
-      selected: !options.reviewOnly && rejectionReason === null,
+      selected: !reviewOnly && rejectionReason === null,
     },
     create: {
       jobId,
@@ -927,9 +928,9 @@ async function saveTopProspectResult(
       pitchAngle: prepared.assessment.pitchAngle,
       buildPrompt: "",
       previewLink: "",
-      packageStatus: "PACKAGE_GENERATED",
+      packageStatus: reviewOnly ? "READY_FOR_REVIEW" : "PACKAGE_GENERATED",
       packageGeneratedAt: new Date(),
-      selected: !options.reviewOnly && rejectionReason === null,
+      selected: !reviewOnly && rejectionReason === null,
     },
   });
   return rejectionReason;
@@ -1067,7 +1068,7 @@ async function processLead(
       }
       existing = await saveProspect(mergeResolvedWebsiteEvidence(existing, resolution.result.prospect));
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
-        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
+        const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, resolution);
         if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
         const unresolved = fit === "adequate_existing_website" || fit === "strong_existing_website"

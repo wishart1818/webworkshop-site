@@ -3,9 +3,11 @@ import test from "node:test";
 import {
   calculatePriority,
   firstTouchEmailDraft,
+  generateEmailReviewOutreach,
   generateOutreach,
   generatePreview,
   generateProspectStyleProfile,
+  outreachComplianceFooter,
   prospectPresenceLabels,
   previewRegenerationBlockReason,
   PREVIEW_GENERATOR_VERSION,
@@ -31,10 +33,14 @@ import {
   applyManualCallSuppression,
   buildManualCallsQueue,
   callQueueResolutionState,
+  manualCallOpportunityScore,
   pendingManualCallsCount,
   prospectCallQueueEligibility,
 } from "../lib/calls-queue";
 import { classifyWebsiteAnalysisFailure } from "../lib/site-analysis";
+import { prospectEmailReviewEligibility, prospectRoutingDecision } from "../lib/prospect-review-routing";
+import { outreachObservationSupported } from "../lib/prospect-qualification";
+import { evaluateOutreachEmailQuality } from "../lib/top-prospects";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
 const testFooter = [
@@ -131,6 +137,87 @@ function withVerifiedWeakWebsite(prospect: Prospect, email = "owner@example.com"
   } as Prospect;
 }
 
+function withEmailReviewCandidate() {
+  const prospect = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
+  prospect.fitDisposition = "inconclusive_requires_review";
+  prospect.websiteVerification = {
+    ...prospect.websiteVerification!,
+    fit: {
+      ...prospect.websiteVerification!.fit!,
+      disposition: "inconclusive_requires_review",
+      reason: "The rendered evidence supports human redesign review but not autonomous qualification.",
+    },
+  };
+  return prospect;
+}
+
+test("centralized prospect email footer includes the complete required sender identity", () => {
+  assert.equal(outreachComplianceFooter({ ...process.env, WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }), [
+    "Thanks,",
+    "",
+    "Brendan Wishart",
+    "WebWorkshop",
+    "webworkshop.dev",
+    "",
+    testPostalAddress,
+    "",
+    "If you'd rather not hear from me again, just let me know.",
+  ].join("\n"));
+});
+
+test("human-review routing excludes protected and non-email prospects", () => {
+  const candidate = withEmailReviewCandidate();
+  assert.equal(prospectEmailReviewEligibility(candidate).eligible, true);
+  assert.equal(prospectRoutingDecision(candidate).sending, "Review Only");
+  assert.equal(prospectEmailReviewEligibility({ ...candidate, notes: ["No outreach was sent."] }).eligible, true);
+
+  const blocked = [
+    { ...candidate, status: "Contacted" as const },
+    { ...candidate, recommendedContactMethod: "do_not_contact" as const, notes: ["Suppressed by operator."] },
+    { ...candidate, recommendedContactMethod: "call_first" as const },
+    { ...candidate, classification: "phone_only" as const },
+    { ...candidate, inactive: true },
+    { ...candidate, classification: "national_large_brand" as const },
+    { ...candidate, notes: ["Supplier / distributor record."] },
+    { ...candidate, notes: ["Duplicate record."] },
+  ];
+  for (const prospect of blocked) {
+    assert.equal(prospectEmailReviewEligibility(prospect).eligible, false);
+    assert.equal(prospectRoutingDecision(prospect).sending, "Blocked");
+  }
+});
+
+test("human-review outreach uses the saved observation without becoming strict send eligible", () => {
+  const prospect = withEmailReviewCandidate();
+  const testEnvironment = { ...process.env, WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress };
+  const outreach = generateEmailReviewOutreach(prospect, testEnvironment);
+  const prepared = { ...prospect, outreach };
+  const observation = prospect.websiteVerification?.fit?.observation;
+
+  assert.ok(observation);
+  assert.match(outreach.concise, new RegExp(observation.statement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(outreach.concise, new RegExp(observation.rebuildSentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(outreachObservationSupported(prepared, outreach.concise), true);
+  assert.equal(evaluateOutreachEmailQuality(prepared, "", "written_only", testEnvironment).ready, true);
+  assert.equal(prospectRoutingDecision(prepared).sending, "Review Only");
+});
+
+test("strict email routing uses the same protected and contact-route guards as the backend", () => {
+  const candidate = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
+  assert.equal(prospectRoutingDecision(candidate).sending, "Strict Email Eligible");
+
+  for (const prospect of [
+    { ...candidate, inactive: true },
+    { ...candidate, classification: "national_large_brand" as const },
+    { ...candidate, classification: "duplicate_bad_fit" as const },
+    { ...candidate, recommendedContactMethod: "message_on_social" as const },
+    { ...candidate, recommendedContactMethod: "do_not_contact" as const },
+    { ...candidate, notes: ["Recipient opted out."] },
+  ]) {
+    assert.equal(prospectRoutingDecision(prospect).sending, "Blocked");
+  }
+});
+
 test("analysis prioritizes weaker websites and moves new leads to reviewed", () => {
   const analyzed = withAnalysis(structuredClone(seedProspects[0]));
 
@@ -147,7 +234,7 @@ test("outreach remains unapproved and references the prospect", () => {
 
   assert.equal(outreach.approved, false);
   assert.match(outreach.concise, new RegExp(prospect.businessName));
-  assert.match(outreach.concise, /Thanks,\n\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.concise, /Thanks,\n\nBrendan Wishart\nWebWorkshop\nwebworkshop\.dev/i);
   assert.match(outreach.concise, new RegExp(testPostalAddress));
   assert.doesNotMatch(outreach.concise, /\[Add your business postal address before sending\]/i);
   assert.match(outreach.concise, /rather not hear from me again/i);
@@ -176,7 +263,7 @@ test("Outreach Package uses truthful permission-first copy before a manual build
   assert.doesNotMatch(outreach.concise, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,60}\bpreview\b/i);
   assert.match(outreach.detailed, /I'll put together a website concept and send you a quick video walkthrough when it's ready/i);
   assert.doesNotMatch(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
-  assert.match(outreach.concise, /Thanks,\n\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.concise, /Thanks,\n\nBrendan Wishart\nWebWorkshop\nwebworkshop\.dev/i);
   assert.match(outreach.concise, new RegExp(testPostalAddress));
   assert.match(outreach.concise, /rather not hear from me again/i);
   assert.doesNotMatch(allDrafts, /One missed opportunity:|One thing that already works well:|customer proof you can verify|trust details could be easier/i);
@@ -284,7 +371,7 @@ test("permission-first outreach avoids repeating the business name and stays lin
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
   assert.match(outreach.detailed, /I'll put together a website concept and send you a quick video walkthrough/i);
-  assert.match(outreach.detailed, /Thanks,\n\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.detailed, /Thanks,\n\nBrendan Wishart\nWebWorkshop\nwebworkshop\.dev/i);
   assert.match(outreach.detailed, new RegExp(testPostalAddress));
   assert.match(outreach.detailed, /rather not hear from me again/i);
 });
@@ -295,7 +382,7 @@ test("outreach drafts omit postal-address placeholders when sender address is mi
   const allDrafts = [outreach.concise, outreach.detailed, ...outreach.followUps].join("\n");
 
   assert.doesNotMatch(allDrafts, /\[Add your business postal address before sending\]/i);
-  assert.match(outreach.concise, /Thanks,\n\nBrendan\nWebWorkshop/i);
+  assert.match(outreach.concise, /Thanks,\n\nBrendan Wishart\nWebWorkshop\nwebworkshop\.dev/i);
   assert.match(outreach.concise, /If you'd rather not hear from me again/i);
 });
 
@@ -748,12 +835,30 @@ test("manual Calls queue only includes high-priority phone-only prospects needin
   };
   const lowPriorityPhone = { ...phoneOnly, id: "low-priority-phone", priorityScore: 60 };
   const contactedPhone = { ...phoneOnly, id: "contacted-phone", status: "Contacted" as const };
+  const protectedPhoneProspects: Prospect[] = [
+    contactedPhone,
+    { ...phoneOnly, id: "suppressed-phone", notes: ["Suppressed by operator."] },
+    { ...phoneOnly, id: "duplicate-phone", notes: ["Duplicate record."] },
+    { ...phoneOnly, id: "bad-fit-phone", classification: "national_large_brand" as const },
+    {
+      ...phoneOnly,
+      id: "identity-conflict-phone",
+      websiteVerification: {
+        ...phoneOnly.websiteVerification,
+        identitySignals: ["public_phone_conflict"],
+      } as NonNullable<Prospect["websiteVerification"]>,
+    },
+  ];
 
+  assert.ok(manualCallOpportunityScore(phoneOnly) >= 65);
   assert.equal(prospectCallQueueEligibility(phoneOnly).eligible, true);
   assert.equal(prospectCallQueueEligibility(emailReady).eligible, false);
   assert.equal(prospectCallQueueEligibility(lowPriorityPhone).eligible, false);
-  assert.deepEqual(buildManualCallsQueue([phoneOnly, emailReady, lowPriorityPhone, contactedPhone]).map((item) => item.prospect.id), ["phone-only-call"]);
-  assert.equal(pendingManualCallsCount([phoneOnly, emailReady, lowPriorityPhone, contactedPhone]), 1);
+  for (const protectedProspect of protectedPhoneProspects) {
+    assert.equal(prospectCallQueueEligibility(protectedProspect).eligible, false, protectedProspect.id);
+  }
+  assert.deepEqual(buildManualCallsQueue([phoneOnly, emailReady, lowPriorityPhone, ...protectedPhoneProspects]).map((item) => item.prospect.id), ["phone-only-call"]);
+  assert.equal(pendingManualCallsCount([phoneOnly, emailReady, lowPriorityPhone, ...protectedPhoneProspects]), 1);
 });
 
 test("manual Calls queue badge states resolve or stay pending by call outcome", () => {

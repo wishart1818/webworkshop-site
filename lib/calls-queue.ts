@@ -72,12 +72,16 @@ export function manualCallOpportunityScore(prospect: Prospect) {
     + Math.min(100, prospect.activitySignals.length * 20) * 0.1
     + Math.min(100, prospect.sourceConfidence || 0) * 0.15,
   );
-  return bounded(
+  const evidenceWeightedScore = bounded(
     websiteNeed * 0.35
     + identityConfidence * 0.3
     + activityStrength * 0.25
     + bounded(prospect.priorityScore) * 0.1,
   );
+  const establishedOpportunityFloor = prospect.priorityScore >= 85
+    ? bounded(bounded(prospect.priorityScore) * 0.75 + activityStrength * 0.25)
+    : 0;
+  return Math.max(evidenceWeightedScore, establishedOpportunityFloor);
 }
 
 export function manualCallValueTier(prospect: Prospect): ManualCallQueueItem["valueTier"] {

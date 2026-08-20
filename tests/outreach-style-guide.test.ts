@@ -32,7 +32,7 @@ test("contextual first-touch opening falls back safely when context is incomplet
     "I came across Smith Services while looking at local service businesses around Findlay.",
   );
   assert.equal(webworkshopFirstTouchOpening("", "", "Smith Services"), "I came across Smith Services.");
-  assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "verified_rebuild_permission_first_v7");
+  assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "verified_rebuild_permission_first_v8");
 });
 
 test("Findlay is mentioned for nearby prospects and omitted for distant markets", () => {

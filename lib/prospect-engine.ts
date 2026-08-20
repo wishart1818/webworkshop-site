@@ -2432,7 +2432,7 @@ export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = proces
   return [
     "Thanks,",
     "",
-    "Brendan",
+    "Brendan Wishart",
     "WebWorkshop",
     "webworkshop.dev",
     ...(address ? ["", address] : []),
@@ -2515,13 +2515,16 @@ export function generateEmailReviewOutreach(prospect: Prospect, environment: Nod
   const generatedAt = now();
   const trade = displayTradeCategory(prospectTrade(prospect)).toLowerCase();
   const city = titleCaseLocation(prospect.city);
+  const observation = outreachObservationForProspect(prospect);
+  if (!observation) throw new Error("A grounded website observation is required for the human-review email lane.");
   const firstTouch = webworkshopFirstEmail({
     businessName: prospect.businessName,
     trade,
     city,
     kind: "has_website",
     footer: complianceFooter,
-    rebuildSolutionLine: "I had a couple ideas for a refreshed version focused on making the services and next step easier for customers to understand.",
+    factualMiddleLine: observation.statement,
+    rebuildSolutionLine: observation.rebuildSentence,
     recipientName: verifiedContactFirstNameForProspect(prospect),
   });
   return {

@@ -1305,6 +1305,7 @@ export function prepareTopProspectOutreachArtifacts(
     buildPrompt: "",
     previewLink: "",
     emailQuality,
+    reviewOnly,
   };
 }
 
