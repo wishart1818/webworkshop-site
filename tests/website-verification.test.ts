@@ -242,6 +242,77 @@ function maxForceFetch(
   }) as typeof fetch;
 }
 
+function bravoProspect(overrides: Partial<Parameters<typeof createProspect>[0]> = {}) {
+  return prospect({
+    businessName: "Bravo Concrete Contractors Indianapolis",
+    website: "https://concretecontractorindianapolis.com/",
+    phone: "+1 765-345-4141",
+    email: "",
+    city: "Indianapolis",
+    state: "IN",
+    trade: "Concrete",
+    serviceArea: "Indianapolis, IN",
+    ...overrides,
+  });
+}
+
+function bravoFetch(
+  structuredName = "Bravo Concrete Contractors Indianapolis Inc",
+  publishedPhone = "765-345-4141",
+): typeof fetch {
+  const structuredIdentity = (withEmail = false) => `<script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    name: structuredName,
+    url: "https://concretecontractorindianapolis.com/",
+    telephone: publishedPhone,
+    ...(withEmail ? { email: "info@concretecontractorindianapolis.com" } : {}),
+    address: {
+      "@type": "PostalAddress",
+      addressLocality: "Indianapolis",
+      addressRegion: "IN",
+    },
+  })}</script>`;
+  const homepage = `
+    <!doctype html><html><head>
+      <title>Concrete Contractors Indianapolis | Free Estimates</title>
+      <meta property="og:site_name" content="Concrete Contractor Indianapolis" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <link rel="canonical" href="https://concretecontractorindianapolis.com/" />
+      ${structuredIdentity()}
+    </head><body>
+      <header><nav><a href="/">Home</a><a href="/about-us/">About Us</a><a href="/contact-us/">Contact Us</a></nav></header>
+      <main><h1>Best Concrete Contractors In Indianapolis</h1>
+        <p>Concrete installation and repair services for homes and businesses throughout Indianapolis.</p>
+        <p>Review project options, service information, and contact details before requesting an estimate.</p>
+        <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">${publishedPhone}</a>
+        <img src="/concrete-project.jpg" alt="Concrete project in Indianapolis" />
+        <a href="https://facebook.com/bravoconcreteindy">Facebook</a>
+      </main>
+    </body></html>`;
+  const contact = `
+    <!doctype html><html><head><title>Contact</title><meta property="og:site_name" content="Concrete Contractor Indianapolis" />${structuredIdentity(true)}</head><body>
+      <nav><a href="/">Home</a><a href="/contact-us/">Contact Us</a></nav>
+      <h1>Contact Us</h1><p>Request concrete project information in Indianapolis.</p>
+      <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">${publishedPhone}</a>
+      <p>info@concretecontractorindianapolis.com</p>
+      <form action="/contact-us/"><input name="name" /><input name="email" /><textarea name="message"></textarea><button>Request an estimate</button></form>
+    </body></html>`;
+  const about = `
+    <!doctype html><html><head><title>About Us</title><meta property="og:site_name" content="Concrete Contractor Indianapolis" />${structuredIdentity()}</head><body>
+      <nav><a href="/">Home</a><a href="/about-us/">About Us</a></nav><h1>About Us</h1>
+      <p>Concrete project information for Indianapolis property owners.</p>
+    </body></html>`;
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    if (url.hostname !== "concretecontractorindianapolis.com") return htmlResponse("Not found", 404);
+    if (url.pathname === "/") return htmlResponse(homepage);
+    if (url.pathname === "/contact-us/") return htmlResponse(contact);
+    if (url.pathname === "/about-us/") return htmlResponse(about);
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+}
+
 const sparseOwnedHomepage = `
   <!doctype html>
   <html>
@@ -400,6 +471,70 @@ test("legal suffix equivalence never overrides a complete public-phone conflict"
 
   assert.equal(result.report.status, "usable");
   assert.equal(result.report.identitySignals?.includes("prominent_business_name"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("Bravo first-party LocalBusiness identity establishes ownership despite generic SEO headings", async () => {
+  const result = await verifyProspectWebsite(
+    bravoProspect(),
+    verificationDependencies(bravoFetch()),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.canonicalUrl, "https://concretecontractorindianapolis.com/");
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.deepEqual(new Set(result.report.identitySignals), new Set([
+    "prominent_business_name",
+    "stored_website_host_match",
+    "market_location_match",
+    "public_phone_match",
+    "canonical_root_business_identity",
+    "first_party_site_structure",
+    "business_domain_email_match",
+  ]));
+  const emailEvidence = result.prospect.contactEvidence.find((item) => item.value === "info@concretecontractorindianapolis.com");
+  assert.equal(emailEvidence?.sourceUrl, "https://concretecontractorindianapolis.com/contact-us/");
+  assert.equal(emailEvidence?.extractionMethod, "json_ld");
+  assert.equal(emailEvidence?.decision, "autonomous_eligible");
+  assert.equal(result.prospect.contactFormDetected || result.prospect.quoteFormDetected, true);
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.outreach, undefined);
+  assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
+});
+
+test("first-party structured identity cannot promote a different core brand through phone and domain evidence", async () => {
+  const result = await verifyProspectWebsite(
+    bravoProspect(),
+    verificationDependencies(bravoFetch("Indianapolis Concrete Specialists Inc")),
+  );
+
+  assert.equal(result.report.identitySignals?.includes("stored_website_host_match"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), true);
+  assert.equal(result.report.identitySignals?.includes("business_domain_email_match"), true);
+  assert.equal(result.report.identitySignals?.includes("prominent_business_name"), false);
+  assert.equal(result.report.identitySignals?.includes("canonical_root_business_identity"), false);
+  assert.equal(result.report.identitySignals?.includes("first_party_site_structure"), false);
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("structured first-party identity never overrides a complete public-phone conflict", async () => {
+  const result = await verifyProspectWebsite(
+    bravoProspect(),
+    verificationDependencies(bravoFetch("Bravo Concrete Contractors Indianapolis Inc", "713-555-0199")),
+  );
+
+  assert.equal(result.report.identitySignals?.includes("prominent_business_name"), true);
+  assert.equal(result.report.identitySignals?.includes("business_domain_email_match"), true);
   assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
   assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
   assert.equal(result.report.ownershipDecision, "uncertain");

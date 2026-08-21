@@ -501,6 +501,35 @@ function jsonLdContactValues(html: string) {
   return { emails, phones };
 }
 
+function jsonLdFirstPartyBusinessNames(html: string) {
+  const names: string[] = [];
+  for (const match of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const payload = JSON.parse(match[1] ?? "null") as unknown;
+      const rootValues = Array.isArray(payload) ? payload : [payload];
+      const values = rootValues.flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [value];
+        const graph = (value as Record<string, unknown>)["@graph"];
+        return Array.isArray(graph) ? [value, ...graph] : [value];
+      });
+      for (const value of values) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const record = value as Record<string, unknown>;
+        const types = (Array.isArray(record["@type"]) ? record["@type"] : [record["@type"]])
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.split(/[\/#]/).at(-1)?.toLowerCase() ?? "");
+        const name = typeof record.name === "string" ? record.name.trim() : "";
+        if (name.length <= 256 && types.some((type) => type === "localbusiness" || type === "organization")) {
+          names.push(name);
+        }
+      }
+    } catch {
+      // Invalid structured data is not identity evidence.
+    }
+  }
+  return [...new Set(names.filter(Boolean))];
+}
+
 function metadataContactValues(html: string) {
   const emails: string[] = [];
   const phones: string[] = [];
@@ -1079,7 +1108,8 @@ function htmlProminentlyMatchesBusinessIdentity(html: string, businessName: stri
   const siteName = html.match(/<meta\b[^>]*(?:property|name)\s*=\s*["']og:site_name["'][^>]*content\s*=\s*["']([^"']+)["']/i)?.[1]
     ?? html.match(/<meta\b[^>]*content\s*=\s*["']([^"']+)["'][^>]*(?:property|name)\s*=\s*["']og:site_name["']/i)?.[1]
     ?? "";
-  const branding = [title, ...headings, siteName].map((value) => value.replace(/<[^>]+>/g, " ").trim());
+  const branding = [title, ...headings, siteName, ...jsonLdFirstPartyBusinessNames(html)]
+    .map((value) => value.replace(/<[^>]+>/g, " ").trim());
   if (branding.some((value) => normalize(value).includes(expected))) return true;
 
   const legalName = normalizedLegalBusinessIdentityName(businessName);
@@ -1817,7 +1847,7 @@ export async function verifyProspectWebsite(
     const switchingFromPresenceGap = prospect.prospectType === "no_website_social_only";
     const identitySignals = websiteIdentitySignals(prospect, canonicalUrl, pages);
     const identityEvidence = [
-      identitySignals.includes("prominent_business_name") ? "The business name appears prominently in the verified page title or primary heading." : "",
+      identitySignals.includes("prominent_business_name") ? "The business name appears in the verified page branding or first-party structured business identity." : "",
       identitySignals.includes("stored_website_host_match") ? "The canonical host matches the stored business website host." : "",
       identitySignals.includes("market_location_match") ? "The verified website names the prospect's stored city or market." : "",
       identitySignals.includes("public_phone_match") ? "The verified website publishes the prospect's stored business phone number." : "",
