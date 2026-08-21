@@ -287,16 +287,27 @@ test("adequate websites require two bounded signals including a commercial path 
   assert.deepEqual(prospectRoutingDecision(nonCommercialSignals), { opportunity: "Not a Fit", email: "Ready", sending: "Blocked" });
 });
 
-test("Dependable-style strong sites and unsafe adequate records stay blocked", () => {
-  const strong = withAdequateCommercialReviewCandidate();
-  strong.businessName = "Dependable Painting & Remodeling";
-  strong.fitDisposition = "strong_existing_website";
-  strong.websiteVerification = {
-    ...strong.websiteVerification!,
-    fit: { ...strong.websiteVerification!.fit!, disposition: "strong_existing_website" },
+test("production-like strong adequate sites and unsafe adequate records stay blocked", () => {
+  const strongAdequate = withAdequateCommercialReviewCandidate();
+  strongAdequate.businessName = "Dependable Painting & Remodeling";
+  strongAdequate.analysis = {
+    ...strongAdequate.analysis!,
+    scores: {
+      ...strongAdequate.analysis!.scores,
+      ctaStrength: 100,
+      trustSignals: 96,
+      contactAccessibility: 66,
+      portfolioQuality: 100,
+      conversionReadiness: 85,
+      technicalQuality: 95,
+    },
   };
-  assert.equal(prospectEmailReviewEligibility(strong).eligible, false);
-  assert.deepEqual(prospectRoutingDecision(strong), { opportunity: "Not a Fit", email: "Ready", sending: "Blocked" });
+  assert.equal(strongAdequate.fitDisposition, "adequate_existing_website");
+  assert.equal(strongAdequate.websiteVerification?.fit?.disposition, "adequate_existing_website");
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(strongAdequate), []);
+  assert.equal(prospectEmailReviewEligibility(strongAdequate).eligible, false);
+  assert.deepEqual(prospectRoutingDecision(strongAdequate), { opportunity: "Not a Fit", email: "Ready", sending: "Blocked" });
+  assert.equal(websiteFitAllowsAutonomousOutreach(strongAdequate), false);
 
   const adequate = withAdequateCommercialReviewCandidate();
   const unsafe = [

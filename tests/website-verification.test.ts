@@ -12,7 +12,11 @@ import {
   prospectQualificationBlockReasons,
   websiteFitAllowsAutonomousOutreach,
 } from "../lib/prospect-qualification";
-import { prospectEmailReviewEligibility, prospectRoutingDecision } from "../lib/prospect-review-routing";
+import {
+  adequateWebsiteCommercialReviewSignals,
+  prospectEmailReviewEligibility,
+  prospectRoutingDecision,
+} from "../lib/prospect-review-routing";
 import {
   extractContactDiscoveryFromPages,
   verifyProspectWebsite,
@@ -213,8 +217,9 @@ function maxForceFetch(
   publishedPhone = "614-467-8910",
 ): typeof fetch {
   const homepage = `
-    <!doctype html><html><head>
+    <!doctype html><html lang="en"><head>
       <title>${branding} | Columbus Roofing</title>
+      <meta name="description" content="Roofing and siding services, project galleries, customer reviews, and free estimates for Columbus homeowners." />
       <meta property="og:site_name" content="${branding}" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <link rel="canonical" href="https://maxforceroofing.com/" />
@@ -222,9 +227,18 @@ function maxForceFetch(
       <header><nav><a href="/">Home</a><a href="/services/">Services</a><a href="/contact-us/">Contact Us</a></nav></header>
       <main><h1>${branding}</h1>
         <p>Roofing and siding services for homeowners in Columbus and surrounding central Ohio communities.</p>
-        <p>Learn about roof replacement, roof repair, siding work, and how to request a project quote.</p>
-        <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">${publishedPhone}</a>
-        <img src="/roofing-project.jpg" alt="Residential roofing project in Columbus" />
+        <p>Review roof replacement, roof repair, siding installation, maintenance, and inspection options before requesting a free estimate.</p>
+        <p>Browse our project gallery, recent work, before and after photos, customer reviews, testimonials, warranty details, and licensed and insured service information.</p>
+        <a href="/contact-us/">Request a quote</a>
+        <a href="/contact-us/">Get an estimate</a>
+        <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">Call now: ${publishedPhone}</a>
+        <a href="mailto:info@maxforceroofing.com">info@maxforceroofing.com</a>
+        <form action="/contact-us/"><input name="name" /><input name="email" /><button>Schedule an estimate</button></form>
+        <section aria-label="Project gallery">
+          <img src="/roofing-project.jpg" alt="Residential roofing project in Columbus" />
+          <img src="/siding-project.jpg" alt="Completed siding project in Columbus" />
+          <img src="/roof-replacement.jpg" alt="Completed roof replacement in Columbus" />
+        </section>
         <a href="https://facebook.com/maxforceroofing">Facebook</a>
       </main>
     </body></html>`;
@@ -281,8 +295,9 @@ function bravoFetch(
     },
   })}</script>`;
   const homepage = `
-    <!doctype html><html><head>
+    <!doctype html><html lang="en"><head>
       <title>Concrete Contractors Indianapolis | Free Estimates</title>
+      <meta name="description" content="Concrete services, completed projects, customer reviews, and free estimates for Indianapolis property owners." />
       <meta property="og:site_name" content="Concrete Contractor Indianapolis" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <link rel="canonical" href="https://concretecontractorindianapolis.com/" />
@@ -291,9 +306,18 @@ function bravoFetch(
       <header><nav><a href="/">Home</a><a href="/about-us/">About Us</a><a href="/contact-us/">Contact Us</a></nav></header>
       <main><h1>Best Concrete Contractors In Indianapolis</h1>
         <p>Concrete installation and repair services for homes and businesses throughout Indianapolis.</p>
-        <p>Review project options, service information, and contact details before requesting an estimate.</p>
-        <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">${publishedPhone}</a>
-        <img src="/concrete-project.jpg" alt="Concrete project in Indianapolis" />
+        <p>Review concrete replacement, installation, repair, maintenance, and project information before requesting a free estimate.</p>
+        <p>Browse our project gallery, recent work, before and after photos, customer reviews, testimonials, warranty details, and licensed and insured service information.</p>
+        <a href="/contact-us/">Request a quote</a>
+        <a href="/contact-us/">Get an estimate</a>
+        <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">Call now: ${publishedPhone}</a>
+        <a href="mailto:info@concretecontractorindianapolis.com">info@concretecontractorindianapolis.com</a>
+        <form action="/contact-us/"><input name="name" /><input name="email" /><button>Schedule an estimate</button></form>
+        <section aria-label="Project gallery">
+          <img src="/concrete-project.jpg" alt="Concrete project in Indianapolis" />
+          <img src="/concrete-patio.jpg" alt="Completed concrete patio in Indianapolis" />
+          <img src="/concrete-driveway.jpg" alt="Completed concrete driveway in Indianapolis" />
+        </section>
         <a href="https://facebook.com/bravoconcreteindy">Facebook</a>
       </main>
     </body></html>`;
@@ -436,8 +460,9 @@ test("MaxForce legal-name suffix omission retains first-party ownership, phone, 
   assert.equal(result.prospect.facebookUrl, "https://facebook.com/maxforceroofing");
   assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
   assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
-  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, true);
-  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Review Only");
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(result.prospect), []);
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
   assert.equal(result.prospect.outreach, undefined);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
 });
@@ -512,8 +537,9 @@ test("Bravo first-party LocalBusiness identity establishes ownership despite gen
   assert.equal(result.prospect.contactFormDetected || result.prospect.quoteFormDetected, true);
   assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
   assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
-  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, true);
-  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Review Only");
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(result.prospect), []);
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
   assert.equal(result.prospect.outreach, undefined);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
 });
