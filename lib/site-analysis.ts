@@ -789,6 +789,22 @@ function likelyContactPageUrl(value: string) {
   }
 }
 
+function likelyMarketServicePageUrl(value: string, prospect: Prospect) {
+  try {
+    const pathSegments = new URL(value).pathname
+      .toLowerCase()
+      .split("/")
+      .filter(Boolean);
+    const city = normalizedIdentityText(prospect.city).replace(/\s+/g, "-");
+    const state = normalizedIdentityText(displayStateCode(prospect.state)).replace(/\s+/g, "-");
+    if (!city || !state || pathSegments.length < 2) return false;
+    if (pathSegments.at(-1) !== `${city}-${state}`) return false;
+    return !["blog", "news", "author", "category", "tag"].includes(pathSegments.at(-2) ?? "");
+  } catch {
+    return false;
+  }
+}
+
 export async function discoverWebsiteContactPaths(prospect: Prospect): Promise<Prospect> {
   if (!prospect.website) return prospect;
   const root = await assertPublicUrl(prospect.website);
@@ -1322,13 +1338,24 @@ function classifyVerification(
 async function collectContactPages(
   rootUrl: string,
   initialPage: ContactDiscoveryPage,
+  prospect: Prospect,
   dependencies: WebsiteVerificationDependencies,
   robotsCache: Map<string, boolean>,
 ) {
   const root = new URL(rootUrl);
   const candidates = new Set<string>([initialPage.url]);
   candidates.add(new URL("/", root.origin).href);
-  for (const link of extractLinks(initialPage.html, initialPage.url)) {
+  const initialLinks = extractLinks(initialPage.html, initialPage.url);
+  const marketServicePage = initialLinks.find((link) => {
+    try {
+      const parsed = new URL(link);
+      return parsed.origin === root.origin && likelyMarketServicePageUrl(parsed.href, prospect);
+    } catch {
+      return false;
+    }
+  });
+  if (marketServicePage) candidates.add(marketServicePage);
+  for (const link of initialLinks) {
     try {
       const parsed = new URL(link);
       if (parsed.origin === root.origin && likelyContactPageUrl(parsed.href)) candidates.add(parsed.href);
@@ -1846,6 +1873,7 @@ export async function verifyProspectWebsite(
     const pages = await collectContactPages(
       canonicalUrl,
       { url: finalUrl, html: successful.html },
+      prospect,
       dependencies,
       robotsCache,
     );

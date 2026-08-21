@@ -80,6 +80,50 @@ function dependencies(fetchImpl: typeof fetch): WebsiteVerificationDependencies 
   };
 }
 
+function dependableProspect() {
+  return createProspect({
+    businessName: "Dependable Painting & Remodeling",
+    website: "https://www.dependablepaint.net/",
+    phone: "+1-470-655-3997",
+    email: "",
+    city: "Atlanta",
+    state: "GA",
+    trade: "Painting",
+    serviceArea: "Atlanta, GA",
+    status: "New",
+    sizeIndicator: "Small",
+  });
+}
+
+function dependablePage(phone: string, extraLinks = "") {
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <title>Dependable Painting & Remodeling | Atlanta Painters</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="canonical" href="https://www.dependablepaint.net/" />
+      </head>
+      <body>
+        <nav><a href="/">Home</a><a href="/contact">Contact</a>${extraLinks}</nav>
+        <h1>Dependable Painting & Remodeling</h1>
+        <p>${"Interior and exterior painting and remodeling services for Atlanta property owners. ".repeat(6)}</p>
+        <a href="tel:${phone.replace(/\D/g, "")}">${phone}</a>
+        <a href="mailto:derek@dependablepaint.net">derek@dependablepaint.net</a>
+        <form action="/contact"><input name="name" /><button>Request an estimate</button></form>
+        <img src="/painting-project.jpg" alt="Dependable Painting project" />
+      </body>
+    </html>
+  `;
+}
+
+function dependableDependencies(fetchImpl: typeof fetch): WebsiteVerificationDependencies {
+  return {
+    ...dependencies(fetchImpl),
+    maxContactPages: 2,
+  };
+}
+
 test("explicit complete-phone conflict vetoes same-name domain-email website ownership", async () => {
   const result = await verifyProspectWebsite(
     hkProspect("+1 512-555-0123"),
@@ -129,4 +173,111 @@ test("first-party identity helper never lets a business-domain email override an
     "business_domain_email_match",
     "public_phone_conflict",
   ]), false);
+});
+
+test("a bounded first-party market page phone match overrides other legitimate company numbers", async () => {
+  const requestedPaths: string[] = [];
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    requestedPaths.push(url.pathname);
+    if (url.pathname === "/") {
+      return htmlResponse(dependablePage(
+        "470-322-7107",
+        '<a href="/house-painting/atlanta-ga/">Atlanta painting</a>',
+      ));
+    }
+    if (url.pathname === "/house-painting/atlanta-ga/") {
+      return htmlResponse(dependablePage("470-655-3997"));
+    }
+    if (url.pathname === "/contact") return htmlResponse(dependablePage("470-322-7107"));
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+
+  const result = await verifyProspectWebsite(dependableProspect(), dependableDependencies(fetchImpl));
+
+  assert.equal(requestedPaths.includes("/house-painting/atlanta-ga/"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), false);
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(result.prospect.outreach, undefined);
+});
+
+test("complete bounded first-party phone evidence still conflicts when no number matches", async () => {
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+    const pathname = new URL(requestUrl(input)).pathname;
+    if (pathname === "/") {
+      return htmlResponse(dependablePage(
+        "470-322-7107",
+        '<a href="/house-painting/atlanta-ga/">Atlanta painting</a>',
+      ));
+    }
+    if (pathname === "/house-painting/atlanta-ga/") return htmlResponse(dependablePage("404-407-7767"));
+    if (pathname === "/contact") return htmlResponse(dependablePage("470-322-7107"));
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+
+  const result = await verifyProspectWebsite(dependableProspect(), dependableDependencies(fetchImpl));
+
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+});
+
+test("a foreign-domain market page cannot provide first-party phone identity evidence", async () => {
+  let foreignPageFetched = false;
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    if (url.hostname === "profiles.example") {
+      foreignPageFetched = true;
+      return htmlResponse(dependablePage("470-655-3997"));
+    }
+    if (url.pathname === "/") {
+      return htmlResponse(dependablePage(
+        "470-322-7107",
+        '<a href="https://profiles.example/house-painting/atlanta-ga/">Atlanta painting</a>',
+      ));
+    }
+    if (url.pathname === "/contact") return htmlResponse(dependablePage("470-322-7107"));
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+
+  const result = await verifyProspectWebsite(dependableProspect(), dependableDependencies(fetchImpl));
+
+  assert.equal(foreignPageFetched, false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
+});
+
+test("an unverified cross-origin redirect cannot provide first-party phone identity evidence", async () => {
+  let redirectedPageFetched = false;
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    if (url.hostname === "profiles.example") {
+      redirectedPageFetched = true;
+      return htmlResponse(dependablePage("470-655-3997"));
+    }
+    if (url.pathname === "/") {
+      return htmlResponse(dependablePage(
+        "470-322-7107",
+        '<a href="/house-painting/atlanta-ga/">Atlanta painting</a>',
+      ));
+    }
+    if (url.pathname === "/house-painting/atlanta-ga/") {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://profiles.example/dependable-painting" },
+      });
+    }
+    if (url.pathname === "/contact") return htmlResponse(dependablePage("470-322-7107"));
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+
+  const result = await verifyProspectWebsite(dependableProspect(), dependableDependencies(fetchImpl));
+
+  assert.equal(redirectedPageFetched, false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
 });
