@@ -10,6 +10,7 @@ import {
   outreachObservationForProspect,
   websiteFitAllowsAutonomousOutreach,
 } from "../lib/prospect-qualification";
+import { prospectEmailReviewEligibility, prospectRoutingDecision } from "../lib/prospect-review-routing";
 import {
   extractContactDiscoveryFromPages,
   verifyProspectWebsite,
@@ -99,6 +100,93 @@ const trueCleanContact = `
   </html>
 `;
 
+const magicPaintingHomepage = `
+  <!doctype html>
+  <html>
+    <head>
+      <title>Magic Painting | Nashville House Painters</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <link rel="canonical" href="https://www.magicpainting.net/" />
+    </head>
+    <body>
+      <header><nav><a href="/">Home</a><a href="/services/">Services</a><a href="/about/">About</a><a href="/contact/">Contact</a></nav></header>
+      <main>
+        <h1>Magic Painting</h1>
+        <p>Interior and exterior painting for homes around Nashville, Brentwood, and Franklin.</p>
+        <p>Our painters help homeowners plan residential painting projects and request a clear estimate.</p>
+        <a href="tel:+16155061172">Call (615) 506-1172</a>
+        <img src="/painting-project.jpg" alt="Magic Painting residential painting project" />
+        <a href="https://www.facebook.com/nashvillemagicpaintingllc/">Facebook</a>
+        <a href="https://www.instagram.com/magicpainting615_/">Instagram</a>
+      </main>
+    </body>
+  </html>
+`;
+
+const magicPaintingContact = `
+  <!doctype html>
+  <html>
+    <head><title>Contact Magic Painting</title><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+    <body>
+      <nav><a href="/">Home</a><a href="/contact/">Contact</a></nav>
+      <h1>Contact Magic Painting</h1>
+      <p>Send the Magic Painting team a message about a project in Nashville, Brentwood, or Franklin.</p>
+      <a href="tel:+16155061172">(615) 506-1172</a>
+      <a href="alex@magicpaintingtn.com">alex@magicpaintingtn.com</a>
+      <form action="/contact/">
+        <label>Name <input name="name" /></label>
+        <label>Email <input name="email" type="email" /></label>
+        <label>Phone <input name="phone" type="tel" /></label>
+        <label>Message <textarea name="message"></textarea></label>
+        <button>Contact us</button>
+      </form>
+      <iframe src="https://magicpaintingllc.dripjobs.com/?ls=MagicPainting.net" title="Request a Quote"></iframe>
+      <a href="https://www.facebook.com/nashvillemagicpaintingllc/">Facebook</a>
+      <a href="https://www.instagram.com/magicpainting615_/">Instagram</a>
+    </body>
+  </html>
+`;
+
+function magicPaintingFetch(
+  contactEmail = "alex@magicpaintingtn.com",
+  publishedPhone = "+16155061172",
+): typeof fetch {
+  const homepage = magicPaintingHomepage
+    .replaceAll("+16155061172", publishedPhone)
+    .replaceAll("(615) 506-1172", publishedPhone);
+  const contact = magicPaintingContact
+    .replaceAll("alex@magicpaintingtn.com", contactEmail)
+    .replaceAll("+16155061172", publishedPhone)
+    .replaceAll("(615) 506-1172", publishedPhone);
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    if (url.hostname === "www.magicpainting.net") {
+      return new Response(null, {
+        status: 301,
+        headers: { location: `https://magicpainting.net${url.pathname}${url.search}` },
+      });
+    }
+    if (url.hostname !== "magicpainting.net") return htmlResponse("Not found", 404);
+    if (url.pathname === "/") return htmlResponse(homepage);
+    if (url.pathname === "/contact/") {
+      return htmlResponse(contact);
+    }
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+}
+
+function magicPaintingProspect() {
+  return prospect({
+    businessName: "Magic Painting",
+    website: "https://www.magicpainting.net/",
+    phone: "+16155061172",
+    city: "Nashville",
+    state: "TN",
+    trade: "Painting",
+    serviceArea: "Nashville, TN",
+  });
+}
+
 const sparseOwnedHomepage = `
   <!doctype html>
   <html>
@@ -165,6 +253,87 @@ test("True Clean crawler-specific 508 is overridden by bounded usable-site and c
   assert.equal(emailEvidence?.decision, "autonomous_eligible");
   assert.ok(calls.length <= 10);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
+});
+
+test("Magic Painting www canonical retains verified contact evidence from the bare-domain redirect", async () => {
+  const result = await verifyProspectWebsite(
+    magicPaintingProspect(),
+    verificationDependencies(magicPaintingFetch()),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.canonicalUrl, "https://magicpainting.net/");
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), false);
+  assert.equal(result.prospect.contactPageUrl, "https://magicpainting.net/contact/");
+  assert.equal(result.prospect.contactFormDetected, true);
+  assert.equal(result.prospect.contactFormUrl, "https://magicpainting.net/contact/");
+  assert.equal(result.prospect.quoteFormDetected, true);
+  assert.equal(result.prospect.quoteFormUrl, "https://magicpainting.net/contact/");
+  assert.equal(result.prospect.facebookUrl, "https://www.facebook.com/nashvillemagicpaintingllc");
+  assert.equal(result.prospect.instagramUrl, "https://www.instagram.com/magicpainting615_");
+  const emailEvidence = result.prospect.contactEvidence.find((item) => item.value === "alex@magicpaintingtn.com");
+  assert.equal(emailEvidence?.sourceUrl, "https://magicpainting.net/contact/");
+  assert.equal(emailEvidence?.extractionMethod, "visible_text");
+  assert.equal(emailEvidence?.decision, "manual_review_required");
+  assert.equal(result.prospect.email, "");
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.outreach, undefined);
+  assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
+});
+
+test("inconclusive owned-site review routing still requires every PR91 contact and safety gate", async () => {
+  const verified = await verifyProspectWebsite(
+    magicPaintingProspect(),
+    verificationDependencies(magicPaintingFetch("info@magicpainting.net")),
+  );
+  const observation = {
+    kind: "quote_path" as const,
+    statement: "I noticed the quote request is separated from the main service information.",
+    rebuildSentence: "I can rebuild your current website with a more modern design that places the quote request beside the main services, while also making your services, contact information, and quote request easier for customers to find.",
+    evidence: ["A bounded rendered review confirmed the quote request is separated from the service content."],
+    demoChecklist: ["Show the quote request beside the primary services"],
+  };
+  const reviewCandidate = {
+    ...verified.prospect,
+    fitDisposition: "inconclusive_requires_review" as const,
+    websiteVerification: {
+      ...verified.report,
+      fit: {
+        disposition: "inconclusive_requires_review" as const,
+        reason: "Human review is required before describing one bounded redesign issue.",
+        supportingEvidence: observation.evidence,
+        confidence: "high" as const,
+        analysisOrigin: "rendered_review" as const,
+        evaluatedAt: fixedNow.toISOString(),
+        observation,
+      },
+    },
+  };
+
+  assert.equal(prospectEmailReviewEligibility(reviewCandidate, fixedNow).eligible, true);
+  assert.equal(prospectRoutingDecision(reviewCandidate, fixedNow).sending, "Review Only");
+  assert.equal(websiteFitAllowsAutonomousOutreach(reviewCandidate), false);
+  assert.equal(prospectEmailReviewEligibility({ ...reviewCandidate, status: "Contacted" }, fixedNow).eligible, false);
+  assert.equal(prospectEmailReviewEligibility({ ...reviewCandidate, notes: ["Suppressed by operator."] }, fixedNow).eligible, false);
+  assert.equal(reviewCandidate.outreach, undefined);
+});
+
+test("Magic Painting explicit public-phone conflict still vetoes first-party ownership", async () => {
+  const result = await verifyProspectWebsite(
+    magicPaintingProspect(),
+    verificationDependencies(magicPaintingFetch("info@magicpainting.net", "+17135550123")),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.outreach, undefined);
 });
 
 test("verified owned usable HTML with multiple objective structural deficiencies becomes a grounded weak-site opportunity", async () => {
@@ -627,6 +796,21 @@ test("contact discovery prefers grounded business mailboxes and filters unsafe c
   const unrelated = result.contactEvidence.find((item) => item.value === "design@unrelated-agency.com");
   assert.equal(unrelated?.decision, "manual_review_required");
   assert.equal(result.contactEvidence.some((item) => /sitebuilder|email\.svg/i.test(item.value)), false);
+});
+
+test("contact discovery does not mistake an unlabeled embedded map for a form", () => {
+  const result = extractContactDiscoveryFromPages("https://magicpainting.net", [{
+    url: "https://magicpainting.net/contact/",
+    html: `
+      <h1>Contact Magic Painting</h1>
+      <p>Nashville, Tennessee</p>
+      <iframe src="https://maps.google.com/maps?q=Nashville&output=embed" title="Magic Painting location"></iframe>
+    `,
+  }], { businessName: "Magic Painting", website: "https://magicpainting.net" });
+
+  assert.equal(result.contactPageUrl, "https://magicpainting.net/contact/");
+  assert.equal(result.contactFormDetected, false);
+  assert.equal(result.quoteFormDetected, false);
 });
 
 test("stale contact evidence is not re-verified unless the current crawl observes it", async () => {

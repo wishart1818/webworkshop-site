@@ -193,6 +193,58 @@ function verificationDependencies(contactEmail = "info@truecleanprowash.com", bu
   };
 }
 
+function magicPaintingVerificationDependencies() {
+  const homepage = `
+    <!doctype html><html><head>
+      <title>Magic Painting | Nashville House Painters</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <link rel="canonical" href="https://www.magicpainting.net/" />
+    </head><body>
+      <nav><a href="/">Home</a><a href="/services/">Services</a><a href="/contact/">Contact</a></nav>
+      <h1>Magic Painting</h1>
+      <p>Interior and exterior painting for homes around Nashville, Brentwood, and Franklin.</p>
+      <a href="tel:+16155061172">Call (615) 506-1172</a>
+      <img src="/project.jpg" alt="Magic Painting residential painting project" />
+    </body></html>
+  `;
+  const contact = `
+    <!doctype html><html><head><title>Contact Magic Painting</title></head><body>
+      <h1>Contact Magic Painting</h1>
+      <p>Send the Magic Painting team a message about a project in Nashville, Brentwood, or Franklin.</p>
+      <a href="tel:+16155061172">(615) 506-1172</a>
+      <a href="alex@magicpaintingtn.com">alex@magicpaintingtn.com</a>
+      <form action="/contact/">
+        <label>Name <input name="name" /></label>
+        <label>Email <input name="email" type="email" /></label>
+        <label>Phone <input name="phone" type="tel" /></label>
+        <label>Message <textarea name="message"></textarea></label>
+        <button>Contact us</button>
+      </form>
+      <iframe src="https://magicpaintingllc.dripjobs.com/?ls=MagicPainting.net" title="Request a Quote"></iframe>
+      <a href="https://www.facebook.com/nashvillemagicpaintingllc/">Facebook</a>
+      <a href="https://www.instagram.com/magicpainting615_/">Instagram</a>
+    </body></html>
+  `;
+  return {
+    fetch: (async (input: Parameters<typeof fetch>[0]) => {
+      const url = new URL(requestUrl(input));
+      if (url.hostname === "www.magicpainting.net") {
+        return new Response(null, {
+          status: 301,
+          headers: { location: `https://magicpainting.net${url.pathname}${url.search}` },
+        });
+      }
+      if (url.hostname !== "magicpainting.net") return new Response("Not found", { status: 404, headers: { "content-type": "text/html" } });
+      if (url.pathname === "/") return new Response(homepage, { status: 200, headers: { "content-type": "text/html" } });
+      if (url.pathname === "/contact/") return new Response(contact, { status: 200, headers: { "content-type": "text/html" } });
+      return new Response("Not found", { status: 404, headers: { "content-type": "text/html" } });
+    }) as typeof fetch,
+    lookup: async () => [{ address: "93.184.216.34" }],
+    robotsPolicy: async () => true,
+    now: () => new Date(now),
+  };
+}
+
 function inconclusiveWebsiteDependencies() {
   const homepage = `
     <!doctype html><html><head>
@@ -1930,6 +1982,48 @@ test("current rendered weak-site evidence stays actionable without re-entering w
   } finally {
     resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
+  }
+});
+
+test("website re-check persists Magic Painting contact evidence without sending outreach", async () => {
+  resetProspectMemoryForTests();
+  resetAutonomousGrowthMemoryForTests();
+  resetOperationalMemoryForTests();
+  const prospect = legacyProspect({
+    id: "magic-painting-contact-refresh",
+    businessName: "Magic Painting",
+    website: "https://www.magicpainting.net/",
+    phone: "+16155061172",
+    city: "Nashville",
+    state: "TN",
+    trade: "Painting",
+    serviceArea: "Nashville, TN",
+    contactEvidence: [],
+  });
+  setProspectMemoryForTests([prospect]);
+  setOutreachQueueMemoryForTests([]);
+  try {
+    const result = await recheckProspectWebsite(prospect.id, magicPaintingVerificationDependencies());
+    const saved = await getProspect(prospect.id);
+    const emailEvidence = saved?.contactEvidence.find((item) => item.value === "alex@magicpaintingtn.com");
+
+    assert.equal(result.verification.status, "usable");
+    assert.equal(result.verification.ownershipDecision, "owned");
+    assert.equal(saved?.website, "https://magicpainting.net/");
+    assert.equal(saved?.contactPageUrl, "https://magicpainting.net/contact/");
+    assert.equal(saved?.contactFormDetected, true);
+    assert.equal(saved?.quoteFormDetected, true);
+    assert.equal(saved?.facebookUrl, "https://www.facebook.com/nashvillemagicpaintingllc");
+    assert.equal(saved?.instagramUrl, "https://www.instagram.com/magicpainting615_");
+    assert.equal(emailEvidence?.sourceUrl, "https://magicpainting.net/contact/");
+    assert.equal(emailEvidence?.decision, "manual_review_required");
+    assert.equal(saved?.email, "");
+    assert.equal(result.nothingSent, true);
+    assert.equal(memoryAuditEventsForTests().some((event) => /provider.*send|outreach.*send/i.test(event.action)), false);
+  } finally {
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
   }
 });
 
