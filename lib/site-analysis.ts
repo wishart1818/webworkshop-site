@@ -446,6 +446,23 @@ function detectForm(html: string, text: string) {
   return hasForm && hasFields;
 }
 
+function embeddedFormIntent(html: string): "quote" | "contact" | null {
+  for (const match of html.matchAll(/<iframe\b[^>]*>/gi)) {
+    const tag = match[0];
+    const descriptors = ["title", "aria-label", "name", "id", "class", "src"]
+      .flatMap((attribute) => [...tag.matchAll(new RegExp(`\\b${attribute}\\s*=\\s*["']([^"']+)["']`, "gi"))])
+      .map((attributeMatch) => attributeMatch[1] ?? "")
+      .join(" ");
+    if (/\b(?:request|get|free)[-_\s]*(?:a[-_\s]*)?(?:quote|estimate)\b|\b(?:quote|estimate)[-_\s]*(?:request|form)\b/i.test(descriptors)) {
+      return "quote";
+    }
+    if (/\bcontact[-_\s]+(?:us[-_\s]+)?(?:request|form|widget|embed)\b|\b(?:booking|schedule|intake)[-_\s]+(?:request|form|widget|embed)\b|\bform[-_\s]+(?:embed|widget)\b/i.test(descriptors)) {
+      return "contact";
+    }
+  }
+  return null;
+}
+
 function visiblePhoneNumbers(text: string) {
   return [...new Set(text.match(/(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}/g) ?? [])];
 }
@@ -663,12 +680,15 @@ export function extractContactDiscoveryFromPages(baseWebsite: string, pages: Con
       contactPageUrl = page.url;
       addEvidence("contact_page", page.url, page.url, "same_origin_link", "high");
     }
-    const hasDetectedForm = detectForm(page.html, lower);
-    if (hasDetectedForm && pageLooksLikeQuote(page.url, lower)) {
+    const embeddedIntent = embeddedFormIntent(page.html);
+    const nativeFormDetected = detectForm(page.html, lower);
+    const nativeQuoteForm = nativeFormDetected && pageLooksLikeQuote(page.url, lower);
+    if (nativeQuoteForm || embeddedIntent === "quote") {
       quoteFormDetected = true;
       quoteFormUrl ||= page.url;
       addEvidence("quote_form", page.url, page.url, "form_markup", "high");
-    } else if (hasDetectedForm) {
+    }
+    if ((nativeFormDetected && !nativeQuoteForm) || embeddedIntent === "contact") {
       contactFormDetected = true;
       contactFormUrl ||= page.url;
       addEvidence("contact_form", page.url, page.url, "form_markup", "high");
@@ -1196,7 +1216,12 @@ async function canonicalUrlFromHtml(
   if (!href) return finalUrl;
   try {
     const candidate = await assertPublicUrl(new URL(href, finalUrl).href, dependencies.lookup ?? defaultLookup);
-    return equivalentOwnedHost(candidate.href, finalUrl) ? candidate.href : finalUrl;
+    if (!equivalentOwnedHost(candidate.href, finalUrl)) return finalUrl;
+    const verifiedUrl = new URL(finalUrl);
+    verifiedUrl.pathname = candidate.pathname;
+    verifiedUrl.search = candidate.search;
+    verifiedUrl.hash = "";
+    return verifiedUrl.href;
   } catch {
     return finalUrl;
   }
