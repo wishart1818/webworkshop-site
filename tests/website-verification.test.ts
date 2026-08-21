@@ -187,6 +187,61 @@ function magicPaintingProspect() {
   });
 }
 
+function maxForceProspect(overrides: Partial<Parameters<typeof createProspect>[0]> = {}) {
+  return prospect({
+    businessName: "MaxForce Roofing and Siding LLC",
+    website: "https://www.maxforceroofing.com/",
+    phone: "+1-614-467-8910",
+    email: "",
+    city: "Columbus",
+    state: "OH",
+    trade: "Roofing",
+    serviceArea: "Columbus, OH",
+    ...overrides,
+  });
+}
+
+function maxForceFetch(
+  branding = "MaxForce Roofing and Siding",
+  publishedPhone = "614-467-8910",
+): typeof fetch {
+  const homepage = `
+    <!doctype html><html><head>
+      <title>${branding} | Columbus Roofing</title>
+      <meta property="og:site_name" content="${branding}" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <link rel="canonical" href="https://maxforceroofing.com/" />
+    </head><body>
+      <header><nav><a href="/">Home</a><a href="/services/">Services</a><a href="/contact-us/">Contact Us</a></nav></header>
+      <main><h1>${branding}</h1>
+        <p>Roofing and siding services for homeowners in Columbus and surrounding central Ohio communities.</p>
+        <p>Learn about roof replacement, roof repair, siding work, and how to request a project quote.</p>
+        <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">${publishedPhone}</a>
+        <img src="/roofing-project.jpg" alt="Residential roofing project in Columbus" />
+        <a href="https://facebook.com/maxforceroofing">Facebook</a>
+      </main>
+    </body></html>`;
+  const contact = `
+    <!doctype html><html><head><title>Contact Us | ${branding}</title></head><body>
+      <nav><a href="/">Home</a><a href="/contact-us/">Contact Us</a></nav>
+      <h1>${branding}</h1><p>Contact the Columbus roofing team about your property.</p>
+      <a href="tel:+1${publishedPhone.replace(/\D/g, "")}">${publishedPhone}</a>
+      <a href="mailto:info@maxforceroofing.com">info@maxforceroofing.com</a>
+      <form action="/contact-us/"><input name="name" /><input name="email" /><textarea name="message"></textarea><button>Request a quote</button></form>
+      <a href="https://facebook.com/maxforceroofing">Facebook</a>
+    </body></html>`;
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(requestUrl(input));
+    if (url.hostname === "www.maxforceroofing.com") {
+      return new Response(null, { status: 301, headers: { location: `https://maxforceroofing.com${url.pathname}${url.search}` } });
+    }
+    if (url.hostname !== "maxforceroofing.com") return htmlResponse("Not found", 404);
+    if (url.pathname === "/") return htmlResponse(homepage);
+    if (url.pathname === "/contact-us/") return htmlResponse(contact);
+    return htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404);
+  }) as typeof fetch;
+}
+
 const sparseOwnedHomepage = `
   <!doctype html>
   <html>
@@ -281,6 +336,76 @@ test("Magic Painting www canonical retains verified contact evidence from the ba
   assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
   assert.equal(result.prospect.outreach, undefined);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
+});
+
+test("MaxForce legal-name suffix omission retains first-party ownership, phone, contact, and fit safety", async () => {
+  const result = await verifyProspectWebsite(
+    maxForceProspect(),
+    verificationDependencies(maxForceFetch()),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.canonicalUrl, "https://maxforceroofing.com/");
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.report.identitySignals?.includes("prominent_business_name"), true);
+  assert.equal(result.report.identitySignals?.includes("canonical_root_business_identity"), true);
+  assert.equal(result.report.identitySignals?.includes("first_party_site_structure"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), false);
+  assert.equal(result.prospect.contactPageUrl?.startsWith("https://maxforceroofing.com/"), true);
+  assert.equal(result.prospect.contactFormDetected || result.prospect.quoteFormDetected, true);
+  assert.equal(result.prospect.quoteFormDetected, true);
+  assert.equal(result.prospect.facebookUrl, "https://facebook.com/maxforceroofing");
+  assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.outreach, undefined);
+  assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
+});
+
+test("legal entity suffix variants match only the same substantive first-party brand", async () => {
+  for (const suffix of ["LLC", "Inc.", "Incorporated", "Corp.", "Corporation", "Co.", "Company"]) {
+    const result = await verifyProspectWebsite(
+      maxForceProspect({ businessName: `Northstar Exteriors ${suffix}` }),
+      verificationDependencies(maxForceFetch("Northstar Exteriors")),
+    );
+    assert.equal(result.report.ownershipDecision, "owned", suffix);
+    assert.equal(result.report.identitySignals?.includes("public_phone_match"), true, suffix);
+  }
+
+  const differentCore = await verifyProspectWebsite(
+    maxForceProspect({ businessName: "ABC Construction LLC" }),
+    verificationDependencies(maxForceFetch("ABC Roofing")),
+  );
+  assert.equal(differentCore.report.ownershipDecision, "uncertain");
+
+  const extendedName = await verifyProspectWebsite(
+    maxForceProspect({ businessName: "Best Roofing LLC" }),
+    verificationDependencies(maxForceFetch("Best Roofing of Texas")),
+  );
+  assert.equal(extendedName.report.ownershipDecision, "uncertain");
+
+  const genericCore = await verifyProspectWebsite(
+    maxForceProspect({ businessName: "Roofing LLC" }),
+    verificationDependencies(maxForceFetch("Roofing")),
+  );
+  assert.equal(genericCore.report.ownershipDecision, "uncertain");
+});
+
+test("legal suffix equivalence never overrides a complete public-phone conflict", async () => {
+  const result = await verifyProspectWebsite(
+    maxForceProspect(),
+    verificationDependencies(maxForceFetch("MaxForce Roofing and Siding", "713-555-0199")),
+  );
+
+  assert.equal(result.report.status, "usable");
+  assert.equal(result.report.identitySignals?.includes("prominent_business_name"), true);
+  assert.equal(result.report.identitySignals?.includes("public_phone_match"), false);
+  assert.equal(result.report.identitySignals?.includes("public_phone_conflict"), true);
+  assert.equal(result.report.ownershipDecision, "uncertain");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.outreach, undefined);
 });
 
 test("inconclusive owned-site review routing still requires every PR91 contact and safety gate", async () => {

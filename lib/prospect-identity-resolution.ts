@@ -4,6 +4,7 @@ import {
   discoverySameNameAmbiguityRemains,
   normalizedBusinessIdentityName,
   normalizedCompletePhone,
+  normalizedLegalBusinessIdentityName,
   normalizedStreetAddress,
   type DiscoveryIdentityEvidence,
   type DiscoveryIdentitySource,
@@ -64,7 +65,6 @@ export type ProviderIdentityResolutionDiagnostic = {
 };
 
 const diagnosticSignalPrefix = "provider_identity_resolution:";
-const legalSuffixes = new Set(["llc", "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "pllc"]);
 const closeCoordinateToleranceKm = 0.35;
 const conflictingCoordinateDistanceKm = 3;
 
@@ -75,13 +75,6 @@ function normalizedNameWithLegalSuffixes(value: string) {
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-}
-
-function legalSuffixStrippedName(value: string) {
-  return normalizedNameWithLegalSuffixes(value)
-    .split(" ")
-    .filter((token) => !legalSuffixes.has(token))
-    .join(" ");
 }
 
 function normalizedLocation(value: string) {
@@ -180,12 +173,14 @@ function assessCandidate(prospect: Prospect, candidate: DiscoveryIdentityEvidenc
   const expectedExactName = normalizedNameWithLegalSuffixes(prospect.businessName);
   const candidateExactName = normalizedNameWithLegalSuffixes(candidate.businessName);
   const exactNameMatch = Boolean(expectedExactName && expectedExactName === candidateExactName);
+  const expectedLegalName = normalizedLegalBusinessIdentityName(prospect.businessName);
+  const candidateLegalName = normalizedLegalBusinessIdentityName(candidate.businessName);
   const suffixEquivalentName = Boolean(
     !exactNameMatch
-    && legalSuffixStrippedName(prospect.businessName)
+    && expectedLegalName
     && (
-      legalSuffixStrippedName(prospect.businessName) === legalSuffixStrippedName(candidate.businessName)
-      || legalSuffixStrippedName(prospect.businessName).replaceAll(" ", "") === legalSuffixStrippedName(candidate.businessName).replaceAll(" ", "")
+      expectedLegalName === candidateLegalName
+      || expectedLegalName.replaceAll(" ", "") === candidateLegalName.replaceAll(" ", "")
     ),
   );
   const strongNameMatch = exactNameMatch || suffixEquivalentName;
