@@ -452,6 +452,7 @@ export async function updateTopProspectOutreachPackage(resultId: string, action:
         packageApprovedAt: null,
         packageSentAt: null,
         packageSkippedAt: null,
+        ...(reviewOnly ? { selected: false } : {}),
       },
     });
     console.info("[outreach-package] Permission-first package generated without a preview.", { resultId, prospectId: saved.id });

@@ -22,6 +22,7 @@ import {
   type WebsiteVerificationReport,
 } from "@/lib/prospect-engine";
 import {
+  boundedWebsiteReviewSignals,
   classifyPublicEmailEvidence,
   initialProspectFreshness,
   verifiedContactFirstNameForProspect,
@@ -1592,6 +1593,23 @@ function objectiveWeakWebsiteObservation(
   };
 }
 
+function automatedReviewOnlyObservation(analysis: Analysis): WebsiteFitObservation | undefined {
+  const reviewSignals = boundedWebsiteReviewSignals(analysis);
+  if (!reviewSignals.length) return undefined;
+  return {
+    kind: "general_rebuild",
+    statement: "I took a look at your website and had a couple of ideas for making the customer contact path a little clearer.",
+    rebuildSentence: "I can rebuild your current website with a modern design that explores those ideas while keeping your services and contact information easy for customers to find.",
+    evidence: reviewSignals.slice(0, 4).map((signal) => (
+      `Automated HTML analysis produced a bounded human-review signal: ${signal.statement} This supports operator review only and does not prove a customer-facing defect.`
+    )),
+    demoChecklist: [
+      "Show a possible clearer customer contact path without asserting an existing-site defect",
+      "Show services and contact information in the proposed desktop and mobile concept",
+    ],
+  };
+}
+
 function fitDispositionForVerifiedWebsite(
   analysis: Analysis,
   prospect: Prospect,
@@ -1664,7 +1682,7 @@ function fitDispositionForVerifiedWebsite(
     };
   }
 
-  void analysis;
+  const reviewOnlyObservation = automatedReviewOnlyObservation(analysis);
   return {
     disposition: "inconclusive_requires_review" as const,
     reason: "The HTML evidence is not complete enough to prove either an adequate site or a genuine rebuild opportunity. Raw HTML cannot establish a customer-facing visual defect, so a rendered human review is required.",
@@ -1672,6 +1690,7 @@ function fitDispositionForVerifiedWebsite(
     confidence: "low" as const,
     analysisOrigin: "automated_html" as const,
     evaluatedAt,
+    ...(reviewOnlyObservation ? { observation: reviewOnlyObservation } : {}),
   };
 }
 

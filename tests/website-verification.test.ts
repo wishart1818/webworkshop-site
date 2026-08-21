@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createProspect,
+  generateEmailReviewOutreach,
   generateOutreach,
   prospectVerifiedEmailEvidence,
   prospectWebsiteVerificationBlockReason,
 } from "../lib/prospect-engine";
 import {
   outreachObservationForProspect,
+  prospectQualificationBlockReasons,
   websiteFitAllowsAutonomousOutreach,
 } from "../lib/prospect-qualification";
 import { prospectEmailReviewEligibility, prospectRoutingDecision } from "../lib/prospect-review-routing";
@@ -17,7 +19,12 @@ import {
   type WebsiteVerificationDependencies,
 } from "../lib/site-analysis";
 import { discoveryIdentityEvidenceSignal } from "../lib/prospect-identity-evidence";
-import { assessOpportunity, topProspectRejectionReason } from "../lib/top-prospects";
+import {
+  assessOpportunity,
+  evaluateOutreachEmailQuality,
+  topProspectRejectionReason,
+  topProspectResultBucket,
+} from "../lib/top-prospects";
 
 const fixedNow = new Date("2026-07-28T12:00:00.000Z");
 
@@ -664,19 +671,90 @@ test("one minor missing structural signal leaves a verified owned website adequa
   );
 });
 
-test("an ambiguous four-signal owned website remains inconclusive", async () => {
+test("automated inconclusive owned-site verification creates a safe review-only Top Prospect", async () => {
+  const reviewNow = new Date();
   const homepage = `<!doctype html><html><head><title>True Clean Prowash</title><meta name="viewport" content="width=device-width"></head><body><header><nav><a href="/contact">Contact</a></nav></header><h1>True Clean Prowash</h1><p>${"Local company information for Columbus property owners. ".repeat(8)}</p></body></html>`;
   const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => (
     new URL(requestUrl(input)).pathname === "/"
       ? htmlResponse(homepage)
       : htmlResponse("<html><head><title>True Clean Prowash</title></head><body><h1>True Clean Prowash</h1><a href='mailto:info@truecleanprowash.com'>Email</a></body></html>")
   )) as typeof fetch;
-  const result = await verifyProspectWebsite(prospect({ phone: "" }), verificationDependencies(fetchImpl));
+  const result = await verifyProspectWebsite(prospect({ phone: "" }), {
+    ...verificationDependencies(fetchImpl),
+    now: () => reviewNow,
+  });
 
   assert.equal(result.report.ownershipDecision, "owned");
   assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
   assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
+  assert.equal(result.report.fit?.analysisOrigin, "automated_html");
+  assert.equal(result.report.fit?.observation?.kind, "general_rebuild");
+  assert.match(result.report.fit?.observation?.statement ?? "", /had a couple of ideas/i);
+  assert.doesNotMatch(result.report.fit?.observation?.statement ?? "", /old|outdated|bad|losing leads/i);
+
+  const review = prospectEmailReviewEligibility(result.prospect, reviewNow);
+  assert.equal(review.eligible, true);
+  assert.ok(review.reviewSignals.length > 0);
+  assert.equal(prospectRoutingDecision(result.prospect, reviewNow).sending, "Review Only");
+  assert.ok(prospectQualificationBlockReasons(result.prospect, { now: reviewNow }).length > 0);
+  assert.equal(
+    topProspectRejectionReason(result.prospect, assessOpportunity(result.prospect), "growth", "written_only"),
+    "Website verification required",
+  );
+
+  const environment = {
+    NODE_ENV: "test",
+    OUTREACH_POSTAL_ADDRESS: "147 George St, Findlay, OH 45840",
+  } as NodeJS.ProcessEnv;
+  const outreach = generateEmailReviewOutreach(result.prospect, environment);
+  const prepared = { ...result.prospect, outreach };
+  const quality = evaluateOutreachEmailQuality(prepared, "", "written_only", environment);
+  assert.equal(outreach.approved, false);
+  assert.match(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
+  assert.match(outreach.concise, /rebuild your current website with a modern design/i);
+  assert.doesNotMatch(outreach.concise, /\b(?:old|outdated|bad|losing leads|customers cannot)\b/i);
+  assert.equal(quality.ready, true);
+  assert.equal(topProspectResultBucket({
+    selected: false,
+    rejectionReason: "Website verification required",
+    packageStatus: "READY_FOR_REVIEW",
+    emailQuality: quality,
+    prospect: prepared,
+  }), "reviewable_lower_priority");
+  assert.equal(result.prospect.outreach, undefined);
+
+  for (const blocked of [
+    { ...result.prospect, status: "Contacted" as const },
+    { ...result.prospect, notes: ["Suppressed by operator."] },
+    { ...result.prospect, notes: ["Duplicate record."] },
+    { ...result.prospect, email: "", contactEvidence: [] },
+    {
+      ...result.prospect,
+      websiteVerification: {
+        ...result.report,
+        checkedAt: new Date(reviewNow.getTime() - 8 * 24 * 60 * 60 * 1_000).toISOString(),
+        fit: { ...result.report.fit!, evaluatedAt: new Date(reviewNow.getTime() - 8 * 24 * 60 * 60 * 1_000).toISOString() },
+      },
+    },
+  ]) {
+    assert.equal(prospectEmailReviewEligibility(blocked, reviewNow).eligible, false);
+    assert.equal(prospectRoutingDecision(blocked, reviewNow).sending, "Blocked");
+  }
+});
+
+test("inconclusive owned-site HTML with no bounded review signal stays out of Human Email Review", async () => {
+  const homepage = `<!doctype html><html lang="en"><head><title>True Clean Prowash</title><meta name="description" content="Exterior cleaning in Columbus"></head><body><header><nav><a href="/contact">Contact</a></nav></header><h1>True Clean Prowash</h1><p>${"Pressure washing services, repair, installation, and maintenance for Columbus property owners. Licensed and insured with a warranty and guarantee. Projects, portfolio, gallery, and recent work. Request a quote, get an estimate, schedule, or book service. ".repeat(3)}</p><a href="mailto:info@truecleanprowash.com">Email</a><form><button>Request a quote</button></form></body></html>`;
+  const contact = "<html><head><title>True Clean Prowash</title></head><body><h1>True Clean Prowash</h1><a href='mailto:info@truecleanprowash.com'>Email</a></body></html>";
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => (
+    new URL(requestUrl(input)).pathname === "/" ? htmlResponse(homepage) : htmlResponse(contact)
+  )) as typeof fetch;
+  const result = await verifyProspectWebsite(prospect({ phone: "" }), verificationDependencies(fetchImpl));
+
+  assert.equal(result.report.ownershipDecision, "owned");
+  assert.equal(result.prospect.fitDisposition, "inconclusive_requires_review");
   assert.equal(result.report.fit?.observation, undefined);
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
 });
 
 test("weak usable HTML with uncertain ownership remains inconclusive", async () => {
