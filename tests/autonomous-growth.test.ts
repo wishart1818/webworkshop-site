@@ -81,6 +81,7 @@ import {
 } from "../lib/autopilot-campaign";
 import { evaluateOutreachEmailQuality, prepareTopProspectArtifacts, prepareTopProspectOutreachArtifacts, publicProspectPreviewLink, recommendedMarketPresets, type TopProspectJob, type TopProspectResult } from "../lib/top-prospects";
 import { generateOutreach, reconcileProspectContactRouting, seedProspects, withAnalysis, type Prospect } from "../lib/prospect-engine";
+import { verifyProspectWebsite } from "../lib/site-analysis";
 import {
   getProspect,
   resetProspectMemoryForTests,
@@ -88,6 +89,7 @@ import {
   setProspectMemoryForTests,
 } from "../lib/prospect-repository";
 import { prospectCurrentBucket } from "../lib/prospect-funnel";
+import { prospectEmailReviewEligibility } from "../lib/prospect-review-routing";
 
 process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
 
@@ -2060,6 +2062,8 @@ test("review-only Top Prospect packages cannot cross into send approval", () => 
 
   assert.match(worker, /packageStatus:\s*reviewOnly\s*\?\s*"READY_FOR_REVIEW"\s*:\s*"PACKAGE_GENERATED"/);
   assert.match(repository, /packageStatus:\s*reviewOnly\s*\?\s*"READY_FOR_REVIEW"\s*:\s*"PACKAGE_GENERATED"/);
+  assert.match(worker, /selected:\s*!reviewOnly\s*&&\s*rejectionReason\s*===\s*null/);
+  assert.match(repository, /reviewOnly\s*\?\s*\{\s*selected:\s*false\s*\}\s*:\s*\{\}/);
   assert.match(repository, /action\s*===\s*"approve"[\s\S]*prospectRoutingDecision\(prospect\)\.sending\s*!==\s*"Strict Email Eligible"[\s\S]*throw new Error/);
   assert.match(workspace, /emailReviewOnly\(result\)[\s\S]*Human review only; not eligible for send approval/);
   assert.match(workspace, /reviewOnly[\s\S]*disabled[^>]*>Review only<\/button>/);
@@ -4040,17 +4044,40 @@ test("review-only Top Prospect sync creates a grounded human-review queue item t
       return new Response(JSON.stringify({ id: "must-not-send" }), { status: 200 });
     };
     const strictProspect = eligibleProspect();
-    const reviewProspect = structuredClone(strictProspect);
-    reviewProspect.id = "review-only-sync-prospect";
-    reviewProspect.fitDisposition = "inconclusive_requires_review";
-    reviewProspect.websiteVerification = {
-      ...reviewProspect.websiteVerification!,
-      fit: {
-        ...reviewProspect.websiteVerification!.fit!,
-        disposition: "inconclusive_requires_review",
-        reason: "The saved website observation is grounded, but rebuild fit still requires operator review.",
-      },
-    };
+    const reviewNow = new Date();
+    const reviewWebsite = "https://reviewroofing.com/";
+    const reviewHomepage = `<!doctype html><html><head><title>Review Roofing</title></head><body><header><nav><a href="/contact">Contact</a></nav></header><h1>Review Roofing</h1><p>${"Residential roofing services and project information for Toledo property owners. ".repeat(8)}</p></body></html>`;
+    const reviewContact = "<html><head><title>Review Roofing</title></head><body><h1>Review Roofing</h1><a href='mailto:info@reviewroofing.com'>info@reviewroofing.com</a></body></html>";
+    const verification = await verifyProspectWebsite({
+      ...strictProspect,
+      id: "review-only-sync-prospect",
+      businessName: "Review Roofing",
+      website: reviewWebsite,
+      email: "",
+      phone: "",
+      city: "Toledo",
+      state: "OH",
+      outreach: undefined,
+      websiteVerification: undefined,
+      contactEvidence: [],
+    }, {
+      fetch: (async (input: Parameters<typeof fetch>[0]) => (
+        new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname === "/"
+          ? new Response(reviewHomepage, { status: 200, headers: { "content-type": "text/html" } })
+          : new Response(reviewContact, { status: 200, headers: { "content-type": "text/html" } })
+      )) as typeof fetch,
+      lookup: async () => [{ address: "93.184.216.34" }],
+      robotsPolicy: async () => true,
+      now: () => reviewNow,
+    });
+    const reviewProspect = verification.prospect;
+    assert.equal(verification.report.fit?.analysisOrigin, "automated_html");
+    assert.equal(verification.report.fit?.observation?.kind, "general_rebuild");
+    assert.equal(reviewProspect.email, "info@reviewroofing.com");
+    assert.equal(reviewProspect.contactEvidence.find((item) => item.kind === "email")?.decision, "autonomous_eligible");
+    assert.equal(reviewProspect.recommendedContactMethod, "send_email");
+    const reviewEligibility = prospectEmailReviewEligibility(reviewProspect, reviewNow);
+    assert.deepEqual(reviewEligibility.reasons, []);
     const reviewArtifacts = prepareTopProspectOutreachArtifacts(reviewProspect, "written_only");
     assert.equal(reviewArtifacts.reviewOnly, true);
     assert.equal(reviewArtifacts.emailQuality.ready, true);
@@ -4068,8 +4095,9 @@ test("review-only Top Prospect sync creates a grounded human-review queue item t
     const queued = await syncTopProspectResultIntoQueue(result, "written_only");
     assert.equal(queued.status, "Needs Review");
     assert.match(queued.eligibilityReason, /human review/i);
-    assert.match(queued.emailBody, /quote request is difficult to reach/i);
+    assert.match(queued.emailBody, /had a couple of ideas/i);
     assert.match(queued.emailBody, /rebuild your current website/i);
+    assert.doesNotMatch(queued.emailBody, /\b(?:old|outdated|bad|losing leads)\b/i);
 
     const approval = await approveAndQueueEmail(queued.id);
     assert.equal(approval.queued, false);

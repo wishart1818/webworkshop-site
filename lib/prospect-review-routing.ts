@@ -6,6 +6,7 @@ import {
   prospectIsSuppressed,
 } from "@/lib/prospect-funnel";
 import {
+  boundedWebsiteReviewSignals,
   normalizeWebsiteFitDisposition,
   outreachObservationForProspect,
   outreachObservationGroundingProblems,
@@ -46,20 +47,7 @@ function reviewSignals(prospect: Prospect) {
     if (/\b(?:no |missing|weak|low|limited|unclear|not found|couldn't find|did not find|requires review)\b/i.test(item)) signals.push(item.trim());
   }
 
-  const scores = prospect.analysis?.scores;
-  if (scores) {
-    const bounded: Array<[number, number, string]> = [
-      [scores.contactAccessibility, 60, `Contact accessibility scored ${scores.contactAccessibility}/100.`],
-      [scores.ctaStrength, 60, `Call-to-action strength scored ${scores.ctaStrength}/100.`],
-      [scores.conversionReadiness, 55, `Conversion readiness scored ${scores.conversionReadiness}/100.`],
-      [scores.portfolioQuality, 45, `Project/portfolio proof scored ${scores.portfolioQuality}/100.`],
-      [scores.trustSignals, 45, `Visible trust signals scored ${scores.trustSignals}/100.`],
-      [scores.technicalQuality, 50, `Technical page signals scored ${scores.technicalQuality}/100.`],
-    ];
-    for (const [score, maximum, statement] of bounded) {
-      if (score <= maximum) signals.push(statement);
-    }
-  }
+  signals.push(...boundedWebsiteReviewSignals(prospect.analysis).map((signal) => signal.statement));
   return [...new Set(signals)].slice(0, 4);
 }
 

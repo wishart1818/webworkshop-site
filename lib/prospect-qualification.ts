@@ -1,5 +1,6 @@
 import { WEBWORKSHOP_OUTREACH_COPY_VERSION, webworkshopCleanBusinessName } from "@/lib/outreach-style-guide";
 import type {
+  Analysis,
   ContactRouteEvidence,
   Prospect,
   ProspectFreshness,
@@ -26,6 +27,27 @@ const autonomousWebsiteFits = new Set<WebsiteFitDisposition>([
   "broken_or_inactive_website",
   "clearly_weak_or_outdated_website",
 ]);
+
+export type BoundedWebsiteReviewSignal = {
+  key: "contact_accessibility" | "cta_strength" | "conversion_readiness" | "portfolio_quality" | "trust_signals" | "technical_quality";
+  score: number;
+  maximum: number;
+  statement: string;
+};
+
+export function boundedWebsiteReviewSignals(analysis: Analysis | undefined): BoundedWebsiteReviewSignal[] {
+  const scores = analysis?.scores;
+  if (!scores) return [];
+  const signals: BoundedWebsiteReviewSignal[] = [
+    { key: "contact_accessibility", score: scores.contactAccessibility, maximum: 60, statement: `Contact accessibility scored ${scores.contactAccessibility}/100.` },
+    { key: "cta_strength", score: scores.ctaStrength, maximum: 60, statement: `Call-to-action strength scored ${scores.ctaStrength}/100.` },
+    { key: "conversion_readiness", score: scores.conversionReadiness, maximum: 55, statement: `Conversion readiness scored ${scores.conversionReadiness}/100.` },
+    { key: "portfolio_quality", score: scores.portfolioQuality, maximum: 45, statement: `Project/portfolio proof scored ${scores.portfolioQuality}/100.` },
+    { key: "trust_signals", score: scores.trustSignals, maximum: 45, statement: `Visible trust signals scored ${scores.trustSignals}/100.` },
+    { key: "technical_quality", score: scores.technicalQuality, maximum: 50, statement: `Technical page signals scored ${scores.technicalQuality}/100.` },
+  ];
+  return signals.filter((signal) => signal.score <= signal.maximum);
+}
 
 const protectedProspectStatuses = new Set<Prospect["status"]>([
   "Contacted",
