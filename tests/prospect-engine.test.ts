@@ -38,9 +38,14 @@ import {
   prospectCallQueueEligibility,
 } from "../lib/calls-queue";
 import { classifyWebsiteAnalysisFailure } from "../lib/site-analysis";
-import { prospectEmailReviewEligibility, prospectRoutingDecision } from "../lib/prospect-review-routing";
-import { outreachObservationSupported } from "../lib/prospect-qualification";
-import { evaluateOutreachEmailQuality } from "../lib/top-prospects";
+import {
+  adequateWebsiteCommercialReviewSignals,
+  prospectEmailReviewEligibility,
+  prospectRoutingDecision,
+  reviewOnlyOutreachObservationForProspect,
+} from "../lib/prospect-review-routing";
+import { outreachObservationSupported, websiteFitAllowsAutonomousOutreach } from "../lib/prospect-qualification";
+import { assessManualTopProspectOpportunity, evaluateOutreachEmailQuality } from "../lib/top-prospects";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
 const testFooter = [
@@ -151,6 +156,32 @@ function withEmailReviewCandidate() {
   return prospect;
 }
 
+function withAdequateCommercialReviewCandidate() {
+  const prospect = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
+  prospect.fitDisposition = "adequate_existing_website";
+  prospect.analysis = {
+    ...prospect.analysis!,
+    scores: {
+      ...prospect.analysis!.scores,
+      contactAccessibility: 52,
+      ctaStrength: 58,
+      conversionReadiness: 82,
+      portfolioQuality: 84,
+      trustSignals: 86,
+      technicalQuality: 88,
+    },
+  };
+  prospect.websiteVerification = {
+    ...prospect.websiteVerification!,
+    fit: {
+      ...prospect.websiteVerification!.fit!,
+      disposition: "adequate_existing_website",
+      reason: "The website is structurally complete, while bounded commercial signals merit human review.",
+    },
+  };
+  return prospect;
+}
+
 test("centralized prospect email footer includes the complete required sender identity", () => {
   assert.equal(outreachComplianceFooter({ ...process.env, WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }), [
     "Thanks,",
@@ -200,6 +231,100 @@ test("human-review outreach uses the saved observation without becoming strict s
   assert.equal(outreachObservationSupported(prepared, outreach.concise), true);
   assert.equal(evaluateOutreachEmailQuality(prepared, "", "written_only", testEnvironment).ready, true);
   assert.equal(prospectRoutingDecision(prepared).sending, "Review Only");
+});
+
+test("commercially improvable adequate websites enter only the human email review lane", () => {
+  const prospect = withAdequateCommercialReviewCandidate();
+  const eligibility = prospectEmailReviewEligibility(prospect);
+  const routing = prospectRoutingDecision(prospect);
+  const observation = reviewOnlyOutreachObservationForProspect(prospect);
+  const outreach = generateEmailReviewOutreach(prospect, { ...process.env, WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
+
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(prospect).map((signal) => signal.key), [
+    "contact_accessibility",
+    "cta_strength",
+  ]);
+  assert.equal(eligibility.eligible, true);
+  assert.deepEqual(routing, { opportunity: "Needs Review", email: "Ready", sending: "Review Only" });
+  assert.equal(websiteFitAllowsAutonomousOutreach(prospect), false);
+  assert.ok(observation);
+  assert.match(outreach.concise, /had a couple of ideas/i);
+  assert.match(outreach.concise, /contact|quote/i);
+  assert.doesNotMatch(outreach.concise, /\b(?:bad|outdated|losing leads|defective)\b/i);
+  assert.equal(outreach.approved, false);
+  assert.equal(evaluateOutreachEmailQuality({ ...prospect, outreach }, "", "written_only", { ...process.env, WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }).ready, true);
+  assert.equal(assessManualTopProspectOpportunity(prospect, {
+    manualReviewOnly: false,
+    manualOpportunityReason: "",
+    strictRequirementFailed: "",
+    sources: ["google"],
+  })?.kind, "existing_site_observation");
+});
+
+test("adequate websites require two bounded signals including a commercial path signal", () => {
+  const oneSignal = withAdequateCommercialReviewCandidate();
+  oneSignal.analysis = {
+    ...oneSignal.analysis!,
+    scores: { ...oneSignal.analysis!.scores, ctaStrength: 80 },
+  };
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(oneSignal), []);
+  assert.equal(prospectEmailReviewEligibility(oneSignal).eligible, false);
+  assert.deepEqual(prospectRoutingDecision(oneSignal), { opportunity: "Not a Fit", email: "Ready", sending: "Blocked" });
+
+  const nonCommercialSignals = withAdequateCommercialReviewCandidate();
+  nonCommercialSignals.analysis = {
+    ...nonCommercialSignals.analysis!,
+    scores: {
+      ...nonCommercialSignals.analysis!.scores,
+      contactAccessibility: 90,
+      ctaStrength: 90,
+      portfolioQuality: 40,
+      trustSignals: 40,
+    },
+  };
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(nonCommercialSignals), []);
+  assert.equal(prospectEmailReviewEligibility(nonCommercialSignals).eligible, false);
+  assert.deepEqual(prospectRoutingDecision(nonCommercialSignals), { opportunity: "Not a Fit", email: "Ready", sending: "Blocked" });
+});
+
+test("production-like strong adequate sites and unsafe adequate records stay blocked", () => {
+  const strongAdequate = withAdequateCommercialReviewCandidate();
+  strongAdequate.businessName = "Dependable Painting & Remodeling";
+  strongAdequate.analysis = {
+    ...strongAdequate.analysis!,
+    scores: {
+      ...strongAdequate.analysis!.scores,
+      ctaStrength: 100,
+      trustSignals: 96,
+      contactAccessibility: 66,
+      portfolioQuality: 100,
+      conversionReadiness: 85,
+      technicalQuality: 95,
+    },
+  };
+  assert.equal(strongAdequate.fitDisposition, "adequate_existing_website");
+  assert.equal(strongAdequate.websiteVerification?.fit?.disposition, "adequate_existing_website");
+  assert.deepEqual(adequateWebsiteCommercialReviewSignals(strongAdequate), []);
+  assert.equal(prospectEmailReviewEligibility(strongAdequate).eligible, false);
+  assert.deepEqual(prospectRoutingDecision(strongAdequate), { opportunity: "Not a Fit", email: "Ready", sending: "Blocked" });
+  assert.equal(websiteFitAllowsAutonomousOutreach(strongAdequate), false);
+
+  const adequate = withAdequateCommercialReviewCandidate();
+  const unsafe = [
+    {
+      ...adequate,
+      websiteVerification: {
+        ...adequate.websiteVerification!,
+        identitySignals: [...(adequate.websiteVerification?.identitySignals ?? []), "public_phone_conflict"],
+      },
+    },
+    { ...adequate, email: "unverified@gmail.com" },
+    { ...adequate, notes: ["Duplicate record."] },
+  ] satisfies Prospect[];
+  for (const prospect of unsafe) {
+    assert.equal(prospectEmailReviewEligibility(prospect).eligible, false);
+    assert.equal(prospectRoutingDecision(prospect).sending, "Blocked");
+  }
 });
 
 test("strict email routing uses the same protected and contact-route guards as the backend", () => {

@@ -1,4 +1,4 @@
-import type { Prospect } from "@/lib/prospect-engine";
+import type { Prospect, WebsiteFitObservation } from "@/lib/prospect-engine";
 import {
   prospectIsBadFit,
   prospectIsContacted,
@@ -14,6 +14,7 @@ import {
   prospectQualificationBlockReasons,
   verifiedEmailEvidenceForProspect,
   websiteFitAllowsAutonomousOutreach,
+  type BoundedWebsiteReviewSignal,
 } from "@/lib/prospect-qualification";
 
 export type EmailReviewEligibility = {
@@ -39,7 +40,68 @@ function routingSafetyReasons(prospect: Prospect) {
   ].filter(Boolean);
 }
 
+const commercialReviewSignalKeys = new Set<BoundedWebsiteReviewSignal["key"]>([
+  "contact_accessibility",
+  "cta_strength",
+  "conversion_readiness",
+]);
+
+export function adequateWebsiteCommercialReviewSignals(prospect: Prospect) {
+  if (normalizeWebsiteFitDisposition(prospect) !== "adequate_existing_website") return [];
+  const signals = boundedWebsiteReviewSignals(prospect.analysis);
+  return signals.length >= 2 && signals.some((signal) => commercialReviewSignalKeys.has(signal.key))
+    ? signals
+    : [];
+}
+
+export function reviewOnlyOutreachObservationForProspect(prospect: Prospect): WebsiteFitObservation | null {
+  if (normalizeWebsiteFitDisposition(prospect) !== "adequate_existing_website") {
+    return outreachObservationForProspect(prospect);
+  }
+  const signals = adequateWebsiteCommercialReviewSignals(prospect);
+  const primary = signals.find((signal) => commercialReviewSignalKeys.has(signal.key));
+  if (!primary) return null;
+
+  const copy = primary.key === "contact_accessibility"
+    ? {
+        statement: "I took a look at your website and had a couple of ideas around making the customer contact or quote path a little clearer.",
+        rebuildSentence: "I can rebuild your current website with a more focused contact and quote path while keeping your services and contact information easy for customers to find.",
+        checklist: "Show a clearer customer contact and quote path in the proposed direction.",
+      }
+    : primary.key === "cta_strength"
+      ? {
+          statement: "I took a look at your website and had a couple of ideas around making the next step for customers a little clearer.",
+          rebuildSentence: "I can rebuild your current website with clearer calls to action and an easier path to contact the business or request a quote.",
+          checklist: "Show clearer primary calls to action and the next customer step.",
+        }
+      : {
+          statement: "I took a look at your website and had a couple of ideas around simplifying the path from service information to getting in touch.",
+          rebuildSentence: "I can rebuild your current website with a clearer path from service details to contacting the business or requesting a quote.",
+          checklist: "Show a clearer path from service information to a customer inquiry.",
+        };
+
+  return {
+    kind: "general_rebuild",
+    statement: copy.statement,
+    rebuildSentence: copy.rebuildSentence,
+    evidence: signals.map((signal) => signal.statement),
+    demoChecklist: [copy.checklist],
+  };
+}
+
+export function reviewOnlyOutreachObservationSupported(prospect: Prospect, body: string) {
+  const observation = reviewOnlyOutreachObservationForProspect(prospect);
+  if (!observation || outreachObservationGroundingProblems(observation).length) return false;
+  const normalizedBody = body.replace(/\s+/g, " ").toLowerCase();
+  return normalizedBody.includes(observation.statement.replace(/\s+/g, " ").toLowerCase())
+    && normalizedBody.includes(observation.rebuildSentence.replace(/\s+/g, " ").toLowerCase());
+}
+
 function reviewSignals(prospect: Prospect) {
+  const commercialSignals = adequateWebsiteCommercialReviewSignals(prospect);
+  if (normalizeWebsiteFitDisposition(prospect) === "adequate_existing_website") {
+    return commercialSignals.map((signal) => signal.statement).slice(0, 4);
+  }
   const signals: string[] = [];
   const fit = prospect.websiteVerification?.fit;
   if (fit?.observation?.statement.trim()) signals.push(fit.observation.statement.trim());
@@ -57,7 +119,10 @@ export function prospectEmailReviewEligibility(prospect: Prospect, now = new Dat
   const emailEvidence = verifiedEmailEvidenceForProspect(prospect);
   const freshness = prospectFreshnessAt(prospect, now);
   const signals = reviewSignals(prospect);
-  const observationProblems = outreachObservationGroundingProblems(outreachObservationForProspect(prospect));
+  const commercialSignals = adequateWebsiteCommercialReviewSignals(prospect);
+  const reviewFitEligible = fit === "inconclusive_requires_review"
+    || (fit === "adequate_existing_website" && commercialSignals.length >= 2);
+  const observationProblems = outreachObservationGroundingProblems(reviewOnlyOutreachObservationForProspect(prospect));
   const reasons = [
     ...routingSafetyReasons(prospect),
     prospect.prospectType !== "redesign" ? "Only existing-site redesign prospects use this human-review email lane." : "",
@@ -66,7 +131,7 @@ export function prospectEmailReviewEligibility(prospect: Prospect, now = new Dat
     verification?.ownershipDecision !== "owned" ? "Website ownership is not established." : "",
     verification?.confidence !== "high" ? "Website identity/availability confidence is not high enough for review routing." : "",
     verification?.identitySignals?.includes("public_phone_conflict") ? "The verified website publishes a conflicting business phone." : "",
-    fit !== "inconclusive_requires_review" ? "This lane is only for otherwise-plausible sites whose rebuild fit still needs human review." : "",
+    !reviewFitEligible ? "This lane requires either inconclusive rebuild fit or an adequate site with at least two bounded commercial-review signals, including contact, CTA, or conversion evidence." : "",
     websiteFitAllowsAutonomousOutreach(prospect) ? "The prospect already passes the stricter autonomous website-fit path." : "",
     !freshness.websiteVerificationFresh ? "Website verification is stale." : "",
     !freshness.websiteFitFresh ? "Website-fit evidence is stale." : "",
@@ -89,10 +154,11 @@ export function prospectRoutingDecision(prospect: Prospect, now = new Date()): P
     && websiteFitAllowsAutonomousOutreach(prospect);
   const notFit = prospect.inactive
     || ["national_large_brand", "duplicate_bad_fit"].includes(prospect.classification)
-    || ["adequate_existing_website", "strong_existing_website"].includes(fit);
+    || fit === "strong_existing_website"
+    || (fit === "adequate_existing_website" && !review.eligible);
 
   return {
-    opportunity: strictEmailEligible ? "Qualified" : notFit ? "Not a Fit" : "Needs Review",
+    opportunity: strictEmailEligible ? "Qualified" : review.eligible ? "Needs Review" : notFit ? "Not a Fit" : "Needs Review",
     email: emailEvidence ? "Ready" : prospect.email.trim() ? "Verify Email" : "No Email",
     sending: strictEmailEligible ? "Strict Email Eligible" : review.eligible ? "Review Only" : "Blocked",
   };
