@@ -435,8 +435,9 @@ test("MaxForce legal-name suffix omission retains first-party ownership, phone, 
   assert.equal(result.prospect.quoteFormDetected, true);
   assert.equal(result.prospect.facebookUrl, "https://facebook.com/maxforceroofing");
   assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
-  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
-  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, true);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Review Only");
   assert.equal(result.prospect.outreach, undefined);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
 });
@@ -510,8 +511,9 @@ test("Bravo first-party LocalBusiness identity establishes ownership despite gen
   assert.equal(emailEvidence?.decision, "autonomous_eligible");
   assert.equal(result.prospect.contactFormDetected || result.prospect.quoteFormDetected, true);
   assert.equal(websiteFitAllowsAutonomousOutreach(result.prospect), false);
-  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, false);
-  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Blocked");
+  assert.equal(result.prospect.fitDisposition, "adequate_existing_website");
+  assert.equal(prospectEmailReviewEligibility(result.prospect, fixedNow).eligible, true);
+  assert.equal(prospectRoutingDecision(result.prospect, fixedNow).sending, "Review Only");
   assert.equal(result.prospect.outreach, undefined);
   assert.equal(result.prospect.activities.some((item) => /sent/i.test(item.label) && !/nothing was sent/i.test(item.label)), false);
 });

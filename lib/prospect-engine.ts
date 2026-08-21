@@ -19,7 +19,7 @@ import {
   verifiedEmailEvidenceForProspect,
   websiteFitAllowsAutonomousOutreach,
 } from "@/lib/prospect-qualification";
-import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
+import { prospectEmailReviewEligibility, reviewOnlyOutreachObservationForProspect } from "@/lib/prospect-review-routing";
 
 export const prospectStatuses = [
   "New",
@@ -2522,7 +2522,7 @@ export function generateEmailReviewOutreach(prospect: Prospect, environment: Nod
   const generatedAt = now();
   const trade = displayTradeCategory(prospectTrade(prospect)).toLowerCase();
   const city = titleCaseLocation(prospect.city);
-  const observation = outreachObservationForProspect(prospect);
+  const observation = reviewOnlyOutreachObservationForProspect(prospect);
   if (!observation) throw new Error("A grounded website observation is required for the human-review email lane.");
   const firstTouch = webworkshopFirstEmail({
     businessName: prospect.businessName,

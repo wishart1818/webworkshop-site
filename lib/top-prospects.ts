@@ -34,7 +34,10 @@ import {
   webworkshopPostalAddress,
 } from "@/lib/prospect-engine";
 import { prospectIsBadFit, prospectIsContacted, prospectIsSuppressed } from "@/lib/prospect-funnel";
-import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
+import {
+  prospectEmailReviewEligibility,
+  reviewOnlyOutreachObservationSupported,
+} from "@/lib/prospect-review-routing";
 
 export const topProspectJobStatuses = [
   "QUEUED",
@@ -281,7 +284,8 @@ export function assessManualTopProspectOpportunity(
   ) return null;
 
   const disposition = normalizeWebsiteFitDisposition(prospect);
-  if (["adequate_existing_website", "strong_existing_website"].includes(disposition)) return null;
+  const emailReviewEligible = prospectEmailReviewEligibility(prospect).eligible;
+  if (disposition === "strong_existing_website" || (disposition === "adequate_existing_website" && !emailReviewEligible)) return null;
   if (websiteFitAllowsAutonomousOutreach(prospect)) return null;
 
   if (prospect.prospectType === "no_website_social_only" && !prospect.website.trim()) {
@@ -309,7 +313,7 @@ export function assessManualTopProspectOpportunity(
     prospect.website.trim()
     && prospect.websiteVerification?.status === "usable"
     && prospect.websiteVerification.ownershipDecision === "owned"
-    && disposition === "inconclusive_requires_review"
+    && (disposition === "inconclusive_requires_review" || emailReviewEligible)
     && observations.length
   ) {
     return {
@@ -789,7 +793,8 @@ export function evaluateOutreachEmailQuality(
   const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   const firstTouchLinkFree = !/https?:\/\/|\/p\//i.test(firstTouch);
   const businessContextReady = Boolean(prospect.businessName) && firstTouch.toLowerCase().includes(prospect.businessName.toLowerCase());
-  const relevantReasonReady = outreachObservationSupported(prospect, firstTouch);
+  const relevantReasonReady = outreachObservationSupported(prospect, firstTouch)
+    || (prospectEmailReviewEligibility(prospect).eligible && reviewOnlyOutreachObservationSupported(prospect, firstTouch));
   const uncertainWebsiteAbsence = prospectWebsiteAbsenceNeedsManualReview(prospect);
   const unsupportedClaim = findUnsupportedClaim(combined);
   const checks: OutreachEmailQualityCheck[] = [
