@@ -90,6 +90,7 @@ import {
 } from "../lib/prospect-repository";
 import { prospectCurrentBucket } from "../lib/prospect-funnel";
 import { prospectEmailReviewEligibility } from "../lib/prospect-review-routing";
+import { GET as runScheduledAutopilot } from "../app/api/cron/autopilot/route";
 
 process.env.WEBWORKSHOP_POSTAL_ADDRESS ??= "123 Main St, Toledo, OH";
 
@@ -3286,6 +3287,180 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     assert.ok((summary.skippedReasons["reply or suppression recorded"] ?? 0) >= 1);
     assert.ok((summary.skippedReasons["phone-only"] ?? 0) >= 1);
   } finally {
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("existing-inventory regeneration skips stale website-fit copy and continues independent eligible items", async () => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  resetAutonomousGrowthMemoryForTests();
+  resetProspectMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env({ OUTREACH_EMAIL_DISABLED: "true" }));
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("No provider call is expected while regenerating unapproved drafts.");
+  };
+
+  const staleProspect = eligibleProspectFor({
+    id: "stale-fit-prospect",
+    businessName: "Established Site Roofing",
+    website: "https://establishedsiteroofing.com",
+    email: "office@establishedsiteroofing.com",
+  });
+  staleProspect.fitDisposition = "adequate_existing_website";
+  staleProspect.websiteVerification = {
+    ...staleProspect.websiteVerification!,
+    fit: {
+      disposition: "adequate_existing_website",
+      reason: "Current evidence shows an adequate established website.",
+      supportingEvidence: ["The current site has clear services and contact paths."],
+      confidence: "high",
+      analysisOrigin: "rendered_review",
+      evaluatedAt: new Date().toISOString(),
+    },
+  };
+  const validProspect = eligibleProspectFor({
+    id: "valid-fit-prospect",
+    businessName: "Valid Refresh Roofing",
+    website: "https://validrefreshroofing.com",
+    email: "office@validrefreshroofing.com",
+  });
+  const staleItem = queueItem({
+    id: "stale-fit-package",
+    prospectId: staleProspect.id,
+    businessName: staleProspect.businessName,
+    website: staleProspect.website,
+    email: staleProspect.email,
+    status: "Needs Review",
+    outreachCopyVersion: "old_copy_v0",
+    emailBody: "Previously grounded draft that must remain unchanged.",
+    notes: "",
+  });
+  const validItem = queueItem({
+    id: "valid-fit-package",
+    prospectId: validProspect.id,
+    businessName: validProspect.businessName,
+    website: validProspect.website,
+    email: validProspect.email,
+    status: "Needs Review",
+    outreachCopyVersion: "old_copy_v0",
+    emailBody: "Old copy awaiting regeneration.",
+    notes: "",
+  });
+
+  try {
+    setProspectMemoryForTests([staleProspect, validProspect]);
+    setOutreachQueueMemoryForTests([staleItem, validItem]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+
+    const result = await processExistingQualifiedProspects({ dryRun: false });
+    const current = outreachQueueMemoryForTests();
+    const skipped = current.find((item) => item.id === staleItem.id)!;
+    const regenerated = current.find((item) => item.id === validItem.id)!;
+
+    assert.equal(skipped.emailBody, staleItem.emailBody);
+    assert.equal(skipped.outreachCopyVersion, staleItem.outreachCopyVersion);
+    assert.notEqual(skipped.status, "Queued");
+    assert.doesNotMatch(skipped.notes, /\[auto-email-approved\]/);
+    assert.equal(regenerated.outreachCopyVersion, currentOutreachCopyVersion);
+    assert.notEqual(regenerated.emailBody, validItem.emailBody);
+    assert.equal(result.summary.blockedReasons["current website-fit evidence no longer supports outreach"], 1);
+    assert.equal(result.autoEmailPilot.sent, 0);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("scheduled Auto Email Pilot succeeds when one independent stale draft is skipped", async () => {
+  const originalEnv = { ...process.env };
+  resetAutonomousGrowthMemoryForTests();
+  resetProspectMemoryForTests();
+  resetOperationalMemoryForTests();
+  Object.assign(process.env, env({ CRON_SECRET: "cron-test-secret", OUTREACH_EMAIL_DISABLED: "true" }));
+
+  const staleProspect = eligibleProspectFor({
+    id: "cron-stale-fit-prospect",
+    businessName: "Cron Established Roofing",
+    website: "https://cronestablishedroofing.com",
+    email: "office@cronestablishedroofing.com",
+  });
+  staleProspect.fitDisposition = "strong_existing_website";
+  staleProspect.websiteVerification = {
+    ...staleProspect.websiteVerification!,
+    fit: {
+      disposition: "strong_existing_website",
+      reason: "Current evidence shows a strong established website.",
+      supportingEvidence: ["The website has a complete customer path."],
+      confidence: "high",
+      analysisOrigin: "rendered_review",
+      evaluatedAt: new Date().toISOString(),
+    },
+  };
+  const validProspect = eligibleProspectFor({
+    id: "cron-valid-fit-prospect",
+    businessName: "Cron Valid Roofing",
+    website: "https://cronvalidroofing.com",
+    email: "office@cronvalidroofing.com",
+  });
+
+  try {
+    setProspectMemoryForTests([staleProspect, validProspect]);
+    setOutreachQueueMemoryForTests([
+      queueItem({ id: "cron-stale-package", prospectId: staleProspect.id, businessName: staleProspect.businessName, website: staleProspect.website, email: staleProspect.email, status: "Needs Review", outreachCopyVersion: "old_copy_v0", emailBody: "Stale fit copy." }),
+      queueItem({ id: "cron-valid-package", prospectId: validProspect.id, businessName: validProspect.businessName, website: validProspect.website, email: validProspect.email, status: "Needs Review", outreachCopyVersion: "old_copy_v0", emailBody: "Valid old copy." }),
+    ]);
+    await updateAutonomousGrowthSettings({ ...defaultAutonomousGrowthSettings, mode: "auto_email_pilot", killSwitch: false });
+
+    const response = await runScheduledAutopilot(new Request("https://webworkshop.dev/api/cron/autopilot", {
+      headers: { authorization: "Bearer cron-test-secret" },
+    }));
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.sent, 0);
+    assert.equal(outreachQueueMemoryForTests().find((item) => item.id === "cron-stale-package")?.emailBody, "Stale fit copy.");
+    assert.equal(outreachQueueMemoryForTests().find((item) => item.id === "cron-valid-package")?.outreachCopyVersion, currentOutreachCopyVersion);
+  } finally {
+    process.env = originalEnv;
+    resetProspectMemoryForTests();
+    resetAutonomousGrowthMemoryForTests();
+    resetOperationalMemoryForTests();
+  }
+});
+
+test("copy regeneration still propagates unexpected programming errors", async () => {
+  resetAutonomousGrowthMemoryForTests();
+  resetProspectMemoryForTests();
+  resetOperationalMemoryForTests();
+  const malformed = eligibleProspectFor({
+    id: "malformed-regeneration-prospect",
+    businessName: "Malformed Regeneration Roofing",
+    website: "https://malformedregenerationroofing.com",
+    email: "office@malformedregenerationroofing.com",
+  });
+  malformed.businessName = undefined as unknown as string;
+  try {
+    setProspectMemoryForTests([malformed]);
+    setOutreachQueueMemoryForTests([queueItem({
+      id: "malformed-regeneration-package",
+      prospectId: malformed.id,
+      outreachCopyVersion: "old_copy_v0",
+    })]);
+
+    await assert.rejects(regenerateUnsentOutreachCopy(), TypeError);
+    assert.equal(outreachQueueMemoryForTests()[0]?.outreachCopyVersion, "old_copy_v0");
+  } finally {
+    resetProspectMemoryForTests();
     resetAutonomousGrowthMemoryForTests();
     resetOperationalMemoryForTests();
   }
