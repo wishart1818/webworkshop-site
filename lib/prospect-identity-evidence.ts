@@ -31,6 +31,18 @@ export type NoOwnedWebsiteEvidenceDecision = {
 };
 
 const evidenceSignalPrefix = "discovery_identity_evidence:";
+const legalBusinessIdentitySuffixes = new Set([
+  "co",
+  "company",
+  "corp",
+  "corporation",
+  "inc",
+  "incorporated",
+  "limited",
+  "llc",
+  "ltd",
+  "pllc",
+]);
 const sameNameAmbiguitySignal = "discovery_identity_conflict:same_name";
 const identityResolutionSignalPrefix = "provider_identity_resolution:";
 const authoritativeIdentitySources = new Set<DiscoveryIdentitySource>(["google", "bing", "yelp"]);
@@ -78,6 +90,18 @@ export function normalizedBusinessIdentityName(value: string) {
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+export function normalizedLegalBusinessIdentityName(value: string) {
+  const tokens = value
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  while (tokens.length && legalBusinessIdentitySuffixes.has(tokens.at(-1)!)) tokens.pop();
+  return tokens.join(" ");
 }
 
 export function normalizedCompletePhone(value: string) {

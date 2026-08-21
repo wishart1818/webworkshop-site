@@ -30,6 +30,7 @@ import {
 import {
   affirmativeFirstPartyIdentity,
   authoritativeNoOwnedWebsiteEvidence,
+  normalizedLegalBusinessIdentityName,
 } from "@/lib/prospect-identity-evidence";
 
 const userAgent = "WebWorkshopProspectEngine/1.0 (+https://webworkshop.dev)";
@@ -1078,9 +1079,14 @@ function htmlProminentlyMatchesBusinessIdentity(html: string, businessName: stri
   const siteName = html.match(/<meta\b[^>]*(?:property|name)\s*=\s*["']og:site_name["'][^>]*content\s*=\s*["']([^"']+)["']/i)?.[1]
     ?? html.match(/<meta\b[^>]*content\s*=\s*["']([^"']+)["'][^>]*(?:property|name)\s*=\s*["']og:site_name["']/i)?.[1]
     ?? "";
-  return [title, ...headings, siteName]
-    .map((value) => normalize(value.replace(/<[^>]+>/g, " ")))
-    .some((value) => value.includes(expected));
+  const branding = [title, ...headings, siteName].map((value) => value.replace(/<[^>]+>/g, " ").trim());
+  if (branding.some((value) => normalize(value).includes(expected))) return true;
+
+  const legalName = normalizedLegalBusinessIdentityName(businessName);
+  const legalNameTokens = legalName.split(" ").filter(Boolean);
+  if (legalNameTokens.length < 2) return false;
+  return branding.some((value) => [value, ...value.split(/[|:\u2013\u2014]/)]
+    .some((segment) => normalizedLegalBusinessIdentityName(segment) === legalName));
 }
 
 function normalizedIdentityText(value: string) {
