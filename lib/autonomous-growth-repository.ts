@@ -47,6 +47,7 @@ import {
   generateEmailReviewOutreach,
   generateOutreach,
   normalizeTradeCategory,
+  OutreachWebsiteFitBlockedError,
   prospectVerifiedEmailEvidence,
   prospectWebsiteVerificationBlockReason,
   prospectWrittenContactMethodIsUsable,
@@ -3405,6 +3406,8 @@ function incrementReason(summary: OutreachCopyRegenerationSummary, reason: strin
   summary.skippedReasons[reason] = (summary.skippedReasons[reason] ?? 0) + 1;
 }
 
+const unsupportedWebsiteFitRegenerationReason = "current website-fit evidence no longer supports outreach";
+
 function summarizeRegeneration(summary: OutreachCopyRegenerationSummary) {
   const skippedParts = Object.entries(summary.skippedReasons)
     .map(([reason, count]) => `${count} skipped because ${reason}`)
@@ -3443,6 +3446,25 @@ function regeneratedQueueCopy(
     reviewSummary: `${item.businessName} outreach copy was regenerated to ${currentOutreachCopyVersion}. Nothing was sent.`,
     notes: [item.notes, `Outreach copy regenerated to ${currentOutreachCopyVersion}. Nothing was sent.`].filter(Boolean).join("\n"),
   };
+}
+
+function regeneratedQueueCopyOrSkip(
+  summary: OutreachCopyRegenerationSummary,
+  item: OutreachQueueItem,
+  nowIso: string,
+  sourceProspect: Prospect | null,
+) {
+  try {
+    return regeneratedQueueCopy(item, nowIso, sourceProspect);
+  } catch (error) {
+    if (!(error instanceof OutreachWebsiteFitBlockedError)) throw error;
+    incrementReason(summary, unsupportedWebsiteFitRegenerationReason);
+    console.warn("[autonomous-growth] Unsent outreach regeneration skipped because current website-fit evidence no longer supports outreach.", {
+      queueItemId: item.id,
+      prospectId: item.prospectId,
+    });
+    return null;
+  }
 }
 
 const safeReadinessRepairStatuses = new Set<OutreachQueueStatus>([
@@ -3804,12 +3826,10 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
         continue;
       }
       const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
+      const regenerated = regeneratedQueueCopyOrSkip(summary, item, nowIso, prospect);
+      if (!regenerated) continue;
       Object.assign(item, {
-        ...regeneratedQueueCopy(
-          item,
-          nowIso,
-          prospect,
-        ),
+        ...regenerated,
         outreachCopyGeneratedAt: nowIso,
         lastRegeneratedAt: nowIso,
         updatedAt: nowIso,
@@ -3831,11 +3851,8 @@ export async function regenerateUnsentOutreachCopy(): Promise<OutreachCopyRegene
       continue;
     }
     const prospect = item.prospectId ? await getProspect(item.prospectId) : null;
-    const regenerated = regeneratedQueueCopy(
-      item,
-      nowIso,
-      prospect,
-    );
+    const regenerated = regeneratedQueueCopyOrSkip(summary, item, nowIso, prospect);
+    if (!regenerated) continue;
     const updated = await database.outreachQueueItem.updateMany({
       where: {
         id: item.id,

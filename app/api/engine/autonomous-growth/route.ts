@@ -39,13 +39,13 @@ import {
   type OutreachQueueStatus,
 } from "@/lib/autonomous-growth";
 import { autopilotStartConfirmation, autopilotTopProspectInput, normalizeAutopilotCampaignSettings, type AutopilotCampaignSettings, type AutopilotHandoffFailure } from "@/lib/autopilot-campaign";
+import { OutreachWebsiteFitBlockedError } from "@/lib/prospect-engine";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const autopilotDisabledMessage = "Autopilot is disabled by environment kill switch.";
-const staleOutreachRegenerationMessage = /current evidence does not support website-rebuild outreach/i;
 
 function autopilotEnvironmentDisabled() {
   return process.env.AUTOPILOT_DISABLED === "true";
@@ -78,8 +78,7 @@ async function startAutopilotTopProspectsHandoff(request: Request, settings: Aut
   try {
     existingInventory = await processExistingQualifiedProspects({ dryRun: false });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (!staleOutreachRegenerationMessage.test(message)) throw error;
+    if (!(error instanceof OutreachWebsiteFitBlockedError)) throw error;
     console.warn("[autonomous-growth] Stale outreach regeneration was skipped so fresh Autopilot discovery can continue safely.", {
       error: error instanceof Error ? error.name : "unknown",
     });

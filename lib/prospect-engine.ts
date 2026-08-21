@@ -2441,6 +2441,13 @@ export function outreachComplianceFooter(environment: NodeJS.ProcessEnv = proces
   ].join("\n");
 }
 
+export class OutreachWebsiteFitBlockedError extends Error {
+  constructor() {
+    super("The current evidence does not support website-rebuild outreach. Review and save an eligible website-fit decision before generating a draft.");
+    this.name = "OutreachWebsiteFitBlockedError";
+  }
+}
+
 function localTradePhrase(prospect: Prospect) {
   return {
     trade: displayTradeCategory(prospectTrade(prospect)).toLowerCase(),
@@ -2551,7 +2558,7 @@ export function generateOutreach(prospect: Prospect, previewLink = "", environme
     prospect.websiteVerification?.version === "website-verification-v2"
     && !websiteFitAllowsAutonomousOutreach(prospect)
   ) {
-    throw new Error("The current evidence does not support website-rebuild outreach. Review and save an eligible website-fit decision before generating a draft.");
+    throw new OutreachWebsiteFitBlockedError();
   }
   const complianceFooter = outreachComplianceFooter(environment);
   const generatedAt = now();
