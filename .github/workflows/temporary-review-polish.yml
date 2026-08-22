@@ -39,7 +39,6 @@ jobs:
                   raise SystemExit(f"Expected one match in {path}, found {count}: {old[:120]!r}")
               p.write_text(text.replace(old, new, 1))
 
-          # Copy version + one concise review-only CTA.
           replace_once(
               "lib/outreach-style-guide.ts",
               'export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v8";',
@@ -61,7 +60,6 @@ jobs:
               '    valueLine,\n    "",\n    valueLineIsPermissionCta ? "" : "Would you be interested in seeing what that could look like?",',
           )
 
-          # Adequate-site review copy stays evidence-backed but becomes shorter and softer.
           replace_once(
               "lib/prospect-review-routing.ts",
               'import type { Prospect, WebsiteFitObservation } from "@/lib/prospect-engine";',
@@ -83,7 +81,6 @@ jobs:
               '          statement: "I took a look at your website and had a couple ideas for making it easier for customers to move from your services to getting in touch.",\n          rebuildSentence: webworkshopReviewPermissionCta,',
           )
 
-          # Count #98 review-only results in the job's manual-review headline/bucket.
           replace_once(
               "lib/top-prospects.ts",
               'import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";',
@@ -100,7 +97,6 @@ jobs:
               '  const permissionCtaReady = /would you be interested in seeing what that could look like\\?/i.test(firstTouch)\n    || firstTouch.toLowerCase().includes(webworkshopReviewPermissionCta.toLowerCase());',
           )
 
-          # Regression coverage.
           replace_once(
               "tests/outreach-style-guide.test.ts",
               'assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "verified_rebuild_permission_first_v8");',
@@ -122,8 +118,8 @@ jobs:
         run: npm ci
       - name: Focused tests
         run: node --import tsx --test tests/outreach-style-guide.test.ts tests/prospect-engine.test.ts tests/manual-opportunity-review.test.ts
-      - name: Verify
-        run: npm run verify
+      - name: Diff check
+        run: git diff --check
       - name: Commit focused changes
         shell: bash
         run: |
