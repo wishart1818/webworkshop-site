@@ -1,4 +1,5 @@
 import type { Prospect, WebsiteFitObservation } from "@/lib/prospect-engine";
+import { webworkshopReviewPermissionCta } from "@/lib/outreach-style-guide";
 import {
   prospectIsBadFit,
   prospectIsContacted,
@@ -64,19 +65,19 @@ export function reviewOnlyOutreachObservationForProspect(prospect: Prospect): We
 
   const copy = primary.key === "contact_accessibility"
     ? {
-        statement: "I took a look at your website and had a couple of ideas around making the customer contact or quote path a little clearer.",
-        rebuildSentence: "I can rebuild your current website with a more focused contact and quote path while keeping your services and contact information easy for customers to find.",
+        statement: "I took a look at your website and had a couple ideas for making it easier for customers to get in touch and request an estimate.",
+        rebuildSentence: webworkshopReviewPermissionCta,
         checklist: "Show a clearer customer contact and quote path in the proposed direction.",
       }
     : primary.key === "cta_strength"
       ? {
-          statement: "I took a look at your website and had a couple of ideas around making the next step for customers a little clearer.",
-          rebuildSentence: "I can rebuild your current website with clearer calls to action and an easier path to contact the business or request a quote.",
+          statement: "I took a look at your website and had a couple ideas for making the next step a little clearer for customers.",
+          rebuildSentence: webworkshopReviewPermissionCta,
           checklist: "Show clearer primary calls to action and the next customer step.",
         }
       : {
-          statement: "I took a look at your website and had a couple of ideas around simplifying the path from service information to getting in touch.",
-          rebuildSentence: "I can rebuild your current website with a clearer path from service details to contacting the business or requesting a quote.",
+          statement: "I took a look at your website and had a couple ideas for making it easier for customers to move from your services to getting in touch.",
+          rebuildSentence: webworkshopReviewPermissionCta,
           checklist: "Show a clearer path from service information to a customer inquiry.",
         };
 

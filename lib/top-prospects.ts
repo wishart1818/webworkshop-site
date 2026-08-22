@@ -1,5 +1,5 @@
 import type { DiscoveredLead, DiscoveryDiagnostics, UnresolvedTopProspectRecord } from "@/lib/lead-discovery";
-import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
+import { webworkshopOptOutPattern, webworkshopReviewPermissionCta } from "@/lib/outreach-style-guide";
 import {
   normalizeWebsiteFitDisposition,
   outreachObservationSupported,
@@ -238,10 +238,10 @@ export type TopProspectJob = {
 };
 
 export function topProspectOutcomeCounts(
-  job: Pick<TopProspectJob, "results" | "manualOpportunityProspects" | "skipSummary" | "skippedCount">,
+  job: Pick<TopProspectJob, "results" | "reviewableLowerPriority" | "manualOpportunityProspects" | "skipSummary" | "skippedCount">,
 ) {
   const strictlyQualified = job.results.length;
-  const manualReview = job.manualOpportunityProspects?.length ?? 0;
+  const manualReview = (job.manualOpportunityProspects?.length ?? 0) + (job.reviewableLowerPriority?.length ?? 0);
   const previouslyReviewed = job.skipSummary.previously_reviewed ?? 0;
   return {
     strictlyQualified,
@@ -789,7 +789,8 @@ export function evaluateOutreachEmailQuality(
   const optOutReady = socialFirstDm
     ? drafts.length >= 4 && drafts.slice(1).every((draft) => optOutPattern.test(draft))
     : drafts.length >= 4 && drafts.every((draft) => optOutPattern.test(draft));
-  const permissionCtaReady = /would you be interested in seeing what that could look like\?/i.test(firstTouch);
+  const permissionCtaReady = /would you be interested in seeing what that could look like\?/i.test(firstTouch)
+    || firstTouch.toLowerCase().includes(webworkshopReviewPermissionCta.toLowerCase());
   const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   const firstTouchLinkFree = !/https?:\/\/|\/p\//i.test(firstTouch);
   const businessContextReady = Boolean(prospect.businessName) && firstTouch.toLowerCase().includes(prospect.businessName.toLowerCase());
