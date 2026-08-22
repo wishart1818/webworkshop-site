@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v8";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v9";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [
@@ -37,6 +37,8 @@ export const webworkshopOutreachStyleGuide = {
     "a verified weak trust or contact path",
   ],
 } as const;
+
+export const webworkshopReviewPermissionCta = "Would you be open to me putting together a quick website concept around your current services and branding?";
 
 export function webworkshopOptOutLine() {
   return "If you'd rather not hear from me again, just let me know.";
@@ -184,6 +186,7 @@ export function webworkshopFirstEmail({
   const optionalFact = factualMiddleLine?.trim() && factualMiddleLine.trim() !== valueLine
     ? factualMiddleLine.trim()
     : "";
+  const valueLineIsPermissionCta = valueLine === webworkshopReviewPermissionCta;
 
   return [
     greeting,
@@ -194,7 +197,7 @@ export function webworkshopFirstEmail({
     optionalFact ? "" : "",
     valueLine,
     "",
-    "Would you be interested in seeing what that could look like?",
+    valueLineIsPermissionCta ? "" : "Would you be interested in seeing what that could look like?",
     "",
     footer,
   ].filter((line, index, lines) => line !== "" || index === 1 || lines[index - 1] !== "").join("\n");

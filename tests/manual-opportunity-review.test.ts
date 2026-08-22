@@ -581,12 +581,13 @@ test("Top Prospects outcome counts keep strict, manual, skipped, and previous re
   const manualRecord = { prospectId: "manual-1", reviewBucket: "manual_opportunity" } as UnresolvedTopProspectRecord;
   const counts = topProspectOutcomeCounts({
     results: [{} as never, {} as never],
+    reviewableLowerPriority: [{} as never],
     manualOpportunityProspects: [manualRecord],
     skipSummary: { previously_reviewed: 3, manual_opportunity: 1, confirmed_usable_website_not_fit: 4 },
     skippedCount: 9,
   });
 
-  assert.deepEqual(counts, { strictlyQualified: 2, manualReview: 1, previouslyReviewed: 3, skipped: 5 });
+  assert.deepEqual(counts, { strictlyQualified: 2, manualReview: 2, previouslyReviewed: 3, skipped: 4 });
 });
 
 test("saved discovery diagnostics preserve the separate manual opportunity bucket", () => {

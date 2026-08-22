@@ -248,8 +248,11 @@ test("commercially improvable adequate websites enter only the human email revie
   assert.deepEqual(routing, { opportunity: "Needs Review", email: "Ready", sending: "Review Only" });
   assert.equal(websiteFitAllowsAutonomousOutreach(prospect), false);
   assert.ok(observation);
-  assert.match(outreach.concise, /had a couple of ideas/i);
-  assert.match(outreach.concise, /contact|quote/i);
+  assert.match(outreach.concise, /had a couple ideas/i);
+  assert.match(outreach.concise, /contact|estimate/i);
+  assert.match(outreach.concise, /Would you be open to me putting together a quick website concept around your current services and branding\?/i);
+  assert.doesNotMatch(outreach.concise, /I can rebuild your current website/i);
+  assert.doesNotMatch(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(outreach.concise, /\b(?:bad|outdated|losing leads|defective)\b/i);
   assert.equal(outreach.approved, false);
   assert.equal(evaluateOutreachEmailQuality({ ...prospect, outreach }, "", "written_only", { ...process.env, WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress }).ready, true);
