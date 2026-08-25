@@ -1,4 +1,8 @@
-import { WEBWORKSHOP_OUTREACH_COPY_VERSION, webworkshopCleanBusinessName } from "@/lib/outreach-style-guide";
+import {
+  WEBWORKSHOP_OUTREACH_COPY_VERSION,
+  webworkshopCleanBusinessName,
+  webworkshopReviewPermissionCta,
+} from "@/lib/outreach-style-guide";
 import type {
   Analysis,
   ContactRouteEvidence,
@@ -455,7 +459,10 @@ export function outreachObservationSupported(prospect: Prospect, body: string) {
   if (!observation || outreachObservationGroundingProblems(observation).length) return false;
   const normalizedBody = body.replace(/\s+/g, " ").toLowerCase();
   return normalizedBody.includes(observation.statement.replace(/\s+/g, " ").toLowerCase())
-    && normalizedBody.includes(observation.rebuildSentence.replace(/\s+/g, " ").toLowerCase());
+    && (
+      normalizedBody.includes(observation.rebuildSentence.replace(/\s+/g, " ").toLowerCase())
+      || normalizedBody.includes(webworkshopReviewPermissionCta.toLowerCase())
+    );
 }
 
 export function prospectQualificationBlockReasons(

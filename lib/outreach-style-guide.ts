@@ -1,4 +1,4 @@
-export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v9";
+export const WEBWORKSHOP_OUTREACH_COPY_VERSION = "verified_rebuild_permission_first_v10";
 
 export const webworkshopOutreachStyleGuide = {
   voice: [
@@ -38,7 +38,7 @@ export const webworkshopOutreachStyleGuide = {
   ],
 } as const;
 
-export const webworkshopReviewPermissionCta = "Would you be open to me putting together a quick website concept around your current services and branding?";
+export const webworkshopReviewPermissionCta = "Would you be open to seeing a quick demo of what a refreshed website could look like?";
 
 export function webworkshopOptOutLine() {
   return "If you'd rather not hear from me again, just let me know.";
@@ -186,7 +186,20 @@ export function webworkshopFirstEmail({
   const optionalFact = factualMiddleLine?.trim() && factualMiddleLine.trim() !== valueLine
     ? factualMiddleLine.trim()
     : "";
-  const valueLineIsPermissionCta = valueLine === webworkshopReviewPermissionCta;
+
+  if (kind === "has_website") {
+    const evidenceLine = optionalFact
+      || "I took a look at your website and had a couple ideas for a refreshed direction.";
+    return [
+      greeting,
+      "",
+      `${webworkshopFirstTouchOpening(trade, city, businessName)} ${evidenceLine}`,
+      "",
+      webworkshopReviewPermissionCta,
+      "",
+      footer,
+    ].join("\n");
+  }
 
   return [
     greeting,
@@ -197,7 +210,7 @@ export function webworkshopFirstEmail({
     optionalFact ? "" : "",
     valueLine,
     "",
-    valueLineIsPermissionCta ? "" : "Would you be interested in seeing what that could look like?",
+    "Would you be interested in seeing what that could look like?",
     "",
     footer,
   ].filter((line, index, lines) => line !== "" || index === 1 || lines[index - 1] !== "").join("\n");

@@ -23,7 +23,7 @@ import {
 } from "@/lib/autonomous-growth-repository";
 import { casualDmPlaybook, currentOutreachCopyVersion, evaluateQueuedEmailSendReadiness, outreachCopyRegenerationEligibility, outreachEnvironment, outreachHistoryTextIndicatesProtectedContact, providerConfigured } from "@/lib/autonomous-growth";
 import { createPublicPreviewToken } from "@/lib/public-preview-token";
-import { webworkshopOptOutPattern } from "@/lib/outreach-style-guide";
+import { webworkshopOptOutPattern, webworkshopReviewPermissionCta } from "@/lib/outreach-style-guide";
 import { listTopProspectJobs } from "@/lib/top-prospect-repository";
 import { listProspects } from "@/lib/prospect-repository";
 import {
@@ -746,12 +746,11 @@ export function currentPermissionFirstWebsiteWordingPasses(input: {
   const observation = input.observation.replace(/\s+/g, " ");
   const rebuildSentence = input.rebuildSentence.replace(/\s+/g, " ");
   const observationIndex = normalized.indexOf(observation);
-  const rebuildIndex = normalized.indexOf(rebuildSentence);
-  const ctaIndex = normalized.search(/Would you be interested in seeing what that could look like\?/i);
+  const ctaIndex = normalized.indexOf(webworkshopReviewPermissionCta);
   return observationIndex >= 0
-    && rebuildIndex > observationIndex
-    && ctaIndex > rebuildIndex
+    && ctaIndex > observationIndex
     && /\bI can rebuild your current website with a more modern design\b/i.test(rebuildSentence)
+    && !/I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\./i.test(normalized)
     && !/\b(?:already|previously)\s+(?:built|made|created|finished|designed)\b/i.test(normalized)
     && !/https?:\/\/|\/p\//i.test(normalized)
     && !/\bwill get you more calls|guarantee|guaranteed\b/i.test(normalized);
@@ -1095,10 +1094,10 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   const yesReply = fakeScripts.find((script) => script.label === "Yes-reply / manual-build confirmation")?.body ?? "";
   const fakeCopyBlob = `${firstEmail}\n${firstDm}\n${softerDm}\n${yesReply}`;
   const firstEmailHasApprovedReason =
-  /I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\./i.test(firstEmail)
-  && /I came across [\s\S]+(?: while looking at [\s\S]+ businesses(?: around [^.]+)?)?\./i.test(firstEmail)
-  && /(?:I can rebuild your current website with a more modern design|I can build you a modern website from the ground up)/i.test(firstEmail)
-  && /Would you be interested in seeing what that could look like\?/i.test(firstEmail);
+  /I came across\b[\s\S]+\bwhile looking at\b[\s\S]+\bbusinesses around\b/i.test(firstEmail)
+  && /I (?:took a look at your website and had a couple (?:of )?ideas|noticed)\b/i.test(firstEmail)
+  && firstEmail.includes(webworkshopReviewPermissionCta)
+  && !/I'm Brendan(?:, based in Findlay)?, and I build websites for local service businesses\./i.test(firstEmail);
   const configuredPostalAddress = environment.WEBWORKSHOP_POSTAL_ADDRESS?.trim() || environment.OUTREACH_POSTAL_ADDRESS?.trim() || "";
   const smartBackfill = await processExistingQualifiedProspects({ dryRun: true }).catch((error) => ({
     ok: false,
@@ -1236,7 +1235,7 @@ export async function runFullAutonomousReadinessTest(environment: NodeJS.Process
   check(checks, { key: "no-scores", category: "Outreach copy quality", label: "No internal score language", passed: !/\b\d{1,3}\/100\b|website quality score|opportunity score|internal score/i.test(fakeCopyBlob), detail: "Fake copy does not expose scoring language." });
   check(checks, { key: "no-engine-links", category: "Outreach copy quality", label: "No internal Prospect Engine links", passed: !/\/engine(?:\/|$|\?)/i.test(fakeCopyBlob), detail: "Prospect-facing fake copy contains no protected engine links." });
   check(checks, { key: "no-guarantees", category: "Outreach copy quality", label: "No guaranteed-result claims", passed: !/\bwill get you more calls|guarantee|guaranteed\b/i.test(fakeCopyBlob), detail: "Fake copy uses help/get wording, not guarantees." });
-  check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses the current permission-first website wording", passed: fakePackage.packagePreview?.currentWebsiteWording === true, detail: "Fake v7 copy includes one evidence-backed website problem, a directly matching full-rebuild solution, and the permission-first CTA without a preview link or guaranteed result." });
+  check(checks, { key: "current-wording", category: "Outreach copy quality", label: "Uses the current permission-first website wording", passed: fakePackage.packagePreview?.currentWebsiteWording === true, detail: "Current copy includes one evidence-backed website improvement and the permission-first demo CTA without a preview link or guaranteed result." });
   check(checks, { key: "why-reaching-out", category: "Outreach copy quality", label: "First-touch email explains why I am reaching out", passed: firstEmailHasApprovedReason, detail: firstEmailHasApprovedReason ? "Current generated fake package includes the approved reason sentence before the CTA." : "Current generated fake package is missing the approved reason sentence before the CTA.", fix: "Regenerate the fake package with the current outreach style guide." });
 
   check(checks, { key: "existing-qualified", category: "Existing prospect readiness", label: "Existing qualified unsent prospects checked", passed: Boolean(existing), detail: existing ? `${existing.total} existing qualified unsent prospect(s) checked.` : "Smart snapshot was unavailable.", fix: "Open Autonomous Growth or rerun the readiness test after database health is restored." });

@@ -7,6 +7,7 @@ import {
   webworkshopFirstTouchOpening,
   webworkshopPreviewValueLine,
   webworkshopRecipientFirstName,
+  webworkshopReviewPermissionCta,
   webworkshopShouldMentionFindlay,
 } from "../lib/outreach-style-guide";
 
@@ -32,7 +33,7 @@ test("contextual first-touch opening falls back safely when context is incomplet
     "I came across Smith Services while looking at local service businesses around Findlay.",
   );
   assert.equal(webworkshopFirstTouchOpening("", "", "Smith Services"), "I came across Smith Services.");
-  assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "verified_rebuild_permission_first_v9");
+  assert.equal(WEBWORKSHOP_OUTREACH_COPY_VERSION, "verified_rebuild_permission_first_v10");
 });
 
 test("Findlay is mentioned for nearby prospects and omitted for distant markets", () => {
@@ -52,20 +53,39 @@ test("recipient greeting uses only a safe recorded first name", () => {
 });
 
 test("existing-site email clearly offers a refreshed website and asks permission to show it", () => {
+  const footer = [
+    "Thanks,",
+    "",
+    "Brendan Wishart",
+    "WebWorkshop",
+    "webworkshop.dev",
+    "",
+    "147 George St, Findlay, OH 45840",
+    "",
+    "If you'd rather not hear from me again, just let me know.",
+  ].join("\n");
   const email = webworkshopFirstEmail({
     businessName: "Pinnacle Pressure Washing",
     trade: "Pressure Washing",
     city: "Toledo",
     kind: "has_website",
-    footer: "Thanks,\nBrendan\nWebWorkshop",
+    footer,
     recipientName: "Nick",
+    factualMiddleLine: "I took a look at your website and had a couple ideas for making it easier for customers to request an estimate.",
   });
 
-  assert.match(email, /^Hi Nick,/);
-  assert.match(email, /I'm Brendan, based in Findlay, and I build websites for local service businesses\./);
-  assert.match(email, /I came across Pinnacle Pressure Washing while looking at pressure-washing businesses around Toledo\./);
-  assert.match(email, /I can rebuild your current website with a more modern design that better represents your business and makes your services, contact information, and quote request easier for customers to find\./);
-  assert.match(email, /Would you be interested in seeing what that could look like\?/);
+  assert.equal(email, [
+    "Hi Nick,",
+    "",
+    "I came across Pinnacle Pressure Washing while looking at pressure-washing businesses around Toledo. I took a look at your website and had a couple ideas for making it easier for customers to request an estimate.",
+    "",
+    webworkshopReviewPermissionCta,
+    "",
+    footer,
+  ].join("\n"));
+  assert.equal(email.split(webworkshopReviewPermissionCta).length - 1, 1);
+  assert.doesNotMatch(email, /I'm Brendan, and I build websites for local service businesses/i);
+  assert.doesNotMatch(email, /Would you be open to me putting together a quick website concept around your current services and branding\?/i);
   assert.doesNotMatch(email, /https?:\/\//);
 });
 

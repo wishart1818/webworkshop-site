@@ -782,7 +782,7 @@ test("Operator Test Center fake package models the manual Lovable workflow witho
   assert.equal(result.packagePreview?.yesReplyLinkFree, true);
   assert.equal(result.packagePreview?.currentWebsiteWording, true);
   assert.match(result.packagePreview?.publicPreviewLink ?? "", /^https:\/\/webworkshop\.dev\/p\//);
-  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you be interested in seeing what that could look like\?/i.test(script.body)));
+  assert.ok(fake?.scripts.some((script) => script.label === "First email script" && /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "First Facebook/Instagram DM script" && /Would you be interested in seeing what that could look like\?/i.test(script.body)));
   assert.ok(fake?.scripts.some((script) => script.label === "Softer DM script"));
   assert.ok(fake?.scripts.some((script) => script.label === "Yes-reply / manual-build confirmation" && /I'll put together a website concept and send you a quick video walkthrough/i.test(script.body) && !/https?:\/\/|\/p\//i.test(script.body)));
@@ -795,8 +795,9 @@ test("Operator Test Center fake package models the manual Lovable workflow witho
   const rebuildSentence = "I can rebuild your current website with a more modern design that gives the quote request a clear place alongside your core services, while also making your services, contact information, and quote request easier for customers to find.";
   assert.match(firstEmail, /I noticed the current quote request is difficult to find/i);
   assert.equal(currentPermissionFirstWebsiteWordingPasses({ firstEmail, observation, rebuildSentence }), true);
-  assert.ok(firstEmail.indexOf(observation) < firstEmail.indexOf(rebuildSentence));
-  assert.ok(firstEmail.indexOf(rebuildSentence) < firstEmail.indexOf("Would you be interested in seeing what that could look like?"));
+  assert.doesNotMatch(firstEmail, new RegExp(rebuildSentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(firstEmail.indexOf(observation) < firstEmail.indexOf("Would you be open to seeing a quick demo of what a refreshed website could look like?"));
+  assert.doesNotMatch(firstEmail, /I'm Brendan, and I build websites for local service businesses/i);
   assert.match(fake?.fullSummary ?? "", /No email, DM, form, phone call, or Loom was sent/i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First email script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
   assert.doesNotMatch(fake?.scripts.find((script) => script.label === "First Facebook\/Instagram DM script")?.body ?? "", /https:\/\/webworkshop\.dev\/p\//i);
@@ -1081,7 +1082,7 @@ test("safe readiness repair fixes deterministic copy, excludes suspicious email,
     assert.doesNotMatch(repairedCopy?.notes ?? "", /\[auto-email-approved\]/);
     assert.doesNotMatch(repairedCopy?.emailBody ?? "", /https:\/\/webworkshop\.dev\/p\/|One missed opportunity/i);
     assert.match(repairedCopy?.emailBody ?? "", /^Hi Ready Pressure Washing team,/);
-    assert.match(repairedCopy?.emailBody ?? "", /Would you be interested in seeing what that could look like\?/i);
+    assert.match(repairedCopy?.emailBody ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
     assert.match(repairedCopy?.emailBody ?? "", /If you'd rather not hear from me again/i);
     assert.equal(excludedEmail?.contactSource, "Needs manual verification");
     assert.equal(excludedEmail?.email, "admin@totalwptheme.com");

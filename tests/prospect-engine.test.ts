@@ -227,7 +227,9 @@ test("human-review outreach uses the saved observation without becoming strict s
 
   assert.ok(observation);
   assert.match(outreach.concise, new RegExp(observation.statement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(outreach.concise, new RegExp(observation.rebuildSentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(outreach.concise, new RegExp(observation.rebuildSentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(outreach.concise, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
+  assert.doesNotMatch(outreach.concise, /I'm Brendan, and I build websites for local service businesses/i);
   assert.equal(outreachObservationSupported(prepared, outreach.concise), true);
   assert.equal(evaluateOutreachEmailQuality(prepared, "", "written_only", testEnvironment).ready, true);
   assert.equal(prospectRoutingDecision(prepared).sending, "Review Only");
@@ -250,8 +252,9 @@ test("commercially improvable adequate websites enter only the human email revie
   assert.ok(observation);
   assert.match(outreach.concise, /had a couple ideas/i);
   assert.match(outreach.concise, /contact|estimate/i);
-  assert.match(outreach.concise, /Would you be open to me putting together a quick website concept around your current services and branding\?/i);
+  assert.match(outreach.concise, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
   assert.doesNotMatch(outreach.concise, /I can rebuild your current website/i);
+  assert.doesNotMatch(outreach.concise, /Would you be open to me putting together a quick website concept around your current services and branding\?/i);
   assert.doesNotMatch(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
   assert.doesNotMatch(outreach.concise, /\b(?:bad|outdated|losing leads|defective)\b/i);
   assert.equal(outreach.approved, false);
@@ -384,9 +387,9 @@ test("Outreach Package uses truthful permission-first copy before a manual build
 
   assert.equal(outreach.subjects[0], "Quick website idea for MC Pressure Washing FL");
   assert.match(outreach.concise, /I came across MC Pressure Washing FL while looking at pressure-washing businesses around Tampa/i);
-  assert.match(outreach.concise, /rebuild your current website with a more modern design/i);
-  assert.match(outreach.concise, /services, contact information, and quote request easier for customers to find/i);
-  assert.match(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
+  assert.match(outreach.concise, /I took a look at your website and had a couple ideas for a refreshed direction/i);
+  assert.match(outreach.concise, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
+  assert.doesNotMatch(outreach.concise, /I'm Brendan, and I build websites for local service businesses/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.concise, /\b(?:I|we)\s+(?:built|made|created|put together)\b.{0,60}\bpreview\b/i);
   assert.match(outreach.detailed, /I'll put together a website concept and send you a quick video walkthrough when it's ready/i);
@@ -410,11 +413,9 @@ test("first-touch email wording matches the manual Lovable permission-first temp
   assert.equal(firstTouchEmailDraft(hasWebsite, testFooter), [
   "Hi Styles Power Wash team,",
   "",
-  "I'm Brendan, and I build websites for local service businesses. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine.",
+  "I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine. I took a look at your website and had a couple ideas for a refreshed direction.",
   "",
-  "I can rebuild your current website with a more modern design that better represents your business and makes your services, contact information, and quote request easier for customers to find.",
-  "",
-  "Would you be interested in seeing what that could look like?",
+  "Would you be open to seeing a quick demo of what a refreshed website could look like?",
   "",
   testFooter,
 ].join("\n"));
@@ -494,7 +495,7 @@ test("permission-first outreach avoids repeating the business name and stays lin
   const previewLink = "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF";
   const outreach = generateOutreach(prospect, previewLink, { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI'm Brendan, and I build websites for local service businesses\. I came across Styles Power Wash while looking at pressure-washing businesses around St Augustine\./);
+  assert.match(outreach.concise, /Hi Styles Power Wash team,\n\nI came across Styles Power Wash while looking at pressure-washing businesses around St Augustine\. I took a look at your website and had a couple ideas for a refreshed direction\./);
   assert.doesNotMatch(outreach.concise, /Hi Styles Power Wash team,\n\n[^.]+Styles Power Wash[^.]+Styles Power Wash/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.detailed, new RegExp(previewLink.replaceAll("/", "\\/")));
@@ -521,8 +522,8 @@ test("outreach avoids analytical strength claims for weak websites", () => {
   }
   const outreach = generateOutreach(prospect, "https://webworkshop.dev/p/abcdefghijklmnopqrstuvwxyzABCDEF", { WEBWORKSHOP_POSTAL_ADDRESS: testPostalAddress });
 
-  assert.match(outreach.concise, /rebuild your current website with a more modern design/i);
-  assert.match(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
+  assert.match(outreach.concise, /I took a look at your website and had a couple ideas for a refreshed direction/i);
+  assert.match(outreach.concise, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
   assert.doesNotMatch(outreach.concise, /https?:\/\/|\/p\//i);
   assert.doesNotMatch(outreach.concise, /already pretty easy|solid technical foundation/i);
   assert.doesNotMatch(outreach.concise, /One thing that already works well|One missed opportunity/i);
