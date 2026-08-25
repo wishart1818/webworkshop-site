@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import {
   getOperatorTestCenterPayload,
   generateOneTestOutreachPackage,
+  regenerateOperatorUnsentOutreachCopy,
   runEmailSafetyGatesCheck,
   runFullAutonomousReadinessTest,
   runOperatorMarketScoutDryRun,
   runOperatorSmartAutonomousDryRun,
   runOperatorSmartBackfillTest,
+  runSafeReadinessRepair,
   sendOperatorTestNotification,
   sendOperatorTestSms,
   simulateNext24Hours,
@@ -15,6 +17,7 @@ import {
   regenerateOperatorUnsentOutreachCopyWithRecovery,
   runSafeReadinessRepairWithRecovery,
 } from "@/lib/operator-readiness-recovery";
+import { OutreachWebsiteFitBlockedError } from "@/lib/prospect-engine";
 import {
   disableAllProspectEmailSending,
   enableControlledEmailPilot,
@@ -24,6 +27,16 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+async function recoverWebsiteFitBlockedAction<T>(primary: () => Promise<T>, fallback: () => Promise<T>) {
+  try {
+    return await primary();
+  } catch (error) {
+    if (!(error instanceof OutreachWebsiteFitBlockedError)) throw error;
+    console.warn("[operator-test-center] Recovery hit a stale website-fit record; falling back to per-record safe handling.");
+    return fallback();
+  }
+}
 
 export async function GET() {
   try {
@@ -40,7 +53,10 @@ export async function POST(request: Request) {
       return NextResponse.json(generateOneTestOutreachPackage());
     }
     if (payload.action === "regenerate_unsent_outreach_copy") {
-      return NextResponse.json(await regenerateOperatorUnsentOutreachCopyWithRecovery());
+      return NextResponse.json(await recoverWebsiteFitBlockedAction(
+        () => regenerateOperatorUnsentOutreachCopyWithRecovery(),
+        () => regenerateOperatorUnsentOutreachCopy(),
+      ));
     }
     if (payload.action === "run_smart_backfill_test") {
       return NextResponse.json(await runOperatorSmartBackfillTest());
@@ -61,7 +77,10 @@ export async function POST(request: Request) {
       if (payload.confirmed !== true) {
         return NextResponse.json({ error: "Confirm the safe readiness repair before changing records." }, { status: 409 });
       }
-      return NextResponse.json(await runSafeReadinessRepairWithRecovery({ confirmed: true }));
+      return NextResponse.json(await recoverWebsiteFitBlockedAction(
+        () => runSafeReadinessRepairWithRecovery({ confirmed: true }),
+        () => runSafeReadinessRepair({ confirmed: true }),
+      ));
     }
     if (payload.action === "send_internal_notification") {
       return NextResponse.json(await sendOperatorTestNotification("notification"));
