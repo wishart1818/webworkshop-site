@@ -272,7 +272,7 @@ test("controlled launch readiness exposes one exact permission-first email and s
   assert.equal(result.emailPreview?.sourceUrl, "https://groundedhvac.com/contact");
   assert.equal(result.emailPreview?.extractionMethod, "mailto");
   assert.equal(result.emailPreview?.approvalState, "not approved");
-  assert.match(result.emailPreview?.body ?? "", /Would you be interested in seeing what that could look like\?/);
+  assert.match(result.emailPreview?.body ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/);
   assert.doesNotMatch(result.emailPreview?.body ?? "", /https?:\/\/|already built|built you/i);
   assert.match(result.emailPreview?.body ?? "", /Brendan[\s\S]*WebWorkshop[\s\S]*147 George St, Findlay, OH 45840/);
   assert.match(result.emailPreview?.body ?? "", /rather not hear from me again/i);

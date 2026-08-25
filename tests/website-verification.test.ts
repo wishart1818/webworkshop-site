@@ -657,7 +657,7 @@ test("verified owned usable HTML with multiple objective structural deficiencies
   });
   assert.equal(outreach.approved, false);
   assert.match(outreach.concise, /couldn't find clear service information/i);
-  assert.match(outreach.concise, /rebuild your current website with clear service information/i);
+  assert.match(outreach.concise, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
   assert.doesNotMatch(outreach.concise, /looks? (?:old|outdated)|old design|outdated design/i);
   assert.equal(result.prospect.outreach, undefined);
 });
@@ -738,8 +738,8 @@ test("automated inconclusive owned-site verification creates a safe review-only 
   const prepared = { ...result.prospect, outreach };
   const quality = evaluateOutreachEmailQuality(prepared, "", "written_only", environment);
   assert.equal(outreach.approved, false);
-  assert.match(outreach.concise, /Would you be interested in seeing what that could look like\?/i);
-  assert.match(outreach.concise, /rebuild your current website with a modern design/i);
+  assert.match(outreach.concise, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
+  assert.doesNotMatch(outreach.concise, /rebuild your current website with a modern design/i);
   assert.doesNotMatch(outreach.concise, /\b(?:old|outdated|bad|losing leads|customers cannot)\b/i);
   assert.equal(quality.ready, true);
   assert.equal(topProspectResultBucket({

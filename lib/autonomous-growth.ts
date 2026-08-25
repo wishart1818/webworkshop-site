@@ -37,6 +37,7 @@ import {
   webworkshopOptOutPattern,
   webworkshopPricingReply,
   webworkshopPreviewValueLine,
+  webworkshopReviewPermissionCta,
   webworkshopSofterFirstDm,
   webworkshopStarterPageReply,
   webworkshopYesReply,
@@ -1741,9 +1742,24 @@ export function rewriteOutreachWithFixes(emailBody: string, businessName = "") {
     ?? combinedIntroduction.match(/\bI came across[\s\S]*$/i)?.[0]
     ?? "I came across your business.";
   const noWebsite = /don't currently have a full website up|couldn't find a dedicated website|did not have a dedicated website/i.test(emailBody);
+  const evidenceLine = lines.find((line) => /^I (?:noticed|took a look at your website)\b/i.test(line));
   const offer = noWebsite
     ? `I couldn't find a dedicated website linked from the business's public profiles. ${webworkshopPreviewValueLine("no_website")}`
     : webworkshopPreviewValueLine("has_website");
+  if (!noWebsite) {
+    const contextualEvidence = /\bI (?:noticed|took a look at your website)\b/i.test(contextualOpening)
+      ? contextualOpening
+      : `${contextualOpening} ${evidenceLine ?? "I took a look at your website and had a couple ideas for a refreshed direction."}`;
+    return [
+      greeting,
+      "",
+      contextualEvidence,
+      "",
+      webworkshopReviewPermissionCta,
+      "",
+      optOut,
+    ].join("\n");
+  }
   return [
     greeting,
     "",

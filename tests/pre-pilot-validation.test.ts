@@ -199,12 +199,12 @@ test("incomplete raw HTML remains inconclusive instead of inventing a visual red
   );
 });
 
-test("clearly weak owned website retains one grounded issue and a directly matching rebuild sentence", () => {
+test("clearly weak owned website retains one grounded issue and the current demo CTA", () => {
   const prospect = verifiedWeakProspect();
   assert.equal(websiteFitAllowsAutonomousOutreach(prospect), true);
   assert.equal(prospectQualificationBlockReasons(prospect).length, 0);
   assert.match(prospect.outreach?.concise ?? "", /quote request is difficult to reach/);
-  assert.match(prospect.outreach?.concise ?? "", /rebuild your current website/);
+  assert.match(prospect.outreach?.concise ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/);
 });
 
 test("verified no-owned-website state uses cautious language and remains distinct from crawler failure", async () => {
@@ -470,7 +470,8 @@ test("unsupported praise is absent and a controlled general rebuild fallback rem
   const prospect = verifiedWeakProspect({ rating: 4.9, reviewCount: 200 });
   const body = prospect.outreach?.concise ?? "";
   assert.doesNotMatch(body, /love what you're doing|customers clearly love|amazing business|impressed by/i);
-  assert.match(body, /I noticed [\s\S]+I can rebuild your current website/);
+  assert.match(body, /I noticed /);
+  assert.match(body, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/);
 });
 
 test("freshness marks daily evidence, weekly fit, approval, and copy independently", () => {
@@ -490,14 +491,15 @@ test("freshness marks daily evidence, weekly fit, approval, and copy independent
   assert.equal(status.approvalFresh, false);
 });
 
-test("permission-first email stays short, link-free, rebuild-specific, and never claims a preview exists", () => {
+test("permission-first email stays concise, link-free, demo-specific, and never claims a preview exists", () => {
   const prospect = verifiedWeakProspect();
   const body = prospect.outreach?.concise ?? "";
   const beforeFooter = body.split("Thanks,")[0] ?? body;
   const wordCount = beforeFooter.trim().split(/\s+/).length;
-  assert.ok(wordCount >= 70 && wordCount <= 130, `Expected 70-130 words before footer, received ${wordCount}.`);
+  assert.ok(wordCount >= 35 && wordCount <= 80, `Expected 35-80 words before footer, received ${wordCount}.`);
   assert.equal(outreachDraftLooksCurrent(prospect.outreach!, postalEnvironment), true);
-  assert.match(body, /Would you be interested in seeing what that could look like\?/);
+  assert.equal(body.split("Would you be open to seeing a quick demo of what a refreshed website could look like?").length - 1, 1);
+  assert.doesNotMatch(body, /Would you be open to me putting together a quick website concept around your current services and branding\?/);
   assert.doesNotMatch(body, /https?:\/\/|\/p\/|already (?:built|made|created)|put together a preview/i);
 });
 

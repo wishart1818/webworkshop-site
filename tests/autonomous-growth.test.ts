@@ -3191,9 +3191,10 @@ test("rewrite outreach preserves opt-out language and removes hype posture", () 
   assert.match(rewritten, /^Hi Clear Flow Plumbing team,/);
   assert.doesNotMatch(rewritten, /^Hi Admin,/);
   assert.match(rewritten, /rather not hear from me again/);
-  assert.match(rewritten, /rebuild your current website with a more modern design/i);
   assert.match(rewritten, /roofing business while looking at companies around Toledo/i);
-  assert.match(rewritten, /Would you be interested in seeing what that could look like\?/);
+  assert.match(rewritten, /I took a look at your website and had a couple ideas for a refreshed direction\./i);
+  assert.match(rewritten, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/);
+  assert.doesNotMatch(rewritten, /I'm Brendan, and I build websites for local service businesses/i);
   assert.doesNotMatch(rewritten, /https:\/\/webworkshop\.dev\/p\/abcdefghijklmnopqrstuvwxyzABCDEF/);
   assert.doesNotMatch(rewritten, /free audit|transform your seamless/i);
 });
@@ -3274,7 +3275,7 @@ test("regeneration updates only unsent uncontacted packages and preserves sent o
     assert.equal(summary.updated, 2);
     assert.equal(summary.oldUnsentPackagesNeedingRegeneration, 2);
     assert.equal(regenerated?.outreachCopyVersion, currentOutreachCopyVersion);
-    assert.match(regenerated?.emailBody ?? "", /rebuild your current website with a more modern design/i);
+    assert.match(regenerated?.emailBody ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
     assert.doesNotMatch(regenerated?.emailBody ?? "", /One missed opportunity|https:\/\/webworkshop\.dev\/p\//i);
     assert.equal(regeneratedMissingPreview?.outreachCopyVersion, currentOutreachCopyVersion);
     assert.match(regeneratedMissingPreview?.loomTalkingPoints ?? "", /Preview missing - generate\/review preview before sending yes-reply/);
@@ -4202,7 +4203,7 @@ test("pre-interest Top Prospect artifacts create outreach without a preview", ()
   assert.equal(prepared.previewLink, "");
   assert.equal(prepared.buildPrompt, "");
   assert.equal(prepared.prospect.preview, undefined);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
 });
 
 test("review-only Top Prospect sync creates a grounded human-review queue item that cannot be approved", async () => {
@@ -4271,7 +4272,7 @@ test("review-only Top Prospect sync creates a grounded human-review queue item t
     assert.equal(queued.status, "Needs Review");
     assert.match(queued.eligibilityReason, /human review/i);
     assert.match(queued.emailBody, /had a couple of ideas/i);
-    assert.match(queued.emailBody, /rebuild your current website/i);
+    assert.match(queued.emailBody, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
     assert.doesNotMatch(queued.emailBody, /\b(?:old|outdated|bad|losing leads)\b/i);
 
     const approval = await approveAndQueueEmail(queued.id);
@@ -4425,7 +4426,7 @@ test("bulk copy regeneration preserves the saved contact first name from the liv
   assert.equal(refreshed.outreachCopyVersion, currentOutreachCopyVersion);
   assert.match(refreshed.emailBody, /^Hi Nick,/);
   assert.match(refreshed.emailBody, /quote request is difficult to reach on the current website/i);
-  assert.match(refreshed.emailBody, /rebuild your current website with a more modern design that makes requesting a quote easier/i);
+  assert.match(refreshed.emailBody, /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
 });
 
 test("verified contact first name save updates the prospect and only the linked editable draft", async () => {

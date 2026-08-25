@@ -3,6 +3,7 @@ import {
   webworkshopFirstDm,
   webworkshopFirstEmail,
   webworkshopOptOutLine,
+  webworkshopReviewPermissionCta,
   webworkshopYesReply,
 } from "@/lib/outreach-style-guide";
 import { attachResolvedPreviewImages, buildPreviewVisualAssetQa, isPublicPreviewImageRelevant, type PreviewImageSet } from "@/lib/preview-image-resolver";
@@ -2252,7 +2253,10 @@ export function outreachDraftLooksCurrent(outreach: Pick<OutreachDraft, "concise
   const firstTouch = outreach.concise ?? "";
   const combined = [firstTouch, outreach.detailed, ...(outreach.followUps ?? [])].join("\n");
   const address = webworkshopPostalAddress(environment);
-  const permissionFirstCta = /would you be interested in seeing what that could look like\?/i.test(firstTouch);
+  const noWebsiteFirstTouch = /couldn't find a dedicated website|build you a modern website from the ground up/i.test(firstTouch);
+  const permissionFirstCta = noWebsiteFirstTouch
+    ? /would you be interested in seeing what that could look like\?/i.test(firstTouch)
+    : firstTouch.toLowerCase().includes(webworkshopReviewPermissionCta.toLowerCase());
   const pastTensePreviewClaim = /\b(?:I|we)\s+(?:already\s+)?(?:built|made|created|finished|designed|put together)\b.{0,90}\b(?:preview|website|site|concept)\b/i.test(firstTouch);
   return outreach.outreachCopyVersion === OUTREACH_COPY_VERSION
     && !/https?:\/\/|\/p\/|\/engine(?:\/|$)/i.test(firstTouch)

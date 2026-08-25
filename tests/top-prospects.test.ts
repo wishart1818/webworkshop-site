@@ -512,8 +512,7 @@ test("Top Prospects keeps contact forms and social profiles manual and permissio
 
   assert.equal(topProspectRejectionReason(formPackage.prospect, formPackage.assessment, "growth"), null);
   assert.equal(formPackage.emailQuality.readinessLabel, "Send-ready");
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /rebuild your current website with a more modern design/i);
-  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
+  assert.match(formPackage.prospect.outreach?.concise ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
   assert.doesNotMatch(formPackage.prospect.outreach?.concise ?? "", /\/p\//i);
   assert.doesNotMatch(formPackage.prospect.outreach?.detailed ?? "", new RegExp(publicLink.replaceAll("/", "\\/")));
 
@@ -1064,7 +1063,7 @@ test("Top Prospect artifacts remain unapproved and keep the preview out of first
   assert.ok(prepared.prospect.preview);
   assert.match(prepared.previewLink, /^https:\/\/webworkshop\.dev\/p\//);
   assert.doesNotMatch(prepared.prospect.outreach?.concise ?? "", /https?:\/\/|\/p\//i);
-  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be interested in seeing what that could look like\?/i);
+  assert.match(prepared.prospect.outreach?.concise ?? "", /Would you be open to seeing a quick demo of what a refreshed website could look like\?/i);
   assert.match(prepared.prospect.outreach?.detailed ?? "", /I'll put together a website concept and send you a quick video walkthrough/i);
   assert.doesNotMatch(prepared.prospect.outreach?.detailed ?? "", new RegExp(prepared.previewLink.replaceAll("/", "\\/")));
   assert.equal(prepared.emailQuality.ready, true);
