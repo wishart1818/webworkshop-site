@@ -224,6 +224,23 @@ export type DiscoveryLogEvent =
 
 export type DiscoveryLogger = (event: DiscoveryLogEvent, metadata: Record<string, boolean | number | string>) => void;
 
+export type ProviderAttemptMetadata = {
+  provider: string;
+  operation: string;
+  query?: string;
+};
+
+export type ProviderAttemptBudget = {
+  reserve: (metadata: ProviderAttemptMetadata) => Promise<void>;
+};
+
+export class ProviderQueryBudgetReachedError extends Error {
+  constructor() {
+    super("The persisted provider-query budget has been reached.");
+    this.name = "ProviderQueryBudgetReachedError";
+  }
+}
+
 export type DiscoveryCandidate = {
   businessName: string;
   website?: string;
@@ -507,10 +524,16 @@ async function fetchWithBackoff(
   init: RequestInit,
   logger: DiscoveryLogger | undefined,
   metadata: Record<string, boolean | number | string>,
+  providerAttemptBudget?: ProviderAttemptBudget,
 ) {
   let retryCount = 0;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (attempt > 0) await delayProviderRequest(attempt);
+    await providerAttemptBudget?.reserve({
+      provider: String(metadata.provider ?? "provider"),
+      operation: String(metadata.queryKind ?? "search"),
+      query: String(metadata.query ?? ""),
+    });
     const response = await fetch(input, init);
     if (response.status !== 429 || attempt === 2) return { response, retryCount };
     retryCount += 1;
@@ -893,6 +916,31 @@ function overpassCandidates(elements: OverpassElement[]): DiscoveryCandidate[] {
   });
 }
 
+export function discoveryCandidatesHaveSameIdentity(
+  left: Pick<DiscoveryCandidate, "businessName" | "website" | "phone" | "address" | "latitude" | "longitude">,
+  right: Pick<DiscoveryCandidate, "businessName" | "website" | "phone" | "address" | "latitude" | "longitude">,
+) {
+  const leftName = normalizedBusinessIdentityName(left.businessName);
+  const rightName = normalizedBusinessIdentityName(right.businessName);
+  if (!leftName || leftName !== rightName) return false;
+  const leftDomain = isCredibleOwnedWebsiteCandidate(left.website ?? "") ? websiteKey(left.website!) : "";
+  const rightDomain = isCredibleOwnedWebsiteCandidate(right.website ?? "") ? websiteKey(right.website!) : "";
+  const leftPhone = normalizedCompletePhone(left.phone ?? "");
+  const rightPhone = normalizedCompletePhone(right.phone ?? "");
+  const leftAddress = normalizedStreetAddress(left.address ?? "");
+  const rightAddress = normalizedStreetAddress(right.address ?? "");
+  if (leftDomain && rightDomain && leftDomain !== rightDomain) return false;
+  if (leftPhone && rightPhone && leftPhone !== rightPhone) return false;
+  if (leftDomain && leftDomain === rightDomain) return true;
+  if (leftPhone && leftPhone === rightPhone) return true;
+  if (leftAddress && leftAddress === rightAddress) return true;
+  return Number.isFinite(left.latitude)
+    && Number.isFinite(left.longitude)
+    && Number.isFinite(right.latitude)
+    && Number.isFinite(right.longitude)
+    && distanceKm(Number(left.latitude), Number(left.longitude), Number(right.latitude), Number(right.longitude)) <= 0.35;
+}
+
 export function mergeDiscoveryCandidates(input: {
   candidates: DiscoveryCandidate[];
   latitude: number;
@@ -945,33 +993,9 @@ export function mergeDiscoveryCandidates(input: {
     longitude: Number.isFinite(candidate.longitude) ? Number(candidate.longitude) : null,
     observedAt,
   });
-  const coordinatesClose = (left: DiscoveryCandidate, right: DiscoveryCandidate) => (
-    Number.isFinite(left.latitude)
-    && Number.isFinite(left.longitude)
-    && Number.isFinite(right.latitude)
-    && Number.isFinite(right.longitude)
-    && distanceKm(Number(left.latitude), Number(left.longitude), Number(right.latitude), Number(right.longitude)) <= 0.35
-  );
-  const candidatesMatch = (left: DiscoveryCandidate, right: DiscoveryCandidate) => {
-    const leftName = normalizedBusinessIdentityName(left.businessName);
-    const rightName = normalizedBusinessIdentityName(right.businessName);
-    if (!leftName || leftName !== rightName) return false;
-    const leftDomain = isCredibleOwnedWebsiteCandidate(left.website ?? "") ? websiteKey(left.website!) : "";
-    const rightDomain = isCredibleOwnedWebsiteCandidate(right.website ?? "") ? websiteKey(right.website!) : "";
-    const leftPhone = normalizedCompletePhone(left.phone ?? "");
-    const rightPhone = normalizedCompletePhone(right.phone ?? "");
-    const leftAddress = normalizedStreetAddress(left.address ?? "");
-    const rightAddress = normalizedStreetAddress(right.address ?? "");
-    if (leftDomain && rightDomain && leftDomain !== rightDomain) return false;
-    if (leftPhone && rightPhone && leftPhone !== rightPhone) return false;
-    if (leftDomain && leftDomain === rightDomain) return true;
-    if (leftPhone && leftPhone === rightPhone) return true;
-    if (leftAddress && leftAddress === rightAddress) return true;
-    return coordinatesClose(left, right);
-  };
   for (const candidate of withinRadius) {
     if (candidate.inactive || !candidate.businessName.trim()) continue;
-    const existing = merged.find((record) => candidatesMatch(record, candidate));
+    const existing = merged.find((record) => discoveryCandidatesHaveSameIdentity(record, candidate));
     if (!existing) {
       merged.push({ ...candidate, sources: [candidate.source], providerIdentityEvidence: [candidateEvidence(candidate)] });
       continue;
@@ -1584,6 +1608,7 @@ async function optionalProviderCandidates(input: {
   radiusKm: number;
   query: string;
   endpointVersion?: GooglePlacesEndpointVersion;
+  providerAttemptBudget?: ProviderAttemptBudget;
 }): Promise<{ candidates: DiscoveryCandidate[]; diagnostic: DiscoveryProviderDiagnostic }> {
   const staticDiagnostic = input.provider ? providerStaticDiagnostic(input.provider) : {};
   const providerLabel = input.provider ? discoveryProviderDefinitions[input.provider].envVarName : "Provider configuration";
@@ -1608,6 +1633,7 @@ async function optionalProviderCandidates(input: {
       { ...input.init, signal: AbortSignal.timeout(12_000) },
       input.logger,
       { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, radiusKm: input.radiusKm },
+      input.providerAttemptBudget,
     );
     const timing = providerAttemptTiming(startedAt);
     if (!response.ok) {
@@ -1650,6 +1676,7 @@ async function optionalProviderCandidates(input: {
       }),
     };
   } catch (error) {
+    if (error instanceof ProviderQueryBudgetReachedError) throw error;
     const timedOut = error instanceof Error && error.name === "TimeoutError";
     const timing = providerAttemptTiming(startedAt);
     input.logger?.("provider_enrichment_failed", { provider: input.provider ?? input.source, queryKind: input.source, query: input.query, reason: timedOut ? "timed_out" : "request_failed", durationMs: timing.durationMs });
@@ -1676,6 +1703,7 @@ export async function discoverContractorsWithDiagnostics(input: {
   prospectType?: ProspectSearchType;
   skipThrottle?: boolean;
   logger?: DiscoveryLogger;
+  providerAttemptBudget?: ProviderAttemptBudget;
 }): Promise<DiscoveryResult> {
   const trade = normalizeTradeCategory(input.trade);
   if (!trade) throw new Error("Trade category is not supported.");
@@ -1708,8 +1736,10 @@ export async function discoverContractorsWithDiagnostics(input: {
   geocodeUrl.searchParams.set("countrycodes", "us");
   let geocodeResponse: Response;
   try {
+    await input.providerAttemptBudget?.reserve({ provider: "nominatim", operation: "geocode", query: `${city}, ${displayStateCode(input.state)}, USA` });
     geocodeResponse = await fetch(geocodeUrl, { headers, signal: AbortSignal.timeout(12_000) });
   } catch (error) {
+    if (error instanceof ProviderQueryBudgetReachedError) throw error;
     throw new TopProspectStageError(
       "geocoding_error",
       error instanceof DOMException && error.name === "TimeoutError"
@@ -1757,10 +1787,12 @@ export async function discoverContractorsWithDiagnostics(input: {
         },
         input.logger,
         { provider: "osm", queryKind, query: queryLabel, radiusKm: input.radiusKm },
+        input.providerAttemptBudget,
       );
       discoveryResponse = result.response;
       retryCount = result.retryCount;
     } catch (error) {
+      if (error instanceof ProviderQueryBudgetReachedError) throw error;
       const timedOut = error instanceof Error && error.name === "TimeoutError";
       const timing = providerAttemptTiming(startedAt);
       input.logger?.("provider_enrichment_failed", { provider: "osm", queryKind, query: queryLabel, reason: timedOut ? "timed_out" : "request_failed", durationMs: timing.durationMs });
@@ -1911,6 +1943,7 @@ export async function discoverContractorsWithDiagnostics(input: {
       radiusKm: input.radiusKm,
       query: googleQuery,
       endpointVersion: googleEndpoint.version,
+      providerAttemptBudget: input.providerAttemptBudget,
     });
   const bingResult = await optionalProviderCandidates({
       source: "bing",
@@ -1927,6 +1960,7 @@ export async function discoverContractorsWithDiagnostics(input: {
       logger: input.logger,
       radiusKm: input.radiusKm,
       query: bingQuery,
+      providerAttemptBudget: input.providerAttemptBudget,
     });
   const yelpResult = await optionalProviderCandidates({
       source: "yelp",
@@ -1939,6 +1973,7 @@ export async function discoverContractorsWithDiagnostics(input: {
       logger: input.logger,
       radiusKm: input.radiusKm,
       query: yelpQuery,
+      providerAttemptBudget: input.providerAttemptBudget,
     });
   const yellowPagesResult = await optionalProviderCandidates({
       source: "yellowPages",
@@ -1949,6 +1984,7 @@ export async function discoverContractorsWithDiagnostics(input: {
       logger: input.logger,
       radiusKm: input.radiusKm,
       query: `${trade} ${city}, ${displayStateCode(input.state)}`,
+      providerAttemptBudget: input.providerAttemptBudget,
     });
   const google = googleResult.candidates;
   const bing = bingResult.candidates;

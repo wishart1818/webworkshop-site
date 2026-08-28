@@ -20,6 +20,10 @@ test("Top Prospects saved settings restore the operator's prospect type and run 
     businessesToScan: 20,
     finalProspectsWanted: 3,
     excludePreviouslyReviewed: true,
+    searchUntilQualified: true,
+    qualifiedTarget: 5,
+    maxBusinessesToProcess: 125,
+    maxProviderQueries: 60,
   });
 
   assert.deepEqual(settings, {
@@ -34,6 +38,10 @@ test("Top Prospects saved settings restore the operator's prospect type and run 
     businessesToScan: 20,
     finalProspectsWanted: 3,
     excludePreviouslyReviewed: true,
+    searchUntilQualified: true,
+    qualifiedTarget: 5,
+    maxBusinessesToProcess: 125,
+    maxProviderQueries: 60,
   });
 });
 
@@ -50,6 +58,10 @@ test("Top Prospects saved settings reject invalid or corrupted values instead of
     businessesToScan: 10_000,
     finalProspectsWanted: 0,
     excludePreviouslyReviewed: "no",
+    searchUntilQualified: "yes",
+    qualifiedTarget: 100,
+    maxBusinessesToProcess: 1_000,
+    maxProviderQueries: 1_000,
   });
 
   assert.deepEqual(settings, { city: "Denton" });

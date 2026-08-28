@@ -413,12 +413,13 @@ test("Austin-style score clears the unchanged sales threshold once a verified ro
 test("Top Prospects calls bounded enrichment after protection and website-fit gates but before artifact assessment", async () => {
   const worker = await readFile(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
   const workspace = await readFile(new URL("../components/engine/TopProspectsWorkspace.tsx", import.meta.url), "utf8");
-  const currentResult = worker.indexOf("if (existingResult) return { qualified: existingResult.selected };");
-  const contacted = worker.indexOf("if (contactedStatuses.has(existing.status))");
-  const protection = worker.indexOf("if (prospectIsSuppressed(existing))");
-  const previouslyReviewed = worker.indexOf("if (excludePreviouslyReviewed && previouslyReviewed)");
-  const enrichment = worker.indexOf("existing = await enrichWrittenContactBeforeAssessment(existing, outreachPreference)");
-  const assessment = worker.indexOf("const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference)");
+  const processLeadStart = worker.indexOf("async function processLead(");
+  const currentResult = worker.indexOf("if (existingResult) return {", processLeadStart);
+  const contacted = worker.indexOf("if (contactedStatuses.has(existing.status))", currentResult);
+  const protection = worker.indexOf("if (prospectIsSuppressed(existing))", contacted);
+  const previouslyReviewed = worker.indexOf("if (excludePreviouslyReviewed && previouslyReviewed)", protection);
+  const enrichment = worker.indexOf("existing = await enrichWrittenContactBeforeAssessment(existing, outreachPreference)", previouslyReviewed);
+  const assessment = worker.indexOf("const savedResult = await saveTopProspectResult(jobId, existing, mode, outreachPreference)", enrichment);
   assert.ok(currentResult >= 0 && contacted > currentResult && protection > contacted && previouslyReviewed > protection);
   assert.ok(enrichment > previouslyReviewed && assessment > enrichment);
   assert.match(workspace, /Written contact enrichment:/);

@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { activity, displayStateCode, normalizeTradeCategory, titleCaseLocation } from "@/lib/prospect-engine";
 import { upsertAutonomousQueueItemFromPackage } from "@/lib/autonomous-growth-repository";
 import { getProspectDatabase, getProspect, saveProspect } from "@/lib/prospect-repository";
@@ -19,12 +19,14 @@ import {
   normalizeOutreachPackageStatus,
   normalizeProspectMode,
   normalizeTopProspectWorkflowType,
+  initialTargetSearchProgress,
   parseTopProspectCityTargets,
   outreachPackageActionAllowed,
   prepareTopProspectOutreachArtifacts,
   topProspectNextRunRecommendations,
   topProspectResultBucket,
   topProspectResultDisposition,
+  targetSearchProgressFromJson,
   validPublicPreviewToken,
 } from "@/lib/top-prospects";
 import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
@@ -147,6 +149,7 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
   const inferredScannedCount = Math.max(row.scannedCount, row.nextLeadIndex, allResults.length);
   const inferredSkippedCount = Math.max(row.skippedCount, inferredScannedCount - recommended.length);
   const diagnostics = discoveryDiagnosticsFromJson(row.discoveredLeads);
+  const targetSearch = targetSearchProgressFromJson(row.discoveredLeads);
   const unresolvedRecords = diagnostics?.unresolvedRecords ?? [];
   const manualOpportunityProspects = unresolvedRecords.filter((record) => record.reviewBucket === "manual_opportunity");
   const remainingUnresolvedProspects = unresolvedRecords.filter((record) => record.reviewBucket !== "manual_opportunity");
@@ -167,13 +170,21 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
       workflowType,
       outreachPreference,
       excludePreviouslyReviewed: diagnostics?.excludePreviouslyReviewed !== false,
+      ...(targetSearch
+        ? {
+            searchUntilQualified: true,
+            qualifiedTarget: targetSearch.qualifiedTarget,
+            maxBusinessesToProcess: targetSearch.maxBusinessesToProcess,
+            maxProviderQueries: targetSearch.maxProviderQueries,
+          }
+        : {}),
     },
     status: row.status as TopProspectJob["status"],
     stage: row.stage,
     discoveredCount: discoveryLeadsFromJson(row.discoveredLeads).length,
     discoveryDiagnostics: diagnostics,
     scannedCount: inferredScannedCount,
-    qualifiedCount: recommended.length,
+    qualifiedCount: targetSearch ? targetSearch.qualifiedProspectIds.length : recommended.length,
     skippedCount: inferredSkippedCount,
     skipSummary: recordValue(row.skipSummary),
     results: recommended,
@@ -188,6 +199,7 @@ async function toJob(row: JobRow): Promise<TopProspectJob> {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    targetSearch,
   };
   return { ...job, nextRunRecommendations: diagnostics?.nextRunRecommendations?.length ? diagnostics.nextRunRecommendations : topProspectNextRunRecommendations({ job }) };
 }
@@ -219,7 +231,39 @@ export async function createTopProspectJob(input: TopProspectInput) {
   return job;
 }
 
+export async function reserveTopProspectProviderAttempt(jobId: string, leaseToken: string) {
+  const database = getProspectDatabase();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await database.$transaction(async (transaction) => {
+        const row = await transaction.topProspectJob.findUnique({
+          where: { id: jobId },
+          select: { leaseToken: true, discoveredLeads: true },
+        });
+        if (!row || row.leaseToken !== leaseToken) throw new Error("Top Prospects worker lease is no longer current.");
+        const progress = targetSearchProgressFromJson(row.discoveredLeads);
+        if (!progress || !progress.continuationAllowed || progress.stopReason) return false;
+        if (progress.providerQueriesUsed >= progress.maxProviderQueries) return false;
+        if (!row.discoveredLeads || Array.isArray(row.discoveredLeads) || typeof row.discoveredLeads !== "object") return false;
+        const envelope = structuredClone(row.discoveredLeads) as Record<string, unknown>;
+        envelope.targetSearch = { ...progress, providerQueriesUsed: progress.providerQueriesUsed + 1 };
+        const updated = await transaction.topProspectJob.updateMany({
+          where: { id: jobId, leaseToken },
+          data: { discoveredLeads: envelope as Prisma.InputJsonValue },
+        });
+        if (updated.count !== 1) throw new Error("Top Prospects worker lease changed during provider-budget reservation.");
+        return true;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+      if (!retryable || attempt === 2) throw error;
+    }
+  }
+  return false;
+}
+
 export function topProspectJobPersistenceData(input: TopProspectInput) {
+  const targetSearch = initialTargetSearchProgress(input);
   return {
     tradeCategory: input.trade === "All Core Service Trades" ? input.trade : normalizeTradeCategory(input.trade) ?? "General Contractor",
     city: titleCaseLocation(input.city),
@@ -233,6 +277,7 @@ export function topProspectJobPersistenceData(input: TopProspectInput) {
     outreachPreference: input.outreachPreference,
     discoveredLeads: {
       leads: [],
+      ...(targetSearch ? { targetSearch } : {}),
       diagnostics: {
         rawProviderCount: 0,
         afterDistanceFilteringCount: 0,

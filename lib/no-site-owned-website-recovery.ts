@@ -1,5 +1,9 @@
 import type { Prospect } from "@/lib/prospect-engine";
 import {
+  ProviderQueryBudgetReachedError,
+  type ProviderAttemptBudget,
+} from "@/lib/lead-discovery";
+import {
   discoveryIdentityEvidenceFromSignals,
   discoveryIdentityEvidenceIsFresh,
   isCredibleOwnedWebsiteCandidate,
@@ -56,6 +60,7 @@ export type OwnedWebsiteRecoveryDependencies = {
   allowHistoricalLookup?: boolean;
   // A stale no-site refresh must collect current provider observations instead of trusting stored source membership.
   forceCurrentProviderRefresh?: boolean;
+  providerAttemptBudget?: ProviderAttemptBudget;
 };
 
 export type TargetedProviderIdentityLookup = {
@@ -371,6 +376,7 @@ export async function discoverIndependentNoSiteIdentityResolution(
     const anchor = bindings.evidence.find((item) => item.latitude !== null && item.longitude !== null);
     const batches = await Promise.all(queries.map(async (query): Promise<DiscoveryIdentityEvidence[]> => {
       try {
+        await dependencies.providerAttemptBudget?.reserve({ provider: "azureMaps", operation: "identity_enrichment", query });
         const url = new URL(process.env.AZURE_MAPS_POI_API_URL?.trim() || "https://atlas.microsoft.com/search/poi/json");
         url.searchParams.set("api-version", "1.0");
         url.searchParams.set("subscription-key", azureMapsKey);
@@ -391,7 +397,8 @@ export async function discoverIndependentNoSiteIdentityResolution(
         return (payload.results ?? [])
           .map((place) => azurePlaceEvidence(place, observedAt))
           .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
-      } catch {
+      } catch (error) {
+        if (error instanceof ProviderQueryBudgetReachedError) throw error;
         return [];
       }
     }));
@@ -409,6 +416,7 @@ export async function discoverIndependentNoSiteIdentityResolution(
   if ((forceCurrentRefresh || !sources.has("google")) && googlePlacesApiKey) {
     const batches = await Promise.all(queries.map(async (query): Promise<DiscoveryIdentityEvidence[]> => {
       try {
+        await dependencies.providerAttemptBudget?.reserve({ provider: "googlePlaces", operation: "identity_enrichment", query });
         const response = await fetchImpl("https://places.googleapis.com/v1/places:searchText", {
           method: "POST",
           headers: {
@@ -425,7 +433,8 @@ export async function discoverIndependentNoSiteIdentityResolution(
         return (payload.places ?? [])
           .map((place) => googlePlaceEvidence(place, observedAt))
           .filter((item): item is DiscoveryIdentityEvidence => Boolean(item));
-      } catch {
+      } catch (error) {
+        if (error instanceof ProviderQueryBudgetReachedError) throw error;
         return [];
       }
     }));
@@ -500,6 +509,7 @@ export async function discoverGoogleOwnedWebsiteResolution(
   const observedAt = (dependencies.now?.() ?? new Date()).toISOString();
 
   try {
+    await dependencies.providerAttemptBudget?.reserve({ provider: "googlePlaces", operation: "owned_website_recovery", query });
     const response = await fetchImpl("https://places.googleapis.com/v1/places:searchText", {
       method: "POST",
       headers: {
@@ -542,7 +552,8 @@ export async function discoverGoogleOwnedWebsiteResolution(
         provider: "" as const,
       })),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof ProviderQueryBudgetReachedError) throw error;
     return null;
   }
 }

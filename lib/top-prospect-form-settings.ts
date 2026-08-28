@@ -20,6 +20,10 @@ export type TopProspectFormSettings = {
   businessesToScan: number;
   finalProspectsWanted: number;
   excludePreviouslyReviewed: boolean;
+  searchUntilQualified: boolean;
+  qualifiedTarget: number;
+  maxBusinessesToProcess: number;
+  maxProviderQueries: number;
 };
 
 const prospectModes = new Set<ProspectMode>(["strict", "growth", "volume"]);
@@ -64,6 +68,13 @@ export function normalizeTopProspectFormSettings(value: unknown): Partial<TopPro
   const finalProspectsWanted = boundedInteger(candidate.finalProspectsWanted, 1, 25);
   if (finalProspectsWanted !== undefined) normalized.finalProspectsWanted = finalProspectsWanted;
   if (typeof candidate.excludePreviouslyReviewed === "boolean") normalized.excludePreviouslyReviewed = candidate.excludePreviouslyReviewed;
+  if (typeof candidate.searchUntilQualified === "boolean") normalized.searchUntilQualified = candidate.searchUntilQualified;
+  const qualifiedTarget = boundedInteger(candidate.qualifiedTarget, 1, 25);
+  if (qualifiedTarget !== undefined) normalized.qualifiedTarget = qualifiedTarget;
+  const maxBusinessesToProcess = boundedInteger(candidate.maxBusinessesToProcess, 5, 250);
+  if (maxBusinessesToProcess !== undefined) normalized.maxBusinessesToProcess = maxBusinessesToProcess;
+  const maxProviderQueries = boundedInteger(candidate.maxProviderQueries, 1, 240);
+  if (maxProviderQueries !== undefined) normalized.maxProviderQueries = maxProviderQueries;
 
   return normalized;
 }

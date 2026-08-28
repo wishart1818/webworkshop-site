@@ -9,6 +9,7 @@ import {
   shouldShowLimitedProviderCoverageWarning,
   mergeDiscoveryCandidates,
   processDiscoveryElements,
+  ProviderQueryBudgetReachedError,
   resetDiscoveryThrottleForTests,
   type DiscoveredLead,
   type DiscoveryResult,
@@ -517,6 +518,120 @@ test("provider throttling retries HTTP 429 and records retry diagnostics", async
     assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.status, "succeeded");
     assert.equal(result.diagnostics.providerDiagnostics.googlePlaces.retryCount, 1);
     assert.equal(result.leads[0]?.businessName, "Retry Roofing");
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetDiscoveryThrottleForTests();
+  }
+});
+
+test("provider budget reserves every actual discovery attempt before dispatch, including retries", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    GOOGLE_PLACES_API_URL: process.env.GOOGLE_PLACES_API_URL,
+    AZURE_MAPS_API_KEY: process.env.AZURE_MAPS_API_KEY,
+    BING_MAPS_API_KEY: process.env.BING_MAPS_API_KEY,
+    YELP_API_KEY: process.env.YELP_API_KEY,
+    YELLOW_PAGES_API_URL: process.env.YELLOW_PAGES_API_URL,
+    DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
+  };
+  process.env.GOOGLE_PLACES_API_KEY = "provider-budget-test";
+  delete process.env.GOOGLE_PLACES_API_URL;
+  delete process.env.AZURE_MAPS_API_KEY;
+  delete process.env.BING_MAPS_API_KEY;
+  delete process.env.YELP_API_KEY;
+  delete process.env.YELLOW_PAGES_API_URL;
+  process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
+  const reservations: string[] = [];
+  let fetchCalls = 0;
+  let googleCalls = 0;
+  globalThis.fetch = async (input) => {
+    fetchCalls += 1;
+    assert.ok(reservations.length >= fetchCalls, "Each provider attempt must reserve before fetch.");
+    const url = String(input);
+    if (url.includes("nominatim")) return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
+    if (url.includes("overpass")) return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+    if (url.includes("googleapis")) {
+      googleCalls += 1;
+      return googleCalls === 1
+        ? new Response("retry", { status: 429, headers: { "retry-after": "0" } })
+        : new Response(JSON.stringify({ places: [] }), { status: 200 });
+    }
+    throw new Error(`Unexpected provider URL: ${url}`);
+  };
+  resetDiscoveryThrottleForTests();
+  try {
+    await discoverContractorsWithDiagnostics({
+      city: "Toledo",
+      state: "OH",
+      trade: "Roofing",
+      radiusKm: 25,
+      limit: 10,
+      providerAttemptBudget: {
+        async reserve(metadata) {
+          reservations.push(`${metadata.provider}:${metadata.operation}`);
+        },
+      },
+    });
+    assert.equal(reservations.length, fetchCalls);
+    assert.equal(googleCalls, 2);
+    assert.ok(reservations.some((item) => item.startsWith("nominatim:geocode")));
+    assert.equal(reservations.filter((item) => item.startsWith("googlePlaces:")).length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetDiscoveryThrottleForTests();
+  }
+});
+
+test("provider budget exhaustion prevents dispatch beyond the reserved hard cap", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    AZURE_MAPS_API_KEY: process.env.AZURE_MAPS_API_KEY,
+    BING_MAPS_API_KEY: process.env.BING_MAPS_API_KEY,
+    YELP_API_KEY: process.env.YELP_API_KEY,
+    YELLOW_PAGES_API_URL: process.env.YELLOW_PAGES_API_URL,
+    DISCOVERY_PROVIDER_DELAY_MS: process.env.DISCOVERY_PROVIDER_DELAY_MS,
+  };
+  delete process.env.GOOGLE_PLACES_API_KEY;
+  delete process.env.AZURE_MAPS_API_KEY;
+  delete process.env.BING_MAPS_API_KEY;
+  delete process.env.YELP_API_KEY;
+  delete process.env.YELLOW_PAGES_API_URL;
+  process.env.DISCOVERY_PROVIDER_DELAY_MS = "0";
+  let reserved = 0;
+  let dispatched = 0;
+  globalThis.fetch = async (input) => {
+    dispatched += 1;
+    const url = String(input);
+    if (url.includes("nominatim")) return new Response(JSON.stringify([{ lat: "41.6528", lon: "-83.5379" }]), { status: 200 });
+    return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+  };
+  resetDiscoveryThrottleForTests();
+  try {
+    await assert.rejects(() => discoverContractorsWithDiagnostics({
+      city: "Toledo",
+      state: "OH",
+      trade: "Roofing",
+      radiusKm: 25,
+      limit: 10,
+      providerAttemptBudget: {
+        async reserve() {
+          if (reserved >= 2) throw new ProviderQueryBudgetReachedError();
+          reserved += 1;
+        },
+      },
+    }), ProviderQueryBudgetReachedError);
+    assert.equal(reserved, 2);
+    assert.equal(dispatched, 2);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalEnv)) {
