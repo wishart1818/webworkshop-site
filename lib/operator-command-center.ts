@@ -182,6 +182,10 @@ const supportedFields = new Set([
   "BUSINESSES_TO_SCAN",
   "FINAL_PROSPECTS_WANTED",
   "EXCLUDE_PREVIOUSLY_REVIEWED",
+  "SEARCH_UNTIL_QUALIFIED",
+  "QUALIFIED_TARGET",
+  "MAX_BUSINESSES_TO_PROCESS",
+  "MAX_PROVIDER_QUERIES",
 ]);
 
 function isOperatorCommandType(value: string): value is OperatorCommandType {
@@ -311,6 +315,18 @@ function normalizeTopProspectStructuredInput(fields: Record<string, string>, err
   const businessesToScan = strictCommandInteger(fields.BUSINESSES_TO_SCAN, "BUSINESSES_TO_SCAN", errors);
   const finalProspectsWanted = strictCommandInteger(fields.FINAL_PROSPECTS_WANTED, "FINAL_PROSPECTS_WANTED", errors);
   const excludePreviouslyReviewed = boolValue(fields.EXCLUDE_PREVIOUSLY_REVIEWED, "EXCLUDE_PREVIOUSLY_REVIEWED", errors);
+  const searchUntilQualified = fields.SEARCH_UNTIL_QUALIFIED === undefined
+    ? false
+    : boolValue(fields.SEARCH_UNTIL_QUALIFIED, "SEARCH_UNTIL_QUALIFIED", errors);
+  const qualifiedTarget = fields.QUALIFIED_TARGET === undefined
+    ? undefined
+    : strictCommandInteger(fields.QUALIFIED_TARGET, "QUALIFIED_TARGET", errors);
+  const maxBusinessesToProcess = fields.MAX_BUSINESSES_TO_PROCESS === undefined
+    ? undefined
+    : strictCommandInteger(fields.MAX_BUSINESSES_TO_PROCESS, "MAX_BUSINESSES_TO_PROCESS", errors);
+  const maxProviderQueries = fields.MAX_PROVIDER_QUERIES === undefined
+    ? undefined
+    : strictCommandInteger(fields.MAX_PROVIDER_QUERIES, "MAX_PROVIDER_QUERIES", errors);
   if (!location || !trade || !prospectType || !mode || !outreachPreference || radiusKm === undefined || businessesToScan === undefined || finalProspectsWanted === undefined || excludePreviouslyReviewed === undefined) {
     return null;
   }
@@ -327,6 +343,10 @@ function normalizeTopProspectStructuredInput(fields: Record<string, string>, err
     workflowType: normalizeTopProspectWorkflowType("search"),
     outreachPreference,
     excludePreviouslyReviewed,
+    searchUntilQualified,
+    qualifiedTarget,
+    maxBusinessesToProcess,
+    maxProviderQueries,
   });
   if (!validation.ok) {
     errors.push(validation.error);
@@ -347,6 +367,12 @@ function setTopProspectPreviewParameters(preview: OperatorCommandPreview, input:
   preview.parsedParameters.FINAL_PROSPECTS_WANTED = input.finalProspectsWanted;
   preview.parsedParameters.EXCLUDE_PREVIOUSLY_REVIEWED = input.excludePreviouslyReviewed;
   preview.parsedParameters.WORKFLOW_TYPE = input.workflowType;
+  if (input.searchUntilQualified) {
+    preview.parsedParameters.SEARCH_UNTIL_QUALIFIED = true;
+    preview.parsedParameters.QUALIFIED_TARGET = input.qualifiedTarget ?? 5;
+    preview.parsedParameters.MAX_BUSINESSES_TO_PROCESS = input.maxBusinessesToProcess ?? input.businessesToScan;
+    preview.parsedParameters.MAX_PROVIDER_QUERIES = input.maxProviderQueries ?? 60;
+  }
 }
 
 function validatedTopProspectInputFromPreview(preview: OperatorCommandPreview) {
@@ -362,6 +388,10 @@ function validatedTopProspectInputFromPreview(preview: OperatorCommandPreview) {
     workflowType: preview.parsedParameters.WORKFLOW_TYPE,
     outreachPreference: preview.parsedParameters.OUTREACH_PREFERENCE,
     excludePreviouslyReviewed: preview.parsedParameters.EXCLUDE_PREVIOUSLY_REVIEWED,
+    searchUntilQualified: preview.parsedParameters.SEARCH_UNTIL_QUALIFIED,
+    qualifiedTarget: preview.parsedParameters.QUALIFIED_TARGET,
+    maxBusinessesToProcess: preview.parsedParameters.MAX_BUSINESSES_TO_PROCESS,
+    maxProviderQueries: preview.parsedParameters.MAX_PROVIDER_QUERIES,
   });
   if (!validation.ok) throw new Error(validation.error);
   return validation.value;
@@ -379,6 +409,14 @@ function topProspectSearchSummary(input: TopProspectInput) {
     `Final prospects wanted: ${input.finalProspectsWanted}`,
     `Exclude previously reviewed: ${input.excludePreviouslyReviewed}`,
     `Workflow: ${input.workflowType}`,
+    ...(input.searchUntilQualified
+      ? [
+          "Target mode: enabled",
+          `Qualified target: ${input.qualifiedTarget}`,
+          `Maximum businesses: ${input.maxBusinessesToProcess}`,
+          `Maximum provider queries: ${input.maxProviderQueries}`,
+        ]
+      : []),
   ];
 }
 
@@ -512,7 +550,7 @@ function structuredPreview(commandText: string): OperatorCommandPreview {
   for (const [key, value] of Object.entries(parsed.fields)) {
     if (key === "COMMAND") continue;
     if (key.endsWith("_CAP") || key === "COOLDOWN_MINUTES") preview.parsedParameters[key] = positiveInteger(value, key, preview.validationErrors, key === "COOLDOWN_MINUTES" ? 240 : 500) ?? 0;
-    else if (["PROCESS_EXISTING_FIRST", "FULL_AUTO", "FOLLOW_UPS", "FORCE"].includes(key)) preview.parsedParameters[key] = boolValue(value, key, preview.validationErrors) ?? false;
+    else if (["PROCESS_EXISTING_FIRST", "FULL_AUTO", "FOLLOW_UPS", "FORCE", "SEARCH_UNTIL_QUALIFIED"].includes(key)) preview.parsedParameters[key] = boolValue(value, key, preview.validationErrors) ?? false;
     else preview.parsedParameters[key] = safeOperatorText(value);
   }
   if (command === "RUN_TOP_PROSPECTS_SEARCH") {

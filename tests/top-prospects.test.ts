@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { handleTopProspectList, topProspectBuildVersion } from "../lib/top-prospect-list-route";
 import { topProspectJobPersistenceData } from "../lib/top-prospect-repository";
-import { topProspectExecutionSettings } from "../lib/top-prospect-worker";
+import { appendUniqueTargetLeads, topProspectExecutionSettings } from "../lib/top-prospect-worker";
 import {
   assessOpportunity,
   assessNoWebsiteOpportunity,
@@ -34,6 +34,12 @@ import {
   topProspectRejectionReason,
   topProspectResultBucket,
   topProspectResultDisposition,
+  targetSearchDefaults,
+  targetSearchMaximums,
+  targetSearchExpansionPlan,
+  targetSearchHardStopReason,
+  targetSearchProgressFromJson,
+  targetSearchSpaceIsExhausted,
   thirdPartyListingOnly,
   validateTopProspectInput,
   websiteBusinessMismatch,
@@ -204,6 +210,191 @@ test("Top Prospects input applies bounded production-safe limits", () => {
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, mode: "unknown" }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, workflowType: "unknown" }).ok, false);
   assert.equal(validateTopProspectInput({ trade: "Roofing", city: "Findlay", state: "OH", radiusKm: 25, businessesToScan: 10, finalProspectsWanted: 5, outreachPreference: "cold_call_everyone" }).ok, false);
+});
+
+test("target search is explicit, server bounded, and defaults independently of fixed-run scan size", () => {
+  const target = validateTopProspectInput({
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    radiusKm: 25,
+    businessesToScan: 20,
+    finalProspectsWanted: 5,
+    prospectType: "all",
+    mode: "growth",
+    outreachPreference: "written_only",
+    searchUntilQualified: true,
+  });
+  assert.equal(target.ok, true);
+  if (target.ok) {
+    assert.equal(target.value.qualifiedTarget, targetSearchDefaults.qualifiedTarget);
+    assert.equal(target.value.maxBusinessesToProcess, targetSearchDefaults.maxBusinessesToProcess);
+    assert.equal(target.value.maxProviderQueries, targetSearchDefaults.maxProviderQueries);
+    assert.equal(target.value.businessesToScan, targetSearchDefaults.maxBusinessesToProcess);
+  }
+
+  const fixed = validateTopProspectInput({
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    radiusKm: 25,
+    businessesToScan: 20,
+    finalProspectsWanted: 5,
+  });
+  assert.equal(fixed.ok, true);
+  if (fixed.ok) {
+    assert.equal(fixed.value.searchUntilQualified, undefined);
+    assert.equal(fixed.value.businessesToScan, 20);
+  }
+
+  const base = {
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    radiusKm: 25,
+    businessesToScan: 20,
+    finalProspectsWanted: 5,
+    prospectType: "all",
+    mode: "growth",
+    outreachPreference: "written_only",
+    searchUntilQualified: true,
+  };
+  assert.equal(validateTopProspectInput({ ...base, qualifiedTarget: targetSearchMaximums.qualifiedTarget + 1 }).ok, false);
+  assert.equal(validateTopProspectInput({ ...base, maxBusinessesToProcess: targetSearchMaximums.maxBusinessesToProcess + 1 }).ok, false);
+  assert.equal(validateTopProspectInput({ ...base, maxProviderQueries: targetSearchMaximums.maxProviderQueries + 1 }).ok, false);
+  assert.equal(validateTopProspectInput({ ...base, city: "Tampa, FL; Orlando, FL" }).ok, false);
+  assert.equal(validateTopProspectInput({ ...base, trade: "All Core Service Trades" }).ok, false);
+  assert.equal(validateTopProspectInput({ ...base, outreachPreference: "phone_allowed" }).ok, false);
+  assert.equal(validateTopProspectInput({ ...base, qualifiedTarget: 6, maxBusinessesToProcess: 5 }).ok, false);
+});
+
+test("target expansion and persisted restart state are deterministic and defensive", () => {
+  const plan = targetSearchExpansionPlan({ city: "Tampa", state: "FL", radiusKm: 25 });
+  assert.deepEqual(plan.map(({ city, state, radiusKm }) => [city, state, radiusKm]), [
+    ["Tampa", "FL", 25],
+    ["Tampa", "FL", 50],
+    ["St. Petersburg", "FL", 50],
+    ["Clearwater", "FL", 50],
+    ["Lakeland", "FL", 50],
+    ["Orlando", "FL", 50],
+  ]);
+  assert.deepEqual(targetSearchExpansionPlan({ city: "Tampa", state: "FL", radiusKm: 25 }), plan);
+  assert.equal(plan.filter((stage) => stage.city === "Tampa" && stage.radiusKm === 25).length, 1);
+  assert.deepEqual(targetSearchExpansionPlan({ city: "Findlay", state: "OH", radiusKm: 25 }).map((stage) => stage.radiusKm), [25, 50]);
+
+  const validation = validateTopProspectInput({
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    radiusKm: 25,
+    businessesToScan: 10,
+    finalProspectsWanted: 5,
+    prospectType: "all",
+    mode: "growth",
+    outreachPreference: "written_only",
+    searchUntilQualified: true,
+  });
+  assert.equal(validation.ok, true);
+  if (!validation.ok) return;
+  const persisted = topProspectJobPersistenceData(validation.value);
+  const decoded = targetSearchProgressFromJson(persisted.discoveredLeads);
+  assert.ok(decoded);
+  assert.equal(decoded?.providerQueriesUsed, 0);
+  assert.equal(decoded?.nextExpansionIndex, 0);
+  assert.deepEqual(decoded?.qualifiedProspectIds, []);
+  assert.deepEqual(decoded?.expansionPlan, plan);
+  const duplicatedIds = targetSearchProgressFromJson({
+    ...persisted.discoveredLeads,
+    targetSearch: {
+      ...decoded,
+      qualifiedProspectIds: ["prospect-1", "prospect-1", "prospect-2"],
+    },
+  });
+  assert.deepEqual(duplicatedIds?.qualifiedProspectIds, ["prospect-1", "prospect-2"]);
+  assert.equal(targetSearchProgressFromJson({ leads: [] }), null);
+  const malformed = targetSearchProgressFromJson({ targetSearch: { version: 999, enabled: true, maxProviderQueries: 999999 } });
+  assert.equal(malformed?.continuationAllowed, false);
+  assert.equal(malformed?.stopReason, "PROVIDER_OR_SYSTEM_FAILURE");
+  const malformedWithPlan = targetSearchProgressFromJson({
+    targetSearch: {
+      ...decoded,
+      version: 999,
+      expansionPlan: plan,
+      continuationAllowed: true,
+    },
+  });
+  assert.equal(malformedWithPlan?.continuationAllowed, false);
+  assert.equal(malformedWithPlan?.stopReason, "PROVIDER_OR_SYSTEM_FAILURE");
+  assert.deepEqual(malformedWithPlan?.expansionPlan, []);
+  const missingBudgetCounter = structuredClone(decoded!);
+  delete (missingBudgetCounter as Partial<typeof missingBudgetCounter>).providerQueriesUsed;
+  const missingBudgetState = targetSearchProgressFromJson({ targetSearch: missingBudgetCounter });
+  assert.equal(missingBudgetState?.continuationAllowed, false);
+  assert.deepEqual(missingBudgetState?.expansionPlan, []);
+  const malformedHistory = targetSearchProgressFromJson({
+    targetSearch: {
+      ...decoded,
+      expansionHistory: [{ index: 0, completedAt: new Date().toISOString() }],
+    },
+  });
+  assert.deepEqual(malformedHistory?.expansionHistory[0].qualifiedProspectIds, []);
+});
+
+test("cross-stage candidate yield uses shared conservative identity reconciliation", () => {
+  const existing = [{
+    businessName: "Tampa Clean Co",
+    website: "https://tampaclean.example",
+    profileUrl: "",
+    phone: "813-555-0100",
+    email: "",
+    contactFormUrl: "",
+    address: "1 Main St",
+    city: "Tampa",
+    state: "FL",
+    trade: "Cleaning" as const,
+    source: "google" as const,
+    sources: ["google" as const],
+    sourceConfidence: 80,
+    prospectType: "redesign" as const,
+    classification: "website_redesign" as const,
+    recommendedContactMethod: "call_first" as const,
+    bestManualContactMethod: "phone" as const,
+    contactConfidence: "medium" as const,
+    activitySignals: [],
+  }];
+  const duplicate = { ...existing[0], source: "bing" as const, sources: ["bing" as const], sourceConfidence: 90 };
+  const differentSameName = { ...duplicate, website: "https://different.example", phone: "813-555-0199", address: "99 Other St" };
+  const merged = appendUniqueTargetLeads(existing, [duplicate, differentSameName]);
+  assert.equal(merged.newUniqueCandidates, 1);
+  assert.equal(merged.leads.length, 2);
+  assert.deepEqual(merged.leads[0].sources, ["google", "bing"]);
+});
+
+test("target stop decisions honor qualified, business, provider, and stagnation limits without lowering gates", () => {
+  const validation = validateTopProspectInput({
+    trade: "Pressure Washing",
+    city: "Tampa",
+    state: "FL",
+    radiusKm: 25,
+    finalProspectsWanted: 5,
+    prospectType: "all",
+    mode: "growth",
+    outreachPreference: "written_only",
+    searchUntilQualified: true,
+    qualifiedTarget: 5,
+    maxBusinessesToProcess: 125,
+    maxProviderQueries: 60,
+  });
+  assert.equal(validation.ok, true);
+  if (!validation.ok) return;
+  const progress = targetSearchProgressFromJson(topProspectJobPersistenceData(validation.value).discoveredLeads);
+  assert.ok(progress);
+  assert.equal(targetSearchHardStopReason({ ...progress, qualifiedProspectIds: ["1", "2", "3", "4", "5"] }, 25), "QUALIFIED_TARGET_REACHED");
+  assert.equal(targetSearchHardStopReason({ ...progress, qualifiedProspectIds: ["1", "2"] }, 125), "TARGET_NOT_REACHED_SAFELY");
+  assert.equal(targetSearchHardStopReason({ ...progress, qualifiedProspectIds: ["1", "2"], providerQueriesUsed: 60 }, 40), "PROVIDER_BUDGET_REACHED");
+  assert.equal(targetSearchHardStopReason({ ...progress, qualifiedProspectIds: ["1", "2"] }, 40), null);
+  assert.equal(targetSearchSpaceIsExhausted({ ...progress, consecutiveZeroYieldStages: 2 }), true);
+  assert.equal(targetSearchSpaceIsExhausted({ ...progress, consecutiveZeroYieldStages: 1, nextExpansionIndex: 1 }), false);
 });
 
 test("Top Prospects job statuses include waiting and partial completion states", () => {

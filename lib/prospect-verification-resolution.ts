@@ -1,4 +1,5 @@
 import type { Prospect, WebsiteVerificationReport } from "@/lib/prospect-engine";
+import type { ProviderAttemptBudget } from "@/lib/lead-discovery";
 import {
   normalizeWebsiteFitDisposition,
   websiteFitAllowsAutonomousOutreach,
@@ -81,6 +82,7 @@ export type SharedProspectVerificationDependencies = WebsiteVerificationDependen
   allowHistoricalNoSiteLookup?: boolean;
   forceNoSiteEvidenceRefresh?: boolean;
   legacyDeterministicCandidateUrl?: string;
+  providerAttemptBudget?: ProviderAttemptBudget;
 };
 
 export const noSiteEnrichmentOutcomes = [
@@ -558,6 +560,7 @@ export async function verifyProspectWebsiteWithSecondPass(
     allowHistoricalLookup: dependencies.allowHistoricalNoSiteLookup,
     forceCurrentProviderRefresh: dependencies.forceNoSiteEvidenceRefresh,
     now: () => new Date(checkedAt),
+    providerAttemptBudget: dependencies.providerAttemptBudget,
   });
   const corroboratingEvidence = independentLookup?.evidence ?? [];
   const identityEvidenceCurrentForQualification = corroboratingEvidence.length > 0
@@ -636,6 +639,7 @@ export async function verifyProspectWebsiteWithSecondPass(
       googlePlacesApiKey: dependencies.googlePlacesApiKey,
       allowHistoricalLookup: dependencies.allowHistoricalNoSiteLookup,
       now: () => new Date(checkedAt),
+      providerAttemptBudget: dependencies.providerAttemptBudget,
     })
     : null;
   const currentlyRecoveredCandidates: OwnedWebsiteRecoveryCandidate[] = ownedWebsiteLookup?.candidates

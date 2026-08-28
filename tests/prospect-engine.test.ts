@@ -46,6 +46,7 @@ import {
 } from "../lib/prospect-review-routing";
 import { outreachObservationSupported, websiteFitAllowsAutonomousOutreach } from "../lib/prospect-qualification";
 import { assessManualTopProspectOpportunity, evaluateOutreachEmailQuality } from "../lib/top-prospects";
+import { prospectMeetsTargetSearchObjective } from "../lib/top-prospect-worker";
 
 const testPostalAddress = "123 Main St, Findlay, OH 45840";
 const testFooter = [
@@ -346,6 +347,54 @@ test("strict email routing uses the same protected and contact-route guards as t
     { ...candidate, notes: ["Recipient opted out."] },
   ]) {
     assert.equal(prospectRoutingDecision(prospect).sending, "Blocked");
+  }
+});
+
+test("target-search objective is approval-free while downstream send locks remain separate", () => {
+  const candidate = withVerifiedWeakWebsite(withAnalysis(structuredClone(seedProspects[0])));
+  candidate.status = "New";
+  candidate.outreach = undefined;
+  const previous = {
+    OUTREACH_EMAIL_DISABLED: process.env.OUTREACH_EMAIL_DISABLED,
+    OUTREACH_AUTO_SEND_ENABLED: process.env.OUTREACH_AUTO_SEND_ENABLED,
+    OUTREACH_FULL_AUTO_SEND_ENABLED: process.env.OUTREACH_FULL_AUTO_SEND_ENABLED,
+  };
+  process.env.OUTREACH_EMAIL_DISABLED = "true";
+  process.env.OUTREACH_AUTO_SEND_ENABLED = "false";
+  process.env.OUTREACH_FULL_AUTO_SEND_ENABLED = "false";
+  try {
+    assert.equal(prospectRoutingDecision(candidate).sending, "Strict Email Eligible");
+    assert.equal(prospectMeetsTargetSearchObjective(candidate, "growth", "written_only"), true);
+    assert.equal(candidate.outreach, undefined);
+    assert.equal(candidate.status, "New");
+
+    const inconclusive = structuredClone(candidate);
+    inconclusive.fitDisposition = "inconclusive_requires_review";
+    inconclusive.websiteVerification!.fit!.disposition = "inconclusive_requires_review";
+    const adequate = structuredClone(candidate);
+    adequate.fitDisposition = "adequate_existing_website";
+    adequate.websiteVerification!.fit!.disposition = "adequate_existing_website";
+    const strong = structuredClone(candidate);
+    strong.fitDisposition = "strong_existing_website";
+    strong.websiteVerification!.fit!.disposition = "strong_existing_website";
+    const phoneOnly = { ...structuredClone(candidate), email: "", contactEvidence: [], recommendedContactMethod: "call_first" as const };
+    const formOnly = { ...structuredClone(phoneOnly), contactFormUrl: `${candidate.website}/contact`, recommendedContactMethod: "submit_contact_form" as const };
+    const socialOnly = { ...structuredClone(phoneOnly), facebookUrl: "https://facebook.com/example", recommendedContactMethod: "message_on_facebook" as const };
+    const suppressed = { ...structuredClone(candidate), notes: ["Recipient opted out."] };
+    const contacted = { ...structuredClone(candidate), status: "Contacted" as const };
+    const unverifiedEmail = { ...structuredClone(candidate), contactEvidence: [] };
+    const stale = structuredClone(candidate);
+    stale.websiteVerification!.checkedAt = "2020-01-01T00:00:00.000Z";
+    stale.websiteVerification!.fit!.evaluatedAt = "2020-01-01T00:00:00.000Z";
+    stale.contactEvidence = stale.contactEvidence.map((item) => ({ ...item, discoveredAt: "2020-01-01T00:00:00.000Z" }));
+    for (const prospect of [inconclusive, adequate, strong, phoneOnly, formOnly, socialOnly, suppressed, contacted, unverifiedEmail, stale]) {
+      assert.equal(prospectMeetsTargetSearchObjective(prospect, "growth", "written_only"), false, prospect.businessName);
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 

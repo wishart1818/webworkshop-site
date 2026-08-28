@@ -65,6 +65,7 @@ function googleResponse(places: unknown[]) {
 }
 
 test("exact Google Places recovery can restore a missing owned website only with a stored identity binding", async () => {
+  const reservations: string[] = [];
   const result = await discoverGoogleOwnedWebsiteCandidates(prospect(), {
     apiKey: "test-key",
     fetch: googleResponse([{
@@ -74,9 +75,15 @@ test("exact Google Places recovery can restore a missing owned website only with
       websiteUri: "https://reesstriping.com/",
       googleMapsUri: "https://www.google.com/maps/place/example",
     }]),
+    providerAttemptBudget: {
+      async reserve(metadata) {
+        reservations.push(`${metadata.provider}:${metadata.operation}`);
+      },
+    },
   });
 
   assert.deepEqual(result, ["https://reesstriping.com/"]);
+  assert.deepEqual(reservations, ["googlePlaces:owned_website_recovery"]);
 });
 
 test("matching Google listing without a website returns bounded deterministic candidates for normal first-party verification", async () => {

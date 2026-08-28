@@ -63,6 +63,7 @@ const azureExactResult = {
 
 test("Azure corroboration retries a bounded phone identity query when the address-heavy query misses", async () => {
   const queries: string[] = [];
+  const reservations: string[] = [];
   const fetchImpl: typeof fetch = async (input) => {
     const url = new URL(String(input));
     const query = url.searchParams.get("query") ?? "";
@@ -78,9 +79,19 @@ test("Azure corroboration retries a bounded phone identity query when the addres
     azureMapsApiKey: "azure-test-key",
     fetch: fetchImpl,
     now: () => now,
+    providerAttemptBudget: {
+      async reserve(metadata) {
+        reservations.push(`${metadata.provider}:${metadata.operation}`);
+      },
+    },
   });
 
   assert.equal(queries.length, 3);
+  assert.deepEqual(reservations, [
+    "azureMaps:identity_enrichment",
+    "azureMaps:identity_enrichment",
+    "azureMaps:identity_enrichment",
+  ]);
   assert.ok(queries.some((query) => query.includes(address)));
   assert.ok(queries.some((query) => query === "MJR CONCRETE LLC Fort Wayne IN"));
   assert.ok(queries.some((query) => query.includes(normalizedPhone)));

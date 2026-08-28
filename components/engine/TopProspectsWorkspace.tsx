@@ -27,6 +27,7 @@ import {
   recommendedMarketPresets,
   topProspectResultBucket,
   topProspectOutcomeCounts,
+  targetSearchDefaults,
   type RecommendedMarketPreset,
 } from "@/lib/top-prospects";
 import type {
@@ -312,6 +313,11 @@ function ContactPaths({ prospect }: { prospect: TopProspectResult["prospect"] })
 
 function jobProgress(job: TopProspectJob) {
   if (job.status === "COMPLETED" || job.status === "COMPLETED_WITH_PARTIAL_RESULTS") return 100;
+  if (job.targetSearch) {
+    const qualificationProgress = job.targetSearch.qualifiedProspectIds.length / Math.max(1, job.targetSearch.qualifiedTarget);
+    const businessProgress = job.scannedCount / Math.max(1, job.targetSearch.maxBusinessesToProcess);
+    return Math.min(98, Math.round(Math.max(qualificationProgress, businessProgress) * 100));
+  }
   if (job.stage === "DISCOVER") return 5;
   return Math.min(98, Math.round((job.scannedCount / Math.max(1, job.discoveredCount)) * 100));
 }
@@ -342,6 +348,16 @@ function jobIsComplete(status: TopProspectJob["status"]) {
 }
 
 function jobStatusDescription(job: TopProspectJob) {
+  if (job.targetSearch?.stopReason) {
+    const descriptions: Record<NonNullable<TopProspectJob["targetSearch"]>["stopReason"] & string, string> = {
+      QUALIFIED_TARGET_REACHED: "The current-evidence qualified target was reached. Approval and sending remain separate operator actions.",
+      TARGET_NOT_REACHED_SAFELY: "The business-processing limit was reached before the qualified target.",
+      PROVIDER_BUDGET_REACHED: "The persisted provider-request budget was reached before another provider call could start.",
+      SEARCH_SPACE_EXHAUSTED: "The deterministic market plan produced no new unique businesses in two consecutive stages.",
+      PROVIDER_OR_SYSTEM_FAILURE: "A provider or system failure stopped the bounded search. No send action was attempted.",
+    };
+    return descriptions[job.targetSearch.stopReason];
+  }
   if (jobIsComplete(job.status)) return `${workflowLabels[job.input.workflowType]} results and artifacts are ready for review.`;
   if (job.status === "FAILED" || job.status === "FAILED_AFTER_DISCOVERY") return "Processing stopped before completion. Review the diagnostic below.";
   if (job.status === "NEEDS_NEXT_BATCH" || job.status === "PARTIAL_RESULTS_READY" || (job.stage === "DISCOVER" && job.discoveredCount > 0)) {
@@ -414,7 +430,8 @@ export function RecommendedMarketPresetCard({
 
 function StageProgress({ job, preparedArtifacts }: { job: TopProspectJob; preparedArtifacts: number }) {
   const discovered = job.discoveredCount;
-  const scanTarget = Math.max(1, Math.min(discovered || job.input.businessesToScan, job.input.businessesToScan));
+  const scanTarget = job.targetSearch?.maxBusinessesToProcess
+    ?? Math.max(1, Math.min(discovered || job.input.businessesToScan, job.input.businessesToScan));
   const scanProgress = Math.min(100, Math.round((job.scannedCount / scanTarget) * 100));
   const artifactProgress = Math.min(100, Math.round((preparedArtifacts / Math.max(1, discovered)) * 100));
   return (
@@ -449,6 +466,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
   const [businessesToScan, setBusinessesToScan] = useState(100);
   const [finalProspectsWanted, setFinalProspectsWanted] = useState(20);
   const [excludePreviouslyReviewed, setExcludePreviouslyReviewed] = useState(true);
+  const [searchUntilQualified, setSearchUntilQualified] = useState(false);
+  const [qualifiedTarget, setQualifiedTarget] = useState<number>(targetSearchDefaults.qualifiedTarget);
+  const [maxBusinessesToProcess, setMaxBusinessesToProcess] = useState<number>(targetSearchDefaults.maxBusinessesToProcess);
+  const [maxProviderQueries, setMaxProviderQueries] = useState<number>(targetSearchDefaults.maxProviderQueries);
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const [marketApplied, setMarketApplied] = useState("");
   const searchFormRef = useRef<HTMLFormElement | null>(null);
@@ -564,6 +585,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
         businessesToScan,
         finalProspectsWanted,
         excludePreviouslyReviewed,
+        searchUntilQualified,
+        qualifiedTarget,
+        maxBusinessesToProcess,
+        maxProviderQueries,
       }));
     } catch {
       // The search form remains usable when browser storage is unavailable.
@@ -573,6 +598,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
     cityInput,
     excludePreviouslyReviewed,
     finalProspectsWanted,
+    searchUntilQualified,
+    qualifiedTarget,
+    maxBusinessesToProcess,
+    maxProviderQueries,
     selectedMode,
     selectedOutreachPreference,
     selectedProspectType,
@@ -597,6 +626,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
       if (saved.businessesToScan) setBusinessesToScan(saved.businessesToScan);
       if (saved.finalProspectsWanted) setFinalProspectsWanted(saved.finalProspectsWanted);
       if (typeof saved.excludePreviouslyReviewed === "boolean") setExcludePreviouslyReviewed(saved.excludePreviouslyReviewed);
+      if (typeof saved.searchUntilQualified === "boolean") setSearchUntilQualified(saved.searchUntilQualified);
+      if (saved.qualifiedTarget) setQualifiedTarget(saved.qualifiedTarget);
+      if (saved.maxBusinessesToProcess) setMaxBusinessesToProcess(saved.maxBusinessesToProcess);
+      if (saved.maxProviderQueries) setMaxProviderQueries(saved.maxProviderQueries);
     } catch {
       // Ignore malformed or unavailable local saved settings.
     } finally {
@@ -642,6 +675,10 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           workflowType: selectedWorkflow,
           outreachPreference: selectedOutreachPreference,
           excludePreviouslyReviewed,
+          searchUntilQualified,
+          ...(searchUntilQualified
+            ? { qualifiedTarget, maxBusinessesToProcess, maxProviderQueries, businessesToScan: maxBusinessesToProcess }
+            : {}),
         }),
       });
       const payload = (await response.json()) as TopProspectApiPayload;
@@ -766,6 +803,15 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
           <label>Businesses to scan<input max="250" min="5" name="businessesToScan" onChange={(event) => setBusinessesToScan(Number(event.target.value))} type="number" value={businessesToScan} /></label>
           <label>Final prospects wanted<input max="25" min="1" name="finalProspectsWanted" onChange={(event) => setFinalProspectsWanted(Number(event.target.value))} type="number" value={finalProspectsWanted} /></label>
           <label className="engine-checkbox-label"><input checked={excludePreviouslyReviewed} name="excludePreviouslyReviewed" onChange={(event) => setExcludePreviouslyReviewed(event.target.checked)} type="checkbox" /> Exclude previously reviewed prospects</label>
+          <label className="engine-checkbox-label engine-form-wide"><input checked={searchUntilQualified} name="searchUntilQualified" onChange={(event) => setSearchUntilQualified(event.target.checked)} type="checkbox" /> Search until a qualified target or safe limit</label>
+          {searchUntilQualified ? (
+            <>
+              <label>Qualified target<input max="25" min="1" name="qualifiedTarget" onChange={(event) => setQualifiedTarget(Number(event.target.value))} type="number" value={qualifiedTarget} /></label>
+              <label>Maximum businesses<input max="250" min="5" name="maxBusinessesToProcess" onChange={(event) => setMaxBusinessesToProcess(Number(event.target.value))} type="number" value={maxBusinessesToProcess} /></label>
+              <label>Maximum provider requests<input max="240" min="1" name="maxProviderQueries" onChange={(event) => setMaxProviderQueries(Number(event.target.value))} type="number" value={maxProviderQueries} /></label>
+              <div className="engine-form-wide engine-mode-note" role="note"><b>Bounded target mode:</b> one city, one trade, and written outreach only. Discovery expands through the saved recommended-market plan, while approval and all send gates remain unchanged.</div>
+            </>
+          ) : null}
           {parsedCityTargets.length ? (
             <div className="engine-city-chip-row" aria-label="Parsed city targets">
               {parsedCityTargets.map((target) => <span key={target.label}>{target.label}</span>)}
@@ -828,6 +874,7 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             <span>Radius <b>{latestJob.input.radiusKm} km</b></span>
             <span>Scan budget <b>{latestJob.input.businessesToScan}</b></span>
             <span>Final target <b>{latestJob.input.finalProspectsWanted}</b></span>
+            {latestJob.targetSearch ? <span>Target mode <b>{latestJob.targetSearch.qualifiedProspectIds.length}/{latestJob.targetSearch.qualifiedTarget} qualified</b></span> : null}
           </div>
           <div className="engine-progress-track"><i style={{ width: `${jobProgress(latestJob)}%` }} /></div>
           <StageProgress job={latestJob} preparedArtifacts={preparedArtifacts} />
@@ -840,6 +887,17 @@ export function TopProspectsWorkspace({ onOpenProspect, onProspectsChanged }: Pr
             {jobIsActive(latestJob.status) && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">{jobNextActionLabel(latestJob)}</button>}
             {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && <button className="engine-button" onClick={() => void resumeJob(latestJob.id)} type="button">Retry from last saved business</button>}
           </div>
+          {latestJob.targetSearch ? (
+            <div className="engine-result-bucket-summary" aria-label="Bounded target search progress">
+              <span><b>Goal:</b> {latestJob.targetSearch.qualifiedProspectIds.length}/{latestJob.targetSearch.qualifiedTarget} current strict-email-eligible prospects encountered by this job.</span>
+              <span><b>Businesses:</b> {latestJob.scannedCount}/{latestJob.targetSearch.maxBusinessesToProcess} processed.</span>
+              <span><b>Provider requests:</b> {latestJob.targetSearch.providerQueriesUsed}/{latestJob.targetSearch.maxProviderQueries} reserved before dispatch.</span>
+              <span><b>Current stage:</b> {(latestJob.targetSearch.currentExpansionIndex ?? 0) + 1} of {latestJob.targetSearch.expansionPlan.length || 1} · {latestJob.targetSearch.expansionPlan[latestJob.targetSearch.currentExpansionIndex ?? 0]?.label ?? "Starting market"}.</span>
+              <span><b>New unique businesses in stage:</b> {latestJob.targetSearch.expansionHistory.at(-1)?.newUniqueCandidates ?? 0}.</span>
+              <span><b>Send effects:</b> 0 automatic approvals and 0 automatic outreach. Existing downstream gates are unchanged.</span>
+              {latestJob.targetSearch.stopReason ? <span><b>Stop reason:</b> {latestJob.targetSearch.stopReason.replaceAll("_", " ").toLowerCase()}.</span> : null}
+            </div>
+          ) : null}
           {(latestJob.status === "FAILED" || latestJob.status === "FAILED_AFTER_DISCOVERY") && latestJob.failureClassification && (
             <div className="engine-job-failure" role="alert">
               <b>{failureLabels[latestJob.failureClassification]}</b>

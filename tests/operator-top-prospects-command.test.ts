@@ -78,6 +78,30 @@ test("Top Prospects command accepts false exclusion and supported human-readable
   assert.equal(preview.parsedParameters.EXCLUDE_PREVIOUSLY_REVIEWED, false);
 });
 
+test("Top Prospects command opts into bounded target mode without changing legacy commands", () => {
+  const targetCommand = topProspectsCommand
+    .replace("FINAL_PROSPECTS_WANTED: 10", [
+      "FINAL_PROSPECTS_WANTED: 10",
+      "SEARCH_UNTIL_QUALIFIED: true",
+      "QUALIFIED_TARGET: 5",
+      "MAX_BUSINESSES_TO_PROCESS: 125",
+      "MAX_PROVIDER_QUERIES: 60",
+    ].join("\n"));
+  const target = parseOperatorCommand(targetCommand, "command");
+  assert.deepEqual(target.validationErrors, []);
+  assert.equal(target.parsedParameters.SEARCH_UNTIL_QUALIFIED, true);
+  assert.equal(target.parsedParameters.QUALIFIED_TARGET, 5);
+  assert.equal(target.parsedParameters.MAX_BUSINESSES_TO_PROCESS, 125);
+  assert.equal(target.parsedParameters.MAX_PROVIDER_QUERIES, 60);
+  assert.match(target.copyPlan, /Target mode: enabled/);
+  assert.match(target.copyPlan, /Qualified target: 5/);
+  assert.match(target.copyPlan, /Maximum provider queries: 60/);
+  assert.equal(parseOperatorCommand(topProspectsCommand, "command").parsedParameters.SEARCH_UNTIL_QUALIFIED, undefined);
+
+  const unbounded = parseOperatorCommand(targetCommand.replace("MAX_PROVIDER_QUERIES: 60", "MAX_PROVIDER_QUERIES: 999999"), "command");
+  assert.match(unbounded.validationErrors.join(" "), /Maximum provider queries must be between/);
+});
+
 test("Top Prospects command fails closed for invalid structured values", () => {
   const invalidCommands = [
     topProspectsCommand.replace("CITY: Tampa, FL", "CITY: Tampa Florida"),

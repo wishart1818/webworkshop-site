@@ -73,6 +73,81 @@ export type OutreachPackageStatus = (typeof outreachPackageStatuses)[number];
 export const outreachPackageActions = ["generate", "ready_for_review", "approve", "mark_sent", "skip"] as const;
 export type OutreachPackageAction = (typeof outreachPackageActions)[number];
 
+export const targetSearchDefaults = {
+  qualifiedTarget: 5,
+  maxBusinessesToProcess: 125,
+  maxProviderQueries: 60,
+  discoveryStageSize: 25,
+} as const;
+
+export const targetSearchMaximums = {
+  qualifiedTarget: 25,
+  maxBusinessesToProcess: 250,
+  maxProviderQueries: 240,
+} as const;
+
+export const targetSearchStopReasons = [
+  "QUALIFIED_TARGET_REACHED",
+  "TARGET_NOT_REACHED_SAFELY",
+  "PROVIDER_BUDGET_REACHED",
+  "SEARCH_SPACE_EXHAUSTED",
+  "PROVIDER_OR_SYSTEM_FAILURE",
+] as const;
+export type TargetSearchStopReason = (typeof targetSearchStopReasons)[number];
+
+export type TargetSearchExpansionStage = {
+  index: number;
+  city: string;
+  state: string;
+  radiusKm: 10 | 25 | 50;
+  label: string;
+};
+
+export type TargetSearchStageHistory = TargetSearchExpansionStage & {
+  candidateRangeStart: number;
+  candidateRangeEnd: number;
+  candidatesReturned: number;
+  newUniqueCandidates: number;
+  qualifiedProspectIds: string[];
+  providerQueriesStart: number;
+  providerQueriesEnd: number;
+  completedAt: string;
+  diagnostics?: DiscoveryDiagnostics;
+};
+
+export type TargetSearchProgress = {
+  version: 1;
+  enabled: true;
+  qualifiedTarget: number;
+  qualifiedProspectIds: string[];
+  maxBusinessesToProcess: number;
+  maxProviderQueries: number;
+  providerQueriesUsed: number;
+  discoveryStageSize: 25;
+  expansionPlan: TargetSearchExpansionStage[];
+  nextExpansionIndex: number;
+  currentExpansionIndex: number | null;
+  uniqueCandidateCount: number;
+  consecutiveZeroYieldStages: number;
+  expansionHistory: TargetSearchStageHistory[];
+  stopReason: TargetSearchStopReason | null;
+  continuationAllowed: boolean;
+};
+
+export function targetSearchHardStopReason(
+  progress: TargetSearchProgress,
+  businessesProcessed: number,
+): TargetSearchStopReason | null {
+  if (progress.qualifiedProspectIds.length >= progress.qualifiedTarget) return "QUALIFIED_TARGET_REACHED";
+  if (businessesProcessed >= progress.maxBusinessesToProcess) return "TARGET_NOT_REACHED_SAFELY";
+  if (progress.providerQueriesUsed >= progress.maxProviderQueries) return "PROVIDER_BUDGET_REACHED";
+  return null;
+}
+
+export function targetSearchSpaceIsExhausted(progress: TargetSearchProgress) {
+  return progress.consecutiveZeroYieldStages >= 2 || progress.nextExpansionIndex >= progress.expansionPlan.length;
+}
+
 export type TopProspectInput = {
   trade: TopProspectTradeSelection;
   city: string;
@@ -87,6 +162,10 @@ export type TopProspectInput = {
   workflowType: TopProspectWorkflowType;
   outreachPreference: OutreachPreference;
   excludePreviouslyReviewed: boolean;
+  searchUntilQualified?: boolean;
+  qualifiedTarget?: number;
+  maxBusinessesToProcess?: number;
+  maxProviderQueries?: number;
 };
 
 export type CitySearchTarget = {
@@ -235,6 +314,7 @@ export type TopProspectJob = {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  targetSearch?: TargetSearchProgress | null;
 };
 
 export function topProspectOutcomeCounts(
@@ -1500,6 +1580,182 @@ export const recommendedMarketPresets: RecommendedMarketPreset[] = [
   },
 ];
 
+export function targetSearchExpansionPlan(input: Pick<TopProspectInput, "city" | "state" | "radiusKm">) {
+  const city = titleCaseLocation(input.city);
+  const state = displayStateCode(input.state);
+  const startingRadius = ([10, 25, 50] as const).includes(input.radiusKm as 10 | 25 | 50)
+    ? input.radiusKm as 10 | 25 | 50
+    : 25;
+  const stages: Array<Omit<TargetSearchExpansionStage, "index">> = [{
+    city,
+    state,
+    radiusKm: startingRadius,
+    label: `${city}, ${state} — ${startingRadius} km`,
+  }];
+  if (startingRadius < 50) {
+    stages.push({ city, state, radiusKm: 50, label: `${city}, ${state} — 50 km` });
+  }
+
+  const preset = recommendedMarketPresets.find((candidate) => candidate.cities.some((target) => (
+    target.city.toLowerCase() === city.toLowerCase() && target.state === state
+  )));
+  if (preset) {
+    const startIndex = preset.cities.findIndex((target) => target.city.toLowerCase() === city.toLowerCase() && target.state === state);
+    const following = preset.cities.slice(startIndex + 1);
+    const preceding = preset.cities.slice(0, startIndex).reverse();
+    for (const target of [...following, ...preceding].slice(0, 4)) {
+      stages.push({
+        city: target.city,
+        state: target.state,
+        radiusKm: 50,
+        label: `${target.city}, ${target.state} — 50 km`,
+      });
+    }
+  }
+  return stages.map((stage, index) => ({ ...stage, index }));
+}
+
+export function initialTargetSearchProgress(input: TopProspectInput): TargetSearchProgress | null {
+  if (input.searchUntilQualified !== true) return null;
+  return {
+    version: 1,
+    enabled: true,
+    qualifiedTarget: input.qualifiedTarget ?? targetSearchDefaults.qualifiedTarget,
+    qualifiedProspectIds: [],
+    maxBusinessesToProcess: input.maxBusinessesToProcess ?? targetSearchDefaults.maxBusinessesToProcess,
+    maxProviderQueries: input.maxProviderQueries ?? targetSearchDefaults.maxProviderQueries,
+    providerQueriesUsed: 0,
+    discoveryStageSize: targetSearchDefaults.discoveryStageSize,
+    expansionPlan: targetSearchExpansionPlan(input),
+    nextExpansionIndex: 0,
+    currentExpansionIndex: null,
+    uniqueCandidateCount: 0,
+    consecutiveZeroYieldStages: 0,
+    expansionHistory: [],
+    stopReason: null,
+    continuationAllowed: true,
+  };
+}
+
+function boundedPersistedInteger(value: unknown, minimum: number, maximum: number, fallback: number) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= minimum && number <= maximum ? number : fallback;
+}
+
+function isBoundedPersistedInteger(value: unknown, minimum: number, maximum: number) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= minimum && number <= maximum;
+}
+
+export function targetSearchProgressFromJson(value: unknown): TargetSearchProgress | null {
+  if (!value || Array.isArray(value) || typeof value !== "object") return null;
+  const envelope = value as Record<string, unknown>;
+  if (!("targetSearch" in envelope)) return null;
+  const candidate = envelope.targetSearch;
+  if (!candidate || Array.isArray(candidate) || typeof candidate !== "object") return null;
+  const record = candidate as Record<string, unknown>;
+  const validEnvelope = record.version === 1 && record.enabled === true;
+  const parsedExpansionPlan = Array.isArray(record.expansionPlan)
+    ? record.expansionPlan.flatMap((item, index): TargetSearchExpansionStage[] => {
+        if (!item || Array.isArray(item) || typeof item !== "object") return [];
+        const stage = item as Record<string, unknown>;
+        const radiusKm = Number(stage.radiusKm);
+        if (typeof stage.city !== "string" || typeof stage.state !== "string" || ![10, 25, 50].includes(radiusKm)) return [];
+        const city = titleCaseLocation(stage.city);
+        const state = displayStateCode(stage.state);
+        if (!city || !/^[A-Z]{2}$/.test(state)) return [];
+        return [{ index, city, state, radiusKm: radiusKm as 10 | 25 | 50, label: `${city}, ${state} — ${radiusKm} km` }];
+      }).slice(0, 6)
+    : [];
+  const qualifiedTarget = boundedPersistedInteger(record.qualifiedTarget, 1, targetSearchMaximums.qualifiedTarget, targetSearchDefaults.qualifiedTarget);
+  const maxBusinessesToProcess = boundedPersistedInteger(record.maxBusinessesToProcess, 5, targetSearchMaximums.maxBusinessesToProcess, targetSearchDefaults.maxBusinessesToProcess);
+  const maxProviderQueries = boundedPersistedInteger(record.maxProviderQueries, 1, targetSearchMaximums.maxProviderQueries, targetSearchDefaults.maxProviderQueries);
+  const planIsComplete = Array.isArray(record.expansionPlan)
+    && record.expansionPlan.length > 0
+    && record.expansionPlan.length <= 6
+    && parsedExpansionPlan.length === record.expansionPlan.length
+    && parsedExpansionPlan.every((stage, index) => stage.index === index);
+  const stopReasonIsValid = record.stopReason === null
+    || targetSearchStopReasons.includes(record.stopReason as TargetSearchStopReason);
+  const currentExpansionIndexIsValid = record.currentExpansionIndex === null
+    || (Number.isInteger(record.currentExpansionIndex)
+      && Number(record.currentExpansionIndex) >= 0
+      && Number(record.currentExpansionIndex) < parsedExpansionPlan.length);
+  const stateIsValid = validEnvelope
+    && planIsComplete
+    && parsedExpansionPlan.length > 0
+    && qualifiedTarget <= maxBusinessesToProcess
+    && isBoundedPersistedInteger(record.qualifiedTarget, 1, targetSearchMaximums.qualifiedTarget)
+    && Array.isArray(record.qualifiedProspectIds)
+    && isBoundedPersistedInteger(record.maxBusinessesToProcess, 5, targetSearchMaximums.maxBusinessesToProcess)
+    && isBoundedPersistedInteger(record.maxProviderQueries, 1, targetSearchMaximums.maxProviderQueries)
+    && isBoundedPersistedInteger(record.providerQueriesUsed, 0, targetSearchMaximums.maxProviderQueries)
+    && isBoundedPersistedInteger(record.nextExpansionIndex, 0, parsedExpansionPlan.length)
+    && currentExpansionIndexIsValid
+    && isBoundedPersistedInteger(record.uniqueCandidateCount, 0, targetSearchMaximums.maxBusinessesToProcess)
+    && isBoundedPersistedInteger(record.consecutiveZeroYieldStages, 0, 2)
+    && Array.isArray(record.expansionHistory)
+    && stopReasonIsValid
+    && typeof record.continuationAllowed === "boolean";
+  const expansionPlan = stateIsValid ? parsedExpansionPlan : [];
+  const qualifiedProspectIds = Array.isArray(record.qualifiedProspectIds)
+    ? [...new Set(record.qualifiedProspectIds.filter((item): item is string => typeof item === "string" && item.length > 0))].slice(0, targetSearchMaximums.maxBusinessesToProcess)
+    : [];
+  const expansionHistory = stateIsValid && Array.isArray(record.expansionHistory)
+    ? record.expansionHistory.flatMap((item): TargetSearchStageHistory[] => {
+        if (!item || Array.isArray(item) || typeof item !== "object") return [];
+        const history = item as Record<string, unknown>;
+        const index = Number(history.index);
+        const stage = Number.isInteger(index) ? expansionPlan[index] : undefined;
+        if (!stage || typeof history.completedAt !== "string" || !Number.isFinite(Date.parse(history.completedAt))) return [];
+        const candidateRangeStart = boundedPersistedInteger(history.candidateRangeStart, 0, targetSearchMaximums.maxBusinessesToProcess, 0);
+        const candidateRangeEnd = boundedPersistedInteger(history.candidateRangeEnd, candidateRangeStart, targetSearchMaximums.maxBusinessesToProcess, candidateRangeStart);
+        const stageQualifiedIds = Array.isArray(history.qualifiedProspectIds)
+          ? [...new Set(history.qualifiedProspectIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0))]
+          : [];
+        return [{
+          ...stage,
+          candidateRangeStart,
+          candidateRangeEnd,
+          candidatesReturned: boundedPersistedInteger(history.candidatesReturned, 0, targetSearchMaximums.maxBusinessesToProcess, 0),
+          newUniqueCandidates: boundedPersistedInteger(history.newUniqueCandidates, 0, targetSearchMaximums.maxBusinessesToProcess, 0),
+          qualifiedProspectIds: stageQualifiedIds,
+          providerQueriesStart: boundedPersistedInteger(history.providerQueriesStart, 0, targetSearchMaximums.maxProviderQueries, 0),
+          providerQueriesEnd: boundedPersistedInteger(history.providerQueriesEnd, 0, targetSearchMaximums.maxProviderQueries, 0),
+          completedAt: history.completedAt,
+          ...(history.diagnostics && typeof history.diagnostics === "object" && !Array.isArray(history.diagnostics)
+            ? { diagnostics: history.diagnostics as DiscoveryDiagnostics }
+            : {}),
+        }];
+      }).slice(0, 10)
+    : [];
+  const stopReason = targetSearchStopReasons.includes(record.stopReason as TargetSearchStopReason)
+    ? record.stopReason as TargetSearchStopReason
+    : null;
+  return {
+    version: 1,
+    enabled: true,
+    qualifiedTarget,
+    qualifiedProspectIds,
+    maxBusinessesToProcess,
+    maxProviderQueries,
+    providerQueriesUsed: boundedPersistedInteger(record.providerQueriesUsed, 0, targetSearchMaximums.maxProviderQueries, 0),
+    discoveryStageSize: targetSearchDefaults.discoveryStageSize,
+    expansionPlan,
+    nextExpansionIndex: boundedPersistedInteger(record.nextExpansionIndex, 0, Math.max(0, expansionPlan.length), 0),
+    currentExpansionIndex: Number.isInteger(record.currentExpansionIndex)
+      && Number(record.currentExpansionIndex) >= 0
+      && Number(record.currentExpansionIndex) < expansionPlan.length
+      ? Number(record.currentExpansionIndex)
+      : null,
+    uniqueCandidateCount: boundedPersistedInteger(record.uniqueCandidateCount, 0, targetSearchMaximums.maxBusinessesToProcess, 0),
+    consecutiveZeroYieldStages: boundedPersistedInteger(record.consecutiveZeroYieldStages, 0, 2, 0),
+    expansionHistory,
+    stopReason: stateIsValid ? stopReason : "PROVIDER_OR_SYSTEM_FAILURE",
+    continuationAllowed: stateIsValid ? record.continuationAllowed !== false : false,
+  };
+}
+
 export function topProspectNextRunRecommendations(input: {
   job: Pick<TopProspectJob, "input" | "results" | "reviewedNotRecommended" | "skipSummary" | "discoveryDiagnostics">;
 }) {
@@ -1551,14 +1807,27 @@ export function topProspectNextRunRecommendations(input: {
 
 export function validateTopProspectInput(value: unknown): { ok: true; value: TopProspectInput } | { ok: false; error: string } {
   const input = value as Partial<TopProspectInput>;
+  if (input.searchUntilQualified !== undefined && typeof input.searchUntilQualified !== "boolean") {
+    return { ok: false, error: "Search-until-qualified must be a boolean." };
+  }
+  const searchUntilQualified = input.searchUntilQualified === true;
   const normalizedTrade = input.trade === allCoreServiceTradesOption ? allCoreServiceTradesOption : normalizeTradeCategory(input.trade);
   const rawCityInput = typeof input.city === "string" ? input.city.trim() : "";
   const state = typeof input.state === "string" ? displayStateCode(input.state) : "";
   const cityTargets = parseTopProspectCityTargets(rawCityInput, state);
   const city = cityTargets.length === 1 ? cityTargets[0].city : rawCityInput;
   const radiusKm = Number(input.radiusKm);
-  const businessesToScan = Number(input.businessesToScan);
-  const finalProspectsWanted = Number(input.finalProspectsWanted);
+  const qualifiedTarget = searchUntilQualified
+    ? Number(input.qualifiedTarget ?? targetSearchDefaults.qualifiedTarget)
+    : undefined;
+  const maxBusinessesToProcess = searchUntilQualified
+    ? Number(input.maxBusinessesToProcess ?? targetSearchDefaults.maxBusinessesToProcess)
+    : undefined;
+  const maxProviderQueries = searchUntilQualified
+    ? Number(input.maxProviderQueries ?? targetSearchDefaults.maxProviderQueries)
+    : undefined;
+  const businessesToScan = Number(searchUntilQualified ? maxBusinessesToProcess : input.businessesToScan);
+  const finalProspectsWanted = Number(input.finalProspectsWanted ?? qualifiedTarget);
   if (input.mode !== undefined && !prospectModes.includes(input.mode as ProspectMode)) return { ok: false, error: "Select a supported prospect mode." };
   if (input.workflowType !== undefined && !topProspectWorkflowTypes.includes(input.workflowType as TopProspectWorkflowType)) {
     return { ok: false, error: "Select a supported Top Prospects workflow." };
@@ -1583,6 +1852,22 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
   if (!Number.isInteger(finalProspectsWanted) || finalProspectsWanted < 1 || finalProspectsWanted > 25 || finalProspectsWanted > businessesToScan) {
     return { ok: false, error: "Final prospects wanted must be between 1 and 25 and no greater than businesses to scan." };
   }
+  if (searchUntilQualified) {
+    if (cityTargets.length !== 1) return { ok: false, error: "Search-until-qualified currently supports one starting city." };
+    if (normalizedTrade === allCoreServiceTradesOption) return { ok: false, error: "Search-until-qualified currently supports one concrete trade." };
+    if (outreachPreference !== "written_only") return { ok: false, error: "Search-until-qualified requires written outreach only." };
+    if (!Number.isInteger(qualifiedTarget) || qualifiedTarget! < 1 || qualifiedTarget! > targetSearchMaximums.qualifiedTarget) {
+      return { ok: false, error: `Qualified target must be between 1 and ${targetSearchMaximums.qualifiedTarget}.` };
+    }
+    if (!Number.isInteger(maxBusinessesToProcess) || maxBusinessesToProcess! < 5 || maxBusinessesToProcess! > targetSearchMaximums.maxBusinessesToProcess) {
+      return { ok: false, error: `Maximum businesses must be between 5 and ${targetSearchMaximums.maxBusinessesToProcess}.` };
+    }
+    if (!Number.isInteger(maxProviderQueries) || maxProviderQueries! < 1 || maxProviderQueries! > targetSearchMaximums.maxProviderQueries) {
+      return { ok: false, error: `Maximum provider queries must be between 1 and ${targetSearchMaximums.maxProviderQueries}.` };
+    }
+    if (qualifiedTarget! > maxBusinessesToProcess!) return { ok: false, error: "Qualified target cannot exceed the maximum businesses processed." };
+    if (finalProspectsWanted < qualifiedTarget!) return { ok: false, error: "Final prospects wanted cannot be lower than the qualified target." };
+  }
   return {
     ok: true,
     value: {
@@ -1599,6 +1884,14 @@ export function validateTopProspectInput(value: unknown): { ok: true; value: Top
       workflowType,
       outreachPreference,
       excludePreviouslyReviewed: input.excludePreviouslyReviewed !== false,
+      ...(searchUntilQualified
+        ? {
+            searchUntilQualified: true,
+            qualifiedTarget: qualifiedTarget!,
+            maxBusinessesToProcess: maxBusinessesToProcess!,
+            maxProviderQueries: maxProviderQueries!,
+          }
+        : {}),
     },
   };
 }

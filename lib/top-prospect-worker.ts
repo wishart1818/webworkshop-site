@@ -1,6 +1,7 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
   discoverContractorsWithDiagnostics,
+  discoveryCandidatesHaveSameIdentity,
   discoveryDiagnosticsFromJson,
   discoveryProviders,
   discoveryLeadsFromJson,
@@ -11,6 +12,8 @@ import {
   type DiscoveryProviderDiagnostic,
   type DiscoveryProviderDiagnostics,
   type DiscoveryProviderStatus,
+  ProviderQueryBudgetReachedError,
+  type ProviderAttemptBudget,
   type DiscoveryResult,
   type DiscoverySourceCounts,
   type TradeDiscoveryDiagnostic,
@@ -26,10 +29,10 @@ import {
   type ProspectSearchType,
   type TradeCategory,
 } from "@/lib/prospect-engine";
-import { findProspectByIdentity, findProspectByWebsite, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
+import { findProspectByIdentity, findProspectByWebsite, getProspect, getProspectDatabase, saveProspect } from "@/lib/prospect-repository";
 import { normalizeWebsiteFitDisposition, prospectFreshnessAt, websiteFitAllowsAutonomousOutreach } from "@/lib/prospect-qualification";
 import { prospectIsSuppressed } from "@/lib/prospect-funnel";
-import { prospectEmailReviewEligibility } from "@/lib/prospect-review-routing";
+import { prospectEmailReviewEligibility, prospectRoutingDecision } from "@/lib/prospect-review-routing";
 import {
   mergeResolvedWebsiteEvidence,
   legacyDeterministicWebsiteRepairInput,
@@ -47,13 +50,20 @@ import {
   parseTopProspectCityTargets,
   citySearchBudgets,
   prepareTopProspectOutreachArtifacts,
+  assessOpportunity,
   assessNoWebsiteOpportunity,
   assessManualTopProspectOpportunity,
   type CitySearchTarget,
   type OutreachPreference,
   type ProspectMode,
+  type TargetSearchProgress,
+  type TargetSearchStageHistory,
+  targetSearchProgressFromJson,
+  targetSearchHardStopReason,
+  targetSearchSpaceIsExhausted,
   topProspectRejectionReason,
 } from "@/lib/top-prospects";
+import { reserveTopProspectProviderAttempt } from "@/lib/top-prospect-repository";
 import {
   enrichProspectWrittenContact,
   latestWrittenContactEnrichmentDiagnostic,
@@ -70,6 +80,18 @@ const LEASE_MS = 90_000;
 const BATCH_SIZE = 3;
 const contactedStatuses = new Set(["Contacted", "Interested", "Proposal Sent", "Closed Won", "Closed Lost"]);
 const resumableStatuses = ["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY", "FAILED", "FAILED_AFTER_DISCOVERY"];
+
+export function prospectMeetsTargetSearchObjective(
+  prospect: Prospect,
+  mode: ProspectMode,
+  outreachPreference: OutreachPreference,
+) {
+  const assessment = prospect.prospectType === "no_website_social_only"
+    ? assessNoWebsiteOpportunity(prospect)
+    : assessOpportunity(prospect);
+  return topProspectRejectionReason(prospect, assessment, mode, outreachPreference) === null
+    && prospectRoutingDecision(prospect).sending === "Strict Email Eligible";
+}
 
 function emptySourceCounts(): DiscoverySourceCounts {
   return { osm: 0, google: 0, bing: 0, yelp: 0, yellowPages: 0 };
@@ -560,6 +582,7 @@ async function discoverTopProspectLeads(input: {
   prospectType: ProspectSearchType;
   excludePreviouslyReviewed: boolean;
   savePartial?: (result: DiscoveryResult) => Promise<void>;
+  providerAttemptBudget?: ProviderAttemptBudget;
 }) {
   const cityTargets = parseTopProspectCityTargets(input.city, input.state);
   const targets = cityTargets.length ? cityTargets : [{ city: input.city, state: input.state, label: `${input.city}, ${input.state}` }];
@@ -579,6 +602,7 @@ async function discoverTopProspectLeads(input: {
         logger(event, metadata) {
           console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, trade: input.tradeCategory, city: target.label, ...metadata });
         },
+        providerAttemptBudget: input.providerAttemptBudget,
       });
     }
 
@@ -602,8 +626,10 @@ async function discoverTopProspectLeads(input: {
           logger(event, metadata) {
             console.info(`[top-prospects] ${event}.`, { jobId: input.jobId, city: target.label, trade, ...metadata });
           },
+          providerAttemptBudget: input.providerAttemptBudget,
         });
       } catch (error) {
+        if (error instanceof ProviderQueryBudgetReachedError) throw error;
         const providerError = safeTopProspectJobFailure(error);
         if (!(error instanceof TopProspectStageError) || providerError.classification !== "discovery_provider_error") throw error;
         const rateLimited = /HTTP 429|rate.?limit/i.test(providerError.reason);
@@ -621,6 +647,7 @@ async function discoverTopProspectLeads(input: {
     try {
       result = await discoverOneCity(target, requestedCount);
     } catch (error) {
+      if (error instanceof ProviderQueryBudgetReachedError) throw error;
       const failure = safeTopProspectJobFailure(error);
       result = cityFailureDiscoveryResult({
         target,
@@ -665,6 +692,7 @@ function addSkip(summary: Record<string, number>, reason: string) {
 
 type ProcessLeadResult = {
   qualified: boolean;
+  objectiveQualifiedProspectId?: string;
   unresolved?: UnresolvedTopProspectRecord;
   websiteEnrichment?: TopProspectWebsiteEnrichmentRecord;
 };
@@ -845,23 +873,46 @@ async function releaseLease(jobId: string, token: string) {
   });
 }
 
-async function finalizeJob(jobId: string, wanted: number, discoveredLeads: Prisma.JsonValue | null) {
+async function finalizeJob(jobId: string, wanted: number, discoveredLeads: Prisma.JsonValue | null, leaseToken?: string) {
   const database = getProspectDatabase();
-  const ranked = await database.topProspectResult.findMany({
-    where: { jobId, selected: true },
-    orderBy: [{ weightedSalesScore: "desc" }, { createdAt: "asc" }],
-  });
-  await database.$transaction([
-    database.topProspectResult.updateMany({ where: { jobId }, data: { selected: false, rank: null } }),
-    ...ranked.slice(0, wanted).map((result, index) => database.topProspectResult.update({
-      where: { id: result.id },
-      data: { selected: true, rank: index + 1 },
-    })),
-    database.topProspectJob.update({
-      where: { id: jobId },
-      data: { status: completedStatusForDiscovery(discoveredLeads), stage: "COMPLETE", completedAt: new Date(), leaseToken: null, leaseUntil: null },
-    }),
-  ]);
+  const finalize = async () => database.$transaction(async (transaction) => {
+    if (leaseToken) {
+      const current = await transaction.topProspectJob.findUnique({ where: { id: jobId }, select: { leaseToken: true } });
+      if (current?.leaseToken !== leaseToken) throw new Error("Top Prospects worker lease changed before finalization.");
+    }
+    const ranked = await transaction.topProspectResult.findMany({
+      where: { jobId, selected: true },
+      orderBy: [{ weightedSalesScore: "desc" }, { createdAt: "asc" }],
+    });
+    await transaction.topProspectResult.updateMany({ where: { jobId }, data: { selected: false, rank: null } });
+    for (const [index, result] of ranked.slice(0, wanted).entries()) {
+      await transaction.topProspectResult.update({ where: { id: result.id }, data: { selected: true, rank: index + 1 } });
+    }
+    const data = {
+      status: completedStatusForDiscovery(discoveredLeads),
+      stage: "COMPLETE",
+      completedAt: new Date(),
+      ...(discoveredLeads ? { discoveredLeads: discoveredLeads as Prisma.InputJsonValue } : {}),
+      leaseToken: null,
+      leaseUntil: null,
+    } as const;
+    if (leaseToken) {
+      const updated = await transaction.topProspectJob.updateMany({ where: { id: jobId, leaseToken }, data });
+      if (updated.count !== 1) throw new Error("Top Prospects worker lease changed during finalization.");
+    } else {
+      await transaction.topProspectJob.update({ where: { id: jobId }, data });
+    }
+  }, leaseToken ? { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } : undefined);
+  const maxAttempts = leaseToken ? 3 : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      await finalize();
+      return;
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+      if (!retryable || attempt === maxAttempts - 1) throw error;
+    }
+  }
 }
 
 async function saveTopProspectResult(
@@ -933,7 +984,7 @@ async function saveTopProspectResult(
       selected: !reviewOnly && rejectionReason === null,
     },
   });
-  return rejectionReason;
+  return { rejectionReason, prospect: prepared.prospect };
 }
 
 async function maybeSaveEmailReviewCandidate(
@@ -960,6 +1011,7 @@ async function processLead(
   mode: ProspectMode,
   outreachPreference: OutreachPreference,
   excludePreviouslyReviewed: boolean,
+  providerAttemptBudget?: ProviderAttemptBudget,
 ): Promise<ProcessLeadResult> {
   if (likelyNationalOrLargeBrand(lead)) {
     addSkip(summary, "national_large_brand");
@@ -992,7 +1044,12 @@ async function processLead(
       where: { jobId_prospectId: { jobId, prospectId: existing.id } },
       select: { selected: true },
     });
-    if (existingResult) return { qualified: existingResult.selected };
+    if (existingResult) return {
+      qualified: existingResult.selected,
+      ...(existingResult.selected && prospectMeetsTargetSearchObjective(existing, mode, outreachPreference)
+        ? { objectiveQualifiedProspectId: existing.id }
+        : {}),
+    };
     if (contactedStatuses.has(existing.status)) {
       addSkip(summary, "already_contacted");
       return { qualified: false };
@@ -1016,9 +1073,11 @@ async function processLead(
       try {
         existingResolution = await verifyProspectWebsiteWithSecondPass(existing, {
           allowHistoricalNoSiteLookup: true,
+          providerAttemptBudget,
         });
         existing = await saveProspect(mergeResolvedWebsiteEvidence(existing, existingResolution.result.prospect));
-      } catch {
+      } catch (error) {
+        if (error instanceof ProviderQueryBudgetReachedError) throw error;
         const unresolved = unresolvedTopProspectRecord(existing, lead);
         addUnresolvedSkip(summary, unresolved, "website_verification_failed");
         return { qualified: false, unresolved };
@@ -1060,8 +1119,10 @@ async function processLead(
             || existingProspectNeedsHistoricalNoSiteLookup(existing, jobCreatedAt),
           forceNoSiteEvidenceRefresh: staleNoSiteEvidence,
           legacyDeterministicCandidateUrl,
+          providerAttemptBudget,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof ProviderQueryBudgetReachedError) throw error;
         const unresolved = unresolvedTopProspectRecord(existing, lead);
         addUnresolvedSkip(summary, unresolved, "website_verification_failed");
         return { qualified: false, unresolved };
@@ -1112,10 +1173,17 @@ async function processLead(
         return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
       }
       existing = await enrichWrittenContactBeforeAssessment(existing, outreachPreference);
-      const rejectionReason = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
+      const savedResult = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
+      const rejectionReason = savedResult.rejectionReason;
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
       const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
-      return { qualified: rejectionReason === null, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
+      return {
+        qualified: rejectionReason === null,
+        ...(rejectionReason === null && prospectMeetsTargetSearchObjective(savedResult.prospect, mode, outreachPreference)
+          ? { objectiveQualifiedProspectId: existing.id }
+          : {}),
+        ...(websiteEnrichment ? { websiteEnrichment } : {}),
+      };
     }
     addSkip(summary, "duplicate");
     return { qualified: false };
@@ -1124,7 +1192,7 @@ async function processLead(
   let prospect = createProspect({ ...lead, sizeIndicator: "Growing", status: "New" });
   let verification: SharedProspectVerificationResolution;
   try {
-    verification = await verifyProspectWebsiteWithSecondPass(prospect);
+    verification = await verifyProspectWebsiteWithSecondPass(prospect, { providerAttemptBudget });
     prospect = verification.result.prospect;
     if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "invalid_website"].includes(prospect.websiteStatus)) {
       await saveProspect(prospect);
@@ -1133,7 +1201,8 @@ async function processLead(
       const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, verification);
       return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof ProviderQueryBudgetReachedError) throw error;
     prospect = await saveProspect({
       ...prospect,
       websiteStatus: "inconclusive",
@@ -1181,10 +1250,365 @@ async function processLead(
       ...prospect.activities,
     ],
   };
-  const rejectionReason = await saveTopProspectResult(jobId, prospect, mode, outreachPreference);
+  const savedResult = await saveTopProspectResult(jobId, prospect, mode, outreachPreference);
+  const rejectionReason = savedResult.rejectionReason;
   if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
   const websiteEnrichment = topProspectWebsiteEnrichmentRecord(prospect, verification);
-  return { qualified: rejectionReason === null, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
+  return {
+    qualified: rejectionReason === null,
+    ...(rejectionReason === null && prospectMeetsTargetSearchObjective(savedResult.prospect, mode, outreachPreference)
+      ? { objectiveQualifiedProspectId: prospect.id }
+      : {}),
+    ...(websiteEnrichment ? { websiteEnrichment } : {}),
+  };
+}
+
+function mergeTargetLead(existing: DiscoveredLead, candidate: DiscoveredLead): DiscoveredLead {
+  return {
+    ...existing,
+    website: existing.website || candidate.website,
+    profileUrl: existing.profileUrl || candidate.profileUrl,
+    phone: existing.phone || candidate.phone,
+    email: existing.email || candidate.email,
+    contactFormUrl: existing.contactFormUrl || candidate.contactFormUrl,
+    address: existing.address || candidate.address,
+    sources: [...new Set([...(existing.sources ?? []), ...(candidate.sources ?? [])])],
+    activitySignals: [...new Set([...(existing.activitySignals ?? []), ...(candidate.activitySignals ?? [])])],
+    providerIdentityEvidence: [...(existing.providerIdentityEvidence ?? []), ...(candidate.providerIdentityEvidence ?? [])],
+    matchedCities: [...new Set([...(existing.matchedCities ?? []), ...(candidate.matchedCities ?? [])])],
+    sourceConfidence: Math.max(existing.sourceConfidence ?? 0, candidate.sourceConfidence ?? 0),
+  };
+}
+
+export function appendUniqueTargetLeads(existing: DiscoveredLead[], candidates: DiscoveredLead[]) {
+  const leads = structuredClone(existing);
+  let newUniqueCandidates = 0;
+  for (const candidate of candidates) {
+    const index = leads.findIndex((lead) => discoveryCandidatesHaveSameIdentity(lead, candidate));
+    if (index >= 0) {
+      leads[index] = mergeTargetLead(leads[index], candidate);
+    } else {
+      leads.push(candidate);
+      newUniqueCandidates += 1;
+    }
+  }
+  return { leads, newUniqueCandidates };
+}
+
+function targetEnvelope(value: Prisma.JsonValue | null, progress: TargetSearchProgress, leads?: DiscoveredLead[], diagnostics?: DiscoveryDiagnostics) {
+  const envelope = value && !Array.isArray(value) && typeof value === "object"
+    ? structuredClone(value) as Record<string, unknown>
+    : {};
+  if (leads) envelope.leads = leads;
+  if (diagnostics) envelope.diagnostics = diagnostics;
+  envelope.targetSearch = progress;
+  return envelope as Prisma.InputJsonValue;
+}
+
+async function renewTargetJobLease(jobId: string, leaseToken: string) {
+  const renewed = await getProspectDatabase().topProspectJob.updateMany({
+    where: { id: jobId, leaseToken },
+    data: { leaseUntil: new Date(Date.now() + LEASE_MS) },
+  });
+  if (renewed.count !== 1) throw new Error("Top Prospects worker lease is no longer current.");
+}
+
+async function currentTargetJob(jobId: string, leaseToken: string) {
+  const row = await getProspectDatabase().topProspectJob.findUnique({
+    where: { id: jobId },
+    select: {
+      leaseToken: true,
+      discoveredLeads: true,
+      nextLeadIndex: true,
+      scannedCount: true,
+      qualifiedCount: true,
+      skippedCount: true,
+      skipSummary: true,
+    },
+  });
+  if (!row || row.leaseToken !== leaseToken) throw new Error("Top Prospects worker lease is no longer current.");
+  return row;
+}
+
+async function reconcileTargetQualifiedProspectIds(
+  jobId: string,
+  prospectIds: string[],
+  mode: ProspectMode,
+  outreachPreference: OutreachPreference,
+) {
+  const eligible: string[] = [];
+  for (const prospectId of [...new Set(prospectIds)]) {
+    const [prospect, result] = await Promise.all([
+      getProspect(prospectId),
+      getProspectDatabase().topProspectResult.findUnique({
+        where: { jobId_prospectId: { jobId, prospectId } },
+        select: { id: true },
+      }),
+    ]);
+    if (prospect && result && prospectMeetsTargetSearchObjective(prospect, mode, outreachPreference)) eligible.push(prospectId);
+  }
+  return eligible;
+}
+
+function stageHistoryWithQualifiedId(history: TargetSearchStageHistory[], leadIndex: number, prospectId: string) {
+  return history.map((stage) => (
+    leadIndex >= stage.candidateRangeStart && leadIndex < stage.candidateRangeEnd
+      ? { ...stage, qualifiedProspectIds: [...new Set([...stage.qualifiedProspectIds, prospectId])] }
+      : stage
+  ));
+}
+
+async function finishTargetSearchJob(
+  jobId: string,
+  leaseToken: string,
+  finalProspectsWanted: number,
+  value: Prisma.JsonValue | null,
+  progress: TargetSearchProgress,
+  stopReason: TargetSearchProgress["stopReason"],
+  mode: ProspectMode,
+  outreachPreference: OutreachPreference,
+) {
+  const row = await currentTargetJob(jobId, leaseToken);
+  const qualifiedProspectIds = await reconcileTargetQualifiedProspectIds(jobId, progress.qualifiedProspectIds, mode, outreachPreference);
+  let finalProgress: TargetSearchProgress = {
+    ...progress,
+    qualifiedProspectIds,
+    stopReason: qualifiedProspectIds.length >= progress.qualifiedTarget ? "QUALIFIED_TARGET_REACHED" : stopReason,
+    continuationAllowed: false,
+  };
+  if (stopReason === "QUALIFIED_TARGET_REACHED" && qualifiedProspectIds.length < progress.qualifiedTarget) {
+    const hardStop = targetSearchHardStopReason(finalProgress, row.scannedCount);
+    const hasUnprocessedCandidates = row.nextLeadIndex < discoveryLeadsFromJson(row.discoveredLeads).length;
+    if (!hardStop && (hasUnprocessedCandidates || !targetSearchSpaceIsExhausted(finalProgress))) {
+      finalProgress = { ...finalProgress, stopReason: null, continuationAllowed: true };
+      const continued = await getProspectDatabase().topProspectJob.updateMany({
+        where: { id: jobId, leaseToken },
+        data: {
+          status: discoveryHasPartialIssues(discoveryDiagnosticsFromJson(row.discoveredLeads)) ? "PARTIAL_RESULTS_READY" : "NEEDS_NEXT_BATCH",
+          stage: hasUnprocessedCandidates ? "ANALYZE" : "DISCOVER",
+          qualifiedCount: qualifiedProspectIds.length,
+          discoveredLeads: targetEnvelope(row.discoveredLeads, finalProgress),
+          leaseUntil: new Date(Date.now() + LEASE_MS),
+        },
+      });
+      if (continued.count !== 1) throw new Error("Top Prospects worker lease changed while continuing after target reconciliation.");
+      return { status: "needs_next_batch" as const, shouldContinue: true };
+    }
+    finalProgress = {
+      ...finalProgress,
+      stopReason: hardStop ?? "SEARCH_SPACE_EXHAUSTED",
+    };
+  }
+  const envelope = targetEnvelope(row.discoveredLeads ?? value, finalProgress) as Prisma.JsonValue;
+  await finalizeJob(jobId, Math.max(finalProspectsWanted, finalProgress.qualifiedTarget), envelope, leaseToken);
+  return {
+    status: "completed" as const,
+    shouldContinue: false,
+    stopReason: finalProgress.stopReason,
+    qualifiedFound: qualifiedProspectIds.length,
+  };
+}
+
+async function processTargetSearchJob(
+  jobId: string,
+  leaseToken: string,
+  jobCreatedAt: Date,
+  acceptedSettings: ReturnType<typeof topProspectExecutionSettings>,
+) {
+  await renewTargetJobLease(jobId, leaseToken);
+  let row = await currentTargetJob(jobId, leaseToken);
+  let progress = targetSearchProgressFromJson(row.discoveredLeads);
+  if (!progress) throw new Error("Target-search state is missing or invalid.");
+  if (!progress.expansionPlan.length) throw new Error("Target-search expansion state is invalid.");
+  if (progress.stopReason === "PROVIDER_OR_SYSTEM_FAILURE") {
+    progress = { ...progress, stopReason: null, continuationAllowed: true };
+    const resumed = await getProspectDatabase().topProspectJob.updateMany({
+      where: { id: jobId, leaseToken },
+      data: { discoveredLeads: targetEnvelope(row.discoveredLeads, progress) },
+    });
+    if (resumed.count !== 1) throw new Error("Top Prospects worker lease changed while resuming target search.");
+    row = await currentTargetJob(jobId, leaseToken);
+  }
+  if (!progress.continuationAllowed || progress.stopReason) throw new Error("Target-search continuation is already closed.");
+  progress = {
+    ...progress,
+    qualifiedProspectIds: await reconcileTargetQualifiedProspectIds(jobId, progress.qualifiedProspectIds, acceptedSettings.mode, acceptedSettings.outreachPreference),
+  };
+  const initialStopReason = targetSearchHardStopReason(progress, row.scannedCount);
+  if (initialStopReason) {
+    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress, initialStopReason, acceptedSettings.mode, acceptedSettings.outreachPreference);
+  }
+
+  const providerAttemptBudget: ProviderAttemptBudget = {
+    async reserve() {
+      const reserved = await reserveTopProspectProviderAttempt(jobId, leaseToken);
+      if (!reserved) throw new ProviderQueryBudgetReachedError();
+    },
+  };
+  const leads = discoveryLeadsFromJson(row.discoveredLeads);
+  if (row.nextLeadIndex < leads.length) {
+    const remainingCapacity = progress.maxBusinessesToProcess - row.scannedCount;
+    const batch = leads.slice(row.nextLeadIndex, row.nextLeadIndex + Math.min(BATCH_SIZE, remainingCapacity));
+    const summary = skipSummary(row.skipSummary);
+    const unresolvedRecords: UnresolvedTopProspectRecord[] = [];
+    const websiteEnrichmentRecords: TopProspectWebsiteEnrichmentRecord[] = [];
+    let processed = 0;
+    let normallyQualified = 0;
+    let budgetReached = false;
+    for (const lead of batch) {
+      try {
+        await renewTargetJobLease(jobId, leaseToken);
+        const result = await processLead(
+          jobId,
+          jobCreatedAt,
+          lead,
+          summary,
+          acceptedSettings.mode,
+          acceptedSettings.outreachPreference,
+          acceptedSettings.excludePreviouslyReviewed,
+          providerAttemptBudget,
+        );
+        processed += 1;
+        if (result.qualified) normallyQualified += 1;
+        if (result.objectiveQualifiedProspectId) {
+          progress.qualifiedProspectIds = [...new Set([...progress.qualifiedProspectIds, result.objectiveQualifiedProspectId])];
+          progress.expansionHistory = stageHistoryWithQualifiedId(
+            progress.expansionHistory,
+            row.nextLeadIndex + processed - 1,
+            result.objectiveQualifiedProspectId,
+          );
+        }
+        if (result.unresolved) unresolvedRecords.push(result.unresolved);
+        if (result.websiteEnrichment) websiteEnrichmentRecords.push(result.websiteEnrichment);
+        if (progress.qualifiedProspectIds.length >= progress.qualifiedTarget) break;
+      } catch (error) {
+        if (!(error instanceof ProviderQueryBudgetReachedError)) throw error;
+        budgetReached = true;
+        break;
+      }
+    }
+
+    row = await currentTargetJob(jobId, leaseToken);
+    const persistedProgress = targetSearchProgressFromJson(row.discoveredLeads);
+    if (!persistedProgress) throw new Error("Target-search state disappeared during candidate processing.");
+    progress = {
+      ...progress,
+      providerQueriesUsed: persistedProgress.providerQueriesUsed,
+      qualifiedProspectIds: await reconcileTargetQualifiedProspectIds(jobId, progress.qualifiedProspectIds, acceptedSettings.mode, acceptedSettings.outreachPreference),
+    };
+    const updatedDiscovery = discoveryWithProcessingRecords(row.discoveredLeads, unresolvedRecords, websiteEnrichmentRecords)
+      ?? targetEnvelope(row.discoveredLeads, progress);
+    const envelope = targetEnvelope(updatedDiscovery as Prisma.JsonValue, progress);
+    const nextLeadIndex = row.nextLeadIndex + processed;
+    const terminalReason = budgetReached
+      ? "PROVIDER_BUDGET_REACHED" as const
+      : targetSearchHardStopReason(progress, row.scannedCount + processed);
+    const advanced = await getProspectDatabase().topProspectJob.updateMany({
+      where: { id: jobId, leaseToken },
+      data: {
+        status: terminalReason ? "RUNNING" : "NEEDS_NEXT_BATCH",
+        stage: nextLeadIndex < leads.length ? "ANALYZE" : "DISCOVER",
+        nextLeadIndex,
+        scannedCount: { increment: processed },
+        qualifiedCount: progress.qualifiedProspectIds.length,
+        skippedCount: { increment: processed - normallyQualified },
+        skipSummary: summary,
+        discoveredLeads: envelope,
+        leaseUntil: new Date(Date.now() + LEASE_MS),
+      },
+    });
+    if (advanced.count !== 1) throw new Error("Top Prospects worker lease changed while advancing target analysis.");
+    if (terminalReason) {
+      return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, envelope as Prisma.JsonValue, progress, terminalReason, acceptedSettings.mode, acceptedSettings.outreachPreference);
+    }
+    return { status: "needs_next_batch" as const, shouldContinue: true };
+  }
+
+  if (targetSearchSpaceIsExhausted(progress)) {
+    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress, "SEARCH_SPACE_EXHAUSTED", acceptedSettings.mode, acceptedSettings.outreachPreference);
+  }
+  const stage = progress.expansionPlan[progress.nextExpansionIndex];
+  progress = { ...progress, currentExpansionIndex: stage.index };
+  const startEnvelope = targetEnvelope(row.discoveredLeads, progress);
+  const staged = await getProspectDatabase().topProspectJob.updateMany({
+    where: { id: jobId, leaseToken },
+    data: { discoveredLeads: startEnvelope, stage: "DISCOVER", leaseUntil: new Date(Date.now() + LEASE_MS) },
+  });
+  if (staged.count !== 1) throw new Error("Top Prospects worker lease changed before target discovery.");
+
+  const providerQueriesStart = progress.providerQueriesUsed;
+  let discovery: DiscoveryResult;
+  try {
+    discovery = await discoverTopProspectLeads({
+      jobId,
+      city: stage.city,
+      state: stage.state,
+      tradeCategory: acceptedSettings.trade,
+      radiusKm: stage.radiusKm,
+      limit: Math.min(progress.discoveryStageSize, progress.maxBusinessesToProcess - row.scannedCount),
+      prospectType: acceptedSettings.prospectType,
+      excludePreviouslyReviewed: acceptedSettings.excludePreviouslyReviewed,
+      providerAttemptBudget,
+    });
+  } catch (error) {
+    if (!(error instanceof ProviderQueryBudgetReachedError)) throw error;
+    row = await currentTargetJob(jobId, leaseToken);
+    progress = targetSearchProgressFromJson(row.discoveredLeads)!;
+    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress, "PROVIDER_BUDGET_REACHED", acceptedSettings.mode, acceptedSettings.outreachPreference);
+  }
+
+  row = await currentTargetJob(jobId, leaseToken);
+  const persistedProgress = targetSearchProgressFromJson(row.discoveredLeads);
+  if (!persistedProgress) throw new Error("Target-search state disappeared during discovery.");
+  const existingLeads = discoveryLeadsFromJson(row.discoveredLeads);
+  const appended = appendUniqueTargetLeads(existingLeads, discovery.leads);
+  const rangeStart = existingLeads.length;
+  const history: TargetSearchStageHistory = {
+    ...stage,
+    candidateRangeStart: rangeStart,
+    candidateRangeEnd: appended.leads.length,
+    candidatesReturned: discovery.leads.length,
+    newUniqueCandidates: appended.newUniqueCandidates,
+    qualifiedProspectIds: [],
+    providerQueriesStart,
+    providerQueriesEnd: persistedProgress.providerQueriesUsed,
+    completedAt: new Date().toISOString(),
+    diagnostics: discovery.diagnostics,
+  };
+  const previousDiagnostics = discoveryDiagnosticsFromJson(row.discoveredLeads);
+  const diagnostics: DiscoveryDiagnostics = {
+    ...discovery.diagnostics,
+    cityTargets: persistedProgress.expansionPlan.map(({ city, state, label }) => ({ city, state, label })),
+    excludePreviouslyReviewed: acceptedSettings.excludePreviouslyReviewed,
+    unresolvedRecords: previousDiagnostics?.unresolvedRecords ?? [],
+    websiteEnrichmentRecords: previousDiagnostics?.websiteEnrichmentRecords ?? [],
+  };
+  progress = {
+    ...persistedProgress,
+    nextExpansionIndex: stage.index + 1,
+    currentExpansionIndex: stage.index,
+    uniqueCandidateCount: appended.leads.length,
+    consecutiveZeroYieldStages: appended.newUniqueCandidates === 0 ? persistedProgress.consecutiveZeroYieldStages + 1 : 0,
+    expansionHistory: [...persistedProgress.expansionHistory.filter((item) => item.index !== stage.index), history],
+  };
+  const envelope = targetEnvelope(row.discoveredLeads, progress, appended.leads, diagnostics);
+  const exhausted = progress.consecutiveZeroYieldStages >= 2;
+  const completedStage = await getProspectDatabase().topProspectJob.updateMany({
+    where: { id: jobId, leaseToken },
+    data: {
+      discoveredLeads: envelope,
+      stage: appended.newUniqueCandidates ? "ANALYZE" : "DISCOVER",
+      status: exhausted
+        ? "RUNNING"
+        : discoveryHasPartialIssues(discovery.diagnostics) ? "PARTIAL_RESULTS_READY" : "NEEDS_NEXT_BATCH",
+      leaseUntil: new Date(Date.now() + LEASE_MS),
+    },
+  });
+  if (completedStage.count !== 1) throw new Error("Top Prospects worker lease changed while saving target discovery.");
+  if (exhausted) {
+    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, envelope as Prisma.JsonValue, progress, "SEARCH_SPACE_EXHAUSTED", acceptedSettings.mode, acceptedSettings.outreachPreference);
+  }
+  return { status: "needs_next_batch" as const, shouldContinue: true };
 }
 
 export async function processTopProspectJob(jobId: string) {
@@ -1194,6 +1618,9 @@ export async function processTopProspectJob(jobId: string) {
   const token = job.leaseToken!;
   const acceptedSettings = topProspectExecutionSettings(job);
   try {
+    if (targetSearchProgressFromJson(job.discoveredLeads)) {
+      return await processTargetSearchJob(job.id, token, job.createdAt, acceptedSettings);
+    }
     const savedLeadCount = savedDiscoveryLeadCount(job.discoveredLeads);
     if (job.stage === "DISCOVER" && savedLeadCount > 0) {
       console.info("[top-prospects] Saved discovery found; resuming analysis without rediscovery.", {
@@ -1334,11 +1761,26 @@ export async function processTopProspectJob(jobId: string) {
     return { status: waitingStatus.toLowerCase() as "needs_next_batch" | "partial_results_ready", shouldContinue: true };
   } catch (error) {
     const failure = safeTopProspectJobFailure(error);
+    const current = await getProspectDatabase().topProspectJob.findUnique({
+      where: { id: job.id },
+      select: { leaseToken: true, discoveredLeads: true },
+    });
+    const currentTargetProgress = current?.leaseToken === token
+      ? targetSearchProgressFromJson(current.discoveredLeads)
+      : null;
+    const failedTargetEnvelope = currentTargetProgress
+      ? targetEnvelope(current!.discoveredLeads, {
+          ...currentTargetProgress,
+          stopReason: "PROVIDER_OR_SYSTEM_FAILURE",
+          continuationAllowed: false,
+        })
+      : null;
     await getProspectDatabase().topProspectJob.updateMany({
       where: { id: job.id, leaseToken: token },
       data: {
         status: "FAILED",
         errorMessage: encodeTopProspectJobFailure(failure.classification, failure.reason),
+        ...(failedTargetEnvelope ? { discoveredLeads: failedTargetEnvelope } : {}),
         leaseToken: null,
         leaseUntil: null,
       },

@@ -499,7 +499,7 @@ test("worker diverts final manual opportunities before outreach artifact generat
   const processLeadStart = workerSource.indexOf("async function processLead(");
   const manualGate = workerSource.indexOf("const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);", processLeadStart);
   const websiteFitGate = workerSource.indexOf("if (!websiteFitAllowsAutonomousOutreach(prospect))", manualGate);
-  const artifactGeneration = workerSource.indexOf("const rejectionReason = await saveTopProspectResult(jobId, prospect", processLeadStart);
+  const artifactGeneration = workerSource.indexOf("const savedResult = await saveTopProspectResult(jobId, prospect", processLeadStart);
 
   assert.ok(processLeadStart >= 0);
   assert.ok(manualGate > processLeadStart);
