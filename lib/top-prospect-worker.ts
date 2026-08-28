@@ -73,13 +73,27 @@ import { ensureTopProspectSchema } from "@/lib/top-prospect-schema";
 import {
   encodeTopProspectJobFailure,
   safeTopProspectJobFailure,
+  topProspectWorkerInternalFailure,
+  topProspectWorkerOperationError,
   TopProspectStageError,
+  type TopProspectWorkerPhase,
 } from "@/lib/top-prospect-diagnostics";
 
 const LEASE_MS = 90_000;
 const BATCH_SIZE = 3;
 const contactedStatuses = new Set(["Contacted", "Interested", "Proposal Sent", "Closed Won", "Closed Lost"]);
 const resumableStatuses = ["QUEUED", "RUNNING", "NEEDS_NEXT_BATCH", "PARTIAL_RESULTS_READY", "FAILED", "FAILED_AFTER_DISCOVERY"];
+
+async function withWorkerOperationContext<T>(
+  context: Parameters<typeof topProspectWorkerOperationError>[1],
+  operation: () => Promise<T>,
+) {
+  try {
+    return await operation();
+  } catch (error) {
+    throw topProspectWorkerOperationError(error, context);
+  }
+}
 
 export function prospectMeetsTargetSearchObjective(
   prospect: Prospect,
@@ -1012,7 +1026,9 @@ async function processLead(
   outreachPreference: OutreachPreference,
   excludePreviouslyReviewed: boolean,
   providerAttemptBudget?: ProviderAttemptBudget,
+  reportPhase?: (phase: TopProspectWorkerPhase) => void,
 ): Promise<ProcessLeadResult> {
+  reportPhase?.("candidate_selection");
   if (likelyNationalOrLargeBrand(lead)) {
     addSkip(summary, "national_large_brand");
     return { qualified: false };
@@ -1071,6 +1087,7 @@ async function processLead(
       : assessManualTopProspectOpportunity(existing, lead);
     if (existingManualOpportunity) {
       try {
+        reportPhase?.("website_verification");
         existingResolution = await verifyProspectWebsiteWithSecondPass(existing, {
           allowHistoricalNoSiteLookup: true,
           providerAttemptBudget,
@@ -1083,8 +1100,10 @@ async function processLead(
         return { qualified: false, unresolved };
       }
       const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
+      reportPhase?.("qualification_routing");
       const refreshedManualOpportunity = assessManualTopProspectOpportunity(existing, lead);
       if (refreshedManualOpportunity) {
+        reportPhase?.("result_persistence");
         const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
         if (reviewOnly) return reviewOnly;
         const unresolved = unresolvedTopProspectRecord(existing, lead, existingResolution);
@@ -1092,6 +1111,7 @@ async function processLead(
         return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
       }
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        reportPhase?.("result_persistence");
         const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
         if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
@@ -1111,6 +1131,7 @@ async function processLead(
     if (legacyDeterministicCandidateUrl || existingProspectRequiresWebsiteResolution(existing, jobCreatedAt)) {
       let resolution: SharedProspectVerificationResolution;
       try {
+        reportPhase?.("website_verification");
         const staleNoSiteEvidence = Boolean(legacyDeterministicCandidateUrl)
           || (!existing.website.trim() && existing.prospectType === "no_website_social_only");
         const verificationProspect = legacyRepair?.prospect ?? existing;
@@ -1128,7 +1149,9 @@ async function processLead(
         return { qualified: false, unresolved };
       }
       existing = await saveProspect(mergeResolvedWebsiteEvidence(existing, resolution.result.prospect));
+      reportPhase?.("qualification_routing");
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        reportPhase?.("result_persistence");
         const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, resolution);
         if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
@@ -1147,6 +1170,7 @@ async function processLead(
       existingResolution = resolution;
       resolvedExistingNow = true;
     } else if (!websiteFitAllowsAutonomousOutreach(existing)) {
+      reportPhase?.("result_persistence");
       const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
       if (reviewOnly) return reviewOnly;
       addSkip(summary, "confirmed_usable_website_not_fit");
@@ -1158,7 +1182,9 @@ async function processLead(
       || recoverableTopProspect(existing, jobCreatedAt)
       || ((existing.prospectType === "no_website_social_only" || existing.analysis) && existing.outreach)
     ) {
+      reportPhase?.("qualification_routing");
       if (!websiteFitAllowsAutonomousOutreach(existing)) {
+        reportPhase?.("result_persistence");
         const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, existing, summary, mode, outreachPreference, existingResolution);
         if (reviewOnly) return reviewOnly;
         const fit = normalizeWebsiteFitDisposition(existing);
@@ -1172,7 +1198,9 @@ async function processLead(
         const websiteEnrichment = topProspectWebsiteEnrichmentRecord(existing, existingResolution);
         return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
       }
+      reportPhase?.("written_contact_enrichment");
       existing = await enrichWrittenContactBeforeAssessment(existing, outreachPreference);
+      reportPhase?.("result_persistence");
       const savedResult = await saveTopProspectResult(jobId, existing, mode, outreachPreference);
       const rejectionReason = savedResult.rejectionReason;
       if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
@@ -1192,6 +1220,7 @@ async function processLead(
   let prospect = createProspect({ ...lead, sizeIndicator: "Growing", status: "New" });
   let verification: SharedProspectVerificationResolution;
   try {
+    reportPhase?.("website_verification");
     verification = await verifyProspectWebsiteWithSecondPass(prospect, { providerAttemptBudget });
     prospect = verification.result.prospect;
     if (["crawler_blocked", "temporarily_unavailable", "inconclusive", "invalid_website"].includes(prospect.websiteStatus)) {
@@ -1213,8 +1242,10 @@ async function processLead(
     addUnresolvedSkip(summary, unresolved, "website_verification_failed");
     return { qualified: false, unresolved };
   }
+  reportPhase?.("qualification_routing");
   const manualOpportunity = assessManualTopProspectOpportunity(prospect, lead);
   if (manualOpportunity) {
+    reportPhase?.("result_persistence");
     const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, prospect, summary, mode, outreachPreference, verification);
     if (reviewOnly) return reviewOnly;
     prospect = await saveProspect(prospect);
@@ -1224,6 +1255,7 @@ async function processLead(
     return { qualified: false, unresolved, ...(websiteEnrichment ? { websiteEnrichment } : {}) };
   }
   if (!websiteFitAllowsAutonomousOutreach(prospect)) {
+    reportPhase?.("result_persistence");
     const reviewOnly = await maybeSaveEmailReviewCandidate(jobId, prospect, summary, mode, outreachPreference, verification);
     if (reviewOnly) return reviewOnly;
     await saveProspect(prospect);
@@ -1241,6 +1273,7 @@ async function processLead(
     };
   }
 
+  reportPhase?.("written_contact_enrichment");
   prospect = await enrichWrittenContactBeforeAssessment(prospect, outreachPreference);
   prospect = {
     ...prospect,
@@ -1250,6 +1283,7 @@ async function processLead(
       ...prospect.activities,
     ],
   };
+  reportPhase?.("result_persistence");
   const savedResult = await saveTopProspectResult(jobId, prospect, mode, outreachPreference);
   const rejectionReason = savedResult.rejectionReason;
   if (rejectionReason) addSkip(summary, rejectionReason.toLowerCase().replaceAll(/[\s/]+/g, "_"));
@@ -1432,11 +1466,17 @@ async function processTargetSearchJob(
   if (!progress.continuationAllowed || progress.stopReason) throw new Error("Target-search continuation is already closed.");
   progress = {
     ...progress,
-    qualifiedProspectIds: await reconcileTargetQualifiedProspectIds(jobId, progress.qualifiedProspectIds, acceptedSettings.mode, acceptedSettings.outreachPreference),
+    qualifiedProspectIds: await withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "target_reconciliation" },
+      () => reconcileTargetQualifiedProspectIds(jobId, progress!.qualifiedProspectIds, acceptedSettings.mode, acceptedSettings.outreachPreference),
+    ),
   };
   const initialStopReason = targetSearchHardStopReason(progress, row.scannedCount);
   if (initialStopReason) {
-    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress, initialStopReason, acceptedSettings.mode, acceptedSettings.outreachPreference);
+    return withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "finalization" },
+      () => finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress!, initialStopReason, acceptedSettings.mode, acceptedSettings.outreachPreference),
+    );
   }
 
   const providerAttemptBudget: ProviderAttemptBudget = {
@@ -1455,8 +1495,11 @@ async function processTargetSearchJob(
     let processed = 0;
     let normallyQualified = 0;
     let budgetReached = false;
-    for (const lead of batch) {
+    for (const [batchOffset, lead] of batch.entries()) {
+      const candidateIndex = row.nextLeadIndex + batchOffset;
+      let phase: TopProspectWorkerPhase = "candidate_selection";
       try {
+        phase = "lease_write";
         await renewTargetJobLease(jobId, leaseToken);
         const result = await processLead(
           jobId,
@@ -1467,6 +1510,7 @@ async function processTargetSearchJob(
           acceptedSettings.outreachPreference,
           acceptedSettings.excludePreviouslyReviewed,
           providerAttemptBudget,
+          (nextPhase) => { phase = nextPhase; },
         );
         processed += 1;
         if (result.qualified) normallyQualified += 1;
@@ -1482,19 +1526,32 @@ async function processTargetSearchJob(
         if (result.websiteEnrichment) websiteEnrichmentRecords.push(result.websiteEnrichment);
         if (progress.qualifiedProspectIds.length >= progress.qualifiedTarget) break;
       } catch (error) {
-        if (!(error instanceof ProviderQueryBudgetReachedError)) throw error;
+        if (!(error instanceof ProviderQueryBudgetReachedError)) {
+          throw topProspectWorkerOperationError(error, {
+            savedLeadIndex: row.nextLeadIndex,
+            candidateIndex,
+            businessName: lead.businessName,
+            phase,
+          });
+        }
         budgetReached = true;
         break;
       }
     }
 
-    row = await currentTargetJob(jobId, leaseToken);
+    row = await withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "lease_write" },
+      () => currentTargetJob(jobId, leaseToken),
+    );
     const persistedProgress = targetSearchProgressFromJson(row.discoveredLeads);
     if (!persistedProgress) throw new Error("Target-search state disappeared during candidate processing.");
     progress = {
       ...progress,
       providerQueriesUsed: persistedProgress.providerQueriesUsed,
-      qualifiedProspectIds: await reconcileTargetQualifiedProspectIds(jobId, progress.qualifiedProspectIds, acceptedSettings.mode, acceptedSettings.outreachPreference),
+      qualifiedProspectIds: await withWorkerOperationContext(
+        { savedLeadIndex: row.nextLeadIndex, phase: "target_reconciliation" },
+        () => reconcileTargetQualifiedProspectIds(jobId, progress!.qualifiedProspectIds, acceptedSettings.mode, acceptedSettings.outreachPreference),
+      ),
     };
     const updatedDiscovery = discoveryWithProcessingRecords(row.discoveredLeads, unresolvedRecords, websiteEnrichmentRecords)
       ?? targetEnvelope(row.discoveredLeads, progress);
@@ -1503,29 +1560,40 @@ async function processTargetSearchJob(
     const terminalReason = budgetReached
       ? "PROVIDER_BUDGET_REACHED" as const
       : targetSearchHardStopReason(progress, row.scannedCount + processed);
-    const advanced = await getProspectDatabase().topProspectJob.updateMany({
-      where: { id: jobId, leaseToken },
-      data: {
-        status: terminalReason ? "RUNNING" : "NEEDS_NEXT_BATCH",
-        stage: nextLeadIndex < leads.length ? "ANALYZE" : "DISCOVER",
-        nextLeadIndex,
-        scannedCount: { increment: processed },
-        qualifiedCount: progress.qualifiedProspectIds.length,
-        skippedCount: { increment: processed - normallyQualified },
-        skipSummary: summary,
-        discoveredLeads: envelope,
-        leaseUntil: new Date(Date.now() + LEASE_MS),
+    await withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "lease_write" },
+      async () => {
+        const advanced = await getProspectDatabase().topProspectJob.updateMany({
+          where: { id: jobId, leaseToken },
+          data: {
+            status: terminalReason ? "RUNNING" : "NEEDS_NEXT_BATCH",
+            stage: nextLeadIndex < leads.length ? "ANALYZE" : "DISCOVER",
+            nextLeadIndex,
+            scannedCount: { increment: processed },
+            qualifiedCount: progress!.qualifiedProspectIds.length,
+            skippedCount: { increment: processed - normallyQualified },
+            skipSummary: summary,
+            discoveredLeads: envelope,
+            leaseUntil: new Date(Date.now() + LEASE_MS),
+          },
+        });
+        if (advanced.count !== 1) throw new Error("Top Prospects worker lease changed while advancing target analysis.");
       },
-    });
-    if (advanced.count !== 1) throw new Error("Top Prospects worker lease changed while advancing target analysis.");
+    );
     if (terminalReason) {
-      return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, envelope as Prisma.JsonValue, progress, terminalReason, acceptedSettings.mode, acceptedSettings.outreachPreference);
+      return withWorkerOperationContext(
+        { savedLeadIndex: nextLeadIndex, phase: "finalization" },
+        () => finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, envelope as Prisma.JsonValue, progress!, terminalReason, acceptedSettings.mode, acceptedSettings.outreachPreference),
+      );
     }
     return { status: "needs_next_batch" as const, shouldContinue: true };
   }
 
   if (targetSearchSpaceIsExhausted(progress)) {
-    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress, "SEARCH_SPACE_EXHAUSTED", acceptedSettings.mode, acceptedSettings.outreachPreference);
+    return withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "finalization" },
+      () => finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress!, "SEARCH_SPACE_EXHAUSTED", acceptedSettings.mode, acceptedSettings.outreachPreference),
+    );
   }
   const stage = progress.expansionPlan[progress.nextExpansionIndex];
   progress = { ...progress, currentExpansionIndex: stage.index };
@@ -1554,7 +1622,10 @@ async function processTargetSearchJob(
     if (!(error instanceof ProviderQueryBudgetReachedError)) throw error;
     row = await currentTargetJob(jobId, leaseToken);
     progress = targetSearchProgressFromJson(row.discoveredLeads)!;
-    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress, "PROVIDER_BUDGET_REACHED", acceptedSettings.mode, acceptedSettings.outreachPreference);
+    return withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "finalization" },
+      () => finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, row.discoveredLeads, progress!, "PROVIDER_BUDGET_REACHED", acceptedSettings.mode, acceptedSettings.outreachPreference),
+    );
   }
 
   row = await currentTargetJob(jobId, leaseToken);
@@ -1606,7 +1677,10 @@ async function processTargetSearchJob(
   });
   if (completedStage.count !== 1) throw new Error("Top Prospects worker lease changed while saving target discovery.");
   if (exhausted) {
-    return finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, envelope as Prisma.JsonValue, progress, "SEARCH_SPACE_EXHAUSTED", acceptedSettings.mode, acceptedSettings.outreachPreference);
+    return withWorkerOperationContext(
+      { savedLeadIndex: row.nextLeadIndex, phase: "finalization" },
+      () => finishTargetSearchJob(jobId, leaseToken, acceptedSettings.finalProspectsWanted, envelope as Prisma.JsonValue, progress, "SEARCH_SPACE_EXHAUSTED", acceptedSettings.mode, acceptedSettings.outreachPreference),
+    );
   }
   return { status: "needs_next_batch" as const, shouldContinue: true };
 }
@@ -1710,7 +1784,9 @@ export async function processTopProspectJob(jobId: string) {
     let qualified = 0;
     const unresolvedRecords: UnresolvedTopProspectRecord[] = [];
     const websiteEnrichmentRecords: TopProspectWebsiteEnrichmentRecord[] = [];
-    for (const lead of batch) {
+    for (const [batchOffset, lead] of batch.entries()) {
+      const candidateIndex = job.nextLeadIndex + batchOffset;
+      let phase: TopProspectWorkerPhase = "candidate_selection";
       if (job.nextLeadIndex === 0) {
         console.info("[top-prospects] First candidate processing started.", {
           jobId: job.id,
@@ -1720,7 +1796,27 @@ export async function processTopProspectJob(jobId: string) {
           recommendedContactMethod: lead.recommendedContactMethod,
         });
       }
-      const result = await processLead(job.id, job.createdAt, lead, summary, mode, outreachPreference, excludePreviouslyReviewed);
+      let result: ProcessLeadResult;
+      try {
+        result = await processLead(
+          job.id,
+          job.createdAt,
+          lead,
+          summary,
+          mode,
+          outreachPreference,
+          excludePreviouslyReviewed,
+          undefined,
+          (nextPhase) => { phase = nextPhase; },
+        );
+      } catch (error) {
+        throw topProspectWorkerOperationError(error, {
+          savedLeadIndex: job.nextLeadIndex,
+          candidateIndex,
+          businessName: lead.businessName,
+          phase,
+        });
+      }
       if (result.qualified) qualified += 1;
       if (result.unresolved) unresolvedRecords.push(result.unresolved);
       if (result.websiteEnrichment) websiteEnrichmentRecords.push(result.websiteEnrichment);
@@ -1761,6 +1857,7 @@ export async function processTopProspectJob(jobId: string) {
     return { status: waitingStatus.toLowerCase() as "needs_next_batch" | "partial_results_ready", shouldContinue: true };
   } catch (error) {
     const failure = safeTopProspectJobFailure(error);
+    const internalFailure = topProspectWorkerInternalFailure(error);
     const current = await getProspectDatabase().topProspectJob.findUnique({
       where: { id: job.id },
       select: { leaseToken: true, discoveredLeads: true },
@@ -1790,6 +1887,7 @@ export async function processTopProspectJob(jobId: string) {
       stage: job.stage,
       classification: failure.classification,
       reason: failure.reason,
+      ...internalFailure,
     });
     return { status: "failed" as const, shouldContinue: false, classification: failure.classification, reason: failure.reason };
   } finally {

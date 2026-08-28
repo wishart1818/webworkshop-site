@@ -18,6 +18,69 @@ export type TopProspectJobFailureClassification =
   | "worker_timeout"
   | "unexpected_exception";
 
+export type TopProspectWorkerPhase =
+  | "candidate_selection"
+  | "website_verification"
+  | "written_contact_enrichment"
+  | "qualification_routing"
+  | "result_persistence"
+  | "target_reconciliation"
+  | "lease_write"
+  | "finalization";
+
+export type TopProspectWorkerFailureContext = {
+  savedLeadIndex: number;
+  candidateIndex?: number;
+  businessName?: string;
+  phase: TopProspectWorkerPhase;
+};
+
+export class TopProspectWorkerOperationError extends Error {
+  constructor(
+    readonly context: TopProspectWorkerFailureContext,
+    options: ErrorOptions,
+  ) {
+    super("A Top Prospects worker operation failed.", options);
+    this.name = "TopProspectWorkerOperationError";
+  }
+}
+
+export function topProspectWorkerOperationError(
+  error: unknown,
+  context: TopProspectWorkerFailureContext,
+) {
+  return error instanceof TopProspectWorkerOperationError
+    ? error
+    : new TopProspectWorkerOperationError(context, { cause: error });
+}
+
+function sanitizedLogText(value: string, fallback: string) {
+  const clean = value
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]")
+    .replace(/\b(api[_-]?key|token|secret|password)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return (clean || fallback).slice(0, 240);
+}
+
+export function topProspectWorkerInternalFailure(error: unknown) {
+  const operation = error instanceof TopProspectWorkerOperationError ? error : null;
+  let source: unknown = operation?.cause ?? error;
+  for (let depth = 0; depth < 3 && source && typeof source === "object"; depth += 1) {
+    const cause = (source as { cause?: unknown }).cause;
+    if (!cause) break;
+    source = cause;
+  }
+  const sourceError = source instanceof Error ? source : null;
+  return {
+    ...(operation?.context ?? {}),
+    errorName: sanitizedLogText(sourceError?.name ?? typeof source, "UnknownError"),
+    errorMessage: sanitizedLogText(sourceError?.message ?? "Non-Error worker failure.", "Worker operation failed."),
+  };
+}
+
 export class TopProspectStageError extends Error {
   constructor(
     readonly classification: Exclude<TopProspectJobFailureClassification, "database_error" | "unexpected_exception">,
@@ -66,8 +129,19 @@ export function classifyTopProspectFailure(error: unknown): TopProspectFailureCl
   return "unknown";
 }
 
+function topProspectStageError(error: unknown) {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof TopProspectStageError) return current;
+    if (typeof current !== "object") break;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 export function classifyTopProspectJobFailure(error: unknown): TopProspectJobFailureClassification {
-  if (error instanceof TopProspectStageError) return error.classification;
+  const stageError = topProspectStageError(error);
+  if (stageError) return stageError.classification;
   const classification = classifyTopProspectFailure(error);
   if (classification !== "unknown") return "database_error";
   const signals = errorSignals(error);
@@ -86,7 +160,7 @@ const fallbackReasons: Record<TopProspectJobFailureClassification, string> = {
 
 export function safeTopProspectJobFailure(error: unknown) {
   const classification = classifyTopProspectJobFailure(error);
-  const reason = error instanceof TopProspectStageError ? error.safeReason : fallbackReasons[classification];
+  const reason = topProspectStageError(error)?.safeReason ?? fallbackReasons[classification];
   return { classification, reason };
 }
 
