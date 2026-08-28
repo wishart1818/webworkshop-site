@@ -6,6 +6,8 @@ import {
   encodeTopProspectJobFailure,
   parseTopProspectJobFailure,
   safeTopProspectJobFailure,
+  topProspectWorkerInternalFailure,
+  topProspectWorkerOperationError,
   TopProspectStageError,
   topProspectRuntimeChecks,
 } from "../lib/top-prospect-diagnostics";
@@ -64,4 +66,54 @@ test("Top Prospects runtime checks compare pooled and direct database targets sa
     }).databaseTargetsMatch,
     false,
   );
+});
+
+test("candidate failures retain server-only checkpoint context without changing the safe UI failure", () => {
+  const internal = new Error(
+    "Invalid provider payload from https://provider.example/path?api_key=secret for owner@example.com\nsecond line",
+  );
+  const wrapped = topProspectWorkerOperationError(internal, {
+    savedLeadIndex: 49,
+    candidateIndex: 50,
+    businessName: "Safe Example Cleaning",
+    phase: "written_contact_enrichment",
+  });
+
+  assert.deepEqual(safeTopProspectJobFailure(wrapped), {
+    classification: "unexpected_exception",
+    reason: "The Top Prospects worker stopped because of an unexpected server error.",
+  });
+  assert.deepEqual(topProspectWorkerInternalFailure(wrapped), {
+    savedLeadIndex: 49,
+    candidateIndex: 50,
+    businessName: "Safe Example Cleaning",
+    phase: "written_contact_enrichment",
+    errorName: "Error",
+    errorMessage: "Invalid provider payload from [url] for [email] second line",
+  });
+});
+
+test("worker diagnostic wrapping preserves the first operation boundary", () => {
+  const candidate = topProspectWorkerOperationError(new Error("candidate failure"), {
+    savedLeadIndex: 49,
+    candidateIndex: 51,
+    businessName: "Third Candidate",
+    phase: "result_persistence",
+  });
+  const outer = topProspectWorkerOperationError(candidate, {
+    savedLeadIndex: 49,
+    phase: "lease_write",
+  });
+  assert.equal(outer, candidate);
+  assert.equal(topProspectWorkerInternalFailure(outer).candidateIndex, 51);
+  assert.equal(topProspectWorkerInternalFailure(outer).phase, "result_persistence");
+});
+
+test("diagnostic context does not weaken established safe failure classifications", () => {
+  const provider = topProspectWorkerOperationError(
+    new TopProspectStageError("discovery_provider_error", "The provider failed safely."),
+    { savedLeadIndex: 49, candidateIndex: 49, phase: "website_verification" },
+  );
+  assert.equal(classifyTopProspectJobFailure(provider), "discovery_provider_error");
+  assert.equal(safeTopProspectJobFailure(provider).reason, "The provider failed safely.");
 });

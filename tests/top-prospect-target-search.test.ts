@@ -19,7 +19,7 @@ test("target worker keeps durable analysis batches at three and persists bounded
   assert.match(worker, /const BATCH_SIZE = 3/);
   assert.match(worker, /reserveTopProspectProviderAttempt\(jobId, leaseToken\)/);
   assert.match(worker, /leads\.slice\(row\.nextLeadIndex,[\s\S]*Math\.min\(BATCH_SIZE, remainingCapacity\)/);
-  assert.match(worker, /qualifiedProspectIds:\s*await reconcileTargetQualifiedProspectIds/);
+  assert.match(worker, /qualifiedProspectIds:\s*await withWorkerOperationContext[\s\S]*reconcileTargetQualifiedProspectIds/);
   assert.match(worker, /stopReason === "QUALIFIED_TARGET_REACHED"[\s\S]*qualifiedProspectIds\.length < progress\.qualifiedTarget/);
   assert.match(worker, /lease changed while continuing after target reconciliation/);
   assert.match(worker, /new Set\(\[\.\.\.progress\.qualifiedProspectIds/);
@@ -52,4 +52,14 @@ test("target-search persistence uses the existing JSON envelope and adds no sche
   const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
   assert.match(repository, /discoveredLeads:[\s\S]*targetSearch/);
   assert.doesNotMatch(schema, /targetSearch/i);
+});
+
+test("a replayed target batch reports the saved checkpoint and exact failing candidate without swallowing it", () => {
+  const worker = readFileSync(new URL("../lib/top-prospect-worker.ts", import.meta.url), "utf8");
+  assert.match(worker, /for \(const \[batchOffset, lead\] of batch\.entries\(\)\)/);
+  assert.match(worker, /const candidateIndex = row\.nextLeadIndex \+ batchOffset/);
+  assert.match(worker, /savedLeadIndex: row\.nextLeadIndex,[\s\S]*candidateIndex,[\s\S]*businessName: lead\.businessName,[\s\S]*phase/);
+  assert.match(worker, /if \(!\(error instanceof ProviderQueryBudgetReachedError\)\) \{[\s\S]*throw topProspectWorkerOperationError/);
+  assert.match(worker, /topProspectWorkerInternalFailure\(error\)/);
+  assert.match(worker, /console\.error\("\[top-prospects\] Worker batch failed\."[\s\S]*\.\.\.internalFailure/);
 });
